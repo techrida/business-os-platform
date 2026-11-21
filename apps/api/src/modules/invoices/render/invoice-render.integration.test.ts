@@ -1239,6 +1239,20 @@ describe('render on commit (S3): the issue enqueues the render, the worker rende
     expect(gotenberg.requests).toHaveLength(1);
     sweep.mockRestore();
   });
+
+  it('does not render twice when the job runs again after the PDF is live', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const job = {
+      name: INVOICE_RENDER_ONE_JOB,
+      data: { ...scope_(scope), id: inv.invoiceId },
+    } as unknown as Job;
+    const processor = new InvoiceRenderProcessor(sweeper);
+    await processor.process(job);
+    await processor.process(job);
+    expect(gotenberg.requests).toHaveLength(1);
+    expect(await documentRows(inv.invoiceId)).toHaveLength(1);
+  });
 });
 
 const scope_ = (s: TxScope): TxScope => ({
