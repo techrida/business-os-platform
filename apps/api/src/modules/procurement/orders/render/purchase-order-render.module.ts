@@ -10,6 +10,7 @@ import { DB, type Db } from '../../../../platform/db/db.module';
 import { DocumentsModule } from '../../../../platform/documents/documents.module';
 import { DocumentsService } from '../../../../platform/documents/documents.service';
 import { PurchaseOrdersCaller } from '../purchase-orders.caller';
+import { PurchaseOrderRenderNudgeModule } from './purchase-order-render.nudge';
 import { PurchaseOrderDocumentController } from './purchase-order-document.controller';
 import { PurchaseOrderDocumentService } from './purchase-order-document.service';
 import {
@@ -18,7 +19,7 @@ import {
 } from './purchase-order-version-owner.policy';
 
 @Module({
-  imports: [AuditModule, DocumentsModule],
+  imports: [AuditModule, DocumentsModule, PurchaseOrderRenderNudgeModule],
   controllers: [PurchaseOrderDocumentController],
   providers: [PurchaseOrdersCaller, PurchaseOrderDocumentService],
 })

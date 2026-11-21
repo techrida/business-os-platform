@@ -23,6 +23,9 @@ import {
   type MarkBillableBody,
   type ReopenInvoiceBody,
   SALES_ORDER_STATUSES,
+  type SalesVatRegister,
+  SalesVatRegisterQuerySchema,
+  SalesVatRegisterSchema,
   type SalesOrderDetail,
   SalesOrderDetailSchema,
   type SalesOrderListItem,
@@ -620,4 +623,20 @@ export function describeBillingFailure(err: unknown): BillingFailure {
     };
   }
   return { ...base, kind: 'error' };
+}
+
+/** The sales VAT register of one period (`from` and `to` are inclusive AD issue dates). */
+export const SalesVatPeriodSchema = SalesVatRegisterQuerySchema;
+
+export function getSalesVatRegister(
+  session: Session,
+  from: string,
+  to: string,
+): Promise<SalesVatRegister> {
+  const period = SalesVatPeriodSchema.parse({ from, to });
+  return get(
+    session,
+    `/v1/invoices/vat-register?${new URLSearchParams(period)}`,
+    SalesVatRegisterSchema,
+  );
 }

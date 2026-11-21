@@ -35,6 +35,7 @@ import { SalesOrdersModule } from './modules/sales-orders/sales-orders.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
 import { VendorBankModule } from './modules/vendors/bank/bank.module';
+import { PartyImportsModule } from './modules/party-imports/party-imports.module';
 import { VendorsModule } from './modules/vendors/vendors.module';
 import { VerificationModule } from './modules/verification/verification.module';
 import { AuditHttpModule } from './platform/audit/audit.module';
@@ -103,6 +104,7 @@ import { UsersModule } from './platform/users/users.module';
     PortalAccessModule,
     // P4: procurement master data and requests.
     VendorsModule,
+    PartyImportsModule,
     VendorBankModule,
     PurchaseRequestsModule,
     SourcingModule,
