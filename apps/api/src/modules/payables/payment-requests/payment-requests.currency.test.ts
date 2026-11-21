@@ -1,12 +1,13 @@
-// Unit tests for the D44 currency check in PaymentRequestsService.create, with a fake database (no Docker).
+// Unit tests for the currency of PaymentRequestsService.create, with a fake database (no Docker). Payment requests
+// are exempt from the D44 switch-off (D56 U16-Q1), as payments are: a switched-off currency is accepted and the
+// setting is never read, while an unknown currency is still refused by the contract.
 // Run with: pnpm --filter @bos/api exec vitest run src/modules/payables/payment-requests/payment-requests.currency.test.ts
 //
-// The real create runs through the real withTx, withIdempotency, CurrencyEnabledService and SettingsService. The fake
-// answers only what those ask: the transaction's set_config, the idempotency claim, the `currency.enabled` read (a
-// saved row when the test gives one, otherwise none, so the default list is the contract's SETTING_DEFAULTS), the
-// company bank account select with the rows the test gives (round 5, P1) and every other select with no rows. With
-// an active bank account in the request's currency and no vendor rows, a create that gets past both checks stops at
-// 404 Vendor.
+// The real create runs through the real withTx and withIdempotency. The fake answers only what those ask: the
+// transaction's set_config, the idempotency claim, a `currency.enabled` read (counted, so a test can show none
+// happens; a saved row when the test gives one), the company bank account select with the rows the test gives
+// (round 5, P1) and every other select with no rows. With an active bank account in the request's currency and no
+// vendor rows, a create that gets past the bank check stops at 404 Vendor.
 import { RequestPaymentBodySchema } from '@bos/contracts';
 import { companyBankAccounts } from '@bos/db';
 import { HttpException } from '@nestjs/common';
@@ -15,8 +16,6 @@ import { describe, expect, it } from 'vitest';
 
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db } from '../../../platform/db/db.module';
-import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
-import { SettingsService } from '../../../platform/settings/settings.service';
 import type { ApprovalsService } from '../../approvals/requests.service';
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { VendorBankService } from '../../vendors/bank/bank.service';
@@ -89,23 +88,16 @@ const caller = {
   }),
 } as unknown as PaymentRequestsCaller;
 
-/** The service as Nest wires it (SettingsModule provides the check), or as the integration tests build it. */
-function serviceOn(db: Db, injected = true): PaymentRequestsService {
-  const deps = [
+/** The service as the integration tests build it; the bank account check is the default one. */
+function serviceOn(db: Db): PaymentRequestsService {
+  return new PaymentRequestsService(
     db,
     {} as ApprovalsService,
     {} as AuditService,
     {} as VendorBankService,
     caller,
     () => new Date('2026-11-19T10:00:00Z'),
-  ] as const;
-  return injected
-    ? new PaymentRequestsService(
-        ...deps,
-        undefined,
-        new CurrencyEnabledService(new SettingsService(db)),
-      )
-    : new PaymentRequestsService(...deps);
+  );
 }
 
 /** A request body as the API receives it, parsed through the contract. */
@@ -129,32 +121,40 @@ async function caught(fn: () => Promise<unknown>): Promise<HttpException> {
   throw new Error('expected a throw');
 }
 
-describe('PaymentRequestsService.create: enabled currency (D44)', () => {
-  it('refuses a currency the company switched off with 422 CURRENCY_NOT_ENABLED before reading the vendor', async () => {
-    const { db, settingsReads, selectCount } = fakeDb(['NPR', 'USD']);
-    const error = await caught(() => serviceOn(db).create(bodyIn('INR'), 'key-refused'));
-    expect(error.getStatus()).toBe(422);
-    expect(error.getResponse()).toEqual({
-      code: 'CURRENCY_NOT_ENABLED',
-      message: 'Currency INR is not enabled for this company',
-      details: { currency: 'INR' },
-    });
-    expect(settingsReads).toEqual([[scope.tenantId, scope.organizationId, 'currency.enabled']]);
-    expect(selectCount()).toBe(0);
-  });
-
-  it('accepts a currency in the default list when nothing is saved and goes on to the bank and vendor checks', async () => {
-    const { db, settingsReads, selectCount } = fakeDb(null, [
-      { status: 'active', currency: 'INR' },
-    ]);
-    const error = await caught(() => serviceOn(db).create(bodyIn('INR'), 'key-default'));
-    expect(settingsReads).toHaveLength(1);
+describe('PaymentRequestsService.create: currency (exempt from D44, D56 U16-Q1)', () => {
+  it('accepts a currency the company switched off without reading the setting, and goes on to the bank and vendor checks', async () => {
+    const { db, settingsReads, selectCount } = fakeDb(
+      ['NPR', 'USD'],
+      [{ status: 'active', currency: 'INR' }],
+    );
+    // Old code: 422 CURRENCY_NOT_ENABLED before the bank account was read.
+    const error = await caught(() => serviceOn(db).create(bodyIn('INR'), 'key-switched-off'));
     expect(error.getStatus()).toBe(404);
     expect(error.getResponse()).toEqual({ code: 'not_found', message: 'Vendor not found' });
+    expect(settingsReads).toEqual([]);
     expect(selectCount()).toBe(2);
   });
 
-  it('checks the paying bank account after the currency and before the vendor (round 5, P1)', async () => {
+  it('accepts a currency missing from a saved list that holds only NPR', async () => {
+    const { db, settingsReads } = fakeDb(['NPR'], [{ status: 'active', currency: 'USD' }]);
+    const error = await caught(() => serviceOn(db).create(bodyIn('USD'), 'key-npr-only'));
+    expect(error.getResponse()).toEqual({ code: 'not_found', message: 'Vendor not found' });
+    expect(settingsReads).toEqual([]);
+  });
+
+  it('still refuses a currency that is not a known one at the contract the controller parses with', () => {
+    const parsed = RequestPaymentBodySchema.safeParse({
+      vendorPartyId: '30000000-0000-4000-8000-000000000001',
+      paymentType: 'settlement',
+      currency: 'EUR',
+      fromBankAccountId: '40000000-0000-4000-8000-000000000001',
+      allocations: [{ openItemId: '50000000-0000-4000-8000-000000000001', amount: '100.00' }],
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((issue) => issue.path)).toEqual([['currency']]);
+  });
+
+  it('checks the paying bank account before the vendor (round 5, P1)', async () => {
     const missing = fakeDb(['NPR']);
     const invalid = await caught(() => serviceOn(missing.db).create(bodyIn('NPR'), 'key-bank'));
     expect(invalid.getStatus()).toBe(422);
@@ -162,16 +162,9 @@ describe('PaymentRequestsService.create: enabled currency (D44)', () => {
     expect(missing.selectCount()).toBe(1);
 
     const usd = fakeDb(['NPR'], [{ status: 'active', currency: 'USD' }]);
-    const mismatch = await caught(() => serviceOn(usd.db, false).create(bodyIn('NPR'), 'key-usd'));
+    const mismatch = await caught(() => serviceOn(usd.db).create(bodyIn('NPR'), 'key-usd'));
     expect(mismatch.getStatus()).toBe(422);
     expect(mismatch.getResponse()).toMatchObject({ code: 'BANK_ACCOUNT_CURRENCY_MISMATCH' });
     expect(usd.selectCount()).toBe(1);
-  });
-
-  it('still refuses when the service is built without the injected check (the fallback reads the same db)', async () => {
-    const { db, selectCount } = fakeDb(['NPR', 'INR']);
-    const error = await caught(() => serviceOn(db, false).create(bodyIn('USD'), 'key-fallback'));
-    expect(error.getResponse()).toMatchObject({ code: 'CURRENCY_NOT_ENABLED' });
-    expect(selectCount()).toBe(0);
   });
 });

@@ -7,7 +7,9 @@
 //   outside the caller's scope), and a caller who is not staff is refused. The unfiltered list returns only the
 //   activities whose subject the caller may read, built from the same scope SQL as the subject's own list, plus
 //   the caller's own follow-ups. The one exception to "write needs subject write": the assignee of a follow-up may
-//   complete it on a subject they can only read (K5);
+//   complete it on a subject they can only read (K5). A collection call (0154, R4c1 Q1) takes no permission from its
+//   customer: it lists for whoever holds `ar.read` and is completed, moved or cancelled with `payment.record`, so the
+//   customer's Sales owner neither sees nor cancels a call about its money;
 // - "work goes only to someone who can do it" (D50, dead-end #21): a named assignee passes the assignment rule of
 //   the subject's area and must be able to read the subject once assigned, else 400 with the rule's reason;
 // - "one subject": the contract refines it and the activities_one_subject_check CHECK enforces it again;
@@ -39,7 +41,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, isNull, lt, not, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, not, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -56,12 +58,16 @@ import {
   assertAssignable,
   assignmentRefused,
   loadAssignmentParties,
+  partyHolds,
   storedAssignmentRule,
 } from '../leads/lead-assignee';
 import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  COLLECTION_CALL_CHANGE,
+  COLLECTION_CALL_KIND,
+  COLLECTION_CALL_READ,
   dueRangeBounds,
   activityNames,
   isPlannedSql,
@@ -75,6 +81,7 @@ import {
   activityCan,
   loadSubjectRefs,
   mayHaveActions,
+  mayReadCollectionCalls,
   needsSubjectRef,
   plannedChangeDecision,
   refKey,
@@ -141,8 +148,12 @@ export class ActivitiesService {
       const id = q[subject]!;
       await this.assertSubject(this.db, subject, id, 'read');
       filters.push(eq(activities[subject], id));
+      // Reading the customer is not reading its receivables: its collection calls list by `ar.read` alone.
+      if (!mayReadCollectionCalls(principal, scope)) {
+        filters.push(ne(activities.kind, COLLECTION_CALL_KIND));
+      }
     } else {
-      filters.push(this.readableSubjects(principal));
+      filters.push(this.readableActivities(principal, scope));
     }
     if (q.kind !== undefined && q.kind.length > 0) filters.push(inArray(activities.kind, q.kind));
     // A cancelled activity never lists. Planned ones are due earliest first; logged ones newest first.
@@ -321,7 +332,11 @@ export class ActivitiesService {
         body.assigneeUserId !== undefined && body.assigneeUserId !== row.assigneeUserId
           ? body.assigneeUserId
           : undefined;
-      if (newAssignee !== undefined) await this.assertAssignee(tx, scope, key, newAssignee);
+      if (newAssignee !== undefined && row.kind === COLLECTION_CALL_KIND) {
+        await this.assertCollector(tx, scope, newAssignee);
+      } else if (newAssignee !== undefined) {
+        await this.assertAssignee(tx, scope, key, newAssignee);
+      }
       const updated = await updateVersioned(tx, activities, id, body.expectedVersion, {
         dueAt: new Date(body.dueAt),
         ...(body.assigneeUserId === undefined ? {} : { assigneeUserId: body.assigneeUserId }),
@@ -382,6 +397,8 @@ export class ActivitiesService {
    * can only read (assigned reach). Rescheduling or calling it off still needs the subject's write permission, and
    * they get a 403 for it rather than a 404: the follow-up is on their own list, so it is no secret. On a customer or
    * contact, which has no assigned reach, the assignee completes it without reaching the customer (U20a2-Q7).
+   * A collection call follows the receivables permissions instead (404 without `ar.read`, 403 without
+   * `payment.record`), with no assignee shortcut.
    */
   private async changePlanned(
     id: string,
@@ -567,6 +584,17 @@ export class ActivitiesService {
   }
 
   /**
+   * The unfiltered list: every activity but a collection call by its subject (readableSubjects), and the collection
+   * calls only for an `ar.read` holder, whatever their reach on the customer, assignee included.
+   */
+  private readableActivities(p: Principal, scope: TxScope): SQL {
+    const notCollection = and(ne(activities.kind, COLLECTION_CALL_KIND), this.readableSubjects(p))!;
+    return mayReadCollectionCalls(p, scope)
+      ? or(eq(activities.kind, COLLECTION_CALL_KIND), notCollection)!
+      : notCollection;
+  }
+
+  /**
    * The unfiltered list: an activity is readable when its subject is one the caller may read, or when it is
    * assigned to the caller (their own follow-ups always list, even on a customer they cannot read any more). Each
    * subject branch reuses the subject's own scope SQL (scopeWhereFor), so the list and the subject's page agree,
@@ -640,6 +668,23 @@ export class ActivitiesService {
     }
     const [target] = await loadAssignmentParties(tx, scope, [userId]);
     if (target === undefined) throw assignmentRefused('assigneeUserId', 'not_active_staff');
+  }
+
+  /**
+   * A collection call's new assignee: active staff of the entity whose live grants record payments, else a 400
+   * (`cannot_read_subject`), so the call never lands with someone who may not finish it.
+   */
+  private async assertCollector(tx: DbTransaction, scope: TxScope, userId: string): Promise<void> {
+    const [target] = await loadAssignmentParties(tx, scope, [userId]);
+    if (target === undefined) throw assignmentRefused('assigneeUserId', 'not_active_staff');
+    // Both grants: the assignment notice names the invoice, so a user who cannot read receivables gets neither
+    // the call nor the notice.
+    if (
+      !(await partyHolds(this.roleCache, scope, target, COLLECTION_CALL_CHANGE)) ||
+      !(await partyHolds(this.roleCache, scope, target, COLLECTION_CALL_READ))
+    ) {
+      throw assignmentRefused('assigneeUserId', 'cannot_read_subject');
+    }
   }
 
   /**

@@ -4,7 +4,12 @@ import { InvoiceDetailSchema, type AccessScope, type Permission } from '@bos/con
 import { describe, expect, it } from 'vitest';
 
 import type { Principal } from '../../platform/authz/principal';
-import { firstPrintFormat, invoiceCan, toInvoiceDetail } from './invoice-mapping';
+import {
+  dueDateEditRefusal,
+  firstPrintFormat,
+  invoiceCan,
+  toInvoiceDetail,
+} from './invoice-mapping';
 import {
   ENTITY,
   issuedInvoiceRow,
@@ -130,5 +135,56 @@ describe('invoiceCan', () => {
       ...drafterActions(false),
       recordPayment: false,
     });
+  });
+});
+
+describe('dueDateEditRefusal', () => {
+  const ORDER = '30303030-3030-4030-8030-303030303030';
+  const scope = { tenantId: TENANT, organizationId: ENTITY };
+  const drafter: Principal = {
+    userId: USER,
+    zitadelUserId: `z-${USER}`,
+    ...scope,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: 'unused',
+    roles: [],
+    departmentId: null,
+    status: 'active',
+    grants: new Map<Permission, AccessScope>([['invoice.draft', 'own']]),
+  };
+  const draft = (over: Partial<ReturnType<typeof issuedInvoiceRow>>) =>
+    issuedInvoiceRow({ status: 'draft', salesOrderId: null, createdBy: USER, ...over });
+
+  it('allows a manual tax invoice and a proforma (with or without an order) in draft and returned', () => {
+    for (const status of ['draft', 'returned'] as const) {
+      expect(dueDateEditRefusal(drafter, scope, draft({ status }))).toBeNull();
+      expect(dueDateEditRefusal(drafter, scope, draft({ kind: 'proforma', status }))).toBeNull();
+      expect(
+        dueDateEditRefusal(
+          drafter,
+          scope,
+          draft({ kind: 'proforma', salesOrderId: ORDER, status }),
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it('refuses the kinds whose due date is set at issue with 409', () => {
+    expect(dueDateEditRefusal(drafter, scope, draft({ salesOrderId: ORDER }))).toEqual({
+      status: 409,
+      reason:
+        "This invoice's due date is set when it is issued, from the sales order's credit days",
+    });
+    expect(dueDateEditRefusal(drafter, scope, draft({ kind: 'debit_note' }))?.status).toBe(409);
+    expect(dueDateEditRefusal(drafter, scope, draft({ kind: 'credit_note' }))?.status).toBe(409);
+  });
+
+  it('refuses the statuses that are not editable with 409, and another drafter with 403 first', () => {
+    for (const status of ['submitted', 'approved', 'issued', 'discarded'] as const) {
+      expect(dueDateEditRefusal(drafter, scope, draft({ status }))?.status, status).toBe(409);
+    }
+    const other = draft({ createdBy: '20202020-2020-4020-8020-202020202020', status: 'issued' });
+    expect(dueDateEditRefusal(drafter, scope, other)?.status).toBe(403);
   });
 });

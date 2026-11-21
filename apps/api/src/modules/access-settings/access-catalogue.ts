@@ -164,7 +164,11 @@ export const ACCESS_AREA_CATALOGUE: readonly AccessAreaInfo[] = [
     key: 'sales_orders',
     label: 'Sales orders',
     seePermission: 'sales_order.read',
-    actionPermissions: ['sales_order.confirm', 'sales_order.mark_billable'],
+    actionPermissions: [
+      'sales_order.confirm',
+      'sales_order.mark_billable',
+      'sales_order.delivery_release',
+    ],
     hasAssignment: false,
     supportsDepartment: false,
   },
@@ -425,7 +429,12 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
   {
     key: 'sales_orders',
     label: 'Sales orders',
-    permissions: ['sales_order.read', 'sales_order.confirm', 'sales_order.mark_billable'],
+    permissions: [
+      'sales_order.read',
+      'sales_order.confirm',
+      'sales_order.mark_billable',
+      'sales_order.delivery_release',
+    ],
   },
   {
     key: 'invoices',
@@ -477,7 +486,13 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
   {
     key: 'customers',
     label: 'Customers',
-    permissions: ['customer.read', 'customer.write', 'customer.merge'],
+    permissions: [
+      'customer.read',
+      'customer.write',
+      'customer.merge',
+      'customers.credit_limit.write',
+      'customers.owner.write',
+    ],
   },
   {
     key: 'verification',
@@ -609,6 +624,14 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   perm('sales_order.read', 'See sales orders', 'record', RECORD_NO_DEPT, []),
   perm('sales_order.confirm', 'Confirm sales orders', 'onOff', ON_OFF_STAFF, []),
   perm('sales_order.mark_billable', 'Mark schedule lines billable', 'onOff', ON_OFF_STAFF, []),
+  perm(
+    'sales_order.delivery_release',
+    'Release a delivery hold',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Lets a confirmed order be delivered before its advance is paid. Finance releases up to the delivery-hold amount, Management above it, the Founder at any amount, and never the person who created the order.',
+  ),
   // Invoices
   perm('invoice.read', 'See invoices', 'record', RECORD_NO_DEPT, []),
   perm('invoice.draft', 'Draft invoices', 'onOff', ON_OFF_STAFF, []),
@@ -699,6 +722,15 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     [],
     'Combines two customer records into one.',
   ),
+  perm(
+    'customers.credit_limit.write',
+    'Set customer credit limits',
+    'onOff',
+    ON_OFF_STAFF,
+    [],
+    'Sets how much a customer may owe before new deals go on credit hold.',
+  ),
+  perm('customers.owner.write', "Change a customer's owner", 'onOff', ON_OFF_STAFF, []),
   // Verification
   perm('verification.read', 'See verification checks', 'record', RECORD_NO_DEPT, []),
   perm(

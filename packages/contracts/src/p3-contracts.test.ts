@@ -112,8 +112,44 @@ describe('P3 permissions', () => {
     }
   });
 
+  it('gives the credit-limit permission to Founder and Finance only, at all (not Management)', () => {
+    expect(PERMISSIONS.filter((p) => p === 'customers.credit_limit.write')).toHaveLength(1);
+    for (const role of ROLE_KEYS) {
+      const expected = role === 'founder' || role === 'finance' ? 'all' : undefined;
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['customers.credit_limit.write'], role).toBe(expected);
+    }
+  });
+
+  it('gives the customer-owner permission to Founder and Management only, at all (not Finance)', () => {
+    expect(PERMISSIONS.filter((p) => p === 'customers.owner.write')).toHaveLength(1);
+    for (const role of ROLE_KEYS) {
+      const expected = role === 'founder' || role === 'management' ? 'all' : undefined;
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['customers.owner.write'], role).toBe(expected);
+    }
+  });
+
   it('lets sales read only its own sales orders (D23)', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.sales['sales_order.read']).toBe('own');
+  });
+});
+
+// F1-Q32 (R4c1 Q4): kept out of P3_PERMISSIONS because Management holds it, unlike every other P3 change grant.
+describe('delivery-hold release permission', () => {
+  const RELEASERS = ['founder', 'management', 'finance'] as const;
+
+  it('is listed once', () => {
+    expect(PERMISSIONS.filter((p) => p === 'sales_order.delivery_release')).toHaveLength(1);
+  });
+
+  it.each(RELEASERS)('gives %s scope all', (role) => {
+    expect(DEFAULT_ROLE_PERMISSIONS[role]['sales_order.delivery_release']).toBe('all');
+  });
+
+  it('gives no other role it, the Accountant included (it confirms orders but does not release them)', () => {
+    for (const role of ROLE_KEYS) {
+      if ((RELEASERS as readonly string[]).includes(role)) continue;
+      expect(DEFAULT_ROLE_PERMISSIONS[role]['sales_order.delivery_release'], role).toBeUndefined();
+    }
   });
 });
 
@@ -911,6 +947,9 @@ describe('receivables read models', () => {
           totalOpen: '150.00',
           promiseMissed: false,
           promiseMissedOn: null,
+          promiseMissedInvoice: null,
+          openPromiseDate: null,
+          openPromiseInvoice: null,
         },
       ],
       totals: [{ currency: 'NPR', buckets, totalOpen: '150.00' }],

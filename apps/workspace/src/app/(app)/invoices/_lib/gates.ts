@@ -1,5 +1,6 @@
 import {
   canTransitionInvoice,
+  isInvoiceEditable,
   type InvoiceCan,
   type InvoiceKind,
   type InvoiceStatus,
@@ -17,7 +18,7 @@ export type Can = (permission: Permission) => boolean;
  */
 type Reach = { can?: InvoiceCan | undefined };
 
-function reaches(invoice: Reach, action: keyof InvoiceCan): boolean {
+function reaches(invoice: Reach, action: Exclude<keyof InvoiceCan, 'editDueDate'>): boolean {
   return invoice.can?.[action] !== false;
 }
 
@@ -32,6 +33,12 @@ export interface InvoiceGates {
    * issue it may take it back; it then needs a new approval.
    */
   reopen: boolean;
+  /**
+   * "Edit due date" on a draft or returned invoice, or null when it is not offered. Shown to whoever may draft this
+   * invoice (the same reach as Discard, so the action slot is already mounted); `reason` is the API's words for why it
+   * is off (an order's invoice or a note takes its due date at issue), null when it works.
+   */
+  editDueDate: { reason: string | null } | null;
   /** Where the "Credit note" and "Debit note" buttons mount: an issued tax invoice, for Finance. */
   notes: boolean;
   /**
@@ -45,6 +52,9 @@ export interface InvoiceGates {
 export const NOTE_CREATOR_CANNOT_ISSUE =
   'You created this note, so someone else with issue access must issue it.';
 
+/** The reason on "Edit due date" when the API refused without one. */
+export const DUE_DATE_NOT_EDITABLE = "This invoice's due date cannot be changed.";
+
 /**
  * Which actions one invoice offers to one person: the contract's transition table decides whether the
  * move exists, the person's grants decide whether they may make it. Both must say yes. This only
@@ -56,6 +66,8 @@ export const NOTE_CREATOR_CANNOT_ISSUE =
  *  - discard `invoice.draft` (Accountant or Finance)
  *  - notes   `invoice.credit_note` (Finance), for credit and debit notes alike (there is no
  *    separate debit permission). A proforma is not corrected by a note: it opens no open item.
+ *  - editDueDate `invoice.draft` on a draft or returned invoice, only when the detail sent `can.editDueDate`
+ *    (the list rows do not), which also decides whether it is on and why not.
  * * Each also needs `invoice.can` to allow it when the API sent one. A note's creator sees Issue off, with
  * `issueBlocker` saying why (TR-Q12f).
  */
@@ -71,21 +83,23 @@ export function invoiceGates(
     can('invoice.issue') &&
     reaches(invoice, 'issue');
   const isNote = kind === 'credit_note' || kind === 'debit_note';
+  const discard =
+    canTransitionInvoice(kind, status, 'discarded') &&
+    can('invoice.draft') &&
+    reaches(invoice, 'discard');
   return {
     submit:
       canTransitionInvoice(kind, status, 'submitted') &&
       can('invoice.submit') &&
       reaches(invoice, 'submit'),
     issue,
-    discard:
-      canTransitionInvoice(kind, status, 'discarded') &&
-      can('invoice.draft') &&
-      reaches(invoice, 'discard'),
+    discard,
     reopen:
       status === 'approved' &&
       canTransitionInvoice(kind, status, 'draft') &&
       can('invoice.issue') &&
       reaches(invoice, 'issue'),
+    editDueDate: editDueDateGate(invoice, discard),
     notes:
       kind === 'tax_invoice' &&
       status === 'issued' &&
@@ -93,6 +107,20 @@ export function invoiceGates(
       reaches(invoice, 'notes'),
     issueBlocker: issue && isNote && createdByViewer ? NOTE_CREATOR_CANNOT_ISSUE : null,
   };
+}
+
+/**
+ * Offered only beside Discard (the same `invoice.draft` grant and reach, on a document still being drafted): someone
+ * whose draft grant does not reach this invoice is offered nothing, and the page's action slot, which mounts for
+ * Discard, is always there for it.
+ */
+function editDueDateGate(
+  invoice: { status: InvoiceStatus } & Reach,
+  discard: boolean,
+): InvoiceGates['editDueDate'] {
+  const answer = invoice.can?.editDueDate;
+  if (answer === undefined || !discard || !isInvoiceEditable(invoice.status)) return null;
+  return { reason: answer.allowed ? null : (answer.reason ?? DUE_DATE_NOT_EDITABLE) };
 }
 
 /** The settlements that still leave something to pay. */

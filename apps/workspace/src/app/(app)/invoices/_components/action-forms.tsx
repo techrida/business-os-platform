@@ -2,6 +2,7 @@
 
 import {
   useActionState,
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -12,6 +13,7 @@ import {
 
 import {
   discardInvoiceAction,
+  editInvoiceDueDateAction,
   issueInvoiceAction,
   reopenInvoiceAction,
   submitInvoiceAction,
@@ -19,6 +21,7 @@ import {
 } from '@/app/(app)/invoices/[id]/actions';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
@@ -78,6 +81,7 @@ function InvoiceActionDialog({
   description,
   pendingWords,
   primary = false,
+  destructive = !primary,
   fields,
 }: Omit<InvoiceActionProps, 'name'> & {
   action: (prev: InvoiceActionState, form: FormData) => Promise<InvoiceActionState>;
@@ -87,6 +91,8 @@ function InvoiceActionDialog({
   description: string;
   pendingWords: string;
   primary?: boolean;
+  /** A secondary action that is not a loss (Edit due date) sets this false; it defaults to "not primary". */
+  destructive?: boolean;
   fields?: (state: InvoiceActionState) => ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<InvoiceActionState, FormData>(action, {
@@ -98,7 +104,9 @@ function InvoiceActionDialog({
   useFocusOnProblem(state, formRef, summaryRef);
   useEffect(() => {
     if (state.done) toast.success(state.message ?? 'Invoice updated', { id: state.key });
-    else if (state.error || state.errors?.reason) toast.error('Check the invoice action');
+    else if (state.error || state.errors?.reason || state.errors?.dueDate) {
+      toast.error('Check the invoice action');
+    }
   }, [state]);
 
   return (
@@ -106,7 +114,7 @@ function InvoiceActionDialog({
       trigger={<Button variant={primary ? 'primary' : 'secondary'}>{triggerLabel}</Button>}
       title={title}
       description={state.done ? undefined : description}
-      tone={primary ? 'default' : 'destructive'}
+      tone={destructive ? 'destructive' : 'default'}
       size="small"
       locked={pending}
       closeOnOutsideClick={false}
@@ -130,7 +138,7 @@ function InvoiceActionDialog({
               type="submit"
               form={formId}
               disabled={pending}
-              className={primary ? undefined : dialogStyles.danger}
+              className={destructive ? dialogStyles.danger : undefined}
             >
               {pending ? pendingWords : (confirmLabel ?? triggerLabel)}
             </Button>
@@ -195,23 +203,30 @@ export function IssueDialog({
 }
 
 /**
- * Issue, shown but off: the person created this credit or debit note, and its issuer must be someone else (TR-Q12f).
- * The button stays in the tab order with `aria-disabled` (a natively disabled button cannot be focused, so its reason
- * would never be read out); the reason sits under it, linked with `aria-describedby`, and is its tooltip. A click does
- * nothing.
+ * An action shown but off, with the reason. The button stays in the tab order with `aria-disabled` (a natively
+ * disabled button cannot be focused, so its reason would never be read out); the reason sits under it, linked with
+ * `aria-describedby`, and is its tooltip. A click does nothing.
  */
-export function IssueBlocked({ kindLabel, reason }: { kindLabel: string; reason: string }) {
+function ActionBlocked({
+  label,
+  reason,
+  primary = false,
+}: {
+  label: string;
+  reason: string;
+  primary?: boolean;
+}) {
   const reasonId = useId();
   return (
     <div className={styles.blocked}>
       <Button
-        variant="primary"
+        variant={primary ? 'primary' : 'secondary'}
         aria-disabled="true"
         aria-describedby={reasonId}
         title={reason}
         onClick={(e) => e.preventDefault()}
       >
-        {`Issue ${kindLabel.toLowerCase()}`}
+        {label}
       </Button>
       <p id={reasonId} className={styles.blockedReason}>
         {reason}
@@ -220,8 +235,90 @@ export function IssueBlocked({ kindLabel, reason }: { kindLabel: string; reason:
   );
 }
 
-/** Back to draft: the approval no longer counts, and it needs a reason for the history. */
-export function ReopenDialog({ name, ...rest }: InvoiceActionProps) {
+/** Issue, shown but off: the person created this credit or debit note, and its issuer must be someone else (TR-Q12f). */
+export function IssueBlocked({ kindLabel, reason }: { kindLabel: string; reason: string }) {
+  return <ActionBlocked label={`Issue ${kindLabel.toLowerCase()}`} reason={reason} primary />;
+}
+
+/** Edit due date, shown but off: the API's reason (an order's invoice or a note takes its due date at issue). */
+export function EditDueDateBlocked({ reason }: { reason: string }) {
+  return <ActionBlocked label="Edit due date" reason={reason} />;
+}
+
+/**
+ * Edit due date on a draft or returned invoice. `dueDate` is the stored ISO date (or null), `dueDateText` the same day
+ * as the page writes it (AD with its BS form). The picker sends ISO; the server refuses a day before today.
+ */
+export function EditDueDateDialog({
+  name,
+  dueDate,
+  dueDateText,
+  ...rest
+}: InvoiceActionProps & { dueDate: string | null; dueDateText: string | null }) {
+  // Controlled, so a refusal never wipes the picked date (React 19 resets uncontrolled fields).
+  const [value, setValue] = useState(dueDate ?? '');
+  // The calendar opens inside the dialog, so it stays in its focus and stacking boundary.
+  const [container, setContainer] = useState<HTMLElement>();
+  const connect = useCallback((el: HTMLDivElement | null) => {
+    setContainer(el?.closest<HTMLElement>('[role="dialog"]') ?? undefined);
+  }, []);
+  return (
+    <InvoiceActionDialog
+      {...rest}
+      action={editInvoiceDueDateAction}
+      triggerLabel="Edit due date"
+      confirmLabel="Save due date"
+      destructive={false}
+      title={`Edit the due date of ${name}`}
+      description={
+        dueDateText === null
+          ? 'This invoice has no due date yet.'
+          : `The due date is now ${dueDateText}.`
+      }
+      pendingWords="Saving"
+      fields={(state) => (
+        <div ref={connect}>
+          <Field label="New due date" hint="Today or later." error={state.errors?.dueDate}>
+            {(control) => (
+              <DatePicker
+                name="dueDate"
+                value={value}
+                onChange={setValue}
+                popoverContainer={container}
+                required
+                {...control}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+    />
+  );
+}
+
+/**
+ * What happens to the due date of an invoice taken back to draft, by the due-date route's rule: a manual tax invoice's
+ * can be edited; an order's invoice and a debit note take theirs when issued; a credit note has none of its own.
+ */
+export type ReopenedDueDate = 'editable' | 'set_at_issue' | 'none';
+
+const REOPEN_WORDS: Record<ReopenedDueDate, string> = {
+  editable:
+    'Its approval will no longer count. As a draft, its due date can be changed, and then it must be submitted for approval again before it is issued. The reason stays in its history.',
+  set_at_issue:
+    'Its approval will no longer count, and it must be submitted for approval again before it is issued. Its due date is set when it is issued. The reason stays in its history.',
+  none: 'Its approval will no longer count, and it must be submitted for approval again before it is issued. The reason stays in its history.',
+};
+
+/**
+ * Back to draft: the approval no longer counts (the approved request stays decided; submitting again opens a new one),
+ * and it needs a reason for the history.
+ */
+export function ReopenDialog({
+  name,
+  dueDate,
+  ...rest
+}: InvoiceActionProps & { dueDate: ReopenedDueDate }) {
   const [reason, setReason] = useState('');
   return (
     <InvoiceActionDialog
@@ -230,7 +327,7 @@ export function ReopenDialog({ name, ...rest }: InvoiceActionProps) {
       triggerLabel="Back to draft"
       confirmLabel="Move to draft"
       title={`Move ${name} back to draft`}
-      description="Its approval no longer counts: it must be submitted and approved again before it is issued. The reason stays in its history."
+      description={REOPEN_WORDS[dueDate]}
       pendingWords="Moving"
       fields={(state) => (
         <Field label="Reason" error={state.errors?.reason}>

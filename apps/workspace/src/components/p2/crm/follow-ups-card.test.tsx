@@ -123,6 +123,15 @@ it('lists only planned follow-ups, earliest first, and marks the overdue one', a
   await mounted.unmount();
 });
 
+it('labels a collection call as such', async () => {
+  const call = activity(9, { kind: 'collection_call', subject: 'Collect payment for INV-1' });
+  const mounted = await mount([call]);
+  expect(rows(mounted.container)[0]?.querySelector('p')?.textContent).toBe(
+    'Collection call: Collect payment for INV-1',
+  );
+  await mounted.unmount();
+});
+
 it('sorts a row without a due time last', () => {
   const undated = activity(5, { dueAt: null });
   expect(sortFollowUps([undated, later, soon]).map((a) => a.id)).toEqual([

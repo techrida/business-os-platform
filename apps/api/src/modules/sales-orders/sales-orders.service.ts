@@ -21,7 +21,9 @@
 // (last row lock) -> draft to confirmed. Lock order: quotation, version, sales order, schedule line, number; the
 // sales order before its lines, as InvoiceDraftingService.draftFromSchedule takes them, so a confirm and a draft of
 // the advance line wait for each other instead of deadlocking. Mark billable: withTx -> withIdempotency -> sales
-// order, then schedule line locks (LedgerService.lockForMoneyCommand) -> conditional updates.
+// order, then schedule line locks (LedgerService.lockForMoneyCommand) -> conditional updates. Delivery release
+// (F1-Q32): withTx (tenant audit lock) -> withIdempotency -> the sales order lock -> checks -> the release row, so
+// two releases of one order wait for each other and the second finds the first one's row.
 import {
   trimPercent,
   type ConfirmSalesOrderBody,
@@ -29,6 +31,8 @@ import {
   type EvidencePolicy,
   type MarkBillableBody,
   type Permission,
+  type ReleaseDeliveryBody,
+  type SalesOrderDeliveryRelease,
   type SalesOrderDetail,
   type SalesOrderDraftState,
   type SalesOrderListItem,
@@ -45,12 +49,19 @@ import {
   opportunities,
   quotations,
   quotationVersions,
+  salesOrderDeliveryReleases,
   salesOrderEvidence,
   salesOrderLines,
   salesOrders,
   scoped,
+  users,
 } from '@bos/db';
-import { Dec } from '@bos/money-rules';
+import {
+  Dec,
+  deliveryHoldReleaser,
+  mayReleaseDeliveryHold,
+  type DeliveryHoldReleaserRole,
+} from '@bos/money-rules';
 import {
   ConflictException,
   ForbiddenException,
@@ -76,6 +87,7 @@ import {
   EVIDENCE_OWNER_TYPE,
 } from '../../platform/documents/evidence-document';
 import { searchPage, type SearchColumn } from '../../platform/list';
+import { deliveryHoldThresholdNpr } from '../../platform/settings/delivery-hold';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -133,6 +145,11 @@ type EvidenceKindOfOrder = (typeof salesOrderEvidence.$inferInsert)['evidenceKin
 const notFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Sales order not found' });
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
+
+/** Why the delivery-hold rule refuses a caller who holds `sales_order.delivery_release` (the 403's `reason`). */
+type ReleaseRefusal = 'requester_cannot_release' | 'role_cannot_release_amount';
+/** The detail's `can.releaseDeliveryBlockedBy`: the refusal above, or no permission at all. */
+type ReleaseBlocker = 'requester' | 'amount' | 'permission';
 
 /** An order and the owner of the quotation it was confirmed from: the two people `own` reaches it through. */
 type OrderOwners = Pick<OrderRow, 'tenantId' | 'organizationId' | 'createdBy'> & {
@@ -407,11 +424,11 @@ export class SalesOrdersService {
     const customerPartyId = quotation.customerPartyId;
     if (customerPartyId === null) throw new Error(`quotation ${quotation.number} has no customer`);
 
-    // F1-Q20/F1-Q26: a customer over its credit limit with this entity holds the deal here, the hand-over to a
-    // sales order, until a holder of credit.override overrides the hold on the deal with a reason. The refusal names
-    // the deal only: the limit and the balance are for holders of credit.override
-    // (GET /v1/opportunities/:id/credit-hold).
-    const credit = await creditPosition(tx, scope, customerPartyId);
+    // F1-Q20/F1-Q26 (Kuu R4a Q1b): a customer whose open receivables plus this order's gross NPR value are over its
+    // credit limit with this entity holds the deal here, the hand-over to a sales order, until a holder of
+    // credit.override overrides the hold on the deal with a reason. The refusal names the deal only: the limit and
+    // the balance are for holders of credit.override (GET /v1/opportunities/:id/credit-hold, the same rule).
+    const credit = await creditPosition(tx, scope, customerPartyId, { version });
     if (credit.held) {
       const [deal] = await tx
         .select({ creditOverrideAt: opportunities.creditOverrideAt })
@@ -763,6 +780,160 @@ export class SalesOrdersService {
     return this.loadDetail(tx, scope, orderId);
   }
 
+  // -------------------------------------------------------------------------------- delivery release
+
+  /**
+   * `POST /v1/sales-orders/:id/delivery-release`: lets a confirmed order's delivery go before its advance is paid
+   * (F1-Q32, D56). 404 for an order outside the entity or the caller's read; 403 without
+   * `sales_order.delivery_release`, or with reason `requester_cannot_release` (the order's creator) or
+   * `role_cannot_release_amount` (no role of the caller's may release this amount under the live threshold:
+   * Finance above it, Management at or below it; the detail's `can.releaseDeliveryAllowedRoles` names who may); 409
+   * `sales_order_not_open` for an order that is not confirmed, `delivery_already_released` when the advance is paid
+   * or a release exists. A retry with the same key replays.
+   */
+  async releaseDelivery(
+    orderId: string,
+    body: ReleaseDeliveryBody,
+    idempotencyKey: string,
+  ): Promise<SalesOrderDetail> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const done = await withTx(this.db, scope, actor, (tx) =>
+      withIdempotency(
+        tx,
+        {
+          command: 'sales_order.delivery_release',
+          key: idempotencyKey,
+          body: { orderId, ...body },
+        },
+        async () => ({
+          status: 201,
+          response: await this.recordRelease(tx, scope, principal, orderId, body),
+        }),
+      ),
+    );
+    return done.response;
+  }
+
+  private async recordRelease(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    orderId: string,
+    body: ReleaseDeliveryBody,
+  ): Promise<SalesOrderDetail> {
+    const [peek] = await tx
+      .select({ id: salesOrders.id })
+      .from(salesOrders)
+      .where(scoped(scope).where(salesOrders, eq(salesOrders.id, orderId)));
+    if (peek === undefined) throw notFound();
+    await this.ledger.lockForMoneyCommand(tx, scope, [
+      { rank: 'sales_order', ids: [orderId], table: salesOrders },
+    ]);
+    const [order] = await tx
+      .select()
+      .from(salesOrders)
+      .where(scoped(scope).where(salesOrders, eq(salesOrders.id, orderId)));
+    if (order === undefined) throw notFound();
+    const owners = {
+      ...order,
+      quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
+    };
+    if (!canOnOrder(principal, 'sales_order.read', owners).allowed) throw notFound();
+    const decision = canOnOrder(principal, 'sales_order.delivery_release', owners);
+    if (!decision.allowed) {
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: decision.reason,
+      });
+    }
+    if (order.status !== 'confirmed') {
+      throw conflict(
+        'sales_order_not_open',
+        `A ${order.status} sales order has no delivery to release`,
+      );
+    }
+    const schedule = await tx
+      .select()
+      .from(billingScheduleLines)
+      .where(
+        scoped(scope).where(billingScheduleLines, eq(billingScheduleLines.salesOrderId, orderId)),
+      );
+    const released = await this.deliveryState(tx, scope, orderId, schedule);
+    if (released !== null) {
+      throw conflict(
+        'delivery_already_released',
+        released.kind === 'advance_paid'
+          ? 'The advance is paid, so this delivery is already released'
+          : 'This delivery was already released',
+      );
+    }
+    // The threshold is read now, not from the page the caller loaded: a Founder's edit applies at once.
+    const thresholdNpr = await deliveryHoldThresholdNpr(tx, scope);
+    const refusal = this.releaseRefusal(principal, order, thresholdNpr);
+    if (refusal !== null) {
+      const allowedRoles = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message:
+          refusal === 'requester_cannot_release'
+            ? 'The person who created this order cannot release its delivery'
+            : `Only ${allowedRoles.join(' or ')} may release the delivery of an order of this amount`,
+        reason: refusal,
+      });
+    }
+
+    const now = this.clock();
+    await tx.insert(salesOrderDeliveryReleases).values({
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      salesOrderId: orderId,
+      releasedByUserId: principal.userId,
+      reason: body.reason,
+      orderAmountNpr: order.amountNpr,
+      thresholdNpr,
+      releasedAt: now,
+    });
+    await this.audit.record(tx, {
+      action: 'sales_order.delivery_released',
+      entityType: AUDIT_ENTITY,
+      entityId: orderId,
+      before: { deliveryReleased: false },
+      after: {
+        deliveryReleased: true,
+        reason: body.reason,
+        amountNpr: order.amountNpr,
+        thresholdNpr,
+        releaserRoles: [...principal.roles],
+        allowedRoles: [...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr)],
+      },
+    });
+    return this.loadDetail(tx, scope, orderId);
+  }
+
+  /**
+   * The delivery-hold rule for this caller on this order (money-rules `mayReleaseDeliveryHold`), or null when it
+   * lets them release. The requester is `sales_orders.created_by`: the person who confirmed the accepted quotation
+   * as the order, so the one who asked for it to be delivered. The command and `can.releaseDelivery` both ask this.
+   */
+  private releaseRefusal(
+    principal: Principal,
+    order: Pick<OrderRow, 'amountNpr' | 'createdBy'>,
+    thresholdNpr: string,
+  ): ReleaseRefusal | null {
+    const allowed = mayReleaseDeliveryHold({
+      amountNpr: new Dec(order.amountNpr),
+      thresholdNpr,
+      requestedByUserId: order.createdBy,
+      releaser: { userId: principal.userId, roles: principal.roles },
+    });
+    if (allowed) return null;
+    return order.createdBy !== null && order.createdBy === principal.userId
+      ? 'requester_cannot_release'
+      : 'role_cannot_release_amount';
+  }
+
   // ----------------------------------------------------------------------------------------- helpers
 
   /** Sales orders are a staff surface; a portal caller learns nothing, not even that the route exists. */
@@ -898,6 +1069,29 @@ export class SalesOrdersService {
       ...order,
       quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
     };
+    const deliveryRelease = await this.deliveryState(tx, scope, order.id, schedule);
+    // The same checks, in the same order, as `recordRelease`: the permission, then the money rule. The threshold
+    // is read only for a caller with the permission on a held order, so most detail reads skip it.
+    let releaseDeliveryBlockedBy: ReleaseBlocker | null = null;
+    let releaseDeliveryAllowedRoles: DeliveryHoldReleaserRole[] = [];
+    if (staff && order.status === 'confirmed' && deliveryRelease === null) {
+      if (!canOnOrder(principal, 'sales_order.delivery_release', owners).allowed) {
+        releaseDeliveryBlockedBy = 'permission';
+      } else {
+        const thresholdNpr = await deliveryHoldThresholdNpr(tx, scope);
+        releaseDeliveryAllowedRoles = [
+          ...deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr),
+        ];
+        const refusal = this.releaseRefusal(principal, order, thresholdNpr);
+        releaseDeliveryBlockedBy =
+          refusal === null ? null : refusal === 'requester_cannot_release' ? 'requester' : 'amount';
+      }
+    }
+    const releaseDelivery =
+      staff &&
+      order.status === 'confirmed' &&
+      deliveryRelease === null &&
+      releaseDeliveryBlockedBy === null;
     return {
       order: {
         id: order.id,
@@ -957,7 +1151,8 @@ export class SalesOrdersService {
         can: { openInvoice: l.invoiceId !== null && held.readable.has(l.invoiceId) },
       })),
       evidence: evidence.map((e) => ({ documentId: e.documentId, kind: e.evidenceKind })),
-      deliveryReleased: await this.deliveryReleased(tx, scope, schedule),
+      deliveryReleased: deliveryRelease !== null,
+      deliveryRelease,
       draft,
       can: {
         confirm:
@@ -972,6 +1167,9 @@ export class SalesOrdersService {
         draftInvoice:
           staff &&
           can(principal, 'invoice.draft', { ...scope, ownerUserId: principal.userId }).allowed,
+        releaseDelivery,
+        releaseDeliveryBlockedBy,
+        releaseDeliveryAllowedRoles,
       },
     };
   }
@@ -1009,11 +1207,55 @@ export class SalesOrdersService {
   }
 
   /**
+   * How the order's delivery is released, or null while it is held: a release row (F1-Q32) first, since it is
+   * the record of who let it go before the advance was paid, else a paid advance (plan A14).
+   */
+  private async deliveryState(
+    tx: DbTransaction,
+    scope: TxScope,
+    orderId: string,
+    schedule: readonly LineRow[],
+  ): Promise<SalesOrderDeliveryRelease | null> {
+    const [release] = await tx
+      .select({
+        releasedAt: salesOrderDeliveryReleases.releasedAt,
+        reason: salesOrderDeliveryReleases.reason,
+        releasedByName: users.displayName,
+      })
+      .from(salesOrderDeliveryReleases)
+      .leftJoin(
+        users,
+        and(
+          eq(users.tenantId, salesOrderDeliveryReleases.tenantId),
+          eq(users.id, salesOrderDeliveryReleases.releasedByUserId),
+        ),
+      )
+      .where(
+        scoped(scope).where(
+          salesOrderDeliveryReleases,
+          eq(salesOrderDeliveryReleases.salesOrderId, orderId),
+        ),
+      )
+      .limit(1);
+    if (release !== undefined) {
+      return {
+        kind: 'override',
+        releasedAt: iso(release.releasedAt),
+        releasedByName: release.releasedByName,
+        reason: release.reason,
+      };
+    }
+    return (await this.advancePaid(tx, scope, schedule))
+      ? { kind: 'advance_paid', releasedAt: null, releasedByName: null, reason: null }
+      : null;
+  }
+
+  /**
    * Plan A14: the order's advance invoice has an open amount of 0. False while there is no advance line, a
    * line without an issued invoice, or an invoice with no open item yet. The open amount comes from the ledger
    * (never stored: A8).
    */
-  private async deliveryReleased(
+  private async advancePaid(
     tx: DbTransaction,
     scope: TxScope,
     schedule: readonly LineRow[],

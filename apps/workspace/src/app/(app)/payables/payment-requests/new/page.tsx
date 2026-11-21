@@ -9,7 +9,6 @@ import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants, hasGrant } from '@/lib/grants';
-import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import {
   listPaymentRequestItems,
   listPaymentRequestItemsWithoutBankAccount,
@@ -64,7 +63,6 @@ export default async function NewPaymentRequestPage({
   let held: PaymentRequestItem[] = [];
   let orders: { id: string; vendorId: string; label: string }[] = [];
   let problem: string | undefined;
-  const enabledCurrencies = allowed ? await loadEnabledCurrencies(session) : [];
   if (allowed) {
     const heldRead = listPaymentRequestItemsWithoutBankAccount(session).catch(
       () => [] as PaymentRequestItem[],
@@ -153,12 +151,9 @@ export default async function NewPaymentRequestPage({
               idempotencyKey={randomUUID()}
               items={items}
               orders={orders}
-              enabledCurrencies={enabledCurrencies}
               bankAccounts={bankAccounts}
               bankAccountsHref={bankAccountsHref}
-              start={
-                billId !== undefined ? requestableItem(items, billId, enabledCurrencies) : undefined
-              }
+              start={billId !== undefined ? requestableItem(items, billId) : undefined}
             />
           </>
         )

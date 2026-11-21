@@ -526,6 +526,23 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('passes entity_changed through on a 409 conflict (customer terms), and other reasons not', () => {
+    const message = 'You switched legal entity since this page loaded; reload and try again';
+    const out = filter(
+      new ConflictException({ code: 'conflict', reason: 'entity_changed', message }),
+    );
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'conflict',
+      reason: 'entity_changed',
+      message,
+    });
+    const other = filter(
+      new ConflictException({ code: 'conflict', reason: 'out_of_scope', message }),
+    );
+    expect(ErrorBodySchema.parse(other.body).error.reason).toBeUndefined();
+  });
+
   it('logs every 403 as one structured line with its reason, the route pattern and no user data', () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
@@ -719,6 +736,7 @@ describe('ErrorBodyFilter', () => {
   it.each([
     'quotation_not_accepted',
     'sales_order_not_open',
+    'delivery_already_released',
     'schedule_line_not_planned',
     'SCHEDULE_LINE_TAKEN',
     'NOT_APPROVED',
@@ -737,6 +755,21 @@ describe('ErrorBodyFilter', () => {
     expect(wrongStatus.status).toBe(422);
     expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
   });
+
+  it.each(['promise_open', 'invoice_not_open'])(
+    'keeps the promise to pay conflict code %s and its message on a 409, and only on a 409',
+    (code) => {
+      const out = filter(new ConflictException({ code, message: 'Try again in a few minutes.' }));
+
+      expect(out.status).toBe(409);
+      const parsed = ErrorBodySchema.parse(out.body);
+      expect(parsed.error.code).toBe(code);
+      expect(parsed.error.message).toBe('Try again in a few minutes.');
+      const wrongStatus = filter(new UnprocessableEntityException({ code, message: 'm' }));
+      expect(wrongStatus.status).toBe(422);
+      expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
+    },
+  );
 
   it.each([
     'invalid_proof',

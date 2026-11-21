@@ -11,8 +11,37 @@ export const CustomerCanSchema = z.object({
   readVerification: z.boolean(),
   /** Start or reopen this customer's verification case: write and verification read on it, and not merged away. */
   openVerification: z.boolean(),
+  // The commercial terms flags: each is the decision the route makes, and a missing one reads as false.
+  /** Set the credit limit with the acting entity (`customers.credit_limit.write`; PATCH /v1/customers/:id/terms). */
+  creditLimit: z.boolean().default(false),
+  /** Change the account owner (`customers.owner.write`; PATCH /v1/customers/:id with a new `ownerUserId`). */
+  owner: z.boolean().default(false),
+  /** Set the payment term (customer.write on this record, as `write`). */
+  paymentTerms: z.boolean().default(false),
 });
 export type CustomerCan = z.infer<typeof CustomerCanSchema>;
+
+/**
+ * The legal entity the caller acts for: the one whose terms (`party_accounts` row) the terms route writes. Sent on
+ * the staff detail read even when that entity has no terms row yet.
+ */
+export const CustomerActingEntitySchema = z.object({
+  organizationId: z.guid(),
+  name: z.string(),
+});
+export type CustomerActingEntity = z.infer<typeof CustomerActingEntitySchema>;
+
+/**
+ * GET /v1/customers/owners answers CustomerOwnerOption[]: the people a customer's account owner may be changed to,
+ * for whoever holds `customers.owner.write` (Management changes owners without any people directory). Active staff
+ * users of the tenant only, by name. Only what a picker shows: no address, roles or department; strict, so a field
+ * added on the server fails the parse instead of leaking.
+ */
+export const CustomerOwnerOptionSchema = z.strictObject({
+  userId: z.guid(),
+  displayName: z.string(),
+});
+export type CustomerOwnerOption = z.infer<typeof CustomerOwnerOptionSchema>;
 
 /**
  * Whether this customer has a verification case at all. Existence only: the case itself (status, files) is read

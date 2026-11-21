@@ -55,7 +55,19 @@ describe('kind lists', () => {
   it('filters by every kind except task', () => {
     const values = FILTER_KINDS.map((k) => k.value);
     expect(values).not.toContain('task');
-    expect(values).toEqual(['call', 'meeting', 'email', 'note', 'stage_change', 'system']);
+    expect(values).toEqual([
+      'call',
+      'meeting',
+      'email',
+      'note',
+      'stage_change',
+      'system',
+      'collection_call',
+    ]);
+  });
+
+  it('names the collection call the payment-promise job plans', () => {
+    expect(FILTER_KINDS.find((k) => k.value === 'collection_call')?.label).toBe('Collection call');
   });
 });
 

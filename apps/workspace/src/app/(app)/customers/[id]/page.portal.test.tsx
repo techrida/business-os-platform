@@ -185,22 +185,29 @@ describe('customer page portal access panel (F1-Q31)', () => {
       customer({ can: WRITE, portalAccess: { hasUser: true, canInvite: true, blocked: null } }),
     );
     const text = await render();
-    expect(text).toContain('This customer has portal access.');
+    expect(text).toContain('Portal access Active');
     expect(text).toContain('Invite portal user');
   });
 
-  it('shows no panel to a reader who may not change the customer, or on a merged record', async () => {
+  it('shows the state, with no invite, to a reader who may not change the customer and on a merged record', async () => {
+    // Portal access is one row of the Commercial terms card: everyone who opens the customer sees its state.
+    api.listContacts.mockResolvedValue(CONTACTS);
     api.getCustomerDetail.mockResolvedValue(
       customer({ portalAccess: { hasUser: false, canInvite: false, blocked: null } }),
     );
-    expect(await render()).not.toContain('Portal access');
+    const reader = await render();
+    expect(reader).toContain('Portal access Not invited');
+    expect(reader).not.toContain('Invite portal');
+    // A merged record offers no invite even if the flag says otherwise: the page checks it too.
     api.getCustomerDetail.mockResolvedValue(
       customer({
         can: WRITE,
         mergedIntoId: '55555555-5555-4555-8555-555555555555',
-        portalAccess: { hasUser: true, canInvite: false, blocked: null },
+        portalAccess: { hasUser: true, canInvite: true, blocked: null },
       }),
     );
-    expect(await render()).not.toContain('Portal access');
+    const merged = await render();
+    expect(merged).toContain('Portal access Active');
+    expect(merged).not.toContain('Invite portal');
   });
 });

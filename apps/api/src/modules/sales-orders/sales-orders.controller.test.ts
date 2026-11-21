@@ -25,6 +25,7 @@ async function setup() {
     detail: vi.fn().mockResolvedValue({ order: { id: ID } }),
     confirmFromQuotation: vi.fn().mockResolvedValue({ order: { id: ID } }),
     markBillable: vi.fn().mockResolvedValue({ order: { id: ID } }),
+    releaseDelivery: vi.fn().mockResolvedValue({ order: { id: ID } }),
   };
   const moduleRef = await Test.createTestingModule({
     controllers: [SalesOrdersController],
@@ -46,6 +47,9 @@ describe('SalesOrdersController', () => {
     expect(Reflect.getMetadata(CAN_KEY, proto.detail)).toBe('sales_order.read');
     expect(Reflect.getMetadata(CAN_KEY, proto.confirm)).toBe('sales_order.confirm');
     expect(Reflect.getMetadata(CAN_KEY, proto.markBillable)).toBe('sales_order.mark_billable');
+    expect(Reflect.getMetadata(CAN_KEY, proto.releaseDelivery)).toBe(
+      'sales_order.delivery_release',
+    );
     await moduleRef.close();
   });
 
@@ -160,6 +164,36 @@ describe('SalesOrdersController', () => {
     expect(service.markBillable).not.toHaveBeenCalled();
   });
 
+  it('releases a delivery with the id, the trimmed reason and the key', async () => {
+    const { service, controller } = await setup();
+    await controller.releaseDelivery(ID, 'key-3', { reason: '  Customer collects today  ' });
+    expect(service.releaseDelivery).toHaveBeenCalledWith(
+      ID,
+      { reason: 'Customer collects today' },
+      'key-3',
+    );
+  });
+
+  it('answers 400 to a missing key or a release body without a usable reason', async () => {
+    const { service, controller } = await setup();
+    expect(() => controller.releaseDelivery(ID, undefined, { reason: 'ok' })).toThrow(
+      /Idempotency-Key/,
+    );
+    for (const body of [
+      {},
+      { reason: '' },
+      { reason: '   ' },
+      { reason: 'x'.repeat(1001) },
+      { reason: 'ok', amount: '1.00' },
+      null,
+    ]) {
+      expect(() => controller.releaseDelivery(ID, 'key-1', body), JSON.stringify(body)).toThrow(
+        BadRequestException,
+      );
+    }
+    expect(service.releaseDelivery).not.toHaveBeenCalled();
+  });
+
   it('puts a UUID pipe on every id, so a bad id is a 400 before the handler runs', () => {
     const pipedIndexes = (method: string) =>
       Object.values(
@@ -173,5 +207,6 @@ describe('SalesOrdersController', () => {
         .sort();
     expect(pipedIndexes('detail')).toEqual([0]);
     expect(pipedIndexes('markBillable')).toEqual([0, 1]);
+    expect(pipedIndexes('releaseDelivery')).toEqual([0]);
   });
 });

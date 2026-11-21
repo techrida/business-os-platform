@@ -214,6 +214,12 @@ export const InvoiceCanSchema = z.object({
   notes: z.boolean(),
   /** `payment.record` for the invoice's customer; false when the invoice names none. */
   recordPayment: z.boolean(),
+  /**
+   * Whether `PATCH /v1/invoices/:id/due-date` would accept this caller on this invoice now, by the same rule the route
+   * applies (permission, kind and status, unlike the flags above). `reason` says why not, in words the page can show.
+   * Only `GET /v1/invoices/:id` sets it; optional so an older API answer still parses.
+   */
+  editDueDate: z.object({ allowed: z.boolean(), reason: z.string().optional() }).optional(),
 });
 export type InvoiceCan = z.infer<typeof InvoiceCanSchema>;
 
@@ -332,8 +338,16 @@ export const DiscardInvoiceBodySchema = z.strictObject({ expectedVersion, reason
 export type DiscardInvoiceBody = z.infer<typeof DiscardInvoiceBodySchema>;
 
 /**
+ * `PATCH /v1/invoices/:id/due-date`: a new due date on a draft or returned invoice whose drafted due date is the one it
+ * issues with (a manual tax invoice or a proforma). A date before today answers 422 DUE_DATE_BEFORE_ISSUE, as issue does.
+ */
+export const EditInvoiceDueDateBodySchema = z.strictObject({ expectedVersion, dueDate: isoDate });
+export type EditInvoiceDueDateBody = z.infer<typeof EditInvoiceDueDateBodySchema>;
+
+/**
  * `POST /v1/invoices/:id/reopen`: an approved invoice back to draft (its due date passed before issue, say). The
- * approval no longer counts, so it must be submitted and approved again; the reason stays in its history.
+ * approval no longer counts. While it is a draft, a manual tax invoice's due date can be changed (`PATCH
+ * /v1/invoices/:id/due-date`); then it must be submitted for approval again. The reason stays in its history.
  */
 export const ReopenInvoiceBodySchema = z.strictObject({ expectedVersion, reason: text(1000) });
 export type ReopenInvoiceBody = z.infer<typeof ReopenInvoiceBodySchema>;

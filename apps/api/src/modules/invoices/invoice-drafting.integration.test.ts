@@ -709,6 +709,13 @@ describe('saved reach on invoices (U20a phase 2)', () => {
     for (const p of [...writes, 'payment.record' as const]) without.delete(p);
     current.grants = without;
     expect(await listCan(theirs.invoice.id)).toEqual({ ...allOf(false), recordPayment: false });
-    expect(await detailCan(mine.invoice.id)).toEqual({ ...allOf(false), recordPayment: false });
+    expect(await detailCan(mine.invoice.id)).toEqual({
+      ...allOf(false),
+      recordPayment: false,
+      editDueDate: {
+        allowed: false,
+        reason: 'Only someone who may draft this invoice can change its due date',
+      },
+    });
   });
 });

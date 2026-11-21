@@ -2,10 +2,11 @@
 
 import { randomUUID } from 'node:crypto';
 
+import type { EditInvoiceDueDateBody } from '@bos/contracts';
 import { formatCustomerDate } from '@bos/locale';
 
 import { NO_APPROVER_MESSAGE } from '@/components/p2/quote-builder/failure';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
 import {
   describeBillingFailure,
   discardInvoice,
@@ -42,7 +43,7 @@ export interface InvoiceActionState {
   /** The page is out of date: offer a reload. */
   reload?: boolean;
   /** One sentence per wrong field; the request never reached the API. */
-  errors?: { reason?: string };
+  errors?: { reason?: string; dueDate?: string };
   /** The API accepted the request. */
   done?: boolean;
   /** What to tell the person once `done`. */
@@ -178,6 +179,77 @@ export async function discardInvoiceAction(
     await discardInvoice(c.session, c.id, { expectedVersion: c.expectedVersion, reason }, key);
     return 'Discarded.';
   });
+}
+
+/**
+ * `PATCH /v1/invoices/:id/due-date` with the page's Idempotency-Key. The billing client posts only, so the call is
+ * here; a refusal throws the same `ApiError` its commands throw, so `describeBillingFailure` and `keyAfterFailure`
+ * treat it like every other action. A success answers the InvoiceDetail, which the reload replaces anyway.
+ */
+async function patchInvoiceDueDate(
+  session: Session,
+  id: string,
+  body: EditInvoiceDueDateBody,
+  key: string,
+): Promise<void> {
+  const path = `/v1/invoices/${encodeURIComponent(id)}/due-date`;
+  const res = await apiFetch(session, path, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'idempotency-key': key },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) return;
+  const text = await res.text();
+  let parsed: unknown = text === '' ? undefined : text;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    // Not JSON: keep the text as the body.
+  }
+  throw new ApiError(res.status, `PATCH ${path} failed with ${res.status}`, parsed);
+}
+
+const DUE_DATE_PAST =
+  'Pick today or a later date. An invoice cannot be issued with a due date before today.';
+
+/** A due date before today (422 DUE_DATE_BEFORE_ISSUE, the rule issue applies), in the dialog's own terms. */
+function dueDateRefusal(err: unknown): string | undefined {
+  if (!(err instanceof ApiError) || err.status !== 422) return undefined;
+  const code = (err.body as { error?: { code?: unknown } } | undefined)?.error?.code;
+  return code === 'DUE_DATE_BEFORE_ISSUE' ? DUE_DATE_PAST : undefined;
+}
+
+/** `PATCH /v1/invoices/:id/due-date`: a new due date on a draft or returned invoice. */
+export async function editInvoiceDueDateAction(
+  prev: InvoiceActionState,
+  form: FormData,
+): Promise<InvoiceActionState> {
+  const dueDate = text(form, 'dueDate').trim();
+  const submitted = text(form, 'idempotencyKey');
+  if (!ISO_DAY.test(dueDate)) {
+    return {
+      key: KEY.test(submitted) ? submitted : prev.key,
+      errors: { dueDate: 'Pick the new due date.' },
+    };
+  }
+  const state = await run(
+    prev,
+    form,
+    async (c, key) => {
+      await patchInvoiceDueDate(
+        c.session,
+        c.id,
+        { expectedVersion: c.expectedVersion, dueDate },
+        key,
+      );
+      return `Due date changed to ${formatCustomerDate(dueDate)}.`;
+    },
+    dueDateRefusal,
+  );
+  // A date the API refused goes on the field, where the person picks another one.
+  return state.error === DUE_DATE_PAST
+    ? { key: state.key, errors: { dueDate: DUE_DATE_PAST } }
+    : state;
 }
 
 /** `POST /v1/invoices/:id/reopen`: an approved invoice back to draft; the reason is required. */
