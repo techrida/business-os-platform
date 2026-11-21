@@ -671,7 +671,12 @@ export class ActivitiesService {
   private async assertCollector(tx: DbTransaction, scope: TxScope, userId: string): Promise<void> {
     const [target] = await loadAssignmentParties(tx, scope, [userId]);
     if (target === undefined) throw assignmentRefused('assigneeUserId', 'not_active_staff');
-    if (!(await partyHolds(this.roleCache, scope, target, COLLECTION_CALL_CHANGE))) {
+    // Both grants: the assignment notice names the invoice, so a user who cannot read receivables gets neither
+    // the call nor the notice.
+    if (
+      !(await partyHolds(this.roleCache, scope, target, COLLECTION_CALL_CHANGE)) ||
+      !(await partyHolds(this.roleCache, scope, target, COLLECTION_CALL_READ))
+    ) {
       throw assignmentRefused('assigneeUserId', 'cannot_read_subject');
     }
   }
