@@ -94,6 +94,7 @@ describe('NAV_GROUPS', () => {
       ['Activities & Tasks', '/activities'],
       ['Sales Orders', '/sales-orders'],
       ['Invoices', '/invoices'],
+      ['Sales VAT register', '/invoices/vat-register'],
       ['Payments', '/payments'],
       ['Receivables', '/receivables/aging'],
       ['Purchase requests', '/procurement/requests'],
@@ -116,6 +117,7 @@ describe('NAV_GROUPS', () => {
     expect(permissionByLabel).toEqual({
       'Sales Orders': 'sales_order.read',
       Invoices: 'invoice.read',
+      'Sales VAT register': 'vat.sales.read',
       Payments: 'payment.read',
       Receivables: 'ar.read',
     });
@@ -428,5 +430,11 @@ describe('searchNavGroups', () => {
       searchNavGroups(visibleGroups(true), 'settings')[0]?.items.map((item) => item.label),
     ).toEqual(['Settings']);
     expect(searchNavGroups(NAV_GROUPS, 'department')).toEqual([]);
+  });
+
+  it('gives a nested page to its own item only (the sales VAT register is not also Invoices)', () => {
+    expect(ownsPath('/invoices', '/invoices/abc')).toBe(true);
+    expect(ownsPath('/invoices', '/invoices/vat-register')).toBe(false);
+    expect(ownsPath('/invoices/vat-register', '/invoices/vat-register')).toBe(true);
   });
 });

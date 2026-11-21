@@ -75,6 +75,8 @@ export const PERMISSIONS = [
   'invoice.submit',
   'invoice.issue',
   'invoice.credit_note',
+  // K1: the sales VAT register (issued tax invoices, credit and debit notes by issue date) and its CSV export.
+  'vat.sales.read',
   'payment.read',
   'payment.record',
   'payment.verify',
@@ -301,6 +303,8 @@ const p4ProcurementGrants: RoleGrants = {
   'verification.read': 'all',
 };
 const p4WarehouseGrants: RoleGrants = { 'procurement.receipt.confirm': 'all' };
+/** K1: Finance and Accountant read the sales VAT register; the Founder holds every permission. Migration 0175 seeds rows. */
+const salesVatRegisterGrants: RoleGrants = { 'vat.sales.read': 'all' };
 const p4AccountantGrants: RoleGrants = {
   'payables.bill.enter': 'all',
   'payables.bill.read': 'all',
@@ -355,6 +359,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...customerCreditLimitGrants,
     ...deliveryReleaseGrants,
     ...p4FinanceGrants,
+    ...salesVatRegisterGrants,
     ...leadReopenGrants,
     ...settingsFinanceGrants,
     ...settingsFxRateGrants,
@@ -369,6 +374,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...billingReadAllGrants,
     ...billingPreparerGrants,
     ...p4AccountantGrants,
+    ...salesVatRegisterGrants,
     ...leadReopenGrants,
     ...settingsFinanceGrants,
   },

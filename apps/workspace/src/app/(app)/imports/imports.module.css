@@ -1,0 +1,48 @@
+.stack {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.upload {
+  display: grid;
+  gap: 16px;
+  max-width: 36rem;
+}
+
+.file {
+  max-width: 100%;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 6px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--spacing-content-gap);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.long {
+  overflow-wrap: anywhere;
+}
+
+.issues {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
