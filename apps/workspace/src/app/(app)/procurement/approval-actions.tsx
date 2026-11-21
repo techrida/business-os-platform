@@ -42,7 +42,7 @@ export function ApprovalActions({
             <div className={styles.head}>
               <span className={styles.name}>{ACTION_LABEL[a.action] ?? a.action}</span>
               <span className={styles.meta}>
-                by {who(a.actorUserId)}
+                {a.actorUserId === 'system' ? 'automatically' : `by ${who(a.actorUserId)}`}
                 {a.onBehalfOfUserId ? ` for ${who(a.onBehalfOfUserId)}` : ''}
               </span>
               <time className={styles.meta} dateTime={a.createdAt}>

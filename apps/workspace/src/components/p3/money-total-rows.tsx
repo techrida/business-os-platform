@@ -12,6 +12,7 @@ export function MoneyTotalRows({
   column,
   columns,
   allPages,
+  pinned = false,
   format,
 }: {
   totals: MoneyTotals | null;
@@ -21,6 +22,11 @@ export function MoneyTotalRows({
   columns: number;
   /** True when the matches run past this page, so the label says the total is not this page's. */
   allPages: boolean;
+  /**
+   * True when the table pins the money column and every column after it (Table's `pinned` cells): the sum then stays
+   * under its header while the rest scrolls, and the columns after it are drawn as separate empty pinned cells.
+   */
+  pinned?: boolean;
   format: (amount: string, currency: Currency) => string;
 }) {
   if (totals === null || totals.length === 0) return null;
@@ -32,10 +38,14 @@ export function MoneyTotalRows({
           <Th scope="row" colSpan={column}>
             {totals.length > 1 ? `${label} · ${t.currency}` : label}
           </Th>
-          <Td align="end" nowrap>
+          <Td align="end" nowrap pinned={pinned}>
             {format(t.amount, t.currency)}
           </Td>
-          {columns - column - 1 > 0 ? <Td colSpan={columns - column - 1} /> : null}
+          {pinned ? (
+            Array.from({ length: columns - column - 1 }, (_, i) => <Td key={i} pinned />)
+          ) : columns - column - 1 > 0 ? (
+            <Td colSpan={columns - column - 1} />
+          ) : null}
         </tr>
       ))}
     </tfoot>
