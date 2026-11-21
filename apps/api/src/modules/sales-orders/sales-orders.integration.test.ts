@@ -2404,6 +2404,33 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     expect((await statusOf(credit.get(q.opportunityId))).status).toBe(404);
   });
 
+  // R5 FU6. Several confirms of one customer's orders at the same moment: each would pass the gate alone, but
+  // together they are over the limit, so exactly one may pass. The confirm transaction takes the tenant's audit
+  // lock before it reads the credit position and holds it to the commit (withTx), which serialises them: the
+  // second one reads the first one's committed order. No deadlock (40P01) and no lock timeout (55P03).
+  it('lets exactly one of several simultaneous confirms for one customer through', async () => {
+    await setLimit('150000.00');
+    try {
+      const quotes = await Promise.all([0, 1, 2].map(() => accepted({ unitPrice: '80000.00' })));
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      const settled = await Promise.allSettled(quotes.map((q) => confirm(q)));
+      const passed = settled.filter((r) => r.status === 'fulfilled');
+      const refused = settled.flatMap((r) =>
+        r.status === 'rejected' ? [r.reason as unknown] : [],
+      );
+      expect(passed).toHaveLength(1);
+      expect(refused).toHaveLength(2);
+      for (const error of refused) {
+        expect(error).toBeInstanceOf(HttpException);
+        expect((error as HttpException).getStatus()).toBe(409);
+        expect((error as HttpException).getResponse()).toMatchObject({ code: 'credit_hold' });
+      }
+    } finally {
+      await setLimit(null);
+    }
+  });
+
   // R5 FU4. Before: a confirmed order that no invoice covers yet counted nowhere, so a customer with no receivables
   // and a limit of 150,000.00 could confirm two orders of 90,400.00 on different deals.
   describe('a confirmed order counts until it is invoiced', () => {
