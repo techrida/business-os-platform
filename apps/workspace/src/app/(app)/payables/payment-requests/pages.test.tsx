@@ -148,8 +148,27 @@ it('shows controlled entry fields for the vendor, source account and bill items'
   expect(html).toContain('name="allocation:0:amount"');
   expect(html).toContain('Himal Supplies');
   expect(html).not.toContain('Vendor ID');
-  // The entry form gets the enabled currencies (D44), read once on the server.
-  expect(currencies.loadEnabledCurrencies).toHaveBeenCalledOnce();
+  // Payment requests are exempt from the currency switch-off (D56 U16-Q1), so the page does not read it.
+  expect(currencies.loadEnabledCurrencies).not.toHaveBeenCalled();
+});
+
+it('starts a ?bill= in a currency the company switched off filled in, like any other bill (D56 U16-Q1)', async () => {
+  const inrBill = '55555555-5555-4555-8555-555555555555';
+  currencies.loadEnabledCurrencies.mockResolvedValue(['NPR']);
+  api.listPaymentRequestItems.mockResolvedValue([
+    {
+      ...heldItem(id, 'Himal Supplies', inrBill),
+      currency: 'INR',
+      availableAmount: '420.50',
+    },
+  ]);
+  const html = renderToStaticMarkup(
+    await NewPage({ searchParams: Promise.resolve({ bill: inrBill }) }),
+  );
+  // Old code dropped the start for a switched-off currency: the form opened on NPR with nothing claimed.
+  expect(html).toMatch(/<input[^>]*name="currency"[^>]*value="INR"/);
+  expect(html).toMatch(/<input[^>]*name="allocation:0:amount"[^>]*value="420.50"/);
+  expect(html).not.toContain('switched off');
 });
 
 it('shows an empty state when all approved bill balances are claimed', async () => {

@@ -34,20 +34,14 @@ export const NEW_REQUEST_HEADING = {
 
 /**
  * The approved bill item a payment request can start from: the bill's balance still free to claim (after pending
- * and approved requests, as the server worked it out), in a currency the company has switched on. Anything else
- * would open a form that cannot use it, so no "Request payment" link points there.
+ * and approved requests, as the server worked it out). Any currency counts, switched off in Settings or not: a bill
+ * already owed must stay payable, so payment requests are exempt from the switch-off (D56 U16-Q1).
  */
 export function requestableItem(
   items: readonly PaymentRequestItem[],
   billId: string,
-  enabledCurrencies: readonly string[],
 ): PaymentRequestItem | undefined {
-  return items.find(
-    (item) =>
-      item.vendorBillId === billId &&
-      Number(item.availableAmount) > 0 &&
-      enabledCurrencies.includes(item.currency),
-  );
+  return items.find((item) => item.vendorBillId === billId && Number(item.availableAmount) > 0);
 }
 
 /**
