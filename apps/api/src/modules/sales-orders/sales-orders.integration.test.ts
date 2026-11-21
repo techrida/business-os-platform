@@ -1493,6 +1493,36 @@ describe('SalesOrdersService.markBillable', () => {
     expect(await sweeper.sweep()).toEqual({ removed: 0 });
   });
 
+  it('keeps an old evidence file a confirmed order filed in its evidence list', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const filed = await evidence.upload('sales_order', detail.order.id);
+    const aged = new Date(Date.now() - 25 * 60 * 60_000);
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.update(documents).set({ createdAt: aged }).where(eq(documents.id, filed));
+      await tx
+        .update(documentVersions)
+        .set({ updatedAt: aged })
+        .where(eq(documentVersions.documentId, filed));
+      await tx.insert(salesOrderEvidence).values({
+        ...scopeA,
+        salesOrderId: detail.order.id,
+        evidenceKind: 'signed_quote',
+        documentId: filed,
+        createdBy: f.ownerUserId,
+      });
+    });
+    const sweeper = new EvidenceSweeper(db, new AuditService(db), {
+      removeQuarantine: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(await sweeper.sweep()).toEqual({ removed: 0 });
+    const [row] = await db
+      .select({ removedAt: documents.removedAt })
+      .from(documents)
+      .where(eq(documents.id, filed));
+    expect(row!.removedAt).toBeNull();
+  });
+
   it('freezes the evidence a line took: no removal, new version or bytes while the order still takes evidence', async () => {
     const detail = await confirm(await acceptedQuotation());
     const doc = await evidence.upload('sales_order', detail.order.id);
