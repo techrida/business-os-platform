@@ -320,9 +320,23 @@ describe('manual invoice (done check 1, golden case)', () => {
   });
 
   it('refuses a manual invoice whose discount takes the whole amount (a zero total cannot be issued)', async () => {
-    await expect(
-      drafting.draftManual({ ...manualBody(), discount: { mode: 'pct', value: '100' } }, key()),
-    ).rejects.toMatchObject({ status: 400 });
+    const refused = await drafting
+      .draftManual({ ...manualBody(), discount: { mode: 'pct', value: '100' } }, key())
+      .catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 400 });
+    expect(codeOf(refused)).toMatchObject({
+      message: 'The invoice total must be above zero: a discount cannot take the whole amount',
+    });
+  });
+
+  it('refuses a zero-priced manual invoice without blaming a discount it does not have', async () => {
+    const refused = await drafting.draftManual(manualBody('0.00'), key()).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 400 });
+    // Old code named a discount here too.
+    expect(codeOf(refused)).toEqual({
+      code: 'bad_request',
+      message: 'The invoice total must be above zero',
+    });
   });
 
   it('refuses a caller without invoice.draft', async () => {
@@ -717,5 +731,68 @@ describe('saved reach on invoices (U20a phase 2)', () => {
         reason: 'Only someone who may draft this invoice can change its due date',
       },
     });
+  });
+});
+
+// Last in the file: its issued invoice and open item would change the list counts and totals the tests above check.
+describe('detail settlement (no ar.read needed)', () => {
+  /**
+   * An issued 1,000.00 NPR tax invoice of the fixture's customer with its debit open item, as U6's issue writes them
+   * (the same rows as the receivables tests' helper). Issued 2026-11-01, due 2026-12-01: unpaid on NOW.
+   */
+  async function issuedWithOpenItem(seq: number): Promise<string> {
+    return withTx(db, scopeA, systemActor('invoice-fixture'), async (tx) => {
+      const inserted = await tx.execute<{ id: string }>(
+        sql`INSERT INTO app.invoices
+              (tenant_id, organization_id, kind, customer_party_id, manual_reason, currency, subtotal, discount_amount,
+               taxable_vat_amount, tax_amount, total)
+            VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'tax_invoice', ${f.customerPartyId}, 'One-off sale',
+                    'NPR', 1000.00, 0, 1000.00, 0, 1000.00)
+            RETURNING id`,
+      );
+      const id = inserted.rows[0]!.id;
+      await tx.execute(
+        sql`UPDATE app.invoices
+               SET status = 'issued', number = ${`INV-2083/84-${String(seq).padStart(5, '0')}`}, seq = ${seq},
+                   fiscal_year = '2083/84', issue_date = '2026-11-01', issue_date_bs = '2083-07-15',
+                   due_date = '2026-12-01', fx_rate = 1, amount_npr = total,
+                   seller_snapshot = '{"legalName": "Techrida Pvt. Ltd.", "panVatNo": null, "address": null}',
+                   buyer_snapshot = '{"legalName": "Acme", "panVatNo": null, "address": null}',
+                   content_hash = decode(repeat('ab', 32), 'hex'), issued_at = now()
+             WHERE id = ${id}`,
+      );
+      await new LedgerService().openItem(tx, scopeA, systemActor('invoice-fixture'), {
+        side: 'receivable',
+        direction: 'debit',
+        partyId: f.customerPartyId,
+        sourceType: 'tax_invoice',
+        sourceId: id,
+        currency: 'NPR',
+        amount: '1000.00',
+        amountNpr: '1000.00',
+        fxRate: '1',
+        documentDate: '2026-11-01',
+        dueDate: '2026-12-01',
+      });
+      return id;
+    });
+  }
+
+  it('carries the settlement and open amount for a caller with invoice.read and payment.record but no ar.read', async () => {
+    const id = await issuedWithOpenItem(90001);
+    // Drafted while the caller still holds invoice.draft (the accountant's grants).
+    const draft = await drafting.draftManual(manualBody(), key());
+    current.grants = new Map<Permission, Scope>([
+      ['invoice.read', 'all'],
+      ['payment.record', 'all'],
+    ]);
+    const detail = InvoiceDetailSchema.parse(await drafting.detail(id));
+    // Old code sent no settlement on the detail, so the page asked the ar.read-gated statement and hid Record payment.
+    expect(detail.settlement).toBe('unpaid');
+    expect(detail.openAmount).toBe('1000.00');
+
+    const onDraft = InvoiceDetailSchema.parse(await drafting.detail(draft.invoice.id));
+    expect(onDraft.settlement).toBeNull();
+    expect(onDraft.openAmount).toBeNull();
   });
 });
