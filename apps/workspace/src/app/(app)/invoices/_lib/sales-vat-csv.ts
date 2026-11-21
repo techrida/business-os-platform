@@ -16,7 +16,8 @@ const KIND_LABEL = {
 
 /**
  * The Nepal sales book as CSV: one row per issued document, amounts in the document's own currency, credit notes
- * negative. Totals are one row per currency, never added across currencies.
+ * negative, then the same amounts in NPR at the rate frozen at issue. Totals are one row per currency, never added across
+ * currencies, and one last row adds the NPR equivalents of every currency for the filing.
  */
 const BOM = String.fromCodePoint(0xfeff);
 
@@ -34,6 +35,12 @@ export function salesVatCsv(register: SalesVatRegister): string {
     'Exempt amount',
     'Zero-rated amount',
     'Total',
+    'Rate to NPR',
+    'NPR taxable amount',
+    'NPR VAT',
+    'NPR exempt amount',
+    'NPR zero-rated amount',
+    'NPR total',
   ];
   const rows: (string | null)[][] = [
     header,
@@ -50,6 +57,12 @@ export function salesVatCsv(register: SalesVatRegister): string {
       row.exemptAmount,
       row.zeroRatedAmount,
       row.totalAmount,
+      row.fxRate,
+      row.nprTaxableAmount,
+      row.nprVatAmount,
+      row.nprExemptAmount,
+      row.nprZeroRatedAmount,
+      row.nprTotalAmount,
     ]),
     ...register.totals.map((t) => [
       `Total ${t.currency}`,
@@ -64,7 +77,33 @@ export function salesVatCsv(register: SalesVatRegister): string {
       t.exemptAmount,
       t.zeroRatedAmount,
       t.totalAmount,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
     ]),
+    [
+      'Total NPR (all currencies)',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      register.nprTotal.taxableAmount,
+      register.nprTotal.vatAmount,
+      register.nprTotal.exemptAmount,
+      register.nprTotal.zeroRatedAmount,
+      register.nprTotal.totalAmount,
+    ],
   ];
   return `${BOM}${rows.map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`;
 }

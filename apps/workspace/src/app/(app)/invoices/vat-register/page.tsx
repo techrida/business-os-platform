@@ -44,7 +44,7 @@ export default async function SalesVatRegisterPage({
   const header = (
     <PageHeader
       title="Sales VAT register"
-      description="VAT charged on issued tax invoices, with credit notes as negative rows and debit notes as positive rows, by issue date. Drafts, proformas and discarded documents are excluded. Totals are kept per currency. Dates below use the AD calendar; each result includes its BS date."
+      description="VAT charged on issued tax invoices, with credit notes as negative rows and debit notes as positive rows, by issue date. Drafts, proformas and discarded documents are excluded. Totals are kept per currency, and every row also shows its NPR equivalent at the rate frozen at issue, with one NPR total across currencies for the filing. Dates below use the AD calendar; each result includes its BS date."
     />
   );
   // Live grants (GET /v1/me), not the role defaults: an admin may grant the register to any role.
@@ -106,6 +106,18 @@ export default async function SalesVatRegisterPage({
               icon="credit-card"
             />,
           ])}
+          <StatCard
+            key="npr-taxable"
+            label="Taxable sales (NPR equivalent, all currencies)"
+            value={poMoney(register.nprTotal.taxableAmount, 'NPR', numberSystems)}
+            icon="receipt"
+          />
+          <StatCard
+            key="npr-vat"
+            label="VAT charged (NPR equivalent, all currencies)"
+            value={poMoney(register.nprTotal.vatAmount, 'NPR', numberSystems)}
+            icon="credit-card"
+          />
         </div>
       ) : null}
       {register ? (
@@ -125,7 +137,7 @@ export default async function SalesVatRegisterPage({
               Choose another period to view issued invoices and notes.
             </EmptyState>
           ) : (
-            <Table caption="Sales VAT register" minWidth={1100}>
+            <Table caption="Sales VAT register" minWidth={2000}>
               <thead>
                 <tr>
                   <Th>BS date</Th>
@@ -137,6 +149,12 @@ export default async function SalesVatRegisterPage({
                   <Th align="end">Exempt</Th>
                   <Th align="end">Zero-rated</Th>
                   <Th align="end">Total</Th>
+                  <Th align="end">Rate to NPR</Th>
+                  <Th align="end">Taxable (NPR)</Th>
+                  <Th align="end">VAT (NPR)</Th>
+                  <Th align="end">Exempt (NPR)</Th>
+                  <Th align="end">Zero-rated (NPR)</Th>
+                  <Th align="end">Total (NPR)</Th>
                 </tr>
               </thead>
               <tbody>
@@ -157,6 +175,12 @@ export default async function SalesVatRegisterPage({
                     <Td align="end">{poMoney(row.exemptAmount, row.currency, numberSystems)}</Td>
                     <Td align="end">{poMoney(row.zeroRatedAmount, row.currency, numberSystems)}</Td>
                     <Td align="end">{poMoney(row.totalAmount, row.currency, numberSystems)}</Td>
+                    <Td align="end">{Number(row.fxRate)}</Td>
+                    <Td align="end">{poMoney(row.nprTaxableAmount, 'NPR', numberSystems)}</Td>
+                    <Td align="end">{poMoney(row.nprVatAmount, 'NPR', numberSystems)}</Td>
+                    <Td align="end">{poMoney(row.nprExemptAmount, 'NPR', numberSystems)}</Td>
+                    <Td align="end">{poMoney(row.nprZeroRatedAmount, 'NPR', numberSystems)}</Td>
+                    <Td align="end">{poMoney(row.nprTotalAmount, 'NPR', numberSystems)}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -172,8 +196,28 @@ export default async function SalesVatRegisterPage({
                     <Td align="end">{poMoney(t.exemptAmount, t.currency, numberSystems)}</Td>
                     <Td align="end">{poMoney(t.zeroRatedAmount, t.currency, numberSystems)}</Td>
                     <Td align="end">{poMoney(t.totalAmount, t.currency, numberSystems)}</Td>
+                    <Td colSpan={6} />
                   </tr>
                 ))}
+                <tr>
+                  <Td>Total NPR</Td>
+                  <Td>{register.nprTotal.documents} documents</Td>
+                  <Td colSpan={7}>All currencies at their issue rates, for the filing</Td>
+                  <Td />
+                  <Td align="end">
+                    {poMoney(register.nprTotal.taxableAmount, 'NPR', numberSystems)}
+                  </Td>
+                  <Td align="end">{poMoney(register.nprTotal.vatAmount, 'NPR', numberSystems)}</Td>
+                  <Td align="end">
+                    {poMoney(register.nprTotal.exemptAmount, 'NPR', numberSystems)}
+                  </Td>
+                  <Td align="end">
+                    {poMoney(register.nprTotal.zeroRatedAmount, 'NPR', numberSystems)}
+                  </Td>
+                  <Td align="end">
+                    {poMoney(register.nprTotal.totalAmount, 'NPR', numberSystems)}
+                  </Td>
+                </tr>
               </tfoot>
             </Table>
           )}

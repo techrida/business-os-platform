@@ -50,6 +50,12 @@ const register: SalesVatRegister = {
       taxableAmount: '100.00',
       vatAmount: '13.00',
       totalAmount: '113.00',
+      fxRate: '1.000000',
+      nprTaxableAmount: '100.00',
+      nprVatAmount: '13.00',
+      nprTotalAmount: '113.00',
+      nprExemptAmount: '0.00',
+      nprZeroRatedAmount: '0.00',
       ...zeros,
     },
     {
@@ -64,6 +70,12 @@ const register: SalesVatRegister = {
       taxableAmount: '-10.00',
       vatAmount: '-1.30',
       totalAmount: '-11.30',
+      fxRate: '133.500000',
+      nprTaxableAmount: '-1335.00',
+      nprVatAmount: '-173.55',
+      nprTotalAmount: '-1508.55',
+      nprExemptAmount: '0.00',
+      nprZeroRatedAmount: '0.00',
       ...zeros,
     },
   ],
@@ -86,6 +98,15 @@ const register: SalesVatRegister = {
       ...zeros,
     },
   ],
+  // Also deliberately not the sum of the visible rows: the NPR filing total is the API's.
+  nprTotal: {
+    documents: 2,
+    taxableAmount: '7777.77',
+    vatAmount: '555.55',
+    exemptAmount: '0.00',
+    zeroRatedAmount: '0.00',
+    totalAmount: '8333.32',
+  },
 };
 const render = async (params: { from?: string | string[]; to?: string | string[] } = period) =>
   renderToStaticMarkup(await SalesVatRegisterPage({ searchParams: Promise.resolve(params) }));
@@ -133,10 +154,19 @@ it('renders rows with BS dates, document kinds, links, negative credit notes and
   expect(html).toContain(`/invoices/${id}`);
   expect(html).toContain('/invoices/vat-register/export?from=2026-11-01&amp;to=2026-11-30');
   const footer = html.match(/<tfoot>[\s\S]*?<\/tfoot>/)?.[0] ?? '';
-  expect(footer.match(/<tr/g)).toHaveLength(2);
+  // One total row per currency, then the NPR filing total.
+  expect(footer.match(/<tr/g)).toHaveLength(3);
   expect(footer).toContain('9,999.99');
   expect(footer).toContain('888.88');
   expect(footer).toContain('-10.00');
+  // NPR equivalents of the foreign row at its frozen rate, and the one NPR total across currencies from the API.
+  expect(html).toContain('Rate to NPR');
+  expect(html).toContain('1,335.00');
+  expect(html).toContain('173.55');
+  expect(footer).toContain('Total NPR');
+  expect(footer).toContain('7,777.77');
+  expect(footer).toContain('555.55');
+  expect(footer).toContain('8,333.32');
   expect(html).toContain('Taxable sales (NPR)');
   expect(html).toContain('VAT charged (USD)');
 });

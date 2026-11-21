@@ -17,6 +17,20 @@ const base = {
   exemptAmount: '0.00',
   zeroRatedAmount: '0.00',
   totalAmount: '1.13',
+  fxRate: '1.000000',
+  nprTaxableAmount: '1.00',
+  nprVatAmount: '0.13',
+  nprExemptAmount: '0.00',
+  nprZeroRatedAmount: '0.00',
+  nprTotalAmount: '1.13',
+};
+const nprTotal = {
+  documents: 1,
+  taxableAmount: '1.00',
+  vatAmount: '0.13',
+  exemptAmount: '0.00',
+  zeroRatedAmount: '0.00',
+  totalAmount: '1.13',
 };
 const csv = (buyerName: string) =>
   salesVatCsv({
@@ -24,6 +38,7 @@ const csv = (buyerName: string) =>
     to: '2026-11-30',
     rows: [{ ...base, buyerName }],
     totals: [],
+    nprTotal,
   } satisfies SalesVatRegister);
 
 it.each(['=1+1', '+SUM(A1)', '-2+3', '@cmd', '\tx', '\rx', ' =x'])(
