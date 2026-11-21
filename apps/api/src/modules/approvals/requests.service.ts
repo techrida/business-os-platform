@@ -99,6 +99,17 @@ export interface ApprovalSubject {
    */
   onCancelled?(tx: DbTransaction, documentId: string, reason: string): Promise<void>;
   /**
+   * Optional: runs after the transaction that decided the request (and ran onDecided) has committed, for work that must
+   * see the decision and must not hold the decision up, such as enqueueing a render. It cannot roll anything back: an
+   * error is logged and the decision stands. Not called for a replay. `snapshot` is the request's frozen snapshot.
+   */
+  afterDecided?(decided: {
+    scope: TxScope;
+    documentId: string;
+    outcome: 'approved' | 'returned' | 'rejected';
+    snapshot: unknown;
+  }): Promise<void>;
+  /**
    * Optional: the workspace page of the document, for the decided notice to the requester (for example
    * `/memos/<id>`). Without it the requester is sent to the request in the inbox. The path must be an area
    * the `approval.decided` email allows (notify/templates.ts), else the notice fails at enqueue.
@@ -537,6 +548,15 @@ export class ApprovalsService {
     // Refuse unassigned callers before acquiring the row lock; repeat eligibility under the lock.
     await this.eligibleRequest(requestId, { action, idempotencyKey });
 
+    /** Set when this call decided the request: the subject's afterDecided runs once the decision commits. */
+    let decision:
+      | {
+          documentType: string;
+          documentId: string;
+          outcome: 'approved' | 'returned' | 'rejected';
+          snapshot: unknown;
+        }
+      | undefined;
     // The stored result (kept for replays) and the row keep the full snapshot; only the answer is filtered (D29).
     const result = await withTx(this.db, scope, actor, async (tx) => {
       const now = this.clock();
@@ -814,6 +834,12 @@ export class ApprovalsService {
         });
         // 7. Tell the document. Same transaction: if it fails, the decision rolls back too.
         await this.subjectOf(request.documentType).onDecided(tx, request.documentId, outcome);
+        decision = {
+          documentType: request.documentType,
+          documentId: request.documentId,
+          outcome,
+          snapshot: request.snapshot,
+        };
       } else if (blocked) {
         await this.notifyBlocked(
           tx,
@@ -837,7 +863,34 @@ export class ApprovalsService {
       }
       return dto;
     });
+    if (decision !== undefined) await this.afterDecided(scope, decision);
     return requestVisibleTo(principal, result);
+  }
+
+  /** The subject's post-commit hook, if it has one. Never throws: the decision has committed. */
+  private async afterDecided(
+    scope: TxScope,
+    d: {
+      documentType: string;
+      documentId: string;
+      outcome: 'approved' | 'returned' | 'rejected';
+      snapshot: unknown;
+    },
+  ): Promise<void> {
+    const subject = this.subjectOf(d.documentType);
+    if (subject.afterDecided === undefined) return;
+    try {
+      await subject.afterDecided({
+        scope,
+        documentId: d.documentId,
+        outcome: d.outcome,
+        snapshot: d.snapshot,
+      });
+    } catch (error) {
+      this.log.warn(
+        `afterDecided failed for ${d.documentType} ${d.documentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

@@ -40,6 +40,8 @@ export interface StorageAdapter {
   openClean(key: string): Promise<Readable>;
   quarantinePath(key: string): string;
   removeQuarantine(key: string): Promise<void>;
+  /** Deletes clean/<key>; fine on a missing file. Only for bytes that were never served (a generated file refused). */
+  removeClean(key: string): Promise<void>;
 }
 
 // "<uuid>/<uuid>" and nothing else: the key becomes a path, so this is also the path-traversal guard.
@@ -124,6 +126,10 @@ export class DiskStorageAdapter implements StorageAdapter {
 
   async removeQuarantine(key: string): Promise<void> {
     await rm(this.quarantinePath(key), { force: true });
+  }
+
+  async removeClean(key: string): Promise<void> {
+    await rm(this.cleanPath(key), { force: true });
   }
 }
 

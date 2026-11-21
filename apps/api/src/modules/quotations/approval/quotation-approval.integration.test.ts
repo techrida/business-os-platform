@@ -40,6 +40,7 @@ import {
 import { ForbiddenException, HttpException } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import type { Queue } from 'bullmq';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -75,6 +76,7 @@ import {
   QUOTATION_VERSION_DOCUMENT_TYPE,
   QuotationVersionSubject,
 } from './quotation-version.subject';
+import { QuotationRenderNudge } from '../render/quotation-render.nudge';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -137,6 +139,8 @@ let appPool: Pool;
 let db: QuotationFixtureDb;
 let f: QuotationFixture;
 let scopeA: TxScope;
+/** The render queue the approval's nudge enqueues on (render on commit, S3). */
+const renderQueue = { add: vi.fn((..._args: unknown[]) => Promise.resolve({})) };
 let scopeB: TxScope;
 let approvals: ApprovalsService;
 let drafting: DraftingService;
@@ -273,7 +277,12 @@ beforeAll(async () => {
   await adminPublisher.publish('quotation_version', 1, SKIP_LIVE_PUBLISHER_CHECK);
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  approvals.registerSubject(new QuotationVersionSubject(() => now));
+  approvals.registerSubject(
+    new QuotationVersionSubject(
+      () => now,
+      new QuotationRenderNudge(renderQueue as unknown as Queue),
+    ),
+  );
   const pricing = new PricingService(money);
   drafting = new DraftingService(
     db,
@@ -1263,5 +1272,36 @@ describe('quotation approval: the author names the first-step approver', () => {
       expect((await versionRow(d.versionId)).status).toBe('draft');
       expect(await requestsOf(d.versionId)).toEqual([]);
     }
+  });
+});
+
+describe('quotation approval: render on commit (S3)', () => {
+  it('enqueues the version render once, when the last approval commits, and not before', async () => {
+    const d = await draft('1500000.00');
+    await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    renderQueue.add.mockClear();
+    await act(U.acc, 'accountant', request!.id, 'approve');
+    await act(U.fin, 'finance', request!.id, 'approve');
+    await act(U.mgmt, 'management', request!.id, 'approve');
+    expect(renderQueue.add).not.toHaveBeenCalled();
+    await act(U.founder, 'founder', request!.id, 'approve');
+    expect(renderQueue.add).toHaveBeenCalledTimes(1);
+    expect(renderQueue.add).toHaveBeenCalledWith(
+      'quotation.render.one',
+      { ...scopeA, id: d.versionId },
+      { jobId: `quotation.render.one-${d.versionId}`, removeOnComplete: true, removeOnFail: true },
+    );
+  });
+
+  it('enqueues nothing for a returned or rejected version', async () => {
+    const returned = await draft('50000.00');
+    await submit(returned, returned.rowVersion);
+    const rejected = await draft('50000.00');
+    await submit(rejected, rejected.rowVersion);
+    renderQueue.add.mockClear();
+    await act(U.acc, 'accountant', (await requestsOf(returned.versionId))[0]!.id, 'return');
+    await act(U.acc, 'accountant', (await requestsOf(rejected.versionId))[0]!.id, 'reject');
+    expect(renderQueue.add).not.toHaveBeenCalled();
   });
 });

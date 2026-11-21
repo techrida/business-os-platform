@@ -966,7 +966,8 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
     expect(filtered.map((i) => i.id)).toEqual([p3.advanceId]);
     expect((await openInvoice(p3.advanceId)).invoice).toMatchObject({ status: 'issued' });
 
-    // Before the scan the document route answers 404 (no unscanned file is ever linked): wait for it.
+    // Until the scan is clean the document route answers 409 invoice_pdf_not_ready (still being prepared), or 404 before
+    // any document exists (no unscanned file is ever linked): wait for it. The issue itself now enqueues the render.
     // Other files leave issued invoices in this shared test DB; the global sweep takes only 10.
     const rendered = await worker.app.get(InvoiceRenderSweeper).renderOne({
       ...world.scope,
@@ -981,7 +982,12 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
           .http()
           .get(path)
           .set('authorization', await bearer('finance'));
-        if (res.status !== 200 && res.status !== 404) throw new Error(show(res));
+        const waiting =
+          res.status === 404 ||
+          (res.status === 409 &&
+            (res.body as { error?: { code?: string } } | undefined)?.error?.code ===
+              'invoice_pdf_not_ready');
+        if (res.status !== 200 && !waiting) throw new Error(show(res));
         return {
           done: res.status === 200 ? SignedLinkDtoSchema.parse(res.body) : undefined,
           last: show(res),

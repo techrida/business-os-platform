@@ -18,7 +18,7 @@
 // Generated files (a quotation PDF a job rendered) take the same road under the system actor, minus the scan
 // (decision D28: bytes the system rendered itself are not scanned; uploads always are):
 //   createGenerated() -> receiveGenerated() -> quarantine, type check, sha256, then straight to `clean`
-//   (scan_engine 'generated', no docs.scan job, clamd never called).
+//   (scan_engine 'generated', no docs.scan job, clamd never called), or `rejected` when it cannot be finished.
 // Who is asked differs too: the owner's `allowsSystemActor`, not the request principal's authz. Only
 // receiveGenerated can skip the scan; the HTTP-facing receiveContent never can.
 //
@@ -81,7 +81,7 @@ import {
   type ScanJobData,
 } from './documents.ports';
 import { isTenantWideImageOwner, TENANT_WIDE_IMAGE_OWNERS } from './image-scope';
-import { GENERATED_ENGINE, markVersionClean } from './mark-version-clean';
+import { GENERATED_ENGINE, markVersionClean, stillQuarantined } from './mark-version-clean';
 import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
 import {
@@ -438,9 +438,9 @@ export class DocumentsService {
    * `who` must be a system actor (anything else is a 403, so a request principal can never skip the scan); the
    * owner is asked again through `allowsSystemActor`. This is the only caller of the skip: `receiveContent`,
    * which the HTTP controller uses, always scans.
-   * If promoting or the database update fails, the version stays `quarantined` and the error is thrown; the
-   * scan is queued as a fallback (and the scan sweeper re-queues it if that fails too), so it ends `clean`
-   * through an ordinary scan.
+   * If promoting or the database update fails, the version is refused (`rejected`, bytes deleted) and the error is
+   * thrown, so the render job counts a failed try and renders again (see finishGenerated). Only when the refusal
+   * cannot be written either does it stay `quarantined`, with the scan queued as the fallback.
    */
   async receiveGenerated(
     created: { documentId: string; versionId: string },
@@ -877,8 +877,15 @@ export class DocumentsService {
    * Steps 5-6 of a generated file (D28), in place of the scan: move the quarantined bytes to clean storage,
    * then mark the version clean in one transaction (same helper as the scan processor). `promote` is
    * idempotent and the update only applies to a still-quarantined version, so a retry finds either state and
-   * never audits twice. A failure leaves the version `quarantined` (recoverable): the scan is queued as a
-   * fallback, the sweeper re-queues it later if that fails too, and the original error is thrown.
+   * never audits twice.
+   *
+   * A failure refuses the version instead of leaving it `quarantined` (round 5, S3): it becomes `rejected` with the
+   * reason `generated_unfinished` and its bytes are deleted, then the original error is thrown. A rejected upload
+   * holds no PDF, so the render job's own failure path counts the try, removes the document and renders again after
+   * its pause. Left quarantined, the document would hold its owner on "Preparing PDF" until a scan finished it, and
+   * a PDF that turned clean that way would skip the render's bookkeeping (an invoice's print row). Only when that
+   * refusal cannot be written either (the database is away) does the version stay quarantined, with the scan queued
+   * as the fallback (the sweeper re-queues it if that fails too), so it still ends `clean` through an ordinary scan.
    */
   private async finishGenerated(
     who: { scope: TxScope; actor: Actor },
@@ -898,25 +905,89 @@ export class DocumentsService {
       return toVersionDto(found.version);
     } catch (error) {
       this.logger.error(
-        `generated version ${received.id} could not be marked clean, falling back to the scan: ${describe(error)}`,
+        `generated version ${received.id} could not be marked clean, refusing it: ${describe(error)}`,
       );
+      const refused = await this.refuseUnfinishedGenerated(who, received);
+      // It turned clean after all (the mark committed before the error): that is a success.
+      if (refused !== null && refused.status === 'clean') return toVersionDto(refused);
+      if (refused === null) await this.queueFallbackScan(who, received);
+      throw error;
+    }
+  }
+
+  /**
+   * Marks a generated version that could not be finished `rejected`, audits it and deletes both copies of its bytes
+   * (the promote may or may not have moved them). Returns the version as it stands afterwards (`rejected`, or `clean`
+   * when it was finished meanwhile), or null when the refusal itself could not be written.
+   */
+  private async refuseUnfinishedGenerated(
+    who: { scope: TxScope; actor: Actor },
+    received: VersionRow,
+  ): Promise<VersionRow | null> {
+    const s = scoped(who.scope);
+    let row: VersionRow;
+    try {
+      row = await withTx(this.db, who.scope, who.actor, async (tx) => {
+        const [rejected] = await tx
+          .update(documentVersions)
+          .set({ status: 'rejected', updatedAt: new Date() })
+          .where(s.where(documentVersions, stillQuarantined(received.id)))
+          .returning();
+        if (rejected === undefined) {
+          return (await this.loadVersion(tx, who.scope, received.id, received.documentId)).version;
+        }
+        await this.audit.record(tx, {
+          action: 'document.rejected',
+          entityType: 'document_version',
+          entityId: received.id,
+          meta: {
+            reason: 'generated_unfinished',
+            declaredMime: received.declaredMime,
+            detectedMime: received.detectedMime,
+          },
+        });
+        return rejected;
+      });
+    } catch (error) {
+      this.logger.error(
+        `generated version ${received.id} could not be refused either, falling back to the scan: ${describe(error)}`,
+      );
+      return null;
+    }
+    if (row.status === 'rejected') {
       try {
-        await this.queue.add(
-          DOCS_SCAN_JOB,
-          {
-            versionId: received.id,
-            tenantId: who.scope.tenantId,
-            organizationId: who.scope.organizationId,
-          } satisfies ScanJobData,
-          { ...SCAN_JOB_OPTIONS, jobId: received.id },
-        );
-      } catch (queueError) {
-        // The sweeper re-queues a quarantined version after 15 minutes with no live job.
-        this.logger.error(
-          `could not queue the fallback scan for version ${received.id}: ${describe(queueError)}`,
+        await this.storage.removeQuarantine(received.storageKey);
+        await this.storage.removeClean(received.storageKey);
+      } catch (error) {
+        // The version is refused and never served; leftover bytes are only disk space.
+        this.logger.warn(
+          `could not delete the bytes of refused version ${received.id}: ${describe(error)}`,
         );
       }
-      throw error;
+    }
+    return row;
+  }
+
+  /** Queues the ordinary scan for a generated version left quarantined. The sweeper re-queues it if this fails. */
+  private async queueFallbackScan(
+    who: { scope: TxScope; actor: Actor },
+    received: VersionRow,
+  ): Promise<void> {
+    try {
+      await this.queue.add(
+        DOCS_SCAN_JOB,
+        {
+          versionId: received.id,
+          tenantId: who.scope.tenantId,
+          organizationId: who.scope.organizationId,
+        } satisfies ScanJobData,
+        { ...SCAN_JOB_OPTIONS, jobId: received.id },
+      );
+    } catch (queueError) {
+      // The sweeper re-queues a quarantined version after 15 minutes with no live job.
+      this.logger.error(
+        `could not queue the fallback scan for version ${received.id}: ${describe(queueError)}`,
+      );
     }
   }
 
