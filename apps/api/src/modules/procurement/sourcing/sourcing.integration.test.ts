@@ -634,10 +634,12 @@ describe('RFQ', () => {
     const { scope, actor } = caller.current();
     // Procurement holds documents.upload (own) and procurement.sourcing: the generic routes' grants.
     expect(principalNow().grants.has('documents.upload')).toBe(true);
-    const removed = await httpErrorOf(
-      evidence.documents.remove(quote!.document_id, { who: { scope, actor } }),
-    );
+    // Its uploader cannot remove it on the RFQ's own route; the generic routes take no evidence file at all.
+    const removed = await httpErrorOf(evidence.service.remove('rfq', rfqId, quote!.document_id));
     expect(removed.getStatus()).toBe(409);
+    expect(removed.getResponse()).toMatchObject({
+      message: 'This record no longer accepts attachments',
+    });
     const versioned = await httpErrorOf(
       withTx(db, scope, actor, (tx) =>
         evidence.documents.createVersion(tx, quote!.document_id, {
@@ -649,7 +651,7 @@ describe('RFQ', () => {
     );
     expect(versioned.getStatus()).toBe(409);
     const unused = await quoteFile(rfqId);
-    await evidence.documents.remove(unused, { who: { scope, actor } });
+    await evidence.service.remove('rfq', rfqId, unused);
     const { rows } = await exec(
       scopeA,
       sql`SELECT (removed_at IS NOT NULL) AS removed FROM app.documents WHERE id IN (${quote!.document_id}, ${unused})

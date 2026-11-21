@@ -1767,10 +1767,12 @@ describe('evidence uploads on a bill (round 5 P2)', () => {
       ['payables.bill.enter', 'all'],
     ]);
     const { scope, actor } = caller.current();
-    const removed = await httpErrorOf(
-      evidence.documents.remove(uploaded, { who: { scope, actor } }),
-    );
+    // Its uploader cannot remove it on the bill's own route; the generic routes take no evidence file at all.
+    const removed = await httpErrorOf(evidence.service.remove('vendor_bill', bill.id, uploaded));
     expect(removed.getStatus()).toBe(409);
+    expect(removed.getResponse()).toMatchObject({
+      message: 'This record no longer accepts attachments',
+    });
     const versioned = await httpErrorOf(
       withTx(db, scope, actor, (tx) => evidence.documents.createVersion(tx, uploaded, file)),
     );
