@@ -71,7 +71,7 @@ dev_tools_boundary() {
 }
 
 step install pnpm install --frozen-lockfile
-step build env BOS_NEXT_DIST_DIR=.next-gate pnpm -r --if-present build
+step build env BOS_BUILD_PROFILE=production BOS_NEXT_DIST_DIR=.next-gate pnpm -r --if-present build
 step dev-tools dev_tools_boundary
 step typecheck pnpm typecheck
 step lint pnpm lint
