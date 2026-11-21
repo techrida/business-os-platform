@@ -212,3 +212,41 @@ describe('expense account actions', () => {
     });
   });
 });
+
+describe('the Idempotency-Key a form submits', () => {
+  const KEY = '33333333-3333-4333-8333-333333333333';
+
+  it('is passed to the API as sent, so a double submit or a retry writes once', async () => {
+    api.createExpenseAccount.mockResolvedValue({ id: ID, code: '5100', name: 'Office' });
+    await createExpenseAccountAction(
+      IDLE,
+      form({ code: '5100', name: 'Office', idempotencyKey: KEY }),
+    );
+    await createExpenseAccountAction(
+      IDLE,
+      form({ code: '5100', name: 'Office', idempotencyKey: KEY }),
+    );
+    expect(api.createExpenseAccount.mock.calls.map((call: unknown[]) => call[2])).toEqual([
+      KEY,
+      KEY,
+    ]);
+
+    api.renameCompanyBankAccount.mockResolvedValue({ id: ID, name: 'Payroll' });
+    await renameBankAccountAction(IDLE, form({ id: ID, name: 'Payroll', idempotencyKey: KEY }));
+    expect(api.renameCompanyBankAccount.mock.calls[0]?.[3]).toBe(KEY);
+
+    api.retireCompanyBankAccount.mockResolvedValue({ id: ID, name: 'Operating' });
+    await changeBankAccountStatusAction(ID, 'retire', KEY);
+    expect(api.retireCompanyBankAccount.mock.calls[0]?.[2]).toBe(KEY);
+  });
+
+  it('is replaced by a fresh one when the form sent none or a malformed one', async () => {
+    api.createCompanyBankAccount.mockResolvedValue({ id: ID, name: 'Operating account' });
+    const fields = { name: 'Operating account', bankName: 'Nabil', last4: '4821', currency: 'NPR' };
+    await createBankAccountAction(IDLE, form(fields));
+    await createBankAccountAction(IDLE, form({ ...fields, idempotencyKey: "x'; DROP" }));
+    for (const call of api.createCompanyBankAccount.mock.calls as unknown[][]) {
+      expect(call[2] as string).toMatch(UUID);
+    }
+  });
+});

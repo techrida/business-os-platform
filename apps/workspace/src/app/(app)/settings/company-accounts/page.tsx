@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { CompanyBankAccount, ExpenseAccount } from '@bos/contracts';
 import type { Metadata } from 'next';
 
@@ -173,7 +175,7 @@ export default async function CompanyAccountsPage() {
             <SectionError message={banks.message} />
           ) : (
             <>
-              <AddBankAccountForm currencies={currencies} />
+              <AddBankAccountForm currencies={currencies} idempotencyKey={randomUUID()} />
               {activeBanks.length > 0 ? (
                 <BankTable rows={activeBanks} caption="Company bank accounts in use" />
               ) : (
@@ -205,7 +207,7 @@ export default async function CompanyAccountsPage() {
             <SectionError message={expenses.message} />
           ) : (
             <>
-              <AddExpenseAccountForm />
+              <AddExpenseAccountForm idempotencyKey={randomUUID()} />
               {activeExpenses.length > 0 ? (
                 <ExpenseTable rows={activeExpenses} caption="Expense accounts in use" />
               ) : (

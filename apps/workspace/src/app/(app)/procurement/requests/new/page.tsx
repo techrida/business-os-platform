@@ -3,14 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { grantsFrom } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { listCostCenters, listDepartments } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
-import { getMeOrNull } from '@/lib/live-permissions';
+import { getGrants } from '@/lib/grants';
 
 import layout from '../../procurement.module.css';
 import { createPrAction } from '../actions';
@@ -24,9 +23,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function NewPurchaseRequestPage() {
   const session = await requireStaffSession('/procurement/requests/new');
-  const allowed = prGrants(
-    grantsFrom(await getMeOrNull(session.accessToken), session.roles),
-  ).create;
+  const allowed = prGrants(await getGrants(session)).create;
   const departments = allowed ? await listDepartments(session).catch(() => []) : [];
   const enabledCurrencies = allowed ? await loadEnabledCurrencies(session) : [];
   let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];
