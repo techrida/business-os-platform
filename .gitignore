@@ -10,7 +10,7 @@ node_modules/
 
 # Build and test output.
 .next/
-.next-devtools/
+.next-*/
 dist/
 # The tracked system-map export in the repo root is not build output.
 !/dist/

@@ -5,7 +5,7 @@
 #
 # It runs exactly:
 #   pnpm install --frozen-lockfile && pnpm -r --if-present build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
-# but one step at a time, with a summary line per step, and it stops at the first failing step. A machine-wide
+# plus two dev-tools exclusion checks (see below), but one step at a time, with a summary line per step, and it stops at the first failing step. A machine-wide
 # lock (default /tmp/bos-gate.lock, override with BOS_GATE_LOCK) lets only one gate run on the machine: a second
 # gate waits for the first, so units that share the machine stop producing timeouts for each other. The
 # full output of every step goes to $BOS_GATE_LOG_DIR (default: a new directory under /tmp/bos-gate-logs).
@@ -55,8 +55,24 @@ step() {
   fi
 }
 
+# The workspace builds go to scratch folders (BOS_NEXT_DIST_DIR), never to the `.next` or `.next-devtools` that a
+# dev server or a compiled devtools server may be using. The command is still `pnpm -r --if-present build`.
+WORKSPACE_DIR="$REPO_ROOT/apps/workspace"
+CHECKER="$WORKSPACE_DIR/scripts/check-no-dev-routes.mjs"
+
+# Both directions of the dev-tools boundary: the production-profile build must hold no dev route, marker or run-time
+# switch; a dev-profile build (compiled, BOS_BUILD_PROFILE=dev) must still carry the dev layer. The portal ships
+# without dev tooling too. The dev build reuses the installed and built packages; only `next build` runs again.
+dev_tools_boundary() {
+  node "$CHECKER" "$WORKSPACE_DIR/.next-gate" || return $?
+  BOS_BUILD_PROFILE=dev BOS_NEXT_DIST_DIR=.next-gate-devtools pnpm --filter @bos/workspace build || return $?
+  node "$CHECKER" --profile dev "$WORKSPACE_DIR/.next-gate-devtools" || return $?
+  node "$CHECKER" "$REPO_ROOT/apps/portal/.next"
+}
+
 step install pnpm install --frozen-lockfile
-step build pnpm -r --if-present build
+step build env BOS_NEXT_DIST_DIR=.next-gate pnpm -r --if-present build
+step dev-tools dev_tools_boundary
 step typecheck pnpm typecheck
 step lint pnpm lint
 step format:check pnpm format:check

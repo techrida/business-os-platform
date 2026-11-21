@@ -34,6 +34,13 @@ export const MARKER = 'BOS_DEV_PERSONA_SWITCHER';
 /** Carried by the DEV MENU widget, which lives only in the dev layer. */
 export const DEV_MENU_MARKER = 'BOS_DEV_MENU';
 
+/**
+ * Next inlines `process.env.BOS_DEV_TOOLS` at build time (next.config.ts `env`). In a production build the
+ * read must therefore be gone from every emitted file. A surviving read is evaluated at run time, so an
+ * environment variable on the server could switch the dev tools on.
+ */
+export const RUNTIME_SWITCH = 'process.env.BOS_DEV_TOOLS';
+
 const MARKERS = [
   MARKER,
   DEV_MENU_MARKER,
@@ -104,9 +111,16 @@ export function findProblems(nextDir, profile = 'production') {
   }
 
   const needles = MARKERS.map((marker) => [marker, Buffer.from(marker)]);
+  const runtimeSwitch = Buffer.from(RUNTIME_SWITCH);
   const seen = new Set();
   for (const file of walk(nextDir, true)) {
     const content = readFileSync(file);
+    // Source maps carry the original source text, so only executable files can show a surviving read.
+    if (!wantDev && !file.endsWith('.map') && content.includes(runtimeSwitch)) {
+      problems.push(
+        `${RUNTIME_SWITCH} is read at run time (not inlined at build time) in ${path.relative(nextDir, file)}`,
+      );
+    }
     for (const [marker, needle] of needles) {
       if (content.includes(needle)) {
         seen.add(marker);
@@ -133,7 +147,8 @@ function main() {
     console.error('check-no-dev-routes: --profile must be "dev" or "production"');
     process.exit(2);
   }
-  const positional = profileAt === -1 ? args : args.filter((_, i) => i !== profileAt && i !== profileAt + 1);
+  const positional =
+    profileAt === -1 ? args : args.filter((_, i) => i !== profileAt && i !== profileAt + 1);
   const defaultDir = profile === 'dev' ? '.next-devtools' : '.next';
   const nextDir = path.resolve(positional[0] ?? path.join(here, '..', defaultDir));
 

@@ -5,7 +5,7 @@
 !.env.example
 **/node_modules
 **/.next
-**/.next-devtools
+**/.next-*
 **/dist
 **/coverage
 **/playwright-report

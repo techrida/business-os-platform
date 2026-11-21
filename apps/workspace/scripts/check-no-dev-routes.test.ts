@@ -293,4 +293,74 @@ describe('check-no-dev-routes', () => {
     const clean = run([], { cwd: elsewhere, script: copy });
     expect(clean.status).toBe(0);
   });
+
+  describe('production profile: the run-time switch', () => {
+    it('fails when an executable file still reads process.env.BOS_DEV_TOOLS at run time', () => {
+      const nextDir = fixtureBuild({
+        files: { 'server/chunks/a.js': 'if(process.env.BOS_DEV_TOOLS==="1")load()' },
+      });
+      const result = run([nextDir]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('read at run time');
+    });
+
+    it('ignores source maps, which carry the original source text', () => {
+      const nextDir = fixtureBuild({
+        files: { 'server/chunks/a.js.map': '{"sourcesContent":["process.env.BOS_DEV_TOOLS"]}' },
+      });
+      expect(run([nextDir]).status).toBe(0);
+    });
+  });
+
+  describe('--profile dev', () => {
+    const DEV_MANIFEST = {
+      ...REAL_BUILD_MANIFEST,
+      '/dev/personas/page': 'app/dev/personas/page.js',
+      '/dev/api/whoami/route': 'app/dev/api/whoami/route.js',
+    };
+    const devBuild = (extra: Record<string, string> = {}): string =>
+      fixtureBuild({
+        manifest: DEV_MANIFEST,
+        files: {
+          'server/chunks/personas.js': MARKER,
+          'static/chunks/menu.js': DEV_MENU_MARKER,
+          ...extra,
+        },
+      });
+
+    it('passes on a build that carries the dev layer, and the production profile rejects it', () => {
+      const nextDir = devBuild();
+      const dev = run(['--profile', 'dev', nextDir]);
+      expect(dev.stderr).toBe('');
+      expect(dev.status).toBe(0);
+      expect(run([nextDir]).status).toBe(1);
+    }, 30_000);
+
+    it('allows the run-time switch, which a dev build keeps on purpose', () => {
+      const nextDir = devBuild({ 'static/chunks/x.js': 'process.env.BOS_DEV_TOOLS' });
+      expect(run(['--profile', 'dev', nextDir]).status).toBe(0);
+    });
+
+    it('fails when the dev build lost its route or a marker', () => {
+      const noRoute = fixtureBuild({
+        files: { 'server/chunks/personas.js': MARKER, 'static/chunks/menu.js': DEV_MENU_MARKER },
+      });
+      const lostRoute = run(['--profile', 'dev', noRoute]);
+      expect(lostRoute.status).toBe(1);
+      expect(lostRoute.stderr).toContain('missing the /dev/personas route');
+
+      const noMenu = fixtureBuild({
+        manifest: DEV_MANIFEST,
+        files: { 'server/chunks/personas.js': MARKER },
+      });
+      const lostMenu = run(['--profile', 'dev', noMenu]);
+      expect(lostMenu.status).toBe(1);
+      expect(lostMenu.stderr).toContain(DEV_MENU_MARKER);
+    });
+
+    it('rejects an unknown profile and exits 2 for a missing build', () => {
+      expect(run(['--profile', 'staging', tempRoot()]).status).toBe(2);
+      expect(run(['--profile', 'dev', path.join(tempRoot(), 'nope')]).status).toBe(2);
+    });
+  });
 });
