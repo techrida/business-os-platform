@@ -11,6 +11,8 @@ import { PurchaseOrdersModule } from '../../procurement/orders/purchase-orders.m
 import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
 import { PurchaseOrderRenderNudge } from '../../procurement/orders/render/purchase-order-render.nudge';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { QuotationsModule } from '../quotations.module';
+import { QuotationRenderNudge } from './quotation-render.nudge';
 
 // Render on commit (S3): the commands take their render nudge as an optional dependency, so a module that forgets to
 // import the nudge's module still boots, and quietly renders on the sweep alone. This compiles the real AppModule and
@@ -60,5 +62,14 @@ describe('render nudges on the real AppModule (DI graph)', () => {
     expect((subject as { renderNudge?: unknown }).renderNudge).toBeInstanceOf(
       PurchaseOrderRenderNudge,
     );
+  });
+
+  it('gives the quotation_version subject the quotation render nudge', () => {
+    const approvals = moduleRef.get(ApprovalsService, { strict: false });
+    moduleRef.get(QuotationsModule, { strict: false }).onModuleInit();
+    const subject = (approvals as unknown as { subjectOf(t: string): unknown }).subjectOf(
+      'quotation_version',
+    );
+    expect((subject as { renderNudge?: unknown }).renderNudge).toBeInstanceOf(QuotationRenderNudge);
   });
 });
