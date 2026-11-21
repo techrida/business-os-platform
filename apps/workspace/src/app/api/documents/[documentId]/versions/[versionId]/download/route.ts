@@ -1,5 +1,5 @@
 import { failureOf, issueDocumentLink, openSignedFile } from '@/lib/api-kernel';
-import { routeSession } from '@/lib/bff';
+import { dbBusyOf, routeSession } from '@/lib/bff';
 import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 
 export const runtime = 'nodejs';
@@ -60,6 +60,12 @@ export async function GET(
     }
     return new Response(file.body, { status: 200, headers });
   } catch (err) {
+    const busy = dbBusyOf(err);
+    if (busy !== null) {
+      const res = plain('Busy, please try again.', 503);
+      res.headers.set('retry-after', String(busy.retryAfterSeconds));
+      return res;
+    }
     const f = failureOf(err);
     // A file that is not clean yet answers 409 or 404; say that in words.
     return plain(

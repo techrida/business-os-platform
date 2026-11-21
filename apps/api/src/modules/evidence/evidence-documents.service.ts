@@ -1,5 +1,5 @@
 // Evidence uploads in place (round 5 P2): the staff routes that create an `evidence` document on a sales order, a
-// vendor bill or an RFQ and receive its bytes. They exist because the generic upload routes need
+// quotation version (confirming its order), a vendor bill or an RFQ and receive its bytes. They exist because the generic upload routes need
 // `documents.upload`, which the Accountant and Finance (who mark lines billable and enter bills) do not hold. Each
 // route names its record kind's own permission, refuses an id of another kind or entity (404) and then hands over
 // to DocumentsService, which checks the record's upload grants (evidence-owner.policy.ts), its attach rule, the
@@ -38,6 +38,7 @@ const FileSchema = CreateDocumentBodySchema.pick({
 /** Where each kind's routes live: the record's own path, so the route sits beside the action it serves. */
 export const EVIDENCE_ROUTE_BASE: Record<EvidenceRecordKind, string> = {
   sales_order: '/v1/sales-orders',
+  quotation_version: '/v1/sales-orders/quotation-versions',
   vendor_bill: '/v1/payables/bills',
   rfq: '/v1/procurement/rfqs',
 };
