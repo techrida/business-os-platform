@@ -68,8 +68,8 @@ interface Fixture {
 }
 
 /** A pending request with two steps (seq 1 active, seq 2 waiting) whose sod_user_ids holds the preparer. */
-async function newRequest(): Promise<Fixture> {
-  const scope = await newScope();
+async function newRequest(inScope?: Scope): Promise<Fixture> {
+  const scope = inScope ?? (await newScope());
   const preparer = randomUUID();
   const approver = randomUUID();
   return inTx(scope, async (c) => {
@@ -122,7 +122,7 @@ interface ActionRow {
 }
 
 /** Inserts one approval_actions row as bos_app, shaped like RequestsService.writeAction for a decision. */
-function insertAction(f: Fixture, a: ActionRow) {
+function insertAction(f: Fixture, a: ActionRow & { key?: string }) {
   return inTx(f.scope, (c) =>
     c.query(
       `INSERT INTO app.approval_actions (tenant_id, organization_id, request_id, step_id, actor_user_id,
@@ -137,7 +137,7 @@ function insertAction(f: Fixture, a: ActionRow) {
         a.onBehalfOf ?? null,
         a.action,
         a.comment ?? null,
-        randomUUID(),
+        a.key ?? randomUUID(),
         Buffer.alloc(32, 2),
       ],
     ),
@@ -169,6 +169,35 @@ afterAll(async () => {
   await owner?.end();
   await superuser?.end();
   await testDb?.drop();
+});
+
+/** A second legal entity of the fixture's tenant (not the default one). */
+async function addEntity(tenantId: string): Promise<Scope> {
+  const organizationId = randomUUID();
+  await inTx({ tenantId, organizationId }, (c) =>
+    c.query(
+      `INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
+       VALUES ($1, $2, $1, $3, 'Second entity', 'Second entity Ltd', false)`,
+      [organizationId, tenantId, `S${organizationId.slice(0, 6)}`],
+    ),
+  );
+  return { tenantId, organizationId };
+}
+
+describe('an approval action idempotency key is scoped to the entity (R5 FU6, 0166)', () => {
+  it('lets one approver reuse a key in another entity of the tenant, and refuses it twice in one entity', async () => {
+    const first = await newRequest();
+    const second = await newRequest(await addEntity(first.scope.tenantId));
+    const approver = randomUUID();
+    const key = `key-${randomUUID()}`;
+    await insertAction(first, { action: 'approve', actor: approver, key });
+    // The same tenant, approver and key in the other entity: its own namespace, so it is accepted.
+    await insertAction(second, { action: 'approve', actor: approver, key });
+    // Within one entity the key is still unique for the approver.
+    await expect(
+      insertAction(first, { action: 'approve', actor: approver, key, stepId: first.stepIds[1] }),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'approval_actions_idempotency_unique' });
+  });
 });
 
 describe('separation of duties on decisions', () => {
