@@ -599,7 +599,7 @@ export const CreditOverrideBodySchema = z.strictObject({
    */
   orderValue: z
     .string()
-    .regex(/^d+.d{2}$/)
+    .regex(/^\d+\.\d{2}$/)
     .optional(),
 });
 export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
