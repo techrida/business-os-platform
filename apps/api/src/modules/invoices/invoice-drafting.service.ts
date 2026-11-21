@@ -39,6 +39,7 @@ import {
   salesOrderTaxSummary,
   scoped,
 } from '@bos/db';
+import { Dec } from '@bos/locale';
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, asc, count, desc, eq, gte, inArray, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 
@@ -580,9 +581,12 @@ export class InvoiceDraftingService {
         periods,
       ),
     );
-    if (!(Number(priced.columns.total) > 0)) {
+    if (Dec(priced.columns.total).lte(0)) {
+      // Name the discount only when one took something off (a document or a line discount).
       throw badRequest(
-        'The invoice total must be above zero: a discount cannot take the whole amount',
+        Dec(priced.columns.discountAmount).gt(0)
+          ? 'The invoice total must be above zero: a discount cannot take the whole amount'
+          : 'The invoice total must be above zero',
       );
     }
     const id = await this.insertInvoice(tx, scope, actor, priced, {

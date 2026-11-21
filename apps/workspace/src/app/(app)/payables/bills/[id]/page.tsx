@@ -282,10 +282,13 @@ export default async function BillPage({
     {
       key: 'vendor',
       label: 'Vendor',
-      value: (
+      // The vendor page needs vendor.read; without it the name is plain text, not a link to a refusal.
+      value: hasGrant(live, 'vendor.read') ? (
         <Link href={`/vendors/${encodeURIComponent(bill.vendorPartyId)}`} className={styles.long}>
           {vendorName ?? 'Open the vendor'}
         </Link>
+      ) : (
+        <span className={styles.long}>{vendorName ?? 'Not recorded'}</span>
       ),
     },
     {
