@@ -115,3 +115,14 @@
     gap: 20px;
   }
 }
+
+/* A table wider than its column scrolls inside its card. Thin classic scrollbars show that Tax, Line total and the
+   other columns are further right (where the platform draws overlay scrollbars they appear on scroll), and the
+   description keeps a readable width instead of wrapping one word per line. */
+.scrollTable {
+  scrollbar-width: thin;
+}
+
+.descriptionCell {
+  min-width: 14rem;
+}

@@ -22,6 +22,7 @@ import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 import { getPermissionCheck } from '@/lib/live-permissions';
 
+import { ApprovalActions } from '../../approval-actions';
 import { ApprovalTimeline } from '../../approval-timeline';
 import layout from '../../procurement.module.css';
 import styles from '../../requests/requests.module.css';
@@ -101,6 +102,7 @@ function ApprovalPanel({ load, retry }: { load: Load<ApprovalRequestDto>; retry:
           ) : (
             <ApprovalTimeline steps={approval.steps} />
           )}
+          <ApprovalActions actions={approval.actions} people={approval.people} />
         </>
       )}
     </Panel>
