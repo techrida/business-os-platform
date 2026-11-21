@@ -1993,7 +1993,8 @@ export class ApprovalsService {
       .select()
       .from(approvalActions)
       .where(eq(approvalActions.requestId, requestId))
-      .orderBy(asc(approvalActions.createdAt), asc(approvalActions.id));
+      // Rows of one transaction share created_at; seq keeps them in the order they were written.
+      .orderBy(asc(approvalActions.createdAt), asc(approvalActions.seq));
     return {
       requestId: request.id,
       documentType: request.documentType,
