@@ -430,10 +430,15 @@ export class CustomersService {
   async paymentTerms(): Promise<PaymentTerm[]> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    this.authz.assert('customer.read', {
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-    });
+    // The list is tenant policy, not a customer: any scope of customer.read (own included) may read it, so the
+    // check is on the grant itself and not on a customer record.
+    if (!principal.grants.has('customer.read')) {
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: 'no_permission',
+      });
+    }
     const rows = await withTx(
       this.db,
       scope,
