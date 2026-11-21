@@ -65,6 +65,14 @@ const TITLES: Record<InvoiceRenderView['kind'], string> = {
   debit_note: 'Debit Note',
 };
 
+/** The label of the document number and of the party block, by kind (the portal's wording, so a note never says "Invoice"). */
+const WORDING: Record<InvoiceRenderView['kind'], { number: string; to: string }> = {
+  tax_invoice: { number: 'Invoice no.', to: 'Invoice to' },
+  proforma: { number: 'Invoice no.', to: 'Invoice to' },
+  credit_note: { number: 'Credit note no.', to: 'Issued to' },
+  debit_note: { number: 'Debit note no.', to: 'Issued to' },
+};
+
 const CSS = `
   @page { size: A4; margin: 14mm 13mm 16mm; }
   :root { color-scheme: light; --brand: #2563eb; --ink: #0f172a; --muted: #475569; --line: #e2e8f0; }
@@ -179,7 +187,7 @@ export function renderInvoiceHtml(
     : seller;
 
   const meta: [string, string][] = [
-    ['Invoice no.', text(view.number)],
+    [WORDING[view.kind].number, text(view.number)],
     ['Issue date', dateCell(view.issueDate, view.issueDateBs, dateFormat)],
   ];
   if (view.dueDate !== null) meta.push(['Due date', dateCell(view.dueDate, null, dateFormat)]);
@@ -246,7 +254,7 @@ export function renderInvoiceHtml(
   ${view.kind === 'proforma' ? '<p class="notice">Proforma Invoice - not a tax invoice.</p>' : ''}
 
   <div class="billing">
-    <section>${partyBlock('Invoice to', view.buyer, text)}</section>
+    <section>${partyBlock(WORDING[view.kind].to, view.buyer, text)}</section>
     <table class="meta">
       ${meta.map(([k, v]) => `<tr><th scope="row">${k}</th><td>${v}</td></tr>`).join('')}
     </table>

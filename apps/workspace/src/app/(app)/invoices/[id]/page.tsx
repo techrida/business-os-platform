@@ -272,7 +272,13 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         <div className={styles.side}>
           <Panel
             as="aside"
-            title="Invoice details"
+            title={
+              invoice.kind === 'debit_note'
+                ? 'Debit note details'
+                : invoice.kind === 'credit_note'
+                  ? 'Credit note details'
+                  : 'Invoice details'
+            }
             description={`Last changed ${when(invoice.updatedAt, 'datetime', format.dateFormat)}`}
           >
             <FactList facts={facts(invoice, customerName, settlement, numberSystems)} />

@@ -452,6 +452,27 @@ describe('invoice detail page', () => {
     expect(mocks.listTaxCodes).not.toHaveBeenCalled();
   });
 
+  it('labels a debit note by its kind: Issued to, Debit note no., Debit note details, never "Invoice"', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      InvoiceDetailSchema.parse({
+        ...invoiceDetail({
+          kind: 'debit_note',
+          status: 'approved',
+          salesOrderId: null,
+          originalInvoiceId: APPROVAL,
+          noteReason: 'Extra support day',
+        }),
+      }),
+    );
+    const html = textOf(await render());
+    expect(html).toContain('Issued to');
+    expect(html).toContain('Debit note no.');
+    expect(html).toContain('Debit note details');
+    expect(html).not.toContain('Invoice to');
+    expect(html).not.toContain('Invoice no.');
+    expect(html).not.toContain('Invoice details');
+  });
+
   it('still opens the detail and offers the note dialogs when tax codes fail to load', async () => {
     mocks.listTaxCodes.mockRejectedValue(new Error('down'));
     const html = await render();
