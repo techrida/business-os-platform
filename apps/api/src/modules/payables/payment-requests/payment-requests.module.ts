@@ -1,7 +1,7 @@
 // Payment requests module (P4 unit A2): the REST routes of payment requests and the registration of the
 // payment_request approval subject. The service reads the vendor's verified bank account (VendorBankModule) and the
-// open amounts and lock order of the payable items (LedgerModule) and the enabled currencies (SettingsModule); it
-// writes no ledger rows. onDecided runs only
+// open amounts and lock order of the payable items (LedgerModule), the enabled currencies (SettingsModule) and the
+// paying company bank account (CompanyAccountsModule); it writes no ledger rows. onDecided runs only
 // from ApprovalsService.act (an API route), so the worker never needs the subject.
 import { Module, type OnModuleInit } from '@nestjs/common';
 
@@ -10,6 +10,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { SettingsModule } from '../../../platform/settings/settings.module';
 import { ApprovalsModule } from '../../approvals/approvals.module';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CompanyAccountsModule } from '../../company-accounts/company-accounts.module';
 import { LedgerModule } from '../../ledger/ledger.module';
 import { VendorBankModule } from '../../vendors/bank/bank.module';
 import { PaymentRequestSubject } from './payment-request.subject';
@@ -18,7 +19,14 @@ import { PaymentRequestsController } from './payment-requests.controller';
 import { PaymentRequestsService } from './payment-requests.service';
 
 @Module({
-  imports: [ApprovalsModule, AuditModule, LedgerModule, SettingsModule, VendorBankModule],
+  imports: [
+    ApprovalsModule,
+    AuditModule,
+    CompanyAccountsModule,
+    LedgerModule,
+    SettingsModule,
+    VendorBankModule,
+  ],
   controllers: [PaymentRequestsController],
   providers: [PaymentRequestsService, PaymentRequestsCaller],
   exports: [PaymentRequestsService],

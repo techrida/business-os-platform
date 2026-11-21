@@ -1,0 +1,43 @@
+/* Bank and expense accounts: only what the shared settings styles do not already cover. */
+
+.short {
+  max-width: 12ch;
+}
+
+.nameCell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.renameForm {
+  display: grid;
+  gap: 8px;
+  min-width: min(100%, 240px);
+}
+
+.renameActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ending {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Retired rows stay readable (they can be reactivated) but step back from the active list. */
+.retired td,
+.retired th {
+  color: var(--text-secondary);
+}

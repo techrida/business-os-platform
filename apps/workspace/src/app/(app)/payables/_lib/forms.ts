@@ -76,7 +76,7 @@ export function parseBillLines(
     if (toScaled(unitPrice, 2) === null) {
       fail('unitPrice', 'Use an amount such as 1250.50, with up to 2 decimal places.');
     }
-    if (!isGuid(accountId)) fail('accountId', 'Paste the account ID this line is booked to.');
+    if (!isGuid(accountId)) fail('accountId', 'Choose the expense account this line is booked to.');
     if (!isGuid(taxCodeId)) fail('taxCodeId', 'Choose the VAT treatment of this line.');
     if (tdsCodeId !== '' && !isGuid(tdsCodeId)) {
       fail('tdsCodeId', 'Paste a withholding code ID, or leave it empty.');
@@ -99,4 +99,45 @@ export function parseBillLines(
     else if (lines.length > MAX_LINES) errors['lines'] = `A bill takes at most ${MAX_LINES} lines.`;
   }
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, lines };
+}
+
+/** The API's 422 code for a line whose account is not an active expense account of this company. */
+export const EXPENSE_ACCOUNT_INVALID = 'EXPENSE_ACCOUNT_INVALID';
+
+export const EXPENSE_ACCOUNT_REFUSED =
+  "This account was retired or is not one of this company's expense accounts. Choose an active account.";
+
+/** The hidden field the bill entry form posts: the ids of the active expense accounts its page loaded. */
+export const ACTIVE_ACCOUNT_IDS_FIELD = 'activeAccountIds';
+
+/** The ids `ACTIVE_ACCOUNT_IDS_FIELD` carries (comma separated, lowercase); undefined when the field was not sent. */
+export function parseActiveAccountIds(value: FormDataEntryValue | null): Set<string> | undefined {
+  if (typeof value !== 'string') return undefined;
+  return new Set(
+    value
+      .split(',')
+      .map((id) => id.trim().toLowerCase())
+      .filter((id) => id !== ''),
+  );
+}
+
+/**
+ * Field errors for an `EXPENSE_ACCOUNT_INVALID` refusal, keyed like `parseBillLines`. The refusal does not say which
+ * line it means, so the account field of each sent row (a blank row was not sent) whose account is not in `active`
+ * (the active accounts the page loaded) is marked. Every sent row is marked when no list is given, or when each
+ * sent account is in it (one was retired after the page loaded), so the refusal never shows on no field.
+ */
+export function expenseAccountErrors(
+  rows: readonly LineRow[],
+  active?: ReadonlySet<string>,
+): Errors {
+  const sent = rows.flatMap((row, i) => (isBlank(row) ? [] : [{ row, i }]));
+  const outside =
+    active === undefined
+      ? []
+      : sent.filter(({ row }) => !active.has(row.accountId.trim().toLowerCase()));
+  const errors: Errors = {};
+  for (const { i } of outside.length > 0 ? outside : sent)
+    errors[`${i}.accountId`] = EXPENSE_ACCOUNT_REFUSED;
+  return errors;
 }

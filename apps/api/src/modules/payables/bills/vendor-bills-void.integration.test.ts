@@ -25,6 +25,7 @@ import {
 import {
   createCostCenter,
   createDepartment,
+  createExpenseAccount,
   createParty,
   createStaffUser,
   createTenantWithEntity,
@@ -87,6 +88,10 @@ let orders: PurchaseOrdersService;
 let receiptsService: ReceiptsService;
 let deptA = '';
 let vatCode = '';
+/** An active expense account of entity A: bill lines must book to one (round 5, unit P1). */
+let expenseAccountId = '';
+/** The same for entity B, for the bills these tests key in there. */
+let expenseAccountB = '';
 
 const U = { req: '', proc: '', acct: '', acct2: '', fin: '', mgmt: '', founder: '', wh: '' };
 const roles: Partial<Record<RoleKey, string[]>> = {};
@@ -103,6 +108,8 @@ const as = (userId: string, role: RoleKey) => {
   current.role = role;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
+/** The active expense account of the acting entity. */
+const accountHere = () => (scopeNow() === scopeB ? expenseAccountB : expenseAccountId);
 const principalNow = (): Principal => ({
   userId: current.userId,
   zitadelUserId: `z-${current.userId}`,
@@ -191,6 +198,8 @@ beforeAll(async () => {
         VALUES (${scopeA.tenantId}, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01') RETURNING id`,
   );
   vatCode = (rows[0] as { id: string }).id;
+  expenseAccountId = (await createExpenseAccount(appPool, scopeA)).id;
+  expenseAccountB = (await createExpenseAccount(appPool, scopeB)).id;
   const extra = await exec(
     scopeA,
     sql`INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
@@ -373,7 +382,7 @@ async function billFor(
       purchaseOrderId: po.id,
       documentId: await doc(po.vendorId),
       lines: [
-        { poLineId: po.lineId, accountId: randomUUID(), quantity, unitPrice, taxCodeId: vatCode },
+        { poLineId: po.lineId, accountId: accountHere(), quantity, unitPrice, taxCodeId: vatCode },
       ],
     },
     key,
@@ -397,7 +406,7 @@ async function plainBill(lines: LineSpec[], invoiceDate = '2026-11-09'): Promise
       invoiceDate,
       currency: 'NPR',
       documentId: await doc(vendorId),
-      lines: lines.map((l) => ({ accountId: randomUUID(), ...l })),
+      lines: lines.map((l) => ({ accountId: accountHere(), ...l })),
     },
     randomUUID(),
   );

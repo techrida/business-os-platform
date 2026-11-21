@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
+
+import type { DbBusyKind } from '../db/busy';
 
 /**
  * Buckets are chosen so the NFR thresholds (300 ms, 500 ms, 800 ms) are bucket edges: a
@@ -7,6 +9,20 @@ import { Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
  */
 export const HTTP_DURATION_BUCKETS = [0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1, 2, 5] as const;
 export const LCP_BUCKETS = [0.5, 1, 1.5, 2, 2.5, 4, 8] as const;
+/** Setup is pool checkout + BEGIN + the settings statement, so a slow one means the pool is short. */
+export const TX_SETUP_BUCKETS = [
+  0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 5,
+] as const;
+export const TX_DURATION_BUCKETS = [
+  0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30,
+] as const;
+
+/** The counters a `pg.Pool` exposes; read at scrape time. */
+export interface PoolStats {
+  readonly totalCount: number;
+  readonly idleCount: number;
+  readonly waitingCount: number;
+}
 
 /**
  * The one place that knows prom-client. If we ever move to OpenTelemetry metrics, only this
@@ -41,6 +57,57 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private pool: PoolStats | undefined;
+
+  private readonly poolTotal = new Gauge({
+    name: 'db_pool_connections',
+    help: 'Open connections in the Postgres pool (idle and checked out).',
+    registers: [this.registry],
+    collect: () => {
+      if (this.pool) this.poolTotal.set(this.pool.totalCount);
+    },
+  });
+
+  private readonly poolIdle = new Gauge({
+    name: 'db_pool_idle_connections',
+    help: 'Idle connections in the Postgres pool.',
+    registers: [this.registry],
+    collect: () => {
+      if (this.pool) this.poolIdle.set(this.pool.idleCount);
+    },
+  });
+
+  private readonly poolWaiting = new Gauge({
+    name: 'db_pool_waiting_clients',
+    help: 'Queries waiting for a free Postgres pool connection.',
+    registers: [this.registry],
+    collect: () => {
+      if (this.pool) this.poolWaiting.set(this.pool.waitingCount);
+    },
+  });
+
+  private readonly dbBusy = new Counter({
+    name: 'db_busy_errors_total',
+    help: 'Transactions Postgres ended as a deadlock victim or after a lock_timeout, by kind.',
+    labelNames: ['kind'] as const,
+    registers: [this.registry],
+  });
+
+  private readonly txSetup = new Histogram({
+    name: 'db_tx_setup_seconds',
+    help: 'Time from withTx being called to its settings statement done: pool wait + BEGIN + SET.',
+    buckets: [...TX_SETUP_BUCKETS],
+    registers: [this.registry],
+  });
+
+  private readonly txDuration = new Histogram({
+    name: 'db_tx_duration_seconds',
+    help: 'Whole withTx duration in seconds, including lock waits, by outcome.',
+    labelNames: ['outcome'] as const,
+    buckets: [...TX_DURATION_BUCKETS],
+    registers: [this.registry],
+  });
+
   private lastHeartbeat = 0;
 
   constructor() {
@@ -58,6 +125,24 @@ export class MetricsService {
 
   observeWebVitalLcp(app: string, route: string, seconds: number): void {
     this.lcp.observe({ app, route }, seconds);
+  }
+
+  /** The pool whose counts the db_pool_* gauges report at each scrape. */
+  observePool(pool: PoolStats): void {
+    this.pool = pool;
+  }
+
+  observeTx(
+    outcome: 'commit' | 'rollback',
+    setupSeconds: number | undefined,
+    totalSeconds: number,
+  ): void {
+    if (setupSeconds !== undefined) this.txSetup.observe(setupSeconds);
+    this.txDuration.observe({ outcome }, totalSeconds);
+  }
+
+  countDbBusy(kind: DbBusyKind): void {
+    this.dbBusy.inc({ kind });
   }
 
   recordHeartbeat(epochSeconds: number): void {
