@@ -12,6 +12,7 @@
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 
 import {
   CreditHoldDtoSchema,
@@ -73,7 +74,7 @@ import {
 import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome.service';
 import { RecordOutcomeService } from '../quotations/outcome/record-outcome.service';
 import { PricingService } from '../quotations/pricing/pricing.service';
-import { evidenceFixture, type EvidenceFixture } from '../evidence/evidence.fixture';
+import { EVIDENCE_PDF, evidenceFixture, type EvidenceFixture } from '../evidence/evidence.fixture';
 import { SalesOrdersService } from './sales-orders.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -1256,13 +1257,33 @@ describe('SalesOrdersService.markBillable', () => {
     },
   );
 
-  it('freezes the evidence a line took: no removal or new version while the order still takes evidence', async () => {
+  it('freezes the evidence a line took: no removal, new version or bytes while the order still takes evidence', async () => {
     const detail = await confirm(await acceptedQuotation());
     const doc = await evidence.upload('sales_order', detail.order.id);
-    await mark(detail, 1, { evidenceDocumentId: doc });
     // A caller with both generic grants (documents.upload) and the order's own grant.
     current.grants = grantsOf('founder');
     const { scope, actor } = caller.current();
+    // A second version opened before the mark, still waiting for its bytes.
+    const pending = await withTx(db, scope, actor, (tx) =>
+      evidence.documents.createVersion(tx, doc, {
+        filename: 'later.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: EVIDENCE_PDF.length,
+      }),
+    );
+    await mark(detail, 1, { evidenceDocumentId: doc });
+    expect(
+      (
+        await statusOf(
+          evidence.documents.receiveContent(
+            pending.versionId,
+            Readable.from(EVIDENCE_PDF),
+            EVIDENCE_PDF.length,
+            { documentId: doc, who: { scope, actor } },
+          ),
+        )
+      ).status,
+    ).toBe(409);
     expect(await statusOf(evidence.documents.remove(doc, { who: { scope, actor } }))).toEqual({
       status: 409,
       code: 'conflict',
