@@ -110,7 +110,7 @@ beforeEach(() => {
 });
 
 describe('POST /api/evidence/:kind/:ownerId', () => {
-  it.each(['sales-order', 'vendor-bill', 'rfq'])(
+  it.each(['sales-order', 'vendor-bill', 'rfq', 'quotation-version'])(
     'reserves evidence through the %s route, streams the bytes, and answers 201',
     async (kind) => {
       const res = await upload(ORDER, { kind });
@@ -233,7 +233,7 @@ function status(documentId: string, versionId: string, kind = 'sales-order'): Pr
 }
 
 describe('GET /api/evidence/:kind/:ownerId', () => {
-  it.each(['sales-order', 'vendor-bill', 'rfq'])(
+  it.each(['sales-order', 'vendor-bill', 'rfq', 'quotation-version'])(
     'reads %s scan status through the record route, not GET /v1/documents/:id',
     async (kind) => {
       const response = await upload(ORDER, { kind });

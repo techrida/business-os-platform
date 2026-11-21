@@ -5,12 +5,17 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Select, Textarea } from '@/components/ui/field';
+import { EvidenceUpload } from '@/components/ui/evidence-upload';
+import { Field, Select } from '@/components/ui/field';
 import { TransactionFormDialog } from '@/components/p3/transaction-form-dialog';
 
 import { confirmOrderAction } from '../_lib/actions';
 import type { ActionState } from '../_lib/state';
 import { CreditHoldHelp } from './credit-hold-help';
+import styles from './sales-orders.module.css';
+
+const EVIDENCE_HINT =
+  "Optional. A file you hold for this order, such as the customer purchase order. It is kept with the order. What the company's evidence policy needs comes from the customer's accepted evidence.";
 
 export interface ConfirmOption {
   /** The quotation's `currentVersionId`: the version the order is confirmed from. */
@@ -35,7 +40,7 @@ export function ConfirmOrderDialog({
   reloadHref,
 }: ConfirmOrderDialogProps) {
   const [version, setVersion] = useState('');
-  const [evidence, setEvidence] = useState('');
+  const [blocked, setBlocked] = useState(false);
   if (!options?.length) {
     return (
       <Dialog
@@ -78,6 +83,7 @@ export function ConfirmOrderDialog({
       action={confirmOrderAction}
       reloadHref={reloadHref}
       size="large"
+      blocked={blocked}
     >
       {(state) => (
         <>
@@ -108,23 +114,26 @@ export function ConfirmOrderDialog({
             )}
           </Field>
 
-          <Field
-            label="Evidence documents (optional)"
-            hint="Document ids, one per line: the customer purchase order, a contract or the signed quotation. If the company's evidence policy needs them and they are missing, the platform refuses and says so."
-            error={state.errors?.evidence}
-          >
-            {(control) => (
-              <Textarea
-                name="evidenceDocumentIds"
-                value={evidence}
-                onChange={(e) => setEvidence(e.target.value)}
-                rows={3}
-                spellCheck={false}
-                autoComplete="off"
-                {...control}
-              />
-            )}
-          </Field>
+          {version === '' ? (
+            <>
+              {/* No file without a quotation: the evidence is uploaded to the version confirmed. */}
+              <input type="hidden" name="evidenceDocumentIds" value="" />
+              <p className={styles.quiet}>Choose a quotation first, then upload its evidence.</p>
+            </>
+          ) : (
+            // Keyed by the version: choosing another quotation remounts the control, which drops
+            // the file staged for the previous one.
+            <EvidenceUpload
+              key={version}
+              kind="quotation-version"
+              ownerId={version}
+              name="evidenceDocumentIds"
+              label="Evidence document (optional)"
+              hint={EVIDENCE_HINT}
+              error={state.errors?.evidence}
+              onBlockingChange={setBlocked}
+            />
+          )}
         </>
       )}
     </TransactionFormDialog>
