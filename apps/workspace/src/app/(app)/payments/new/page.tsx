@@ -4,6 +4,7 @@ import type { CustomerDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { isPayableSettlement } from '@/app/(app)/invoices/_lib/gates';
 import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { getCustomer, listCustomers } from '@/components/p2/customers/api';
 import { Alert } from '@/components/ui/alert';
@@ -12,12 +13,19 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { SearchInput } from '@/components/ui/search-input';
 import { Field } from '@/components/ui/field';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { getInvoice } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { getPermissionCheck } from '@/lib/live-permissions';
+import type { Session } from '@/lib/session';
 
-import { type CustomerOption, PaymentForm } from './payment-form';
+import {
+  type CustomerOption,
+  type FixedCustomer,
+  PaymentForm,
+  type PaymentPrefill,
+} from './payment-form';
 import styles from './payment-form.module.css';
 
 export const metadata: Metadata = { title: 'Record payment · Business OS' };
@@ -37,6 +45,50 @@ const toOption = (c: CustomerDto): CustomerOption => ({
   defaultCurrency: c.defaultCurrency,
 });
 
+/**
+ * What a form opened from an invoice's Record payment starts on (U16-Q8 a): the invoice's currency and the open amount
+ * the API derives for it, read as this person (tenant and grant scoped). The link carries only ids; an amount in the
+ * query is never read. Anything off (another customer's invoice, not a payable document, settled, not found, not
+ * readable, or an API that does not send the open amount) leaves the form blank, without saying why.
+ *
+ * The invoice also fixes the customer (item 3b): its name comes from the invoice detail (the buyer frozen at issue,
+ * else the current name the invoice read carries), so a role with invoice.read and payment.record but no
+ * customer.read can record the payment. No customer read happens on this path.
+ */
+async function invoicePrefill(
+  session: Session,
+  invoiceId: string,
+  customerId: string,
+): Promise<{ prefill: PaymentPrefill; customer: FixedCustomer } | null> {
+  if (invoiceId === '' || customerId === '') return null;
+  try {
+    const detail = await getInvoice(session, invoiceId);
+    const { invoice } = detail;
+    if (invoice.customerId !== customerId || invoice.status !== 'issued') return null;
+    if (invoice.kind !== 'tax_invoice' && invoice.kind !== 'debit_note') return null;
+    if (detail.can?.recordPayment === false) return null;
+    if (!isPayableSettlement(detail.settlement) || detail.openAmount == null) return null;
+    return {
+      prefill: {
+        customerId,
+        currency: invoice.currency,
+        amount: detail.openAmount,
+        invoiceNumber: invoice.number,
+      },
+      customer: {
+        id: customerId,
+        name:
+          invoice.buyer?.legalName ??
+          detail.customerName ??
+          `The customer on ${invoice.number ?? 'this invoice'}`,
+        invoiceId,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 function Crumbs() {
   return (
     <Breadcrumb items={[{ label: 'Payments', href: '/payments' }, { label: 'Record payment' }]} />
@@ -47,14 +99,22 @@ export default async function NewPaymentPage({
   searchParams,
 }: {
   // Next 16: searchParams is a Promise.
-  searchParams: Promise<{ customerId?: string | string[]; q?: string | string[] }>;
+  searchParams: Promise<{
+    customerId?: string | string[];
+    invoiceId?: string | string[];
+    q?: string | string[];
+  }>;
 }) {
   const query = await searchParams;
   const rawCustomer = first(query.customerId);
   const customerId = rawCustomer !== undefined && UUID.test(rawCustomer) ? rawCustomer : '';
+  const rawInvoice = first(query.invoiceId);
+  const invoiceId =
+    customerId !== '' && rawInvoice !== undefined && UUID.test(rawInvoice) ? rawInvoice : '';
   const q = (first(query.q) ?? '').trim().slice(0, 100);
   const params = new URLSearchParams();
   if (customerId !== '') params.set('customerId', customerId);
+  if (invoiceId !== '') params.set('invoiceId', invoiceId);
   if (q !== '') params.set('q', q);
   const here = params.size > 0 ? `/payments/new?${params.toString()}` : '/payments/new';
   const session = await requireStaffSession(here);
@@ -74,6 +134,29 @@ export default async function NewPaymentPage({
   // Never throws: a failed read gives the default list. It only marks which currencies are switched off;
   // a payment is accepted in any of them (U16-Q1).
   const enabledCurrencies = loadEnabledCurrencies(session);
+
+  // Opened from an invoice that still owes: the invoice names the customer, so the picker (and its customer.read) is
+  // not needed and the customer cannot be changed here. Anything off falls back to the standalone form below.
+  const fromInvoice = await invoicePrefill(session, invoiceId, customerId);
+  if (fromInvoice !== null) {
+    return (
+      <Page>
+        <Crumbs />
+        <PaymentForm
+          // One key per render of this page: a double click or a retry records the payment once.
+          idempotencyKey={randomUUID()}
+          today={todayInKathmandu()}
+          customers={[]}
+          enabledCurrencies={await enabledCurrencies}
+          initialCustomerId={fromInvoice.customer.id}
+          fixedCustomer={fromInvoice.customer}
+          prefill={fromInvoice.prefill}
+          reloadHref={here}
+        />
+      </Page>
+    );
+  }
+
   let customers: CustomerOption[] = [];
   let truncated = false;
   let problem: { message: string; status: number } | null = null;
@@ -96,6 +179,8 @@ export default async function NewPaymentPage({
       // Not found or not readable: the picker simply starts empty.
     }
   }
+
+  const initialCustomerId = customers.some((c) => c.id === customerId) ? customerId : '';
 
   const showSearch = q !== '' || truncated;
 
@@ -180,7 +265,7 @@ export default async function NewPaymentPage({
               today={todayInKathmandu()}
               customers={customers}
               enabledCurrencies={await enabledCurrencies}
-              initialCustomerId={customers.some((c) => c.id === customerId) ? customerId : ''}
+              initialCustomerId={initialCustomerId}
               reloadHref={here}
             >
               {search}

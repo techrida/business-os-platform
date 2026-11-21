@@ -32,6 +32,31 @@ export interface CustomerOption {
 }
 
 /**
+ * Where a form opened from an invoice starts (U16-Q8 a): the page read the invoice from the API, so the amount is the
+ * open amount the server reports, never a figure from the link. It is only a starting value: the amount stays
+ * editable for a part payment, and choosing another customer drops it while untouched.
+ */
+export interface PaymentPrefill {
+  /** The invoice's customer, the one the picker starts on. */
+  customerId: string;
+  currency: Currency;
+  /** The invoice's open amount as the API sent it (a decimal string). */
+  amount: string;
+  invoiceNumber: string | null;
+}
+
+/**
+ * The customer a form opened from an invoice pays (item 3b), resolved on the server from that invoice. Shown read-only
+ * by name: the form reads no customer list, so a role without customer.read can record the payment. The action reads
+ * the invoice again and pays its customer, whatever the posted customer field says.
+ */
+export interface FixedCustomer {
+  id: string;
+  name: string;
+  invoiceId: string;
+}
+
+/**
  * The currency the form starts on for a customer: their usual one while it is enabled in Settings,
  * else blank when that usual one is switched off (the person chooses; no silent move to NPR), else
  * NPR for a customer with no usual currency.
@@ -93,6 +118,8 @@ export function PaymentForm({
   customers,
   enabledCurrencies,
   initialCustomerId,
+  prefill = null,
+  fixedCustomer = null,
   reloadHref,
   children,
 }: {
@@ -104,6 +131,10 @@ export function PaymentForm({
   /** The currencies enabled in Settings (`currency.enabled`), NPR first. */
   enabledCurrencies: readonly Currency[];
   initialCustomerId: string;
+  /** Set when the form was opened from an invoice that still owes; null or left out starts blank. */
+  prefill?: PaymentPrefill | null;
+  /** Set when the invoice fixes the customer: no picker, and the customer cannot be changed. */
+  fixedCustomer?: FixedCustomer | null;
   reloadHref: string;
   children?: ReactNode;
 }) {
@@ -116,14 +147,17 @@ export function PaymentForm({
 
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [customerId, setCustomerId] = useState(initialCustomerId);
+  // An invoice's own currency is used as it is, even when switched off in Settings: a payment is still accepted in it.
   const [currency, setCurrency] = useState<string>(() =>
-    startCurrency(
-      customers.find((c) => c.id === initialCustomerId)?.defaultCurrency,
-      enabledCurrencies,
-    ),
+    prefill !== null
+      ? prefill.currency
+      : startCurrency(
+          customers.find((c) => c.id === initialCustomerId)?.defaultCurrency,
+          enabledCurrencies,
+        ),
   );
   const [currencyChosen, setCurrencyChosen] = useState(false);
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(prefill?.amount ?? '');
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [receivedOn, setReceivedOn] = useState(today);
   const [bankReference, setBankReference] = useState('');
@@ -153,6 +187,8 @@ export function PaymentForm({
     setCustomerId(id);
     const fallback = customers.find((c) => c.id === id)?.defaultCurrency;
     if (!currencyChosen) setCurrency(startCurrency(fallback, enabledCurrencies));
+    // The invoice's open amount belongs to its customer: drop it unless the person has typed their own.
+    if (prefill !== null && id !== prefill.customerId && amount === prefill.amount) setAmount('');
   }
 
   async function addFiles(files: FileList | null) {
@@ -214,6 +250,16 @@ export function PaymentForm({
         ? `This customer usually pays in ${CURRENCY_NAME[usualCurrency]}, which is switched off in Settings. Payments in it are still recorded.`
         : undefined;
 
+  // The open amount is in the invoice's currency: in any other currency the same figure is not what the invoice owes.
+  const showsOpenAmount =
+    prefill !== null &&
+    customerId === prefill.customerId &&
+    currency === prefill.currency &&
+    amount === prefill.amount;
+  const amountHint = showsOpenAmount
+    ? `The open amount of ${prefill?.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
+    : 'The cash that arrived, for example 20,18,180.00.';
+
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
 
@@ -238,6 +284,9 @@ export function PaymentForm({
         <input type="hidden" name="idempotencyKey" value={state.key} />
         {/* The select below is locked while proof is held, and a locked select sends nothing. */}
         <input type="hidden" name="customerId" value={customerId} />
+        {fixedCustomer !== null ? (
+          <input type="hidden" name="invoiceId" value={fixedCustomer.invoiceId} />
+        ) : null}
         {proofs.map((p) => (
           <input key={p.documentId} type="hidden" name="proofDocumentId" value={p.documentId} />
         ))}
@@ -299,32 +348,44 @@ export function PaymentForm({
           description="What the customer paid, as it appears on the bank slip."
         >
           <div className={styles.form}>
-            <Field
-              label="Customer"
-              hint={
-                customerLocked
-                  ? 'Remove the proof files below to change the customer.'
-                  : 'Proof is stored against this customer.'
-              }
-              error={fe.customerId}
-            >
-              {(control) => (
-                <Select
-                  value={customerId}
-                  disabled={customerLocked}
-                  onChange={(e) => chooseCustomer(e.target.value)}
-                  required
-                  {...control}
-                >
-                  <option value="">Choose a customer</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.number})
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+            {fixedCustomer !== null ? (
+              <Field
+                label="Customer"
+                hint="From the invoice. Proof is stored against this customer. To pay for another customer, record the payment from Payments."
+                error={fe.customerId}
+              >
+                {(control) => (
+                  <Input value={fixedCustomer.name} readOnly autoComplete="off" {...control} />
+                )}
+              </Field>
+            ) : (
+              <Field
+                label="Customer"
+                hint={
+                  customerLocked
+                    ? 'Remove the proof files below to change the customer.'
+                    : 'Proof is stored against this customer.'
+                }
+                error={fe.customerId}
+              >
+                {(control) => (
+                  <Select
+                    value={customerId}
+                    disabled={customerLocked}
+                    onChange={(e) => chooseCustomer(e.target.value)}
+                    required
+                    {...control}
+                  >
+                    <option value="">Choose a customer</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.number})
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
 
             <div className={styles.grid}>
               <Field label="Currency" hint={currencyHint} error={fe.currency}>
@@ -334,7 +395,11 @@ export function PaymentForm({
                     required
                     value={currency}
                     onChange={(e) => {
-                      setCurrency(e.target.value);
+                      const next = e.target.value;
+                      // The untouched open amount is a figure in the invoice's currency: in another currency the
+                      // person enters what arrived. An amount they typed is never cleared.
+                      if (showsOpenAmount && next !== prefill?.currency) setAmount('');
+                      setCurrency(next);
                       setCurrencyChosen(true);
                     }}
                     {...control}
@@ -348,11 +413,7 @@ export function PaymentForm({
                   </Select>
                 )}
               </Field>
-              <Field
-                label="Amount received"
-                hint="The cash that arrived, for example 20,18,180.00."
-                error={fe.amount}
-              >
+              <Field label="Amount received" hint={amountHint} error={fe.amount}>
                 {(control) => (
                   <Input
                     name="amount"

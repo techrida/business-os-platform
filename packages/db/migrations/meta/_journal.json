@@ -685,6 +685,62 @@
       "idx": 97,
       "version": "7",
       "when": 1783000000143,
+      "tag": "0161_approval_actions_seq",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1783000000144,
+      "tag": "0162_opportunity_stage_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1783000000145,
+      "tag": "0175_sales_vat_register_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1783000000146,
+      "tag": "0176_party_import_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1783000000147,
+      "tag": "0177_invoices_issue_date_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1783000000148,
+      "tag": "0178_accountant_record_acceptance",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1783000000149,
+      "tag": "0170_credit_override_order_value",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1783000000150,
+      "tag": "0171_credit_override_order_value_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1783000000151,
       "tag": "0165_idempotency_keys_entity_scope",
       "breakpoints": true
     }

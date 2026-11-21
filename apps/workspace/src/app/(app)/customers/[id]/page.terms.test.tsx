@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getCustomerDetail: vi.fn(),
   listContacts: vi.fn(),
   listVerificationCases: vi.fn(),
+  listCustomerPaymentTerms: vi.fn().mockResolvedValue([]),
   listCustomerOwners: vi.fn(),
 }));
 
@@ -30,9 +31,6 @@ vi.mock('@/lib/bff', () => ({
 }));
 vi.mock('@/lib/display-settings', () => ({ getNumberSystems: vi.fn().mockResolvedValue({}) }));
 vi.mock('@/lib/business-labels', () => ({ userNames: vi.fn().mockResolvedValue(new Map()) }));
-vi.mock('@/components/p2/quote-builder/api', () => ({
-  listPaymentTerms: vi.fn().mockResolvedValue([]),
-}));
 vi.mock('@/components/p2/customers/actions', () => ({ addContactAction: vi.fn() }));
 vi.mock('@/components/p2/customers/contact-form', () => ({
   ContactForm: () => <span>Add contact</span>,
@@ -111,6 +109,29 @@ describe('customer terms by legal entity', () => {
     expect(text).toContain('Techrida Nepal Pvt. Ltd.');
     expect(text.match(/Legal entity name unavailable/g)?.length).toBe(1);
     expect(text).not.toContain(ENTITY);
+  });
+
+  it('shows credit limits in NPR, the currency they are held in, even for a customer that trades in USD', async () => {
+    api.getCustomerDetail.mockResolvedValue(
+      customer({
+        defaultCurrency: 'USD',
+        can: { write: true, readVerification: true, openVerification: true },
+        accounts: [
+          {
+            partyId: ID,
+            organizationId: ENTITY,
+            organizationName: 'Techrida Nepal Pvt. Ltd.',
+            paymentTermId: null,
+            creditLimit: '50000.00',
+            version: 1,
+          },
+        ],
+      }),
+    );
+    const text = await render();
+    expect(text).toMatch(/NPR\s*50,000\.00/);
+    expect(text).not.toMatch(/USD\s*50,000/);
+    expect(text).toContain('Credit limits are held in NPR');
   });
 });
 

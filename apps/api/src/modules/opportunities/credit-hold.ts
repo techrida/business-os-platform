@@ -1,9 +1,11 @@
-// A deal's credit hold (F1-Q20, F1-Q26; Kuu R4a Q1b). The deal is held when what the customer owes the acting
-// entity now plus the value of the order the deal is about to become is more than the limit that entity gave it
-// (`party_accounts.credit_limit`, NPR): a customer at 90,000 of a 100,000 limit is held for a 20,000 order. Derived
-// from the ledger and the deal's accepted quotation on every read, never stored, so a payment or a new invoice
-// changes it at once. The one rule for the opportunity's flag, the credit-hold page, the override and the sales
-// order gate: they must agree, or a deal the gate holds could not be overridden.
+// A deal's credit hold (F1-Q20, F1-Q26; Kuu R4a Q1b, R5 FU4). The deal is held when what the customer owes the acting
+// entity now (open receivables), plus what its confirmed sales orders have not invoiced yet, plus the value of the
+// order the deal is about to become, is more than the limit that entity gave it (`party_accounts.credit_limit`,
+// NPR): a customer at 90,000 of a 100,000 limit is held for a 20,000 order, and so is one with a confirmed 90,000
+// order that no invoice covers yet. Derived from the ledger, the orders and the deal's accepted quotation on every
+// read, never stored, so a payment or a new invoice changes it at once. The one rule for the opportunity's flag,
+// the credit-hold page, the override and the sales order gate: they must agree, or a deal the gate holds could not
+// be overridden.
 import Decimal from 'decimal.js';
 import { sql } from 'drizzle-orm';
 
@@ -14,9 +16,14 @@ export interface CreditPosition {
   creditLimit: string | null;
   /** Open receivables: NPR, two decimals; may be negative when the customer is in credit. */
   exposure: string;
+  /**
+   * The not yet invoiced part of the customer's confirmed or completed sales orders with this entity: NPR, two
+   * decimals, never negative. See uninvoicedOrderBalance.
+   */
+  uninvoiced: string;
   /** The pending order's gross NPR value (with VAT), two decimals; '0.00' when the deal has none pending. */
   orderValue: string;
-  /** exposure + orderValue: what `held` compares with the limit. */
+  /** exposure + uninvoiced + orderValue: what `held` compares with the limit. */
   exposureWithOrder: string;
   held: boolean;
 }
@@ -50,6 +57,54 @@ export function orderValueOf(version: VersionNprSnapshot): string {
   const amountNpr = version.amountNpr ?? (version.currency === 'NPR' ? version.total : null);
   if (amountNpr === null) throw new Error('quotation version has no NPR snapshot');
   return new Decimal(amountNpr).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+}
+
+/**
+ * Whether an override given for an order of `overrideOrderValue` still covers an order of `orderValue`: a later,
+ * bigger order needs its own override. An override with no recorded value (given before the value was kept) covers
+ * nothing, so it fails closed: the deal needs a new override.
+ */
+export function overrideCovers(overrideOrderValue: string | null, orderValue: string): boolean {
+  return (
+    overrideOrderValue !== null && new Decimal(overrideOrderValue).gte(new Decimal(orderValue))
+  );
+}
+
+/**
+ * What the customer's confirmed or completed sales orders with this entity have not billed yet (R5 FU4): per order,
+ * its total less its issued tax invoices in the order's own currency (an invoice credited in full counts as not
+ * billed, as its schedule line is free again), never below zero, converted to NPR at the order's rate and rounded
+ * half-up to two decimals (D22), then summed. The remainder is worked out in the order's currency because an
+ * invoice freezes its own NPR rate when it is issued: subtracting NPR snapshots taken at two rates would leave a
+ * phantom balance (or hide a real one) on every foreign-currency order. A tax invoice enters the receivables when
+ * it is issued and an order counts here only for what no issued invoice covers, so nothing is counted twice; a
+ * draft, submitted or proforma invoice is no receivable and does not reduce it. A draft order (made on acceptance,
+ * F1-Q25) is not confirmed and counts through the quotation's pending value instead (pendingOrderValue).
+ */
+export async function uninvoicedOrderBalance(
+  tx: DbTransaction,
+  scope: TxScope,
+  customerPartyId: string,
+): Promise<string> {
+  const rows = await tx.execute<{ uninvoiced: string }>(sql`
+    SELECT coalesce(sum(round(greatest(so.total - coalesce(billed.amount, 0), 0) * so.fx_rate, 2)), 0)::numeric(18, 2)::text
+             AS uninvoiced
+      FROM app.sales_orders so
+      LEFT JOIN LATERAL (
+             SELECT sum(i.total) AS amount
+               FROM app.invoices i
+              WHERE i.tenant_id = so.tenant_id
+                AND i.organization_id = so.organization_id
+                AND i.sales_order_id = so.id
+                AND i.kind = 'tax_invoice'
+                AND i.status = 'issued'
+                AND i.currency = so.currency
+                AND i.credited_in_full_at IS NULL) billed ON true
+     WHERE so.tenant_id = ${scope.tenantId}::uuid
+       AND so.organization_id = ${scope.organizationId}::uuid
+       AND so.customer_party_id = ${customerPartyId}::uuid
+       AND so.status IN ('confirmed', 'completed')`);
+  return new Decimal(rows.rows[0]?.uninvoiced ?? '0').toFixed(2);
 }
 
 /**
@@ -130,11 +185,13 @@ export async function creditPosition(
   const exposure = new Decimal(exposureRows.rows[0]?.exposure ?? '0').toFixed(2);
   const creditLimit = limitRows.rows[0]?.credit_limit ?? null;
   const limit = creditLimit === null ? null : new Decimal(creditLimit).toFixed(2);
+  const uninvoiced = await uninvoicedOrderBalance(tx, scope, customerPartyId);
   const orderValue = await pendingOrderValue(tx, scope, pending);
-  const exposureWithOrder = new Decimal(exposure).plus(orderValue).toFixed(2);
+  const exposureWithOrder = new Decimal(exposure).plus(uninvoiced).plus(orderValue).toFixed(2);
   return {
     creditLimit: limit,
     exposure,
+    uninvoiced,
     orderValue,
     exposureWithOrder,
     held: isOverLimit(limit, exposureWithOrder),

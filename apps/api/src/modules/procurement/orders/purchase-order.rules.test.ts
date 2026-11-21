@@ -5,12 +5,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AmendPurchaseOrderBodySchema,
+  ChangePurchaseOrderVendorBodySchema,
   ListPurchaseOrdersQuerySchema,
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
+  PO_VENDOR_CHANGE_NOT_DRAFT,
   amendLines,
   amendmentApprovalReasons,
   shortCloseCancelled,
+  vendorChangePatch,
+  vendorChangeRefusal,
   versionTotals,
   type PoLineState,
 } from './purchase-order.rules';
@@ -197,5 +201,88 @@ describe('ListPurchaseOrdersQuerySchema', () => {
     );
     expect(ListPurchaseOrdersQuerySchema.safeParse({ limit: '101' }).success).toBe(false);
     expect(ListPurchaseOrdersQuerySchema.safeParse({ vendorId: 'x' }).success).toBe(false);
+  });
+});
+
+describe('vendor change on a draft (F1-Q40 a)', () => {
+  const A = '11111111-1111-4111-8111-111111111111';
+  const B = '22222222-2222-4222-8222-222222222222';
+
+  it('lets a draft change to another vendor', () => {
+    expect(vendorChangeRefusal({ status: 'draft', vendorId: A, nextVendorId: B })).toBeNull();
+  });
+
+  it.each([
+    'issued',
+    'partially_received',
+    'fully_received',
+    'amendment_pending',
+    'cancelled',
+  ] as const)('refuses a %s order with the cancel-and-recreate message', (status) => {
+    expect(vendorChangeRefusal({ status, vendorId: A, nextVendorId: B })).toEqual({
+      code: 'PO_VENDOR_CHANGE_NOT_DRAFT',
+      message: 'Cancel this order and create a new one',
+    });
+  });
+
+  it('refuses the same vendor, and the status refusal wins on a non-draft', () => {
+    expect(vendorChangeRefusal({ status: 'draft', vendorId: A, nextVendorId: A })).toMatchObject({
+      code: 'PO_VENDOR_UNCHANGED',
+    });
+    expect(vendorChangeRefusal({ status: 'issued', vendorId: A, nextVendorId: A })).toBe(
+      PO_VENDOR_CHANGE_NOT_DRAFT,
+    );
+  });
+
+  it('takes the new terms, zeroes the advance and clears the quotation link together', () => {
+    const patch = vendorChangePatch(
+      {
+        vendorId: A,
+        paymentTermsDays: 30,
+        advancePercent: '25.0000',
+        rfqId: 'rfq-1',
+        vendorQuotationId: 'vq-1',
+      },
+      { vendorId: B, paymentTermsDays: 45 },
+    );
+    expect(patch.set).toEqual({
+      vendorId: B,
+      paymentTermsDays: 45,
+      advancePercent: '0',
+      rfqId: null,
+      vendorQuotationId: null,
+    });
+    expect(patch.before).toEqual({
+      vendorId: A,
+      paymentTermsDays: 30,
+      advancePercent: '25.0000',
+      rfqId: 'rfq-1',
+      vendorQuotationId: 'vq-1',
+    });
+    expect(patch.cleared).toEqual(['advancePercent', 'rfqId', 'vendorQuotationId']);
+  });
+
+  it('names nothing cleared on a draft without a link or advance', () => {
+    const patch = vendorChangePatch(
+      {
+        vendorId: A,
+        paymentTermsDays: 0,
+        advancePercent: '0.0000',
+        rfqId: null,
+        vendorQuotationId: null,
+      },
+      { vendorId: B, paymentTermsDays: 0 },
+    );
+    expect(patch.cleared).toEqual([]);
+    expect(patch.set).toMatchObject({ rfqId: null, vendorQuotationId: null });
+  });
+
+  it('takes a vendor id only', () => {
+    expect(ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: A }).success).toBe(true);
+    expect(ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: 'x' }).success).toBe(false);
+    expect(ChangePurchaseOrderVendorBodySchema.safeParse({}).success).toBe(false);
+    expect(
+      ChangePurchaseOrderVendorBodySchema.safeParse({ vendorId: A, paymentTermsDays: 5 }).success,
+    ).toBe(false);
   });
 });

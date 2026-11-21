@@ -23,6 +23,9 @@ import {
   type MarkBillableBody,
   type ReopenInvoiceBody,
   SALES_ORDER_STATUSES,
+  type SalesVatRegister,
+  SalesVatRegisterQuerySchema,
+  SalesVatRegisterSchema,
   type SalesOrderDetail,
   SalesOrderDetailSchema,
   type SalesOrderListItem,
@@ -490,7 +493,7 @@ export type BillingFailureKind =
   | 'period_mismatch' // PERIOD_FY_MISMATCH
   | 'stale_fx' // fx_rate_stale
   | 'evidence' // evidence_policy_unmet, invalid_evidence_document, evidence_required
-  | 'credit_hold' // credit_hold: the customer is over its credit limit (F1-Q20/F1-Q26)
+  | 'credit_hold' // credit_hold: receivables, uninvoiced orders and this order are over the credit limit (F1-Q20/F1-Q26)
   | 'infected' // document_infected: an evidence file the scan found infected (TR-Q12e)
   | 'in_progress' // the first request with this key has not settled
   | 'stale' // the row version moved: reload
@@ -591,7 +594,7 @@ export function describeBillingFailure(err: unknown): BillingFailure {
       case 'credit_hold':
         return final(
           'credit_hold',
-          'This customer is over its credit limit, so the sales order is on hold. Ask someone with credit override access to override the credit hold on the opportunity, then confirm again.',
+          'With its open receivables, its confirmed orders not yet invoiced and this order, this customer is over its credit limit, so the sales order is on hold. Ask someone with credit override access to override the credit hold on the opportunity, then confirm again.',
         );
       default:
         return { ...base, kind: 'stale', definite: true };
@@ -620,4 +623,20 @@ export function describeBillingFailure(err: unknown): BillingFailure {
     };
   }
   return { ...base, kind: 'error' };
+}
+
+/** The sales VAT register of one period (`from` and `to` are inclusive AD issue dates). */
+export const SalesVatPeriodSchema = SalesVatRegisterQuerySchema;
+
+export function getSalesVatRegister(
+  session: Session,
+  from: string,
+  to: string,
+): Promise<SalesVatRegister> {
+  const period = SalesVatPeriodSchema.parse({ from, to });
+  return get(
+    session,
+    `/v1/invoices/vat-register?${new URLSearchParams(period)}`,
+    SalesVatRegisterSchema,
+  );
 }

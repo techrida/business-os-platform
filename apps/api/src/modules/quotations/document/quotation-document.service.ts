@@ -21,6 +21,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { and, eq, gte } from 'drizzle-orm';
 
@@ -32,6 +33,7 @@ import { READ_ONLY, withTx } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { DraftingCaller } from '../drafting/drafting.caller';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
+import { QuotationRenderNudge } from '../render/quotation-render.nudge';
 import { MAX_RENDER_ATTEMPTS, quotationRenderGivenUp } from '../render/render-retry';
 
 /** What the link needs of a version: the entity it lives in and its rendered document, null when none. */
@@ -163,6 +165,8 @@ export class QuotationDocumentService {
     private readonly store: QuotationDocumentStore,
     private readonly caller: DraftingCaller,
     private readonly audit: AuditService,
+    // Optional so a hand-built service (tests) keeps its argument list; without it a Retry waits for the sweep.
+    @Optional() private readonly renderNudge?: QuotationRenderNudge,
   ) {}
 
   /**
@@ -236,6 +240,8 @@ export class QuotationDocumentService {
         after: { versionId, renderState: 'none', renderAttempts: 0 },
       });
     });
+    // After the commit: render now instead of on the next one-minute sweep. Never throws.
+    await this.renderNudge?.nudge(scope, versionId);
     return { state: 'queued' };
   }
 }

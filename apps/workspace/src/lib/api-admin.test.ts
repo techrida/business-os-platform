@@ -327,6 +327,40 @@ describe('workflows, groups and delegations', () => {
     expect(call.body).toBeUndefined();
   });
 
+  it('reads publishSoleEligible and publishes the sole eligible draft with exactly { reason }', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json([
+        {
+          id: UUID_A,
+          key: 'test_memo',
+          name: 'Test memo',
+          documentType: 'test_memo',
+          currentVersionId: null,
+          versions: [
+            {
+              id: UUID_B,
+              version: 2,
+              status: 'draft',
+              spec,
+              publishedAt: null,
+              savedByCaller: true,
+              publishSoleEligible: true,
+            },
+          ],
+        },
+      ]),
+    );
+    const [workflow] = await listWorkflows(session);
+    expect(workflow?.versions[0]?.publishSoleEligible).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(
+      json({ id: UUID_B, version: 2, status: 'published', spec, publishedAt: null }),
+    );
+    await publishWorkflowVersion(session, 'test_memo', 2, 'Only founder on the team');
+    expect(lastCall().url.pathname).toBe('/v1/admin/workflows/test_memo/versions/2/publish');
+    expect(lastCall().body).toEqual({ reason: 'Only founder on the team' });
+  });
+
   it('lists groups and delegations as bare arrays', async () => {
     fetchMock.mockResolvedValueOnce(
       json([{ id: UUID_A, key: 'ops', name: 'Ops', memberUserIds: [UUID_B] }]),

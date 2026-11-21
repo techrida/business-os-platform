@@ -88,11 +88,13 @@ describe('NAV_GROUPS', () => {
       ['Customers', '/customers'],
       ['Leads', '/leads'],
       ['Opportunities', '/opportunities'],
+      ['Lost deals', '/reports/lost-deals'],
       ['Quotations', '/quotations'],
       ['Verification', '/verification'],
       ['Activities & Tasks', '/activities'],
       ['Sales Orders', '/sales-orders'],
       ['Invoices', '/invoices'],
+      ['Sales VAT register', '/invoices/vat-register'],
       ['Payments', '/payments'],
       ['Receivables', '/receivables/aging'],
       ['Purchase requests', '/procurement/requests'],
@@ -115,6 +117,7 @@ describe('NAV_GROUPS', () => {
     expect(permissionByLabel).toEqual({
       'Sales Orders': 'sales_order.read',
       Invoices: 'invoice.read',
+      'Sales VAT register': 'vat.sales.read',
       Payments: 'payment.read',
       Receivables: 'ar.read',
     });
@@ -135,6 +138,7 @@ describe('NAV_GROUPS', () => {
       Customers: 'customer.read',
       Leads: 'crm.lead.read',
       Opportunities: 'crm.opportunity.read',
+      'Lost deals': 'crm.opportunity.read',
       Quotations: 'quotation.read',
       Verification: 'verification.read',
       'Activities & Tasks': 'crm.lead.read',
@@ -356,6 +360,7 @@ describe('visibleGroups with permissions', () => {
       'Customers',
       'Leads',
       'Opportunities',
+      'Lost deals',
       'Quotations',
       'Verification',
       'Activities & Tasks',
@@ -425,5 +430,11 @@ describe('searchNavGroups', () => {
       searchNavGroups(visibleGroups(true), 'settings')[0]?.items.map((item) => item.label),
     ).toEqual(['Settings']);
     expect(searchNavGroups(NAV_GROUPS, 'department')).toEqual([]);
+  });
+
+  it('gives a nested page to its own item only (the sales VAT register is not also Invoices)', () => {
+    expect(ownsPath('/invoices', '/invoices/abc')).toBe(true);
+    expect(ownsPath('/invoices', '/invoices/vat-register')).toBe(false);
+    expect(ownsPath('/invoices/vat-register', '/invoices/vat-register')).toBe(true);
   });
 });

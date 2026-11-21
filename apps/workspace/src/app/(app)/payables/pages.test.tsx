@@ -966,3 +966,23 @@ describe('expense accounts on bills', () => {
     expect(out).not.toContain('href="/settings/company-accounts"');
   });
 });
+
+describe('the vendor on a bill', () => {
+  const open = () => html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+
+  it('links the vendor for someone who may read vendors, and names it as plain text otherwise', async () => {
+    api.getBill.mockResolvedValue({ ...header, lines: [line] });
+    grants.live = new Map([
+      ['payables.bill.read', 'all'],
+      ['vendor.read', 'all'],
+    ]);
+    const reader = await open();
+    expect(reader).toContain(`href="/vendors/${VENDOR}"`);
+    expect(reader).toContain('Himal Traders');
+
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    const other = await open();
+    expect(other).toContain('Himal Traders');
+    expect(other).not.toContain(`/vendors/${VENDOR}`);
+  });
+});

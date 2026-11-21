@@ -2,7 +2,7 @@
 import { act, useState } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { click, mountForm, submit } from '@/test/form-interactions';
+import { choose, click, mountForm, submit } from '@/test/form-interactions';
 
 const mocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
@@ -65,7 +65,7 @@ it('announces a successful move even though the card re-renders in its new colum
       setColumns(after);
       return Promise.resolve({ ok: true, movedTo: 'Contacted' });
     }
-    return <Board columns={columns} action={action} noun="lead" />;
+    return <Board columns={columns} action={action} noun="opportunity" />;
   }
 
   const mounted = await mountForm(<Harness />);
@@ -85,13 +85,13 @@ it('announces a successful move even though the card re-renders in its new colum
 
 it('toasts a refused move once, from the board only', async () => {
   const action = vi.fn((): Promise<MoveState> =>
-    Promise.resolve({ error: 'You cannot move this lead.' }),
+    Promise.resolve({ error: 'You cannot move this opportunity.' }),
   );
-  const mounted = await mountForm(<Board columns={before} action={action} noun="lead" />);
+  const mounted = await mountForm(<Board columns={before} action={action} noun="opportunity" />);
   try {
     await submit(mounted.container);
     expect(action).toHaveBeenCalledOnce();
-    expect(mocks.error).toHaveBeenCalledExactlyOnceWith('You cannot move this lead.', {
+    expect(mocks.error).toHaveBeenCalledExactlyOnceWith('You cannot move this opportunity.', {
       id: `board-move-${CARD.id}`,
     });
     expect(mocks.success).not.toHaveBeenCalled();
@@ -151,69 +151,297 @@ it('excludes Lost from Move options, hides Move when only Lost was passed, and s
   }
 });
 
-it('refuses drops onto the Lost column while allowing drops onto valid columns', async () => {
-  const columns: BoardColumnData[] = [
-    {
-      stage: 'new',
-      label: 'New',
-      cards: [
-        {
-          ...CARD,
-          moves: [
-            { stage: 'contacted', label: 'Contacted', needsReason: false },
-            { stage: 'lost', label: 'Lost', needsReason: true },
-          ],
-        },
-      ],
-    },
-    { stage: 'contacted', label: 'Contacted', cards: [] },
-    { stage: 'lost', label: 'Lost', note: 'Mark lost on the record page', cards: [] },
-  ];
+const dragEvent = (type: string) => {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { setData: vi.fn(), effectAllowed: '' },
+  });
+  return event;
+};
+
+const column = (root: HTMLElement, stage: string) =>
+  root.querySelector(`#col-${stage}`)!.closest('section')!;
+
+function dragTo(card: Element, target: Element) {
+  act(() => {
+    card.dispatchEvent(dragEvent('dragstart'));
+  });
+  const over = dragEvent('dragover');
+  act(() => {
+    target.dispatchEvent(over);
+  });
+  act(() => {
+    target.dispatchEvent(dragEvent('drop'));
+  });
+  return over;
+}
+
+const dialog = () => document.querySelector('[role="dialog"]');
+const footerButton = (label: string) =>
+  [...(dialog()?.querySelectorAll('footer button') ?? [])].find((b) => b.textContent === label) ??
+  null;
+
+async function settle() {
+  for (let i = 0; i < 3; i += 1) await act(() => Promise.resolve());
+}
+
+const CONTACT_REQUIRED = 'Log a call, email or meeting before moving this lead to Contacted.';
+
+const withHold: BoardColumnData[] = [
+  {
+    stage: 'new',
+    label: 'New',
+    cards: [
+      {
+        ...CARD,
+        moves: [
+          { stage: 'contacted', label: 'Contacted', needsReason: false },
+          { stage: 'lost', label: 'Lost', needsReason: true },
+          { stage: 'on_hold', label: 'On Hold', needsReason: true },
+        ],
+      },
+    ],
+  },
+  { stage: 'contacted', label: 'Contacted', cards: [] },
+  { stage: 'on_hold', label: 'On Hold', cards: [] },
+  { stage: 'lost', label: 'Lost', note: 'Mark lost on the record page', cards: [] },
+];
+
+it('refuses drops onto the Lost column while a drop onto On Hold opens Move with the stage chosen', async () => {
   const action = vi.fn((): Promise<MoveState> => Promise.resolve({}));
-  const mounted = await mountForm(<Board columns={columns} action={action} noun="lead" />);
+  const mounted = await mountForm(<Board columns={withHold} action={action} noun="lead" />);
   try {
     const card = mounted.container.querySelector('li')!;
-    const lostColumn = mounted.container.querySelector('#col-lost')!.closest('section')!;
-    const contactedColumn = mounted.container.querySelector('#col-contacted')!.closest('section')!;
 
-    const dragEvent = (type: string) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'dataTransfer', {
-        value: { setData: vi.fn(), effectAllowed: '' },
-      });
-      return event;
-    };
-
-    act(() => {
-      card.dispatchEvent(dragEvent('dragstart'));
-    });
-    const overLost = dragEvent('dragover');
-    act(() => {
-      lostColumn.dispatchEvent(overLost);
-    });
+    const overLost = dragTo(card, column(mounted.container, 'lost'));
     expect(overLost.defaultPrevented).toBe(false);
-    act(() => {
-      lostColumn.dispatchEvent(dragEvent('drop'));
-    });
     expect(card.querySelector('details')?.open).toBe(false);
 
-    act(() => {
-      card.dispatchEvent(dragEvent('dragstart'));
-    });
-    const overContacted = dragEvent('dragover');
-    act(() => {
-      contactedColumn.dispatchEvent(overContacted);
-    });
-    expect(overContacted.defaultPrevented).toBe(true);
-    act(() => {
-      contactedColumn.dispatchEvent(dragEvent('drop'));
-    });
+    const overHold = dragTo(card, column(mounted.container, 'on_hold'));
+    expect(overHold.defaultPrevented).toBe(true);
     expect(card.querySelector('details')?.open).toBe(true);
-    expect(card.querySelector<HTMLInputElement>('input[name="stage"]')?.value).toBe('contacted');
+    expect(card.querySelector<HTMLInputElement>('input[name="stage"]')?.value).toBe('on_hold');
     await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     expect(document.activeElement).toBe(card.querySelector('button[aria-haspopup="listbox"]'));
+    expect(dialog()).toBeNull();
     expect(action).not.toHaveBeenCalled();
   } finally {
     await mounted.unmount();
+  }
+});
+
+it('a lead dropped on Contacted opens Mark contacted instead of moving, and Cancel leaves the card', async () => {
+  const action = vi.fn((): Promise<MoveState> => Promise.resolve({ ok: true }));
+  const mounted = await mountForm(<Board columns={withHold} action={action} noun="lead" />);
+  try {
+    const card = mounted.container.querySelector('li')!;
+    const over = dragTo(card, column(mounted.container, 'contacted'));
+    expect(over.defaultPrevented).toBe(true);
+
+    expect(dialog()?.textContent).toContain(
+      'LEAD-1 will move from New to Contacted after you log your call, email or meeting.',
+    );
+    expect(card.querySelector('details')?.open).toBe(false);
+    expect(action).not.toHaveBeenCalled();
+
+    await click(footerButton('Cancel'));
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(action).not.toHaveBeenCalled();
+    expect(column(mounted.container, 'new').textContent).toContain(CARD.title);
+    expect(column(mounted.container, 'contacted').textContent).not.toContain(CARD.title);
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('saving Mark contacted after a drop sends the logged contact and the board shows the moved card', async () => {
+  const sent: FormData[] = [];
+  function Harness() {
+    const [columns, setColumns] = useState(before);
+    function action(_prev: MoveState, form: FormData): Promise<MoveState> {
+      sent.push(form);
+      setColumns(after);
+      return Promise.resolve({ ok: true, movedTo: 'Contacted' });
+    }
+    return <Board columns={columns} action={action} noun="lead" />;
+  }
+  const mounted = await mountForm(<Harness />);
+  try {
+    dragTo(mounted.container.querySelector('li')!, column(mounted.container, 'contacted'));
+    const note = dialog()?.querySelector('textarea[name="contactBody"]');
+    if (!(note instanceof HTMLTextAreaElement)) throw new Error('Missing contactBody');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+      note,
+      'Called about the enquiry.',
+    );
+    await act(() => Promise.resolve(note.dispatchEvent(new Event('input', { bubbles: true }))));
+    await click(footerButton('Mark contacted'));
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.get('recordId')).toBe(CARD.id);
+    expect(sent[0]?.get('expectedVersion')).toBe(String(CARD.version));
+    expect(sent[0]?.get('stage')).toBe('contacted');
+    expect(sent[0]?.get('contactKind')).toBe('call');
+    expect(sent[0]?.get('contactBody')).toBe('Called about the enquiry.');
+    expect(dialog()).toBeNull();
+    expect(mocks.success).toHaveBeenCalledExactlyOnceWith('Moved to Contacted.');
+    expect(column(mounted.container, 'contacted').textContent).toContain(CARD.title);
+    expect(column(mounted.container, 'new').textContent).not.toContain(CARD.title);
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('a held lead dropped on Contacted opens Mark contacted naming On Hold as where it moves from', async () => {
+  const columns: BoardColumnData[] = [
+    { stage: 'contacted', label: 'Contacted', cards: [] },
+    {
+      stage: 'on_hold',
+      label: 'On Hold',
+      cards: [{ ...CARD, moves: [{ stage: 'contacted', label: 'Contacted', needsReason: false }] }],
+    },
+  ];
+  const action = vi.fn((): Promise<MoveState> => Promise.resolve({ ok: true }));
+  const mounted = await mountForm(<Board columns={columns} action={action} noun="lead" />);
+  try {
+    dragTo(mounted.container.querySelector('li')!, column(mounted.container, 'contacted'));
+    expect(dialog()?.textContent).toContain(
+      'LEAD-1 will move from On Hold to Contacted after you log your call, email or meeting.',
+    );
+    expect(action).not.toHaveBeenCalled();
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('an opportunity board keeps the Move form for a drop, with no contact dialog', async () => {
+  const columns: BoardColumnData[] = [
+    {
+      stage: 'qualified',
+      label: 'Qualified',
+      cards: [{ ...CARD, moves: [{ stage: 'contacted', label: 'Contacted', needsReason: false }] }],
+    },
+    { stage: 'contacted', label: 'Contacted', cards: [] },
+  ];
+  const action = vi.fn((): Promise<MoveState> => Promise.resolve({}));
+  const mounted = await mountForm(<Board columns={columns} action={action} noun="opportunity" />);
+  try {
+    const card = mounted.container.querySelector('li')!;
+    dragTo(card, column(mounted.container, 'contacted'));
+    expect(dialog()).toBeNull();
+    expect(card.querySelector('details')?.open).toBe(true);
+    expect(action).not.toHaveBeenCalled();
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+async function typeNote(text: string) {
+  const note = dialog()?.querySelector('textarea[name="contactBody"]');
+  if (!(note instanceof HTMLTextAreaElement)) throw new Error('Missing contactBody');
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(note, text);
+  await act(() => Promise.resolve(note.dispatchEvent(new Event('input', { bubbles: true }))));
+}
+
+it('a lead Move form with Contacted chosen opens Mark contacted instead of moving, and Cancel leaves the card', async () => {
+  const action = vi.fn((): Promise<MoveState> => Promise.resolve({ error: CONTACT_REQUIRED }));
+  const mounted = await mountForm(<Board columns={withHold} action={action} noun="lead" />);
+  try {
+    const card = mounted.container.querySelector('li')!;
+    await click(card.querySelector('summary'));
+    await submit(card);
+
+    expect(action).not.toHaveBeenCalled();
+    expect(mocks.error).not.toHaveBeenCalled();
+    expect(dialog()?.textContent).toContain(
+      'LEAD-1 will move from New to Contacted after you log your call, email or meeting.',
+    );
+    expect(card.querySelector('details')?.open).toBe(false);
+
+    await click(footerButton('Cancel'));
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(action).not.toHaveBeenCalled();
+    expect(column(mounted.container, 'new').textContent).toContain(CARD.title);
+    expect(column(mounted.container, 'contacted').textContent).not.toContain(CARD.title);
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('saving Mark contacted opened from a lead Move form sends the logged contact and the card moves', async () => {
+  const sent: FormData[] = [];
+  function Harness() {
+    const [columns, setColumns] = useState(before);
+    function action(_prev: MoveState, form: FormData): Promise<MoveState> {
+      sent.push(form);
+      setColumns(after);
+      return Promise.resolve({ ok: true, movedTo: 'Contacted' });
+    }
+    return <Board columns={columns} action={action} noun="lead" />;
+  }
+  const mounted = await mountForm(<Harness />);
+  try {
+    await submit(mounted.container);
+    expect(sent).toHaveLength(0);
+    await typeNote('Emailed the price list.');
+    await click(footerButton('Mark contacted'));
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.get('recordId')).toBe(CARD.id);
+    expect(sent[0]?.get('expectedVersion')).toBe(String(CARD.version));
+    expect(sent[0]?.get('stage')).toBe('contacted');
+    expect(sent[0]?.get('contactBody')).toBe('Emailed the price list.');
+    expect(dialog()).toBeNull();
+    expect(mocks.success).toHaveBeenCalledExactlyOnceWith('Moved to Contacted.');
+    expect(column(mounted.container, 'contacted').textContent).toContain(CARD.title);
+    expect(column(mounted.container, 'new').textContent).not.toContain(CARD.title);
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('a lead Move form still sends other stages directly', async () => {
+  const action = vi.fn((_prev: MoveState, _form: FormData): Promise<MoveState> =>
+    Promise.resolve({}),
+  );
+  const mounted = await mountForm(<Board columns={withHold} action={action} noun="lead" />);
+  try {
+    const card = mounted.container.querySelector('li')!;
+    await click(card.querySelector('summary'));
+    await choose(card, 'stage', 'On Hold (needs a reason)');
+    await submit(card);
+    expect(action).toHaveBeenCalledOnce();
+    expect(action.mock.calls[0]?.[1].get('stage')).toBe('on_hold');
+    expect(dialog()).toBeNull();
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('the lead board hint says moving to Contacted asks for a logged contact; the opportunity hint is unchanged', async () => {
+  const action = vi.fn((): Promise<MoveState> => Promise.resolve({}));
+  const lead = await mountForm(<Board columns={before} action={action} noun="lead" />);
+  try {
+    const hint = lead.container.querySelector('p')?.textContent ?? '';
+    expect(hint).not.toContain('Either way you confirm with Move');
+    expect(hint).toContain(
+      'Moving a lead to Contacted asks you to log a call, email or meeting first.',
+    );
+  } finally {
+    await lead.unmount();
+  }
+  const opportunity = await mountForm(
+    <Board columns={before} action={action} noun="opportunity" />,
+  );
+  try {
+    expect(opportunity.container.querySelector('p')?.textContent).toBe(
+      'Drag a card to a column, or open Move on a card to pick the stage. Either way you confirm with Move.',
+    );
+  } finally {
+    await opportunity.unmount();
   }
 });

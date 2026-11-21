@@ -86,7 +86,7 @@ const OVERRIDE_REASON = 'Say why this deal may go ahead, up to 500 characters.';
 /**
  * Override a deal's credit hold (F1-Q20, `POST /v1/opportunities/:id/credit-override`) with a
  * required reason. The override is permanent for the deal, so its sales order can then be
- * confirmed. A deal no longer on hold (409) asks for a reload; a 403 says the permission is missing.
+ * confirmed. A deal no longer on hold, or whose order changed since the form opened (409), asks for a reload; a 403 says the permission is missing.
  */
 export async function overrideCreditHoldAction(
   _prev: CreditOverrideState,
@@ -98,8 +98,10 @@ export async function overrideCreditHoldAction(
   const session = await requireStaffSession(`/opportunities/${id}`);
 
   const reasonValue = form.get('reason');
+  const orderValue = form.get('orderValue');
   const parsed = CreditOverrideBodySchema.safeParse({
     reason: typeof reasonValue === 'string' ? reasonValue.trim() : '',
+    ...(typeof orderValue === 'string' && orderValue !== '' ? { orderValue } : {}),
   });
   if (!parsed.success) return { fieldErrors: { reason: OVERRIDE_REASON } };
 
@@ -110,7 +112,8 @@ export async function overrideCreditHoldAction(
     if (f.status === 400) return { fieldErrors: { reason: OVERRIDE_REASON } };
     if (f.status === 409) {
       return {
-        error: 'This opportunity is no longer on credit hold. Reload to see it.',
+        error:
+          'The credit position of this opportunity changed, or the hold is gone. Reload to see it.',
         reload: true,
       };
     }

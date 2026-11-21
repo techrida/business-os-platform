@@ -9,7 +9,6 @@ import {
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { grantsFrom } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +28,7 @@ import {
   readList,
   type RawParams,
 } from '@/lib/list-params';
-import { getMeOrNull } from '@/lib/live-permissions';
+import { getGrants } from '@/lib/grants';
 import { companyLogo } from '../customers/_lib/company-logo';
 import { ListPager } from '../invoices/_components/list-pager';
 
@@ -118,17 +117,27 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
   let total: number | null = null;
   let counts: VendorCounts | null = null;
   let problem: { message: string; status: number } | null = null;
+  let window = pageWindow(page, pageSize);
   try {
-    const window = pageWindow(page, pageSize);
     // The counts start first; the cards are a convenience and drop out on their own failure.
     const countsLoad = countVendorsByBucket(session);
-    const result = await listVendors(session, {
-      ...(q !== undefined ? { q } : {}),
-      ...(status.length > 0 ? { status } : {}),
-      ...(kind.length > 0 ? { kind } : {}),
-      limit: window.limit,
-      offset: window.offset,
-    });
+    const fetchPage = () =>
+      listVendors(session, {
+        ...(q !== undefined ? { q } : {}),
+        ...(status.length > 0 ? { status } : {}),
+        ...(kind.length > 0 ? { kind } : {}),
+        limit: window.limit,
+        offset: window.offset,
+      });
+    let result = await fetchPage();
+    // A page number past the end (a stale link) shows the last page instead of an empty table.
+    const clamped = pageWindow(page, pageSize, result.total);
+    if (result.items.length === 0 && result.total > 0 && clamped.page !== window.page) {
+      window = clamped;
+      result = await fetchPage();
+    } else {
+      window = clamped;
+    }
     vendors = result.items;
     total = result.total;
     counts = await countsLoad;
@@ -137,14 +146,18 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
     problem = { message: f.message, status: f.status };
   }
 
-  const live = grantsFrom(await getMeOrNull(session.accessToken), session.roles);
-  const addButton = vendorGrants(live).write ? (
-    <LinkButton href="/vendors/new" size="large">
-      <span aria-hidden="true" className={styles.plus}>
-        +
-      </span>
-      Add vendor
-    </LinkButton>
+  const addButton = vendorGrants(await getGrants(session)).write ? (
+    <>
+      <LinkButton href="/imports/vendors" variant="secondary" size="large">
+        Import from CSV
+      </LinkButton>
+      <LinkButton href="/vendors/new" size="large">
+        <span aria-hidden="true" className={styles.plus}>
+          +
+        </span>
+        Add vendor
+      </LinkButton>
+    </>
   ) : null;
   const filtersOn = activeFilterLabels(state, FILTER_LABELS, 'Search');
   const clearHref = clearFiltersHref('/vendors', params, LIST);
@@ -236,7 +249,7 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
           <ListPager
             pathname="/vendors"
             current={params}
-            window={pageWindow(page, pageSize, total)}
+            window={window}
             total={total}
             label="Vendor pages"
           />

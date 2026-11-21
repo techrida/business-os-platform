@@ -1,7 +1,7 @@
 // OpportunitiesService: reads and stage changes of opportunities, plus the two system-only moves that the
 // quotation lifecycle makes (markQuotationSent, markWon). Serves the NFRs:
 // - "the pipeline is auditable": every change is a row audited by the database trigger, and a stage change
-//   also writes a domain event that carries the reason and note;
+//   also writes a domain event that carries the reason and note, and a stage history row (applyStageChange);
 // - "no lost updates": a stage change names the version the caller saw; the row is locked, and a stale version
 //   is a 409;
 // - "authorization is deny-by-default": a record outside the caller's entity or scope is a 404, never a 403;
@@ -28,24 +28,26 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { loadRecordReaders, type RecordReaders } from '../../platform/authz/record-reach';
 import { DB, type Db } from '../../platform/db/db.module';
-import { updateVersioned } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope, READ_ONLY } from '../../platform/db/tx';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
 import { LeadLostReasonsService, lostReasonRefs } from '../leads/lost-reasons.service';
-import { creditPosition } from './credit-hold';
+import { creditPosition, overrideCovers } from './credit-hold';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
   type ListOpportunitiesQuery,
   type OpportunityRow,
   toOpportunityDto,
+  toStageHistoryDto,
 } from './opportunities.types';
 import {
+  applyStageChange,
   mayReopenOpportunity,
   opportunityRef,
   planStageChange,
+  stageHistoryOf,
   type StageCaller,
   type StageChangeRefusal,
 } from './opportunity-stage';
@@ -177,15 +179,22 @@ export class OpportunitiesService {
     // order the way the sales order gate does (credit-hold.ts), and whether a sales order already
     // went ahead (a draft one is what the hold keeps waiting). In a transaction, so the ledger and the orders are
     // read under the entity's row security rather than seen as empty.
-    const { credit, ordered } = await withTx(
+    // R4a Q13: the stage history comes with the detail, behind the same read check.
+    const { credit, ordered, history } = await withTx(
       this.db,
       scope,
       actor,
       async (tx) => ({
         credit: await creditPosition(tx, scope, row.customerId, { opportunityId: row.id }),
         ordered: await this.hasSalesOrder(tx, scope, row.id),
+        history: await stageHistoryOf(tx, scope, row.id),
       }),
       READ_ONLY,
+    );
+    const actorNames = await personNameMap(
+      this.db,
+      row.tenantId,
+      history.map((h) => h.actorUserId),
     );
     return {
       ...toOpportunityDto(
@@ -194,7 +203,15 @@ export class OpportunitiesService {
         await this.lostReasonOf(this.db, row),
         principal,
       ),
-      creditHold: { held: credit.held, overridden: row.creditOverrideAt !== null, ordered },
+      creditHold: {
+        held: credit.held,
+        // An override covers the order it was given for: a bigger pending order is held again (R5 FU4).
+        overridden:
+          row.creditOverrideAt !== null &&
+          overrideCovers(row.creditOverrideOrderValue, credit.orderValue),
+        ordered,
+      },
+      stageHistory: toStageHistoryDto(history, actorNames),
     };
   }
 
@@ -277,10 +294,9 @@ export class OpportunitiesService {
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
       // Leaving lost (or any move that is not to lost) clears the reference with the text.
-      const updated = await updateVersioned(tx, opportunities, id, body.expectedVersion, {
+      const updated = await applyStageChange(tx, row, body.expectedVersion, {
         ...plan.set,
         lostReasonId,
-        updatedAt: new Date(),
       });
       await this.audit.record(tx, {
         action: 'opportunity.stage_changed',
@@ -373,11 +389,10 @@ export class OpportunitiesService {
       by: 'system',
     });
     if (!plan.ok) throw refusalToException(plan.kind, plan.message);
-    const updated = await updateVersioned(tx, opportunities, row.id, row.version, {
+    const updated = await applyStageChange(tx, row, row.version, {
       ...plan.set,
       lostReasonId: null,
       ...extra,
-      updatedAt: new Date(),
     });
     await this.audit.record(tx, {
       action: `opportunity.${to}`,

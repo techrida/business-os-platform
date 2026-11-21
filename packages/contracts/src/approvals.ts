@@ -172,6 +172,16 @@ export const RoutePlanSchema = z.object({
 });
 export type RoutePlan = z.infer<typeof RoutePlanSchema>;
 
+/**
+ * POST /v1/admin/workflows/:key/versions/:v/publish. `reason` is for the small-team rule (F1-Q11 a): a Founder who
+ * saved the draft may publish it alone only when nobody else may publish, and must say why. Blank is accepted here
+ * and refused by the API as `sole_eligible_reason_required`, so the client hears the specific reason.
+ */
+export const PublishWorkflowVersionBodySchema = z.strictObject({
+  reason: z.string().trim().max(500).optional(),
+});
+export type PublishWorkflowVersionBody = z.infer<typeof PublishWorkflowVersionBodySchema>;
+
 export const ApprovalActionBodySchema = z
   .object({
     action: z.enum(['approve', 'return', 'reject']),
@@ -259,6 +269,10 @@ export const ApprovalContextDocumentSchema = z.object({
   versionId: z.string(),
   filename: z.string(),
   detectedMime: z.string().nullable(),
+  /** That version's size, its uploader (null for a system or portal upload) and when it was uploaded. */
+  sizeBytes: z.number().int().nonnegative().optional(),
+  uploadedBy: z.guid().nullable().optional(),
+  uploadedAt: isoDateTime.optional(),
 });
 export type ApprovalContextDocument = z.infer<typeof ApprovalContextDocumentSchema>;
 

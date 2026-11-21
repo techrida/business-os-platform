@@ -1,0 +1,30 @@
+/* Sticky at the bottom of the viewport, after the form: it appears without moving a field under the cursor. */
+.region {
+  position: sticky;
+  bottom: var(--spacing-content-gap);
+  z-index: 1;
+}
+
+.hint {
+  margin-top: var(--spacing-content-gap);
+  padding: 12px 16px;
+  border: var(--border-width-thin) solid var(--status-warning);
+  border-radius: var(--radius-lg);
+  background: var(--status-warning-subtle);
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+}
+
+.title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.list {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.kind {
+  color: var(--text-secondary);
+}

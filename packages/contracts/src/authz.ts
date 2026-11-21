@@ -75,6 +75,8 @@ export const PERMISSIONS = [
   'invoice.submit',
   'invoice.issue',
   'invoice.credit_note',
+  // K1: the sales VAT register (issued tax invoices, credit and debit notes by issue date) and its CSV export.
+  'vat.sales.read',
   'payment.read',
   'payment.record',
   'payment.verify',
@@ -174,7 +176,8 @@ const crmCreatedReadGrants: RoleGrants = {
 
 /**
  * Creator roles (A2 R1 and C14): they start leads and draft and submit their own quotations. Approving is
- * the workflow's job (an approvals step), so none of these grants approve, send or record acceptance.
+ * the workflow's job (an approvals step), so none of these grants approve, send or record acceptance (the Accountant
+ * gets record acceptance separately, below).
  */
 const salesCreatorGrants: RoleGrants = {
   'crm.lead.write': 'own',
@@ -260,6 +263,16 @@ const customerOwnerGrants: RoleGrants = { 'customers.owner.write': 'all' };
 const deliveryReleaseGrants: RoleGrants = { 'sales_order.delivery_release': 'all' };
 
 /**
+ * S4-Q2 (Kuu, 2026-11-21): the Accountant confirms the evidence of a portal acceptance, so the pending-evidence notice
+ * it receives can be acted on. Staff confirmation uses `quotation.record_acceptance` on the quotation, so the same
+ * grant also lets the Accountant record a customer's accept or reject on a Sent quotation. At `all`: the Accountant
+ * works across the acting entity and owns no quotation, so `own` would reach nothing. Sending, revising and the PDF
+ * retry stay on `quotation.send` and `quotation.revise`, which the Accountant does not hold. Migration 0178 writes the
+ * row for tenants that already hold role_permissions rows.
+ */
+const accountantRecordAcceptanceGrants: RoleGrants = { 'quotation.record_acceptance': 'all' };
+
+/**
  * Every staff role sets its own profile picture (U12). Founder holds it at `all` through PERMISSIONS, and so may
  * set anyone's; no other default role holds `admin.users.invite`. Migration 0053 gives existing staff roles `own`,
  * and `all` to founder and to any role that holds `admin.users.invite`. Portal roles get none.
@@ -301,6 +314,8 @@ const p4ProcurementGrants: RoleGrants = {
   'verification.read': 'all',
 };
 const p4WarehouseGrants: RoleGrants = { 'procurement.receipt.confirm': 'all' };
+/** K1: Finance and Accountant read the sales VAT register; the Founder holds every permission. Migration 0175 seeds rows. */
+const salesVatRegisterGrants: RoleGrants = { 'vat.sales.read': 'all' };
 const p4AccountantGrants: RoleGrants = {
   'payables.bill.enter': 'all',
   'payables.bill.read': 'all',
@@ -355,6 +370,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...customerCreditLimitGrants,
     ...deliveryReleaseGrants,
     ...p4FinanceGrants,
+    ...salesVatRegisterGrants,
     ...leadReopenGrants,
     ...settingsFinanceGrants,
     ...settingsFxRateGrants,
@@ -368,7 +384,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...salesCostReadGrants,
     ...billingReadAllGrants,
     ...billingPreparerGrants,
+    ...accountantRecordAcceptanceGrants,
     ...p4AccountantGrants,
+    ...salesVatRegisterGrants,
     ...leadReopenGrants,
     ...settingsFinanceGrants,
   },

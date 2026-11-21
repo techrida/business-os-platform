@@ -7,6 +7,8 @@ import type { Logger } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { z } from 'zod';
 
+import { NUDGE_TIMEOUT_MS, nudgeWithin } from '../../../platform/queue/nudge-timeout';
+
 /** What a `*.render.one` job carries: the document's tenant, its acting entity and its id. */
 export const RenderOneJobSchema = z.strictObject({
   tenantId: z.guid(),
@@ -20,7 +22,8 @@ export type RenderOneJob = z.infer<typeof RenderOneJobSchema>;
  * the sweep renders the document anyway. The job id is `key` (the document's id unless the caller narrows it), so
  * several commits for one document before the worker runs share one job (bullmq ignores an add whose id it still
  * holds); it is removed when it ends, so a later commit can enqueue again. Bullmq refuses a `:` in a custom id, hence
- * the `-`.
+ * the `-`. It also gives up waiting after NUDGE_TIMEOUT_MS (a Valkey that is down holds `queue.add` on its offline
+ * queue), logs that, and returns, so the request that committed never hangs on it.
  */
 export async function enqueueRenderOne(
   queue: Queue,
@@ -28,16 +31,22 @@ export async function enqueueRenderOne(
   jobName: string,
   data: RenderOneJob,
   key: string = data.id,
+  timeoutMs: number = NUDGE_TIMEOUT_MS,
 ): Promise<void> {
-  try {
-    await queue.add(jobName, data, {
-      jobId: `${jobName}-${key}`,
-      removeOnComplete: true,
-      removeOnFail: true,
-    });
-  } catch (error) {
-    log.warn(
-      `render nudge failed, the sweep will render it: job=${jobName} id=${data.id} ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  const what = `render nudge: job=${jobName} id=${data.id}`;
+  await nudgeWithin(
+    log,
+    what,
+    () =>
+      queue.add(jobName, data, {
+        jobId: `${jobName}-${key}`,
+        removeOnComplete: true,
+        removeOnFail: true,
+      }),
+    (error) =>
+      log.warn(
+        `render nudge failed, the sweep will render it: job=${jobName} id=${data.id} ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    timeoutMs,
+  );
 }

@@ -64,6 +64,8 @@ import { type EvidenceState, evidenceStateOf, readEvidenceState } from './eviden
 export const QUOTATION_OUTCOME_CLOCK = Symbol('QUOTATION_OUTCOME_CLOCK');
 
 const AUDIT_ENTITY = 'quotations';
+/** The roles that can confirm a draft sales order (sales_order.confirm), so the roles told that one is waiting. */
+const DRAFT_ORDER_NOTICE_ROLES = ['accountant', 'finance'] as const;
 
 /** `staff` records the answer the customer gave; `customer_user` is the portal (the server sets it). */
 export type OutcomeActorKind = z.infer<typeof ActorKindSchema>;
@@ -127,7 +129,7 @@ export class QuotationOutcomeService {
   /**
    * Accepts a Sent version inside the caller's `tx`: the acceptance row, the version to Accepted, history, audit,
    * the opportunity to Won (with this version), the draft sales order (F1-Q25), a notice to the quotation's
-   * owner and notices to the Accountants (a new draft order; a portal acceptance's pending evidence). The caller
+   * owner and notices to the Accountants and Finance (a new draft order; a portal acceptance's pending evidence). The caller
    * must call `NotifyService.nudge()` after its transaction commits.
    */
   async accept(tx: DbTransaction, input: AcceptQuotationInput): Promise<AcceptanceDto> {
@@ -171,15 +173,18 @@ export class QuotationOutcomeService {
       version,
       null,
     );
-    // The Accountant confirms the draft, so every Accountant hears of it (in-app only). An order that already
-    // existed or could not be drafted is not a new draft: no notice.
+    // Accountants and Finance both hold sales_order.confirm, so both hear of the draft (in-app only). Someone who
+    // holds both roles still gets one notice: the bell row is unique per (tenant, user, dedupe key). An order that
+    // already existed or could not be drafted is not a new draft: no notice.
     if (draft.drafted) {
-      await this.notify.notifyRole(tx, 'accountant', {
-        title: `Draft sales order for ${quotation.number} waits for you`,
-        body: `${quotation.number} was accepted and its sales order was drafted; confirm it to start billing.`,
-        link: `/sales-orders/${draft.orderId}`,
-        dedupeKey: `sales_order.drafted:${draft.orderId}`,
-      });
+      for (const role of DRAFT_ORDER_NOTICE_ROLES) {
+        await this.notify.notifyRole(tx, role, {
+          title: `Draft sales order for ${quotation.number} waits for you`,
+          body: `${quotation.number} was accepted and its sales order was drafted; confirm it to start billing.`,
+          link: `/sales-orders/${draft.orderId}`,
+          dedupeKey: `sales_order.drafted:${draft.orderId}`,
+        });
+      }
     }
     // A portal acceptance stands with its evidence pending (F1-Q28); a staff entry is confirmed as it is recorded.
     if (input.actorKind !== 'staff') {

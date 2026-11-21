@@ -27,6 +27,9 @@ export const ERROR_REASONS = [
   // F1-Q32 (403): the delivery-hold release rule.
   'requester_cannot_release',
   'role_cannot_release_amount',
+  // F1-Q11 (400, small-team rule): a Founder who is the only person able to do a step that would otherwise need a
+  // second person did it without the reason the rule asks for.
+  'sole_eligible_reason_required',
 ] as const;
 export const ErrorReasonSchema = z.enum(ERROR_REASONS);
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>;
@@ -73,6 +76,7 @@ export const BILLING_ERROR_CODES = {
   credit_hold: 409,
   /** Issue refused: the drafted due date is before today, the issue date. `details` names both when known. */
   DUE_DATE_BEFORE_ISSUE: 422,
+  contact_activity_required: 409, // FR-6/D48: a lead moves to contacted only with a done call, email or meeting.
 } as const;
 export type BillingErrorCode = keyof typeof BILLING_ERROR_CODES;
 export const BillingErrorCodeSchema = z.enum(

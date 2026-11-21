@@ -46,6 +46,11 @@ export function confirmRefusalText(err: unknown): string | undefined {
   if (status === 422 && code === 'evidence_not_confirmed') {
     return "This order cannot be confirmed yet: the customer's evidence for the accepted quotation has not been confirmed. Confirm it on the quotation, or ask the sales team to, then try again. Nothing was confirmed.";
   }
+  if (status === 422 && code === 'invalid_evidence_document') {
+    // The general evidence words say "this record": here the file belongs to the chosen quotation.
+    // An infected file (409 `document_infected`) keeps the general infected-file words.
+    return 'That file is not evidence uploaded for this quotation, or it has not finished uploading. Remove it, upload it again, then confirm. Nothing was confirmed.';
+  }
   if (status === 409 && code === 'draft_of_other_revision') {
     return 'A draft order from another revision of this quotation is already waiting. Open that draft from the sales orders list instead. Nothing was confirmed.';
   }

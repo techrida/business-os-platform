@@ -235,6 +235,105 @@ describe('releasing a delivery', () => {
   });
 });
 
+describe('releasing an order only its creator, the Founder, can release (small-team rule)', () => {
+  const HINT = 'You are the only person who can release this; a reason is required.';
+  const mountSole = async (sole: boolean | undefined) => {
+    const mounted = await mountForm(
+      <ReleaseDelivery
+        salesOrderId={ORDER}
+        can={canOf({
+          releaseDelivery: true,
+          releaseDeliveryAllowedRoles: ['founder'],
+          ...(sole === undefined ? {} : { releaseSoleEligible: sole }),
+        })}
+        idempotencyKey={KEY}
+        reloadHref={`/sales-orders/${ORDER}`}
+      />,
+    );
+    await click(buttonNamed('Release delivery', mounted.container));
+    return mounted;
+  };
+
+  it('shows the hint beside the reason only when the API says the caller is the only one who can release', async () => {
+    const sole = await mountSole(true);
+    const area = dialog()!.querySelector('textarea')!;
+    const described = (area.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    expect(described).toContain(HINT);
+    // The creator may release here, so the dialog does not tell them the creator cannot.
+    expect(dialog()?.textContent).not.toContain(
+      'The person who created the order cannot release it.',
+    );
+    await sole.unmount();
+
+    for (const flag of [false, undefined]) {
+      const mounted = await mountSole(flag);
+      expect(dialog()?.textContent).not.toContain(HINT);
+      expect(dialog()?.textContent).toContain('Why the delivery should go ahead now.');
+      expect(dialog()?.textContent).toContain(
+        'The person who created the order cannot release it.',
+      );
+      await mounted.unmount();
+    }
+  });
+
+  it('still needs a reason: a blank one never reaches the API, a real one is sent once', async () => {
+    const mounted = await mountSole(true);
+    const area = dialog()!.querySelector('textarea')!;
+    expect(area.required).toBe(true);
+    expect(area.maxLength).toBe(1000);
+    await typeReason('   ');
+    await send();
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(dialog()?.textContent).toContain('Say why the delivery is released now.');
+
+    await typeReason('  Only founder on the team; customer collects today  ');
+    await send();
+    expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
+    const [, , init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      reason: 'Only founder on the team; customer collects today',
+    });
+    expect(mocks.success).toHaveBeenCalledWith('Delivery released');
+    await mounted.unmount();
+  });
+
+  it('puts a sole_eligible_reason_required refusal on the reason field', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            ErrorBodySchema.parse({
+              error: {
+                code: 'bad_request',
+                message: 'A reason is required',
+                correlationId: 'corr-1',
+                reason: 'sole_eligible_reason_required',
+              },
+            }),
+          ),
+          { status: 400 },
+        ),
+      ),
+    );
+    const mounted = await mountSole(true);
+    await typeReason('Customer collects on site today');
+    await send();
+    const area = dialog()!.querySelector('textarea')!;
+    const described = (area.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    expect(described).toContain(
+      'You are the only person who can release this delivery, so say why it is released now.',
+    );
+    expect(mocks.success).not.toHaveBeenCalled();
+    await mounted.unmount();
+  });
+});
+
 describe('refusals that are not about the release rule', () => {
   it('uses the kernel words for a 403 with an allow-listed reason and for another 409 code', async () => {
     mocks.apiFetch.mockImplementation(() =>
@@ -283,6 +382,9 @@ describe('releasedText', () => {
     expect(
       releasedText({ kind: 'advance_paid', releasedAt: null, releasedByName: null, reason: null }),
     ).toBe('Released: advance paid');
+    expect(
+      releasedText({ kind: 'no_advance', releasedAt: null, releasedByName: null, reason: null }),
+    ).toBe('Released: no advance on this order');
     expect(
       releasedText({
         kind: 'override',

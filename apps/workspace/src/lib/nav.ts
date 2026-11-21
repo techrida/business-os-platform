@@ -114,6 +114,14 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         phase: 'P2',
         permission: 'crm.opportunity.read',
       },
+      // The lost-deal report reads only deals, so it follows the deal read grant, as its API does.
+      {
+        label: 'Lost deals',
+        href: '/reports/lost-deals',
+        icon: 'trending-up',
+        phase: 'P2',
+        permission: 'crm.opportunity.read',
+      },
       {
         label: 'Quotations',
         href: '/quotations',
@@ -160,6 +168,13 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         icon: 'receipt',
         phase: 'P3',
         permission: 'invoice.read',
+      },
+      {
+        label: 'Sales VAT register',
+        href: '/invoices/vat-register',
+        icon: 'file-text',
+        phase: 'P3',
+        permission: 'vat.sales.read',
       },
       // Not in the PRD yet (see the Figma notes), so parked at "later" until it is confirmed.
       { label: 'Recurring Invoices', icon: 'repeat', phase: 'later' },
@@ -314,7 +329,15 @@ export function visibleGroups(
 
 /** True when `pathname` is the item's page or one under it (`/inbox` owns `/inbox/abc`). */
 export function ownsPath(href: string, pathname: string): boolean {
-  return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
+  const under = (base: string) =>
+    base === '/' ? pathname === '/' : pathname === base || pathname.startsWith(`${base}/`);
+  if (!under(href)) return false;
+  // A page that has its own item (the sales VAT register under /invoices) belongs to that item alone.
+  return !NAV_GROUPS.some((group) =>
+    group.items.some(
+      (item) => item.href !== undefined && item.href.length > href.length && under(item.href),
+    ),
+  );
 }
 
 /** Filter already-authorized, built navigation by group or destination name. */

@@ -3,10 +3,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { SubmitPaymentBodySchema } from '@bos/contracts';
+import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
+import { getInvoice } from '@/lib/api-billing';
 import { findPaymentReferenceMatches } from '@/lib/api-payments';
 import { submitPayment } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
@@ -43,6 +45,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEY = /^[A-Za-z0-9-]{8,64}$/;
 
 const BROKEN = 'This form is incomplete. Reload the page and try again.';
+const INVOICE_UNREADABLE =
+  'The invoice this payment is for could not be read. Reload the page and try again.';
 
 const FIELD_MESSAGE: Record<RecordPaymentField, string> = {
   customerId: 'Choose the customer who paid.',
@@ -64,7 +68,7 @@ function text(form: FormData, name: string): string {
 
 /** Lakh grouping ("20,18,180.00") is typed naturally; the contract wants plain digits. A string clean-up, not arithmetic. */
 function normalizeAmount(raw: string): string {
-  return raw.replace(/[,\s]/g, '');
+  return plainAmount(raw);
 }
 
 function codeOf(err: unknown): string {
@@ -103,6 +107,19 @@ export async function recordPaymentAction(
     return { key, error: NO_RECORD_WORDS };
   }
 
+  // A form opened from an invoice pays that invoice's customer (item 3b): read the invoice again as this person and
+  // take its customer, whatever the posted customer field says. Needs invoice.read, never customer.read. Nothing has
+  // reached the API if the read fails, so the key is kept.
+  const invoiceId = text(form, 'invoiceId');
+  let customerId = text(form, 'customerId');
+  if (UUID.test(invoiceId)) {
+    try {
+      customerId = (await getInvoice(session, invoiceId)).invoice.customerId;
+    } catch {
+      return { key, error: INVOICE_UNREADABLE, reload: true };
+    }
+  }
+
   const proofDocumentIds = [
     ...new Set(
       form
@@ -114,7 +131,7 @@ export async function recordPaymentAction(
   const withholdingCode = text(form, 'withholdingCode').trim();
   const tds = normalizeAmount(text(form, 'tdsWithheld'));
   const candidate = {
-    customerId: text(form, 'customerId'),
+    customerId,
     currency: text(form, 'currency'),
     amount: normalizeAmount(text(form, 'amount')),
     method: text(form, 'method'),
@@ -134,6 +151,13 @@ export async function recordPaymentAction(
         head === 'proofDocumentIds' ? 'proof' : (head as RecordPaymentField | undefined);
       if (field !== undefined && field in FIELD_MESSAGE) fieldErrors[field] = FIELD_MESSAGE[field];
     }
+  }
+  // A comma that is not grouping ("10,50") is a decimal comma: say so, since the digits alone look fine to the person.
+  if (fieldErrors.amount !== undefined && hasStrayComma(text(form, 'amount'))) {
+    fieldErrors.amount = `${USE_A_POINT} ${fieldErrors.amount}`;
+  }
+  if (fieldErrors.tdsWithheld !== undefined && hasStrayComma(text(form, 'tdsWithheld'))) {
+    fieldErrors.tdsWithheld = `${USE_A_POINT} ${fieldErrors.tdsWithheld}`;
   }
   // Tax withheld needs its code. The contract says so too, but its object-level check may not run
   // when another field already failed, so the person is told about every wrong field at once.

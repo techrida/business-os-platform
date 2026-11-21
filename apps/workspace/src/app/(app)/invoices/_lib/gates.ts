@@ -126,24 +126,30 @@ function editDueDateGate(
 /** The settlements that still leave something to pay. */
 const PAYABLE: ReadonlySet<SettlementStatus> = new Set(['unpaid', 'partly_paid', 'overdue']);
 
+/** True when the server's derived settlement still leaves something to pay; null (not loaded) is not. */
+export function isPayableSettlement(settlement: SettlementStatus | null | undefined): boolean {
+  return settlement != null && PAYABLE.has(settlement);
+}
+
 /**
  * Where "Record payment" leads for one invoice, or null when it is not offered. Only an issued tax invoice or debit
  * note opens an item a customer pays, and only `payment.record` (the permission the payment form checks) sees the
  * button. A payment is recorded against the customer and allocated to invoices afterwards, so the link preselects the
- * customer on the payment form.
+ * customer on the payment form and names the invoice: the form reads that invoice itself and starts on its currency
+ * and the open amount the server reports (U16-Q8 a). The link carries no amount.
  *
  * `settlement` is the server's derived state (the detail page and each list row carry it, U15b-Q2): a settled invoice,
  * or one whose state did not load (null), offers nothing. Left out, the button is offered on every issued tax invoice
  * and debit note. A `can.recordPayment` of false (the grant does not reach this customer) offers nothing.
  */
 export function recordPaymentHref(
-  invoice: { kind: InvoiceKind; status: InvoiceStatus; customerId: string } & Reach,
+  invoice: { id: string; kind: InvoiceKind; status: InvoiceStatus; customerId: string } & Reach,
   can: Can,
   settlement?: SettlementStatus | null,
 ): string | null {
-  const { kind, status, customerId } = invoice;
+  const { id, kind, status, customerId } = invoice;
   if (status !== 'issued' || (kind !== 'tax_invoice' && kind !== 'debit_note')) return null;
   if (!can('payment.record') || !reaches(invoice, 'recordPayment')) return null;
-  if (settlement !== undefined && (settlement === null || !PAYABLE.has(settlement))) return null;
-  return `/payments/new?customerId=${encodeURIComponent(customerId)}`;
+  if (settlement !== undefined && !isPayableSettlement(settlement)) return null;
+  return `/payments/new?customerId=${encodeURIComponent(customerId)}&invoiceId=${encodeURIComponent(id)}`;
 }

@@ -30,6 +30,8 @@ import {
 } from '@bos/contracts';
 import { z } from 'zod';
 
+import { DocumentSchema, type DocumentDetail } from '@/components/p2/crm/verification-file';
+
 import { ApiError, apiFetch } from './api';
 import type { EvidenceKind } from './evidence';
 import { describeFailure, type Failure, type FailureContext } from './kernel-ui';
@@ -373,6 +375,7 @@ const EVIDENCE_BASE: Record<EvidenceKind, string> = {
   'sales-order': '/v1/sales-orders',
   'vendor-bill': '/v1/payables/bills',
   rfq: '/v1/procurement/rfqs',
+  'quotation-version': '/v1/sales-orders/quotation-versions',
 };
 
 function evidencePath(kind: EvidenceKind, ownerId: string): string {
@@ -390,6 +393,20 @@ export function createEvidenceDocument(
   body: Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>,
 ): Promise<CreatedDocument> {
   return call(session, evidencePath(kind, ownerId), CreatedDocumentSchema, json('POST', body));
+}
+
+/**
+ * Reads an evidence document and its versions through the record's own route
+ * (`GET <record>/:id/evidence-documents/:documentId`, that record's permission, not
+ * `documents.read`).
+ */
+export function getEvidenceDocument(
+  session: Session,
+  kind: EvidenceKind,
+  ownerId: string,
+  documentId: string,
+): Promise<DocumentDetail> {
+  return call(session, `${evidencePath(kind, ownerId)}/${seg(documentId)}`, DocumentSchema);
 }
 
 /** Step 2 of an evidence upload: stream the bytes to the content route of the reserved version. */

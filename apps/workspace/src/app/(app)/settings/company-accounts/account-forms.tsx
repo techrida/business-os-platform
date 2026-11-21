@@ -20,6 +20,7 @@ import {
   renameExpenseAccountAction,
 } from './actions';
 import { RETIRE_KEEPS_WORKING } from './copy';
+import { useFormKey } from './use-form-key';
 import local from './company-accounts.module.css';
 
 export type AccountKind = 'bank' | 'expense';
@@ -36,13 +37,22 @@ const OFFERED_ON: Record<AccountKind, string> = {
 // Add forms
 // ---------------------------------------------------------------------------------------------
 
-export function AddBankAccountForm({ currencies }: { currencies: readonly CurrencyChoice[] }) {
+export function AddBankAccountForm({
+  currencies,
+  idempotencyKey,
+}: {
+  currencies: readonly CurrencyChoice[];
+  /** One key per render of the page; kept until a save succeeds (see `useFormKey`). */
+  idempotencyKey: string;
+}) {
   const [state, formAction, pending] = useActionState(createBankAccountAction, IDLE);
+  const key = useFormKey(idempotencyKey, state);
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
   const errors = state.fieldErrors ?? {};
 
   return (
     <form action={formAction} className={styles.form} aria-label="Add a bank account">
+      <input type="hidden" name="idempotencyKey" value={key} />
       <div className={styles.formRow}>
         <Field
           label="Name"
@@ -119,13 +129,15 @@ export function AddBankAccountForm({ currencies }: { currencies: readonly Curren
   );
 }
 
-export function AddExpenseAccountForm() {
+export function AddExpenseAccountForm({ idempotencyKey }: { idempotencyKey: string }) {
   const [state, formAction, pending] = useActionState(createExpenseAccountAction, IDLE);
+  const key = useFormKey(idempotencyKey, state);
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
   const errors = state.fieldErrors ?? {};
 
   return (
     <form action={formAction} className={styles.form} aria-label="Add an expense account">
+      <input type="hidden" name="idempotencyKey" value={key} />
       <div className={styles.formRow}>
         <Field label="Code" hint="Fixed once added, for example 5100." error={errors.code}>
           {(control) => (
@@ -186,6 +198,9 @@ export function RenameableName({
   prefix?: string;
 }) {
   const [editing, setEditing] = useState(false);
+  // One key per time the form is opened (made in the click, never in the server render): a double click on Save
+  // renames once. The form closes on success, so the next opening gets its own key.
+  const [renameKey, setRenameKey] = useState('');
   // A saved name closes the form, which unmounts its FormStatus, so the success toast is raised here.
   const [state, formAction, pending] = useActionState(
     async (previous: ActionState, formData: FormData) => {
@@ -222,7 +237,10 @@ export function RenameableName({
           variant="tertiary"
           size="small"
           aria-label={`Rename ${label}`}
-          onClick={() => setEditing(true)}
+          onClick={() => {
+            setRenameKey(crypto.randomUUID());
+            setEditing(true);
+          }}
         >
           Rename
         </Button>
@@ -243,6 +261,7 @@ export function RenameableName({
       }}
     >
       <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="idempotencyKey" value={renameKey} />
       <Field label={`New name for ${label}`} error={state.fieldErrors?.name}>
         {(control) => (
           <Input
@@ -276,6 +295,20 @@ export function RenameableName({
 const changeStatus = (kind: AccountKind) =>
   kind === 'bank' ? changeBankAccountStatusAction : changeExpenseAccountStatusAction;
 
+/**
+ * The Idempotency-Key for one status button: made on the first press, kept across presses and failed tries so a
+ * double click or a retry changes the account once, and renewed after a change succeeds.
+ */
+function useStatusKey() {
+  const held = useRef<string | null>(null);
+  return {
+    current: () => (held.current ??= crypto.randomUUID()),
+    renew: () => {
+      held.current = null;
+    },
+  };
+}
+
 /** Retire asks first and says what keeps working; nothing is ever deleted. */
 export function RetireButton({
   kind,
@@ -286,6 +319,7 @@ export function RetireButton({
   id: string;
   label: string;
 }) {
+  const key = useStatusKey();
   return (
     <ConfirmDialog
       trigger={
@@ -297,11 +331,12 @@ export function RetireButton({
       description={`It is no longer offered on ${OFFERED_ON[kind]}. ${RETIRE_KEEPS_WORKING}`}
       confirmLabel={`Retire ${NOUN[kind]}`}
       onConfirm={async () => {
-        const result = await changeStatus(kind)(id, 'retire');
+        const result = await changeStatus(kind)(id, 'retire', key.current());
         if (result.status === 'error') {
           toast.error(result.message);
           return false;
         }
+        key.renew();
         toast.success(result.message);
         return true;
       }}
@@ -319,6 +354,7 @@ export function ReactivateButton({
   label: string;
 }) {
   const [pending, startTransition] = useTransition();
+  const key = useStatusKey();
   return (
     <Button
       type="button"
@@ -329,9 +365,12 @@ export function ReactivateButton({
       aria-busy={pending || undefined}
       onClick={() =>
         startTransition(async () => {
-          const result = await changeStatus(kind)(id, 'reactivate');
+          const result = await changeStatus(kind)(id, 'reactivate', key.current());
           if (result.status === 'error') toast.error(result.message);
-          else toast.success(result.message);
+          else {
+            key.renew();
+            toast.success(result.message);
+          }
         })
       }
     >

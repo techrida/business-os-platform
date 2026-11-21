@@ -13,6 +13,17 @@ import {
 import { chooseOption, selectByName } from '../helpers/select';
 
 async function moveStage(page: Page, value: string, label: string) {
+  if (value === 'contacted') {
+    // New to Contacted needs the call, email or meeting that made the contact (D48).
+    await page.getByRole('button', { name: 'Mark contacted', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Mark this lead contacted?' });
+    await dialog.getByRole('radio', { name: 'Call', exact: true }).click();
+    await dialog.getByLabel('Note', { exact: true }).fill('Intro call');
+    await dialog.getByRole('button', { name: 'Mark contacted', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();
+    return;
+  }
   if (value === 'lost') {
     // Lost is marked from the header dialog, with a reason chosen from the tenant list (D49, D54-3).
     await page.getByRole('button', { name: 'Mark lost', exact: true }).click();

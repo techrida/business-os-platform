@@ -167,7 +167,22 @@ describe('parseDebitNote', () => {
   });
 });
 
+describe('parseDiscount: a decimal comma is never grouping', () => {
+  it.each(['1,5', '10,50', '1,25'])('refuses an amount of %s and says to use a point', (typed) => {
+    const out = parseDiscount('amount', typed);
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.error).toMatch(/^Use a point for decimals\./);
+  });
+});
+
 describe('parseDiscount', () => {
+  it.each(['1 5', '1 0.5'])(
+    'refuses the percentage %j: a space inside is not grouping',
+    (typed) => {
+      expect(parseDiscount('pct', typed).ok).toBe(false);
+    },
+  );
+
   it.each<[string | undefined, string | undefined, unknown]>([
     [undefined, undefined, undefined],
     ['', '', undefined],
@@ -175,6 +190,8 @@ describe('parseDiscount', () => {
     ['pct', '0', { mode: 'pct', value: '0' }],
     ['pct', '33.3333', { mode: 'pct', value: '33.3333' }],
     ['amount', ' 1,00,000.50 ', { mode: 'amount', value: '100000.50' }],
+    ['amount', '12,50,000.00', { mode: 'amount', value: '1250000.00' }],
+    ['amount', '1,250,000.50', { mode: 'amount', value: '1250000.50' }],
   ])('%s %j sends %j', (mode, value, data) => {
     expect(parseDiscount(mode, value)).toEqual({ ok: true, data });
   });

@@ -222,6 +222,27 @@ describe('parseStageMove', () => {
     }
   });
 
+  it('accepts a meeting as the contact logged on a move to Contacted', () => {
+    expect(
+      parseStageMove(
+        'lead',
+        form({
+          stage: 'contacted',
+          expectedVersion: '3',
+          contactKind: 'meeting',
+          contactBody: 'Met them at the office.',
+        }),
+      ),
+    ).toEqual({
+      ok: true,
+      data: {
+        stage: 'contacted',
+        expectedVersion: 3,
+        contactActivity: { kind: 'meeting', body: 'Met them at the office.' },
+      },
+    });
+  });
+
   it('maps contactActivity validation errors to contactKind, contactSubject and contactBody', () => {
     const noBody = parseStageMove(
       'lead',
@@ -229,7 +250,7 @@ describe('parseStageMove', () => {
     );
     expect(noBody.ok).toBe(false);
     if (!noBody.ok) {
-      expect(noBody.fieldErrors['contactBody']).toMatch(/call or email/i);
+      expect(noBody.fieldErrors['contactBody']).toMatch(/call, email or meeting/i);
     }
 
     const badKind = parseStageMove(
@@ -237,13 +258,13 @@ describe('parseStageMove', () => {
       form({
         stage: 'contacted',
         expectedVersion: '3',
-        contactKind: 'meeting',
-        contactBody: 'Met them.',
+        contactKind: 'note',
+        contactBody: 'Wrote it down.',
       }),
     );
     expect(badKind.ok).toBe(false);
     if (!badKind.ok) {
-      expect(badKind.fieldErrors['contactKind']).toBe('Choose call or email.');
+      expect(badKind.fieldErrors['contactKind']).toBe('Choose call, email or meeting.');
     }
 
     const longSubject = parseStageMove(

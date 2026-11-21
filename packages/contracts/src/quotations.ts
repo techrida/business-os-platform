@@ -8,6 +8,7 @@ import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { multi, searchParam } from './list-query.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
+import { decimalPattern, PERCENT_LIMITS, QUANTITY_LIMITS } from './number-limits.js';
 import { richTextSchema } from './rich-text.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -23,7 +24,7 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 /** A quantity: numeric(18,4) and above zero. A string, because a float cannot hold 0.1 exactly. */
 export const QuantityString = z
   .string()
-  .regex(/^\d{1,14}(\.\d{1,4})?$/)
+  .regex(decimalPattern(QUANTITY_LIMITS))
   .refine((s) => /[1-9]/.test(s), 'must be above zero');
 export type QuantityString = z.infer<typeof QuantityString>;
 
@@ -35,7 +36,7 @@ export const NonNegativeDecimalString = DecimalString.refine(
 export type NonNegativeDecimalString = z.infer<typeof NonNegativeDecimalString>;
 
 /** A tax rate in percent: numeric(7,4). Internal screens only; the customer view calls it `percent`. */
-const TaxRatePercent = z.string().regex(/^\d{1,3}(\.\d{1,4})?$/);
+const TaxRatePercent = z.string().regex(decimalPattern(PERCENT_LIMITS));
 
 /** A percentage from 0 to 100 with up to 4 decimals (the discount input is numeric(18,4)). */
 export const PercentFourDecimals = z.string().regex(/^(?:\d{1,2}(?:\.\d{1,4})?|100(?:\.0{1,4})?)$/);

@@ -1,5 +1,6 @@
 // Money as strings, never floats: a float cannot hold 0.10 exactly. Serves the NFR "amounts are exact".
 import { z } from 'zod';
+import { decimalPattern, MONEY_LIMITS, RATE_LIMITS } from './number-limits.js';
 
 export const CURRENCIES = ['NPR', 'INR', 'USD'] as const;
 export const CurrencySchema = z.enum(CURRENCIES);
@@ -10,11 +11,11 @@ export const PEGGED_CURRENCIES = ['INR'] as const satisfies readonly Currency[];
 export type PeggedCurrency = (typeof PEGGED_CURRENCIES)[number];
 
 /** An amount with at most 2 decimals (numeric(18,2) in the database). Compare with decimal.js, not Number. */
-export const DecimalString = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?$/);
+export const DecimalString = z.string().regex(decimalPattern(MONEY_LIMITS, { signed: true }));
 export type DecimalString = z.infer<typeof DecimalString>;
 
 /** An FX rate: up to 6 decimals (numeric(18,6)), which DecimalString would wrongly reject. */
-export const RateString = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
+export const RateString = z.string().regex(decimalPattern(RATE_LIMITS));
 export type RateString = z.infer<typeof RateString>;
 
 export const MoneySchema = z.object({ amount: DecimalString, currency: CurrencySchema });

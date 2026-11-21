@@ -29,7 +29,7 @@ import { actorUuid, readTxContext } from '../../../platform/documents/tx-context
 import { fact, readableDocuments } from '../../approvals/context';
 import type { ApprovalSubject, ApprovalsService } from '../../approvals/requests.service';
 import { idAt, procurementReferenceNames } from '../reference-names';
-import { mayReadPo, requestFactsColumns, requestOf } from './po-read-access';
+import { approvesRequestOf, mayReadPo, requestFactsColumns, requestOf } from './po-read-access';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AUDIT_ENTITY } from './purchase-order.rules';
 import type { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
 import {
@@ -95,13 +95,14 @@ export class PoAmendmentSubject implements ApprovalSubject {
 
   /**
    * The order as it stands now, with the PDF of its current version. The order page is linked only for a viewer the
-   * order's detail route lets in (po-read-access.ts: procurement, and read-only the bill and receipt roles, F1-Q52);
-   * anyone else (management, by default) gets no link rather than a page that refuses them (TR-Q2).
+   * order's detail route lets in (po-read-access.ts: procurement, and read-only the bill and receipt roles, F1-Q52,
+   * and an approver of this amendment whose step is active or who decided one, R4f Q1 b); anyone else gets no link
+   * rather than a page that refuses them (TR-Q2).
    */
   async context(
     q: Db,
     scope: TxScope,
-    request: { snapshot: unknown },
+    request: { documentId: string; snapshot: unknown },
     viewer: Principal,
   ): Promise<ApprovalContext | null> {
     const poId = idAt(request.snapshot, 'amendment', 'purchaseOrderId');
@@ -146,6 +147,15 @@ export class PoAmendmentSubject implements ApprovalSubject {
           ),
         ),
       );
+    const linked =
+      mayReadPo(viewer, po.request) ||
+      (await approvesRequestOf(
+        q,
+        scope,
+        viewer,
+        { documentType: PO_AMENDMENT_DOCUMENT_TYPE, documentId: request.documentId },
+        () => this.approvals.inbox(),
+      ));
     return {
       title: `Purchase order ${po.number}`,
       fields: [
@@ -161,7 +171,7 @@ export class PoAmendmentSubject implements ApprovalSubject {
         files.map((f) => f.id),
         [new PurchaseOrderVersionOwnerPolicy(drizzlePoVersionHeadLoader(q))],
       ),
-      href: mayReadPo(viewer, po.request) ? `/procurement/orders/${po.id}` : null,
+      href: linked ? `/procurement/orders/${po.id}` : null,
     };
   }
 

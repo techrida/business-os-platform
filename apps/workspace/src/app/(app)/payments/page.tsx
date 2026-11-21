@@ -39,7 +39,7 @@ import {
   type RawParams,
   readList,
 } from '@/lib/list-params';
-import { getPermissionCheck } from '@/lib/live-permissions';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 import { ListPager } from '../invoices/_components/list-pager';
 import layout from '@/components/p3/list.module.css';
@@ -149,7 +149,7 @@ export default async function PaymentsPage({
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
-  const mayRecord = (await getPermissionCheck(session))('payment.record');
+  const mayRecord = hasGrant(await getGrants(session), 'payment.record');
   const hiding = activeFilterLabels(
     { q, multi, single: {} },
     {
