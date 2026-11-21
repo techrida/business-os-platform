@@ -39,6 +39,7 @@ import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { buildIssuer, IssuerIncompleteError } from '../quotations/render/issuer';
 import { CreditNoteIssueService } from './notes/credit-note-issue.service';
+import { InvoiceRenderNudge } from './render/invoice-render.nudge';
 import { creditExceedsInvoice } from './notes/note-drafting.service';
 import {
   assertStaff,
@@ -99,6 +100,8 @@ export class InvoiceIssueService {
     @Optional() @Inject(INVOICE_CLOCK) private readonly clock: () => Date = () => new Date(),
     // Optional so callers that build this service by hand (tests) keep their argument list.
     @Optional() creditNotes?: CreditNoteIssueService,
+    // Optional for the same reason: a hand-built service renders on the sweep alone.
+    @Optional() private readonly renderNudge?: InvoiceRenderNudge,
   ) {
     this.creditNotes = creditNotes ?? new CreditNoteIssueService(audit, ledger, numbering);
   }
@@ -119,8 +122,9 @@ export class InvoiceIssueService {
     assertStaff(principal);
     this.authz.assert('invoice.issue', scope);
     const now = this.clock();
+    let result: IssueInvoiceResult;
     try {
-      return await withTx(this.db, scope, actor, async (tx) => {
+      result = await withTx(this.db, scope, actor, async (tx) => {
         // The route check carries no owner, so a grant narrowed to own or department is judged here against the
         // drafter; an invoice outside the caller's read is a 404.
         const [owned] = await tx
@@ -152,6 +156,10 @@ export class InvoiceIssueService {
       }
       throw error;
     }
+    // After the commit, so the worker sees the issued row: render the PDF now rather than on the next sweep. A replay
+    // answers `issued` again and nudges again; the worker skips an invoice whose PDF is already live.
+    if (result.kind === 'issued') await this.renderNudge?.nudge(scope, result.invoiceId);
+    return result;
   }
 
   private async issueInTx(
