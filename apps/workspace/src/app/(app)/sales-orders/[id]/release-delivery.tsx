@@ -9,7 +9,7 @@ import { Field, Textarea } from '@/components/ui/field';
 
 import local from '../_components/sales-orders.module.css';
 import { releaseDeliveryAction, type ReleaseDeliveryState } from './release-delivery-action';
-import { releaseBlockedText, whoCanRelease } from './release-delivery-text';
+import { releaseBlockedText, SOLE_ELIGIBLE_HINT, whoCanRelease } from './release-delivery-text';
 
 export interface ReleaseDeliveryProps {
   salesOrderId: string;
@@ -43,11 +43,13 @@ export function ReleaseDelivery({
       </span>
     );
   }
+  // The small-team rule (F1-Q11 a): the Founder who created the order is the only one who may release it.
+  const soleEligible = can.releaseSoleEligible === true;
   return (
     <TransactionFormDialog<ReleaseDeliveryState>
       trigger="Release delivery"
       title="Release this delivery?"
-      description={`The delivery can go ahead before the advance is paid. ${whoCanRelease(can.releaseDeliveryAllowedRoles)} A release is final, and the reason is kept on the order.`}
+      description={`The delivery can go ahead before the advance is paid. ${whoCanRelease(can.releaseDeliveryAllowedRoles, soleEligible)} A release is final, and the reason is kept on the order.`}
       submit="Release delivery"
       successMessage="Delivery released"
       initial={{ key: idempotencyKey }}
@@ -59,7 +61,11 @@ export function ReleaseDelivery({
           <input type="hidden" name="salesOrderId" value={salesOrderId} />
           <Field
             label="Reason"
-            hint="Why the delivery should go ahead now."
+            hint={
+              soleEligible
+                ? `Why the delivery should go ahead now. ${SOLE_ELIGIBLE_HINT}`
+                : 'Why the delivery should go ahead now.'
+            }
             error={state.errors?.reason}
           >
             {(control) => (
