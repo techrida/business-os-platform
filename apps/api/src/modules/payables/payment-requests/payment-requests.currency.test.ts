@@ -3,9 +3,12 @@
 //
 // The real create runs through the real withTx, withIdempotency, CurrencyEnabledService and SettingsService. The fake
 // answers only what those ask: the transaction's set_config, the idempotency claim, the `currency.enabled` read (a
-// saved row when the test gives one, otherwise none, so the default list is the contract's SETTING_DEFAULTS) and
-// every select with no rows. With no vendor rows, a create that gets past the currency check stops at 404 Vendor.
+// saved row when the test gives one, otherwise none, so the default list is the contract's SETTING_DEFAULTS), the
+// company bank account select with the rows the test gives (round 5, P1) and every other select with no rows. With
+// an active bank account in the request's currency and no vendor rows, a create that gets past both checks stops at
+// 404 Vendor.
 import { RequestPaymentBodySchema } from '@bos/contracts';
+import { companyBankAccounts } from '@bos/db';
 import { HttpException } from '@nestjs/common';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
@@ -27,8 +30,11 @@ const scope = {
 const userId = '20000000-0000-4000-8000-000000000001';
 const dialect = new PgDialect();
 
-/** A Db for one create: `saved` is the stored `currency.enabled` (null: nothing saved). Counts reads and selects. */
-function fakeDb(saved: unknown[] | null) {
+/**
+ * A Db for one create: `saved` is the stored `currency.enabled` (null: nothing saved) and `bank` what the company
+ * bank account select finds. Counts reads and selects.
+ */
+function fakeDb(saved: unknown[] | null, bank: { status: string; currency: string }[] = []) {
   const settingsReads: unknown[][] = [];
   let selects = 0;
   const rowsOf = (query: Parameters<typeof dialect.sqlToQuery>[0]) => {
@@ -47,12 +53,13 @@ function fakeDb(saved: unknown[] | null) {
     }
     throw new Error(`unexpected query: ${text}`);
   };
-  // Every select resolves to no rows, whatever it chains.
-  const emptyChain: Record<string, unknown> = {};
-  for (const step of ['from', 'where', 'innerJoin', 'orderBy', 'for']) {
-    emptyChain[step] = () => emptyChain;
-  }
-  emptyChain.then = (resolve: (rows: unknown[]) => unknown) => resolve([]);
+  // A select from company_bank_accounts resolves to `bank`, any other to no rows, whatever it chains.
+  const chainOf = (rows: unknown[]) => {
+    const chain: Record<string, unknown> = {};
+    for (const step of ['where', 'innerJoin', 'orderBy', 'for']) chain[step] = () => chain;
+    chain.then = (resolve: (found: unknown[]) => unknown) => resolve(rows);
+    return chain;
+  };
   const tx = {
     execute: (query: Parameters<typeof dialect.sqlToQuery>[0]) => Promise.resolve(rowsOf(query)),
     insert: () => ({
@@ -62,7 +69,7 @@ function fakeDb(saved: unknown[] | null) {
     }),
     select: () => {
       selects += 1;
-      return emptyChain;
+      return { from: (table: unknown) => chainOf(table === companyBankAccounts ? bank : []) };
     },
   };
   const db = {
@@ -134,13 +141,29 @@ describe('PaymentRequestsService.create: enabled currency (D44)', () => {
     expect(selectCount()).toBe(0);
   });
 
-  it('accepts a currency in the default list when nothing is saved and goes on to the vendor check', async () => {
-    const { db, settingsReads, selectCount } = fakeDb(null);
+  it('accepts a currency in the default list when nothing is saved and goes on to the bank and vendor checks', async () => {
+    const { db, settingsReads, selectCount } = fakeDb(null, [
+      { status: 'active', currency: 'INR' },
+    ]);
     const error = await caught(() => serviceOn(db).create(bodyIn('INR'), 'key-default'));
     expect(settingsReads).toHaveLength(1);
     expect(error.getStatus()).toBe(404);
     expect(error.getResponse()).toEqual({ code: 'not_found', message: 'Vendor not found' });
-    expect(selectCount()).toBe(1);
+    expect(selectCount()).toBe(2);
+  });
+
+  it('checks the paying bank account after the currency and before the vendor (round 5, P1)', async () => {
+    const missing = fakeDb(['NPR']);
+    const invalid = await caught(() => serviceOn(missing.db).create(bodyIn('NPR'), 'key-bank'));
+    expect(invalid.getStatus()).toBe(422);
+    expect(invalid.getResponse()).toMatchObject({ code: 'BANK_ACCOUNT_INVALID' });
+    expect(missing.selectCount()).toBe(1);
+
+    const usd = fakeDb(['NPR'], [{ status: 'active', currency: 'USD' }]);
+    const mismatch = await caught(() => serviceOn(usd.db, false).create(bodyIn('NPR'), 'key-usd'));
+    expect(mismatch.getStatus()).toBe(422);
+    expect(mismatch.getResponse()).toMatchObject({ code: 'BANK_ACCOUNT_CURRENCY_MISMATCH' });
+    expect(usd.selectCount()).toBe(1);
   });
 
   it('still refuses when the service is built without the injected check (the fallback reads the same db)', async () => {
