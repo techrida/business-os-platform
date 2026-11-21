@@ -21,7 +21,10 @@ const router = vi.hoisted(() => ({
   replace: vi.fn<(href: string) => void>(),
   refresh: vi.fn<() => void>(),
 }));
-vi.mock('next/navigation', () => ({ useRouter: () => router }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => router,
+  usePathname: () => '/settings/sales',
+}));
 vi.mock('@/components/ui/bell-ring', () => ({
   BELL_AFTER_DOT_MS: 0,
   createBellRing: () => ({ kick: vi.fn(), cancel: vi.fn() }),
@@ -37,6 +40,7 @@ vi.stubGlobal('ResizeObserver', NoopResizeObserver);
 const { SettingsForm } = await import('./settings-form');
 const { SettingCard } = await import('./setting-card');
 const { NotificationsBell } = await import('../../notifications-bell');
+const { ShellCountsProvider } = await import('@/components/shell/shell-counts');
 
 const validity: FieldSpec = {
   key: 'quotation.validity_days',
@@ -64,7 +68,9 @@ const buttonByText = (text: string): HTMLButtonElement | null =>
 async function dirtyFormWithOpenBell() {
   const mounted = await mountForm(
     <div>
-      <NotificationsBell initialCount={1} />
+      <ShellCountsProvider>
+        <NotificationsBell />
+      </ShellCountsProvider>
       <SettingsForm section="sales" fields={[validity]}>
         <SettingCard title="Quotations" fields={[validity]} />
       </SettingsForm>
@@ -86,7 +92,7 @@ beforeEach(() => {
   router.replace.mockReset();
   fetchMock.mockReset();
   fetchMock.mockImplementation((url) => {
-    if (url === '/api/notifications/unread-count') return json({ count: 1 });
+    if (url === '/api/shell/counts') return json({ inbox: null, notifications: 1 });
     if (url === '/api/notifications') {
       return json({
         items: [
