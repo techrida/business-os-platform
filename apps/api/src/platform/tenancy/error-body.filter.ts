@@ -125,6 +125,11 @@ export type ErrorCode =
   | 'BILL_NOT_PAYABLE'
   | 'CURRENCY_MISMATCH'
   | 'PURCHASE_ORDER_NOT_FOUND'
+  // Round 5 P1: the paying company bank account of a payment request.
+  | 'BANK_ACCOUNT_INVALID'
+  | 'BANK_ACCOUNT_CURRENCY_MISMATCH'
+  // Round 5 P1: a bill line booked to an account that is not an active expense account of the entity.
+  | 'EXPENSE_ACCOUNT_INVALID'
   // U20b access settings and last-Founder guard.
   | 'confirmation_required'
   | 'last_founder'
@@ -258,6 +263,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   BILL_NOT_PAYABLE: 'A line names a bill that is not approved for payment',
   CURRENCY_MISMATCH: 'The payable items of a payment request must all be in one currency',
   PURCHASE_ORDER_NOT_FOUND: 'This vendor has no such purchase order',
+  BANK_ACCOUNT_INVALID: 'Choose an active bank account of this company',
+  BANK_ACCOUNT_CURRENCY_MISMATCH: 'The bank account holds another currency than this payment',
+  EXPENSE_ACCOUNT_INVALID: 'Choose an active expense account for every line',
   confirmation_required: 'Confirm the warning before saving these access changes.',
   last_founder: 'Cannot remove the only Founder. Make someone else a Founder first.',
   unprocessable: 'The submitted data cannot be processed',
@@ -467,6 +475,10 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'BILL_NOT_PAYABLE',
   'CURRENCY_MISMATCH',
   'PURCHASE_ORDER_NOT_FOUND',
+  // Round 5 P1: a paying bank account that is not an active company account of the entity, or of another currency.
+  'BANK_ACCOUNT_INVALID',
+  'BANK_ACCOUNT_CURRENCY_MISMATCH',
+  'EXPENSE_ACCOUNT_INVALID',
   // Global whitelist: staff and vendor-portal KYC 422s retain `unprocessable` for checklist or expiry
   // refusals; vendor bank changes retain their supporting-file refusal.
   'unprocessable',
