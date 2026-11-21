@@ -489,8 +489,8 @@ export class DocumentsService {
    * the owner's type and size rules; it commits before the receive, which opens its own transactions.
    * Returns the ids; the version is `quarantined` until the scan worker marks it clean.
    *
-   * If the receive fails after the create committed (wrong type: the version ends `rejected`; queue down: it is
-   * back to `awaiting_content`), the live document stays behind and the error is thrown without its ids.
+   * If the receive fails after the create committed (wrong type: the version ends `rejected`; queue down: it stays
+   * `quarantined` with its bytes for the sweeper), the live document stays behind and the error is thrown without its ids.
    */
   async createAndReceiveScanned(
     owner: { ownerType: string; ownerId: string },
@@ -892,12 +892,15 @@ export class DocumentsService {
         jobId: versionId,
       });
     } catch (error) {
-      // Without a job the file would sit in quarantine forever. Undo, so the client can simply retry.
-      this.logger.error(`could not queue the scan for version ${versionId}: ${describe(error)}`);
-      await this.storage.removeQuarantine(version.storageKey);
-      await this.reopen(who, version);
+      // The bytes are stored and the version already holds their sha256 and `quarantined`, so the file is kept
+      // (round 5, FU11): undoing it could end as a quarantined version with a sha256 and no bytes if the undo itself
+      // half failed. The stuck-scan sweeper re-queues every version quarantined for over 15 minutes with no live
+      // job, so the scan still happens. Sending the content again is a 409, as the content was received.
+      this.logger.error(
+        `could not queue the scan for version ${versionId}, the sweeper will: ${describe(error)}`,
+      );
       throw new ServiceUnavailableException(
-        'The virus scanner queue is unavailable. Try again shortly.',
+        'The file was received but its virus scan could not be queued yet. It will be scanned shortly.',
       );
     }
     return toVersionDto(updated);
@@ -1649,13 +1652,15 @@ export class DocumentsService {
   /** Puts a half-received version back to awaiting_content so the client can send the content again. */
   private async reopen(who: { scope: TxScope; actor: Actor }, version: VersionRow): Promise<void> {
     const s = scoped(who.scope);
-    await this.storage.removeQuarantine(version.storageKey);
+    // The row first, then the file: a failure between the two leaves an open version with a stray file the next
+    // upload overwrites, never a quarantined version with no bytes.
     await withTx(this.db, who.scope, who.actor, async (tx) => {
       await tx
         .update(documentVersions)
         .set({ status: 'awaiting_content', updatedAt: new Date() })
         .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
     });
+    await this.storage.removeQuarantine(version.storageKey);
   }
 }
 

@@ -47,7 +47,7 @@ import { DocumentsService } from './documents.service';
 import { FilesController } from './files.controller';
 import { SignedLinks, type LinkStore } from './signed-link';
 import { eicarBytes, startFakeClamd, type FakeClamd } from './fake-clamd';
-import { SCAN_JOB_OPTIONS, ScanProcessor } from './scan.processor';
+import { SCAN_JOB_OPTIONS, ScanProcessor, ScanSweepProcessor } from './scan.processor';
 import { DiskStorageAdapter } from './storage.adapter';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -389,6 +389,32 @@ describe('PUT .../content (raw streamed upload)', () => {
       scanJob(c.versionId),
       expect.objectContaining({ jobId: c.versionId }),
     );
+  });
+
+  it('keeps the bytes and the version quarantined when the scan cannot be queued, and the sweeper re-queues it (FU11)', async () => {
+    const bytes = PDF(300);
+    const c = await create({ sizeBytes: bytes.length });
+    queue.add.mockRejectedValueOnce(new Error('valkey down'));
+    const res = await put(c.uploadPath, bytes, 'application/pdf');
+    expect(res.status).toBe(503);
+    // Old code deleted the file and reopened the version; the sha256 stays only with the bytes.
+    const r = await row(c.versionId);
+    expect(r.status).toBe('quarantined');
+    expect(r.sha256?.toString('hex')).toBe(createHash('sha256').update(bytes).digest('hex'));
+    expect(existsSync(storage.quarantinePath(r.storage_key))).toBe(true);
+
+    const added: { name: string; data: unknown }[] = [];
+    const sweepQueue = {
+      getJobs: () => Promise.resolve([]),
+      add: (name: string, data: unknown) => {
+        added.push({ name, data });
+        return Promise.resolve({});
+      },
+    };
+    const sweeper = new ScanSweepProcessor(db, sweepQueue as unknown as Queue);
+    await sweeper.sweep(new Date(Date.now() + 16 * 60_000));
+    expect(added).toContainEqual({ name: 'docs.scan', data: scanJob(c.versionId) });
+    expect(await processor.scanVersion(scanJob(c.versionId), true)).toBe('clean');
   });
 
   it('answers 413 for Content-Length 25 MiB + 1 byte, and keeps the version open for a valid upload', async () => {
