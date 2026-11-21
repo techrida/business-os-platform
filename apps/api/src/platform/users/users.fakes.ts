@@ -20,7 +20,12 @@ import {
   UsersStore,
   type ZitadelEventKey,
 } from './users.store';
-import type { ZitadelAdminClient, ZitadelUser, ZitadelUserPage } from './zitadel-admin.client';
+import {
+  type ZitadelAdminClient,
+  ZitadelHttpError,
+  type ZitadelUser,
+  type ZitadelUserPage,
+} from './zitadel-admin.client';
 
 export const TENANT = '00000000-0000-4000-8000-000000000001';
 /** The tenant's default legal entity (ADR 0027): bootstrap memberships land here. */
@@ -366,15 +371,76 @@ export class FakeZitadel {
     return Promise.resolve();
   }
   deletedUsers: string[] = [];
+  statusCalls: string[] = [];
   deleteUser(userId: string) {
     this.deletedUsers.push(userId);
     this.users.delete(userId);
     this.grants.delete(userId);
     return Promise.resolve();
   }
+  lockUser(userId: string) {
+    applyZitadelStatusTransition(this.users.get(userId), 'lock');
+    this.statusCalls.push(`lock:${userId}`);
+    return Promise.resolve();
+  }
+  unlockUser(userId: string) {
+    applyZitadelStatusTransition(this.users.get(userId), 'unlock');
+    this.statusCalls.push(`unlock:${userId}`);
+    return Promise.resolve();
+  }
+  deactivateUser(userId: string) {
+    applyZitadelStatusTransition(this.users.get(userId), 'deactivate');
+    this.statusCalls.push(`deactivate:${userId}`);
+    return Promise.resolve();
+  }
+  reactivateUser(userId: string) {
+    applyZitadelStatusTransition(this.users.get(userId), 'reactivate');
+    this.statusCalls.push(`reactivate:${userId}`);
+    return Promise.resolve();
+  }
 
   asClient(): ZitadelAdminClient {
     return this as unknown as ZitadelAdminClient;
+  }
+}
+
+/**
+ * Mirrors ZITADEL v4.20.1 state-change preconditions:
+ *   - lockUser: accepted only when active or invited (not already locked or inactive)
+ *   - unlockUser: accepted only when locked
+ *   - reactivateUser: accepted only when inactive and not locked
+ *   - deactivateUser: accepted when active or locked (refused for invited or already deactivated)
+ */
+export function applyZitadelStatusTransition(
+  user: ZitadelUser | undefined,
+  action: 'lock' | 'unlock' | 'deactivate' | 'reactivate',
+): void {
+  const locked = user?.locked === true;
+  switch (action) {
+    case 'lock':
+      if (!user || locked || (user.status !== 'active' && user.status !== 'invited')) {
+        throw new ZitadelHttpError('/LockUser', 400, 'failed_precondition');
+      }
+      Object.assign(user, { status: 'inactive', locked: true });
+      return;
+    case 'unlock':
+      if (!user || !locked) {
+        throw new ZitadelHttpError('/UnlockUser', 400, 'failed_precondition');
+      }
+      Object.assign(user, { status: 'active', locked: false });
+      return;
+    case 'reactivate':
+      if (!user || user.status !== 'inactive' || locked) {
+        throw new ZitadelHttpError('/ReactivateUser', 400, 'failed_precondition');
+      }
+      Object.assign(user, { status: 'active', locked: false });
+      return;
+    case 'deactivate':
+      if (!user || (user.status !== 'active' && !locked)) {
+        throw new ZitadelHttpError('/DeactivateUser', 400, 'failed_precondition');
+      }
+      Object.assign(user, { status: 'inactive', locked: false });
+      return;
   }
 }
 
