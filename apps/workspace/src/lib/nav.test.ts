@@ -93,6 +93,7 @@ describe('NAV_GROUPS', () => {
       ['Activities & Tasks', '/activities'],
       ['Sales Orders', '/sales-orders'],
       ['Invoices', '/invoices'],
+      ['Sales VAT register', '/invoices/vat-register'],
       ['Payments', '/payments'],
       ['Receivables', '/receivables/aging'],
       ['Purchase requests', '/procurement/requests'],
@@ -115,6 +116,7 @@ describe('NAV_GROUPS', () => {
     expect(permissionByLabel).toEqual({
       'Sales Orders': 'sales_order.read',
       Invoices: 'invoice.read',
+      'Sales VAT register': 'vat.sales.read',
       Payments: 'payment.read',
       Receivables: 'ar.read',
     });

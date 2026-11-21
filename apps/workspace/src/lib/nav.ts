@@ -161,6 +161,13 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         phase: 'P3',
         permission: 'invoice.read',
       },
+      {
+        label: 'Sales VAT register',
+        href: '/invoices/vat-register',
+        icon: 'file-text',
+        phase: 'P3',
+        permission: 'vat.sales.read',
+      },
       // Not in the PRD yet (see the Figma notes), so parked at "later" until it is confirmed.
       { label: 'Recurring Invoices', icon: 'repeat', phase: 'later' },
     ],
