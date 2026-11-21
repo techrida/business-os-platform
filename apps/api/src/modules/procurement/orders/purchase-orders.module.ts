@@ -1,7 +1,8 @@
 // Purchase orders module (P4 unit P3): the REST routes of purchase orders (list, detail, versions, issue, amend,
 // short-close, cancel) and the registration of the po_amendment approval subject. onDecided runs only from
-// ApprovalsService.act (an API route), so the worker never needs the subject. The PO PDF render is a later unit:
-// it sweeps issued versions that have no document, so nothing here queues it.
+// ApprovalsService.act (an API route), so the worker never needs the subject. Round 5 (S3): a command that creates
+// a version (issue, an amendment applied at once or approved) enqueues its PDF render through
+// PurchaseOrderRenderNudgeModule once it commits; the render worker's sweep stays the safety net.
 import { Module, type OnModuleInit } from '@nestjs/common';
 
 import { AuditModule } from '../../../platform/audit/audit.module';
@@ -12,9 +13,10 @@ import { PoAmendmentSubject } from './po-amendment.subject';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { PurchaseOrderRenderNudgeModule } from './render/purchase-order-render.nudge';
 
 @Module({
-  imports: [ApprovalsModule, AuditModule],
+  imports: [ApprovalsModule, AuditModule, PurchaseOrderRenderNudgeModule],
   controllers: [PurchaseOrdersController],
   providers: [PurchaseOrdersService, PurchaseOrdersCaller],
   exports: [PurchaseOrdersService],

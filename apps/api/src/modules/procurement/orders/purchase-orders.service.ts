@@ -49,6 +49,7 @@ import {
   requestOf,
 } from './po-read-access';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
+import { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AUDIT_ENTITY,
@@ -284,6 +285,8 @@ export class PurchaseOrdersService {
     private readonly clock: () => Date = () => new Date(),
     /** Tells the requester their order was issued (in-app only); absent in tests that do not look. */
     @Optional() private readonly notify?: ApprovalsNotify,
+    /** Renders a new version's PDF once its command commits; absent in tests that build the service by hand. */
+    @Optional() private readonly renderNudge?: PurchaseOrderRenderNudge,
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -441,7 +444,7 @@ export class PurchaseOrdersService {
   async issue(id: string, idempotencyKey: string): Promise<PurchaseOrderDto> {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
-    return withTx(this.db, scope, actor, async (tx) => {
+    const issued = await withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'procurement.po.issue', key: idempotencyKey, body: { id } },
@@ -509,6 +512,9 @@ export class PurchaseOrdersService {
       );
       return done.response;
     });
+    // After the commit, so the worker sees version 1: render its PDF now rather than on the next sweep.
+    await this.renderNudge?.nudge(scope, issued.id, issued.currentVersion);
+    return issued;
   }
 
   /**
@@ -559,8 +565,9 @@ export class PurchaseOrdersService {
   ): Promise<AmendResultDto> {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
+    let amended: AmendResultDto;
     try {
-      return await withTx(this.db, scope, actor, async (tx) => {
+      amended = await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency<AmendResultDto>(
           tx,
           { command: 'procurement.po.amend', key: idempotencyKey, body: { id, ...body } },
@@ -731,6 +738,12 @@ export class PurchaseOrdersService {
         message: `This amendment cannot be submitted: ${error.reason}`,
       });
     }
+    // An amendment applied at once made a new version: render it now. One that waits for approval renders when the
+    // approval commits (PoAmendmentSubject.afterDecided).
+    if (amended.outcome === 'applied') {
+      await this.renderNudge?.nudge(scope, id, amended.purchaseOrder.currentVersion);
+    }
+    return amended;
   }
 
   // ------------------------------------------------------------------------------------------------- close
