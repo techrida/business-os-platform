@@ -166,6 +166,25 @@ export class EvidenceOwnerPolicy implements DocumentOwnerPolicy {
   }
 }
 
+/**
+ * The `evidence` policy as an approval context reads it (approvals/context.ts readableDocuments): only files uploaded
+ * to `recordId` itself, so a row naming another record's evidence lists nothing. The read rule is the generic one.
+ */
+export function evidenceOwnerPolicyFor(
+  db: Db,
+  recordId: string,
+): Pick<DocumentOwnerPolicy, 'ownerType' | 'resource'> {
+  const policy = new EvidenceOwnerPolicy(
+    drizzleEvidenceRecordLoader(db),
+    drizzleEvidenceReferenceLoader(db),
+  );
+  return {
+    ownerType: policy.ownerType,
+    resource: (scope, ownerId) =>
+      ownerId === recordId ? policy.resource(scope, ownerId) : Promise.resolve(null),
+  };
+}
+
 /** Resolves an id to the sales order, vendor bill or RFQ of this tenant and acting entity that owns it. */
 export function drizzleEvidenceRecordLoader(db: Db): EvidenceRecordLoader {
   return async (scope, recordId, tx) => {

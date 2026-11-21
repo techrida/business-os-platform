@@ -6,6 +6,7 @@
 // so a row can never point at another entity's (or another tenant's) row.
 import {
   type AnyPgColumn,
+  bigint,
   customType,
   foreignKey,
   integer,
@@ -304,6 +305,8 @@ export const approvalActions = appSchema.table(
     requestVersion: integer('request_version').notNull(),
     result: jsonb('result'),
     createdAt: tz('created_at').notNull().defaultNow(),
+    // Insertion order (0161): breaks ties between rows of one transaction, which share created_at.
+    seq: bigint('seq', { mode: 'number' }).notNull().generatedAlwaysAsIdentity(),
   },
   (t) => [
     tenantOrgFk('approval_actions', t),
