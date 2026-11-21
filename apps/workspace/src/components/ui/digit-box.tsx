@@ -33,7 +33,7 @@ export interface DigitRules {
   /** The most digits the box may hold once it starts with `digits`. */
   maxFor(digits: string): number;
   /** Pasted text reduced to the digits it carries: spaces, dashes and the like go. */
-  cleanPaste(pasted: string): string;
+  cleanPaste(pasted: string, whole: boolean): string;
   /** A reason these digits may not be typed, or null (a leading 0 where a country code is shown). */
   refuseDigits?(digits: string): string | null;
   /** The reason typing past the limit is refused. */
@@ -130,6 +130,8 @@ export function DigitBox({
     emitted.current = postedOf(text);
   });
 
+  // True once the user has edited the box. A stored value nobody touched is never blocked at submit.
+  const touched = useRef(false);
   const pendingCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -174,6 +176,7 @@ export function DigitBox({
   }
 
   function accept(next: string, caret: number | null) {
+    touched.current = true;
     clearNotice();
     commit(next);
     if (caret !== null) placeCaret(caret);
@@ -183,6 +186,7 @@ export function DigitBox({
   }
 
   useFormReset(rootRef, () => {
+    touched.current = false;
     clearNotice();
     const next = rules.parse(controlled ? value : (defaultValue ?? ''));
     setError(null);
@@ -194,6 +198,26 @@ export function DigitBox({
     }
     commit(next);
   });
+
+  // The forms that hold these boxes are `noValidate` and the contracts accept a shorter number, so a
+  // number the user typed but left incomplete is stopped at submit, with its reason and focus on the
+  // box. A function action does not run when its submit event is cancelled.
+  const onFormSubmit = useEffectEvent((event: Event) => {
+    if (disabled || !touched.current) return;
+    const current = textRef.current;
+    const found = rules.problem(current);
+    if (found === null) return;
+    event.preventDefault();
+    setError(found);
+    inputRef.current?.focus();
+  });
+  useEffect(() => {
+    const form = rootRef.current?.closest('form');
+    if (!form) return;
+    const listener = (event: Event) => onFormSubmit(event);
+    form.addEventListener('submit', listener, true);
+    return () => form.removeEventListener('submit', listener, true);
+  }, []);
 
   // Soft keyboards send keydown "Unidentified", so a typed character is judged in `beforeinput`,
   // where a refused one is cancelled before it reaches the box and the caret stays put.
@@ -240,10 +264,12 @@ export function DigitBox({
     if (disabled || readOnly) return;
     const input = event.currentTarget;
     event.preventDefault();
-    const pasted = rules.cleanPaste(event.clipboardData.getData('text'));
     const current = textRef.current;
     const start = input.selectionStart ?? current.length;
     const end = input.selectionEnd ?? start;
+    // Whole number: nothing is left of the box once the selection is replaced.
+    const whole = current.slice(0, start) + current.slice(end) === '';
+    const pasted = rules.cleanPaste(event.clipboardData.getData('text'), whole);
     const next = current.slice(0, start) + pasted + current.slice(end);
     const reason = refusalOf(next);
     if (reason) {
@@ -301,7 +327,6 @@ export function DigitBox({
           className={styles.input}
           type="text"
           inputMode="numeric"
-          pattern="[0-9]*"
           autoComplete="off"
           value={text}
           onChange={onChange}

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { PhoneSchema } from '@bos/contracts';
 import { act, useState, type ReactNode } from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, paste, typeKeys } from '@/test/form-interactions';
+import { click, fill, mountForm, paste, submit, typeKeys } from '@/test/form-interactions';
 import { Field } from './field';
 import { PhoneInput } from './phone-input';
 
@@ -112,6 +112,51 @@ describe('PhoneInput, Nepal', () => {
     await fill(phone.box(), '');
     await paste(phone.box(), '(98) 1234-5678');
     expect(phone.box().value).toBe('9812345678');
+  });
+
+  it('keeps a pasted 0 when it replaces part of a number', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+97714123456" />,
+    );
+    phone.box().setSelectionRange(4, 8);
+    await paste(phone.box(), '0123');
+    expect(phone.box().value).toBe('14120123');
+    expect(phone.hidden()).toBe('+97714120123');
+  });
+
+  it('opens a stored +977 number the Nepal box cannot hold in the international box, whole', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+9771234567890" />,
+    );
+    expect(phone.prefix()).toBe('+');
+    expect(phone.box().value).toBe('9771234567890');
+    expect(phone.hidden()).toBe('+9771234567890');
+  });
+
+  it('stops a submit of a number typed but left short, and lets an untouched stored one through', async () => {
+    const reached = vi.fn();
+    const phone = await mount(<PhoneInput aria-label="Phone" name="phone" />);
+    phone.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await typeKeys(phone.box(), '981234567');
+    await submit(phone.container);
+    expect(reached).toHaveBeenCalledWith(true);
+    expect(phone.status()).toBe('A mobile number has 10 digits; this has 9.');
+    expect(document.activeElement).toBe(phone.box());
+    await mounted.unmount();
+
+    reached.mockClear();
+    const stored = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+977981234567" />,
+    );
+    stored.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await submit(stored.container);
+    expect(reached).toHaveBeenCalledWith(false);
   });
 
   it('shows a stored +977 number without the prefix and posts it back unchanged', async () => {

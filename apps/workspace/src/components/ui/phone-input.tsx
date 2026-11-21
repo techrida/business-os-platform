@@ -39,8 +39,11 @@ const NEPAL_RULES: DigitRules = {
   },
   post: (digits) => (digits === '' ? '' : `${NEPAL_PREFIX}${digits}`),
   maxFor: (digits) => (isMobile(digits) ? MOBILE_DIGITS : LANDLINE_MAX),
-  cleanPaste: (pasted) => {
+  cleanPaste: (pasted, whole) => {
     let bare = pasted.replace(NOISE, '');
+    // A country code or trunk 0 is only dropped from a whole number; pasted into part of one, the
+    // digits are the user's own.
+    if (!whole) return bare;
     if (bare.startsWith('+977')) bare = bare.slice(4);
     else if (bare.startsWith('00977')) bare = bare.slice(5);
     else if (bare.startsWith('977') && bare.length > MOBILE_DIGITS) bare = bare.slice(3);
@@ -115,12 +118,23 @@ export type PhoneInputProps = DigitBoxProps;
  *
  *   <Field label="Phone">{(control) => <PhoneInput {...control} name="phone" />}</Field>
  */
+/** A stored number the Nepal box can show as typed: +977, then digits it would let a user type. */
+function fitsNepalBox(stored: string): boolean {
+  if (!stored.startsWith(NEPAL_PREFIX)) return false;
+  const national = NEPAL_RULES.parse(stored);
+  return (
+    ALL_DIGITS.test(national) &&
+    !national.startsWith('0') &&
+    national.length <= NEPAL_RULES.maxFor(national)
+  );
+}
+
 export function PhoneInput(props: PhoneInputProps) {
   const { value, defaultValue, onValueChange, className, ...rest } = props;
   const start = value ?? defaultValue ?? '';
-  const [international, setInternational] = useState(
-    start !== '' && !start.startsWith(NEPAL_PREFIX),
-  );
+  // A stored number the Nepal box cannot hold (a foreign number, or +977 with too many digits) opens
+  // in the international box, where it is shown and posted whole.
+  const [international, setInternational] = useState(start !== '' && !fitsNepalBox(start));
   // What an uncontrolled box starts with after a switch, and what each country's box held when it was
   // left, so switching by mistake and back does not lose a stored number.
   const [seed, setSeed] = useState(defaultValue ?? '');
