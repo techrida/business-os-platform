@@ -4,7 +4,8 @@
  * arithmetic on money (D22).
  */
 
-import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
+import { CreditLimitSchema } from '@bos/contracts';
+import { NO_SPACES, USE_A_POINT, hasInnerSpace, hasStrayComma, plainAmount } from '@bos/locale';
 
 /** The three fields the card edits, one save each. Portal access is the existing invite, not an edit here. */
 export type TermsField = 'owner' | 'paymentTerms' | 'creditLimit';
@@ -71,9 +72,6 @@ export const LIMIT_REQUIRED = 'Enter the credit limit in NPR, or choose No limit
 export const LIMIT_INVALID =
   'Enter an amount in NPR with up to two decimals, for example 1,00,000.00. It cannot be negative.';
 
-/** The contract's credit limit (CreditLimitSchema): digits, then at most two decimals; no sign. */
-const AMOUNT = /^\d{1,16}(\.\d{1,2})?$/;
-
 export type CreditLimitMode = 'limit' | 'none';
 
 /**
@@ -90,7 +88,9 @@ export function parseCreditLimit(
   if (mode !== 'limit') return { ok: false, error: INCOMPLETE };
   const typed = plainAmount(raw);
   if (typed === '') return { ok: false, error: LIMIT_REQUIRED };
-  if (!AMOUNT.test(typed)) {
+  // "10 50" is not 1050: say what to fix rather than the generic sentence.
+  if (hasInnerSpace(raw)) return { ok: false, error: NO_SPACES };
+  if (!CreditLimitSchema.safeParse(typed).success) {
     return {
       ok: false,
       error: hasStrayComma(raw) ? `${USE_A_POINT} ${LIMIT_INVALID}` : LIMIT_INVALID,

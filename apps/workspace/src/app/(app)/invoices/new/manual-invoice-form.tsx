@@ -3,10 +3,12 @@
 import type { Currency, TaxCode } from '@bos/contracts';
 import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
 
+import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Select, Textarea } from '@/components/ui/field';
+import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -54,6 +56,7 @@ export function ManualInvoiceForm({
   taxCodes,
   enabledCurrencies,
   idempotencyKey,
+  today = todayInKathmandu(),
 }: {
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState>;
   customers: readonly CustomerOption[] | null;
@@ -63,6 +66,8 @@ export function ManualInvoiceForm({
   enabledCurrencies: readonly Currency[];
   /** One key per render, retained after an unknown result so a retry only creates one invoice. */
   idempotencyKey: string;
+  /** Today as `YYYY-MM-DD`, the earliest due date the picker offers. */
+  today?: string | undefined;
 }) {
   const [state, formAction, pending] = useActionState<InvoiceFormState, FormData>(action, {
     key: idempotencyKey,
@@ -211,7 +216,13 @@ export function ManualInvoiceForm({
             error={errors['dueDate']}
           >
             {(control) => (
-              <DatePicker name="dueDate" value={dueDate} onChange={setDueDate} {...control} />
+              <DatePicker
+                name="dueDate"
+                value={dueDate}
+                min={today}
+                onChange={setDueDate}
+                {...control}
+              />
             )}
           </Field>
           <Field label="Discount" hint="Optional. Applies to the whole invoice, before tax.">
@@ -219,7 +230,11 @@ export function ManualInvoiceForm({
               <Select
                 name="discountMode"
                 value={discountMode}
-                onChange={(e) => setDiscountMode(e.target.value as DiscountMode)}
+                onChange={(e) => {
+                  // A value typed for one type means nothing in the other: 5000 is not 5000%.
+                  setDiscountMode(e.target.value as DiscountMode);
+                  setDiscountValue('');
+                }}
                 {...control}
               >
                 {DISCOUNT_MODES.map((m) => (
@@ -235,16 +250,24 @@ export function ManualInvoiceForm({
               label={discountMode === 'pct' ? 'Discount (%)' : `Discount amount (${currency})`}
               error={errors['discount']}
             >
-              {(control) => (
-                <Input
-                  name="discountValue"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  value={discountValue}
-                  onChange={(e) => setDiscountValue(e.target.value)}
-                  {...control}
-                />
-              )}
+              {(control) =>
+                discountMode === 'pct' ? (
+                  <PercentInput
+                    {...control}
+                    name="discountValue"
+                    value={discountValue}
+                    onValueChange={setDiscountValue}
+                  />
+                ) : (
+                  <MoneyInput
+                    {...control}
+                    name="discountValue"
+                    currency={currency}
+                    value={discountValue}
+                    onValueChange={setDiscountValue}
+                  />
+                )
+              }
             </Field>
           ) : null}
         </div>
