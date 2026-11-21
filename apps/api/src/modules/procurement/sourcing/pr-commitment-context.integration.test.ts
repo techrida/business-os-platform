@@ -8,7 +8,12 @@ import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
 
-import { DEFAULT_ROLE_PERMISSIONS, type Permission, type RoleKey, type Scope } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
 import {
   createCostCenter,
   createDepartment,
@@ -68,10 +73,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[current.role])) as Map<
-    Permission,
-    Scope
-  >,
+  grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[current.role])) as Map<Permission, Scope>,
 });
 const caller = {
   current: () => ({
