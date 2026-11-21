@@ -1,6 +1,35 @@
+import { ErrorBodySchema } from '@bos/contracts';
+
+import { ApiError } from '@/lib/api';
 import { currencyNotEnabledText } from '@/lib/kernel-ui';
 
 import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/failure-core';
+
+/**
+ * The words for the API's 422 about the chosen paying bank account. The entry form shows them under its
+ * "Pay from bank account" field. Submit refuses a draft whose account was retired after it was made
+ * (BANK_ACCOUNT_INVALID); the submit dialog has no such field and shows the same words as its refusal.
+ * Cancel never checks the account.
+ */
+const BANK_ACCOUNT_MESSAGES: Record<string, string> = {
+  BANK_ACCOUNT_INVALID: 'This bank account is not an active account of your company.',
+  BANK_ACCOUNT_CURRENCY_MISMATCH:
+    'This bank account holds a different currency. Choose an account in the request currency.',
+};
+
+/**
+ * The field a refusal belongs to, for the entry form: a 422 about the paying bank account belongs to
+ * `fromBankAccountId`. Undefined for every other refusal, which the form shows as a whole.
+ */
+export function paymentRequestFieldError(
+  err: unknown,
+): { field: 'fromBankAccountId'; message: string } | undefined {
+  if (!(err instanceof ApiError) || err.status !== 422) return undefined;
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  const code = parsed.success ? parsed.data.error.code : undefined;
+  const message = code === undefined ? undefined : BANK_ACCOUNT_MESSAGES[code];
+  return message === undefined ? undefined : { field: 'fromBankAccountId', message };
+}
 
 export function paymentRequestFailure(err: unknown): ProcFailure {
   // A currency switched off for the company (D44). Read before the code map: until the API passes
@@ -48,6 +77,7 @@ export function paymentRequestFailure(err: unknown): ProcFailure {
         CURRENCY_MISMATCH: 'Every bill must use the request currency.',
         PURCHASE_ORDER_NOT_FOUND:
           'That purchase order does not belong to this vendor in this legal entity.',
+        ...BANK_ACCOUNT_MESSAGES,
       };
       return code === undefined ? undefined : messages[code];
     },

@@ -404,6 +404,107 @@ async function seedWithholdingCodes(client: pg.ClientBase, scope: SeedScope): Pr
   return changed;
 }
 
+/** A dev row of app.company_bank_accounts. Fictional: only the last four characters are ever stored. */
+export interface DevBankAccount {
+  name: string;
+  bankName: string;
+  last4: string;
+  currency: 'NPR' | 'INR' | 'USD';
+  status: 'active' | 'retired';
+}
+
+/** A dev row of app.expense_accounts. */
+export interface DevExpenseAccount {
+  code: string;
+  name: string;
+  status: 'active' | 'retired';
+}
+
+/**
+ * The entity's own bank accounts for the payment request picker (0143). The retired one is there so the Retired
+ * display can be checked by hand.
+ */
+export const DEV_BANK_ACCOUNTS: readonly DevBankAccount[] = [
+  {
+    name: 'Operating account',
+    bankName: 'Nabil Bank',
+    last4: '4821',
+    currency: 'NPR',
+    status: 'active',
+  },
+  {
+    name: 'Dollar account',
+    bankName: 'Standard Chartered Bank Nepal',
+    last4: '7305',
+    currency: 'USD',
+    status: 'active',
+  },
+  {
+    name: 'Old payroll account',
+    bankName: 'Global IME Bank',
+    last4: '1190',
+    currency: 'NPR',
+    status: 'retired',
+  },
+];
+
+/** The accounts bill lines book to (0144); 5800 is retired for the same reason as the old payroll account. */
+export const DEV_EXPENSE_ACCOUNTS: readonly DevExpenseAccount[] = [
+  { code: '5100', name: 'Office supplies', status: 'active' },
+  { code: '5200', name: 'Rent', status: 'active' },
+  { code: '5300', name: 'Utilities', status: 'active' },
+  { code: '5400', name: 'Travel', status: 'active' },
+  { code: '5500', name: 'Professional fees', status: 'active' },
+  { code: '5900', name: 'Other expenses', status: 'active' },
+  { code: '5800', name: 'Closed project costs', status: 'retired' },
+];
+
+/**
+ * Seeds the dev bank and expense accounts in the acting entity. Insert only, never update: the 0143/0144 guards
+ * freeze the bank, last four, currency and code, and a row someone edited or retired by hand is theirs. A retired
+ * row is written retired, with retired_at, in the same insert (the retired_at check needs both).
+ *
+ * Bank accounts have no unique key, so a row is inserted only when the entity has none with that name, whatever
+ * its status; a renamed seeded account is therefore added again on the next run. Expense accounts hang ON CONFLICT
+ * on the 0144 unique index (entity plus lower(code)).
+ */
+async function seedCompanyAccounts(client: pg.ClientBase, scope: SeedScope): Promise<number> {
+  let changed = 0;
+  for (const bank of DEV_BANK_ACCOUNTS) {
+    const result = await client.query(
+      `INSERT INTO app.company_bank_accounts
+         (tenant_id, organization_id, name, bank_name, last4, currency, status, retired_at)
+       SELECT $1::uuid, $2::uuid, $3::text, $4, $5, $6, $7::text,
+              CASE WHEN $7::text = 'retired' THEN now() END
+       WHERE NOT EXISTS (
+         SELECT 1 FROM app.company_bank_accounts
+         WHERE tenant_id = $1::uuid AND organization_id = $2::uuid
+           AND lower(btrim(name)) = lower(btrim($3::text))
+       )`,
+      [
+        scope.tenantId,
+        scope.organizationId,
+        bank.name,
+        bank.bankName,
+        bank.last4,
+        bank.currency,
+        bank.status,
+      ],
+    );
+    changed += result.rowCount ?? 0;
+  }
+  for (const account of DEV_EXPENSE_ACCOUNTS) {
+    const result = await client.query(
+      `INSERT INTO app.expense_accounts (tenant_id, organization_id, code, name, status, retired_at)
+       VALUES ($1, $2, $3, $4, $5::text, CASE WHEN $5::text = 'retired' THEN now() END)
+       ON CONFLICT (tenant_id, organization_id, lower(code)) DO NOTHING`,
+      [scope.tenantId, scope.organizationId, account.code, account.name, account.status],
+    );
+    changed += result.rowCount ?? 0;
+  }
+  return changed;
+}
+
 async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<number> {
   const result = await client.query(
     `INSERT INTO app.fx_rates (tenant_id, currency, rate_npr, source, rate_date)
@@ -826,6 +927,8 @@ export async function seedKernelRows(
       );
       changed += result.rowCount ?? 0;
     }
+    // The bank and expense account pickers (payment requests, bill lines) need rows to pick from.
+    changed += await seedCompanyAccounts(client, scope);
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
     changed += await seedWithholdingCodes(client, scope);

@@ -28,7 +28,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../../platform/authz/authz.service';
 import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
-import { withTx } from '../../../platform/db/tx';
+import { READ_ONLY, withTx } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { DraftingCaller } from '../drafting/drafting.caller';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
@@ -176,8 +176,12 @@ export class QuotationDocumentService {
   async link(quotationId: string, versionId: string): Promise<SignedLinkDto> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
-    const head = await withTx(this.db, scope, actor, (tx) =>
-      this.store.head(tx, principal, quotationId, versionId),
+    const head = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => this.store.head(tx, principal, quotationId, versionId),
+      READ_ONLY,
     );
     if (head === undefined) throw versionNotFound();
     if (quotationRenderGivenUp(head)) throw renderFailed();

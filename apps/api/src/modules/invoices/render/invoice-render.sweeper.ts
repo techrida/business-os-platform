@@ -68,7 +68,7 @@ import { type Job, Queue } from 'bullmq';
 import { and, asc, desc, eq, exists, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
-import { systemActor, type TxScope } from '../../../platform/db/tx';
+import { READ_ONLY, systemActor, type TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
 import { DocumentLogoUnavailableError } from '../../quotations/render/issuer';
 import {
@@ -330,7 +330,7 @@ export class InvoiceRenderSweeper {
     /** The print the stored PDF is: its document, its number and the format it printed with. */
     let print: { documentId: string; printNo: number; format: DocumentFormatSnapshot };
     try {
-      const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
+      const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c), READ_ONLY);
       if (source === undefined) throw new RenderSourceMissingError();
       const { nextPrintNo, originalFormat, ...rows } = source;
       const view = toInvoiceRenderView({ ...rows, printNo: nextPrintNo });

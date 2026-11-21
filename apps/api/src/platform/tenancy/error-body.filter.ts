@@ -19,6 +19,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { z } from 'zod';
 
 import { STEP_UP_REQUIRED } from '../auth/step-up';
+import { DB_BUSY_RETRY_AFTER_SECONDS, type DbBusyKind, dbBusyKindOf } from '../db/busy';
 import { newCorrelationId } from '../obs/correlation';
 import { REQUEST_ID_HEADER, type CorrelatedRequest } from './correlation.middleware';
 import { currentCorrelationId } from './request-context';
@@ -138,6 +139,11 @@ export type ErrorCode =
   | 'BILL_NOT_PAYABLE'
   | 'CURRENCY_MISMATCH'
   | 'PURCHASE_ORDER_NOT_FOUND'
+  // Round 5 P1: the paying company bank account of a payment request.
+  | 'BANK_ACCOUNT_INVALID'
+  | 'BANK_ACCOUNT_CURRENCY_MISMATCH'
+  // Round 5 P1: a bill line booked to an account that is not an active expense account of the entity.
+  | 'EXPENSE_ACCOUNT_INVALID'
   // U20b access settings and last-Founder guard.
   | 'confirmation_required'
   | 'last_founder'
@@ -147,6 +153,8 @@ export type ErrorCode =
   | 'unsupported_media_type'
   | 'bad_request'
   | 'unavailable'
+  // A deadlock victim or a lock wait over lock_timeout: rolled back, safe to retry (503 + Retry-After).
+  | 'db_busy'
   | 'internal';
 
 export function codeForStatus(status: number): ErrorCode {
@@ -283,6 +291,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   BILL_NOT_PAYABLE: 'A line names a bill that is not approved for payment',
   CURRENCY_MISMATCH: 'The payable items of a payment request must all be in one currency',
   PURCHASE_ORDER_NOT_FOUND: 'This vendor has no such purchase order',
+  BANK_ACCOUNT_INVALID: 'Choose an active bank account of this company',
+  BANK_ACCOUNT_CURRENCY_MISMATCH: 'The bank account holds another currency than this payment',
+  EXPENSE_ACCOUNT_INVALID: 'Choose an active expense account for every line',
   confirmation_required: 'Confirm the warning before saving these access changes.',
   last_founder: 'Cannot remove the only Founder. Make someone else a Founder first.',
   unprocessable: 'The submitted data cannot be processed',
@@ -292,6 +303,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
   unavailable: 'Service unavailable',
+  db_busy: 'Busy, please try again',
   internal: 'Internal server error',
 };
 
@@ -492,6 +504,10 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'BILL_NOT_PAYABLE',
   'CURRENCY_MISMATCH',
   'PURCHASE_ORDER_NOT_FOUND',
+  // Round 5 P1: a paying bank account that is not an active company account of the entity, or of another currency.
+  'BANK_ACCOUNT_INVALID',
+  'BANK_ACCOUNT_CURRENCY_MISMATCH',
+  'EXPENSE_ACCOUNT_INVALID',
   // Global whitelist: staff and vendor-portal KYC 422s retain `unprocessable` for checklist or expiry
   // refusals; vendor bank changes retain their supporting-file refusal.
   'unprocessable',
@@ -670,6 +686,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
     let duplicates: DuplicateCandidate[] | undefined;
     let warnings: AccessWarning[] | undefined;
     let fieldErrors: Record<string, string> | undefined;
+    let busy: DbBusyKind | undefined;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
@@ -696,10 +713,19 @@ export class ErrorBodyFilter implements ExceptionFilter {
         fieldErrors = fieldErrorsOf(exception);
       }
     } else {
-      status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
+      busy = dbBusyKindOf(exception);
+      status =
+        busy === undefined
+          ? (statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR)
+          : HttpStatus.SERVICE_UNAVAILABLE;
     }
 
-    const code: ErrorCode = stepUp ? 'step_up_required' : (conflictCode ?? codeForStatus(status));
+    const code: ErrorCode =
+      busy !== undefined
+        ? 'db_busy'
+        : stepUp
+          ? 'step_up_required'
+          : (conflictCode ?? codeForStatus(status));
     // 5xx other than 503 may carry internal detail in the message, so those are never shown.
     const message =
       status >= 500 && status !== 503
@@ -707,7 +733,11 @@ export class ErrorBodyFilter implements ExceptionFilter {
         : (exposedMessage ?? GENERIC_MESSAGE[code]);
     const correlationId = this.correlationIdFor(req);
 
-    if (status >= 500) {
+    if (busy !== undefined) {
+      this.logger.warn(
+        `${req.method} ${req.path} rolled back: database ${busy} (correlationId=${correlationId})`,
+      );
+    } else if (status >= 500) {
       // req.path excludes the query string, which could carry secrets.
       const stack = exception instanceof Error ? exception.stack : String(exception);
       this.logger.error(
@@ -753,6 +783,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
       },
     };
     res.setHeader(REQUEST_ID_HEADER, correlationId);
+    if (busy !== undefined) res.setHeader('Retry-After', String(DB_BUSY_RETRY_AFTER_SECONDS[busy]));
     res.status(status).json(body);
   }
 

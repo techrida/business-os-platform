@@ -349,91 +349,101 @@ export class AccessSettingsService {
     actor: Actor,
     req: AccessSaveRequest,
   ): Promise<AccessCatalogueResponse> {
-    await withTx(this.db, scope, actor, async (tx) => {
-      await lockAccessRevision(tx, scope.tenantId);
-      // The route's @Can used the token's roles; a Founder whose role was removed since sign-in
-      // still passes it, so check the roles the mirror holds now (403 unless admin.roles.write).
-      await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
+    await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        await lockAccessRevision(tx, scope.tenantId);
+        // The route's @Can used the token's roles; a Founder whose role was removed since sign-in
+        // still passes it, so check the roles the mirror holds now (403 unless admin.roles.write).
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
 
-      const loaded = await this.loadSnapshot(tx, scope, { includeOpenOwned: true });
-      if (loaded.revisionRow.revision !== req.expectedRevision) {
-        throw new ConflictException({
-          code: 'stale_access',
-          message: 'Access settings were changed by someone else. Reload and try again.',
+        const loaded = await this.loadSnapshot(tx, scope, { includeOpenOwned: true });
+        if (loaded.revisionRow.revision !== req.expectedRevision) {
+          throw new ConflictException({
+            code: 'stale_access',
+            message: 'Access settings were changed by someone else. Reload and try again.',
+          });
+        }
+
+        const evalResult = evaluateAccessChanges(loaded.snapshot, req.changes);
+        const blockedWarnings = evalResult.warnings.filter((w) => w.severity === 'blocked');
+        const hasFieldErrors = Object.keys(evalResult.fieldErrors).length > 0;
+        if (hasFieldErrors || blockedWarnings.length > 0) {
+          const firstMessage =
+            blockedWarnings[0]?.message ??
+            Object.values(evalResult.fieldErrors)[0] ??
+            'These access changes cannot be saved.';
+          throw new UnprocessableEntityException({
+            code: 'unprocessable',
+            message: firstMessage,
+            ...(hasFieldErrors ? { fieldErrors: evalResult.fieldErrors } : {}),
+            ...(blockedWarnings.length > 0 ? { warnings: blockedWarnings } : {}),
+          });
+        }
+
+        const acknowledgedSet = new Set(req.acknowledged);
+        const unacknowledged = evalResult.warnings.filter(
+          (w) => w.severity === 'confirm' && !acknowledgedSet.has(w.code),
+        );
+        if (unacknowledged.length > 0) {
+          throw new ConflictException({
+            code: 'confirmation_required',
+            message: 'Confirm the warning before saving these access changes.',
+            warnings: unacknowledged,
+          });
+        }
+
+        const hasGrantOrReset = req.changes.some(
+          (c) => c.kind === 'grant' || c.kind === 'resetRole',
+        );
+        const hasLevelRuleChange = req.changes.some((c) => c.kind === 'levelRule');
+
+        // A tenant still on the code defaults has no grant rows; the first save writes them out, so the edit applies to
+        // the policy the tenant has been running on rather than to an empty table.
+        if (!loaded.hasPersistedGrants) {
+          await this.materializeDefaultGrants(tx, scope.tenantId);
+        }
+
+        // A tenant on the code default level rows gets them written out before its first level-rule
+        // or grant change. A grant change counts too: the role cache applies the code defaults as
+        // computed from the default grants, so a role a grant makes newly eligible would get no row
+        // there while Check a person showed it the department.
+        let levelRulesActive =
+          loaded.revisionRow.levelRulesMaterialized || loaded.hasPersistedLevelRows;
+        if ((hasLevelRuleChange || hasGrantOrReset) && !levelRulesActive) {
+          await this.materializeDefaultLevelRules(tx, scope.tenantId, evalResult.before.grants);
+          levelRulesActive = true;
+        }
+
+        const auditMeta: Record<string, unknown> = {
+          ...(req.note !== undefined && req.note !== '' ? { note: req.note } : {}),
+          ...(req.acknowledged.length > 0 ? { acknowledged: req.acknowledged } : {}),
+        };
+
+        await this.applyChangesAndAudit(
+          tx,
+          scope,
+          req.changes,
+          evalResult.before,
+          evalResult.after,
+          levelRulesActive,
+          auditMeta,
+        );
+
+        // Once the rows are the tenant's truth, mark it so, including for rows migration 0088 wrote
+        // without the flag: otherwise switching every rule off leaves zero rows and the role cache
+        // falls back to the code defaults (the flag only ever turns on).
+        await bumpAccessRevision(tx, scope, {
+          actorUserId: actor.kind === 'user' ? actor.id : null,
+          markLevelRulesMaterialized: levelRulesActive,
         });
-      }
-
-      const evalResult = evaluateAccessChanges(loaded.snapshot, req.changes);
-      const blockedWarnings = evalResult.warnings.filter((w) => w.severity === 'blocked');
-      const hasFieldErrors = Object.keys(evalResult.fieldErrors).length > 0;
-      if (hasFieldErrors || blockedWarnings.length > 0) {
-        const firstMessage =
-          blockedWarnings[0]?.message ??
-          Object.values(evalResult.fieldErrors)[0] ??
-          'These access changes cannot be saved.';
-        throw new UnprocessableEntityException({
-          code: 'unprocessable',
-          message: firstMessage,
-          ...(hasFieldErrors ? { fieldErrors: evalResult.fieldErrors } : {}),
-          ...(blockedWarnings.length > 0 ? { warnings: blockedWarnings } : {}),
-        });
-      }
-
-      const acknowledgedSet = new Set(req.acknowledged);
-      const unacknowledged = evalResult.warnings.filter(
-        (w) => w.severity === 'confirm' && !acknowledgedSet.has(w.code),
-      );
-      if (unacknowledged.length > 0) {
-        throw new ConflictException({
-          code: 'confirmation_required',
-          message: 'Confirm the warning before saving these access changes.',
-          warnings: unacknowledged,
-        });
-      }
-
-      const hasGrantOrReset = req.changes.some((c) => c.kind === 'grant' || c.kind === 'resetRole');
-      const hasLevelRuleChange = req.changes.some((c) => c.kind === 'levelRule');
-
-      // A tenant still on the code defaults has no grant rows; the first save writes them out, so the edit applies to
-      // the policy the tenant has been running on rather than to an empty table.
-      if (!loaded.hasPersistedGrants) {
-        await this.materializeDefaultGrants(tx, scope.tenantId);
-      }
-
-      // A tenant on the code default level rows gets them written out before its first level-rule
-      // or grant change. A grant change counts too: the role cache applies the code defaults as
-      // computed from the default grants, so a role a grant makes newly eligible would get no row
-      // there while Check a person showed it the department.
-      let levelRulesActive =
-        loaded.revisionRow.levelRulesMaterialized || loaded.hasPersistedLevelRows;
-      if ((hasLevelRuleChange || hasGrantOrReset) && !levelRulesActive) {
-        await this.materializeDefaultLevelRules(tx, scope.tenantId, evalResult.before.grants);
-        levelRulesActive = true;
-      }
-
-      const auditMeta: Record<string, unknown> = {
-        ...(req.note !== undefined && req.note !== '' ? { note: req.note } : {}),
-        ...(req.acknowledged.length > 0 ? { acknowledged: req.acknowledged } : {}),
-      };
-
-      await this.applyChangesAndAudit(
-        tx,
-        scope,
-        req.changes,
-        evalResult.before,
-        evalResult.after,
-        levelRulesActive,
-        auditMeta,
-      );
-
-      // Once the rows are the tenant's truth, mark it so, including for rows migration 0088 wrote
-      // without the flag: otherwise switching every rule off leaves zero rows and the role cache
-      // falls back to the code defaults (the flag only ever turns on).
-      await bumpAccessRevision(tx, scope, {
-        actorUserId: actor.kind === 'user' ? actor.id : null,
-        markLevelRulesMaterialized: levelRulesActive,
-      });
-    });
+        // 'lazy': the access-revision lock comes first, as on the ZITADEL admin paths that cannot take the tenant
+        // audit lock first; taking that lock before it would invert the order against them.
+      },
+      { audit: 'lazy' },
+    );
 
     // Invalidate AFTER commit so no request can refill the role cache with pre-commit rows.
     await this.authz.invalidate(scope.tenantId, scope.organizationId);

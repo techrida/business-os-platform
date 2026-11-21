@@ -22,6 +22,7 @@ import {
   createCostCenter,
   approvalRequests,
   createDepartment,
+  createExpenseAccount,
   createParty,
   createStaffUser,
   createTenantWithEntity,
@@ -73,6 +74,8 @@ let orders: PurchaseOrdersService;
 let receiptsService: ReceiptsService;
 let deptA = '';
 let vatCode = '';
+/** An active expense account of entity A: bill lines must book to one (round 5, unit P1). */
+let expenseAccountId = '';
 let tdsCode = '';
 
 const U = { req: '', proc: '', acct: '', acct2: '', fin: '', mgmt: '', founder: '', wh: '' };
@@ -172,6 +175,7 @@ beforeAll(async () => {
         VALUES (${scopeA.tenantId}, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01') RETURNING id`,
   );
   vatCode = (vat.rows[0] as { id: string }).id;
+  expenseAccountId = (await createExpenseAccount(appPool, scopeA)).id;
   const tds = await exec(
     scopeA,
     sql`INSERT INTO app.withholding_codes (tenant_id, code, name, applies_to, rate_bp, effective_from)
@@ -353,7 +357,7 @@ async function submittedBill(po: Po, lineTds?: string) {
       lines: [
         {
           poLineId: po.lineId,
-          accountId: randomUUID(),
+          accountId: expenseAccountId,
           quantity: '1',
           unitPrice: '100000.00',
           taxCodeId: vatCode,
