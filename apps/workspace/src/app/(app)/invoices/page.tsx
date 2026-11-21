@@ -344,6 +344,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
               totals={totals}
               column={5}
               columns={8}
+              pinned
               allPages={total > items.length}
               format={(amount, currency) => money(amount, currency, numberSystems)}
             />

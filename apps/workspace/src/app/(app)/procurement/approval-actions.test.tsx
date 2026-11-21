@@ -48,6 +48,26 @@ describe('ApprovalActions', () => {
     expect(html).not.toContain(ADA);
   });
 
+  it('says "automatically" for a step the system took, not a missing name', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalActions
+        actions={[
+          {
+            action: 'escalate',
+            actorUserId: 'system',
+            onBehalfOfUserId: null,
+            comment: null,
+            createdAt: '2026-11-21T06:00:00.000Z',
+          },
+        ]}
+        people={[]}
+      />,
+    );
+    expect(html).toContain('Escalated after the deadline');
+    expect(html).toContain('automatically');
+    expect(html).not.toContain('Person name unavailable');
+  });
+
   it('draws nothing before the first action', () => {
     expect(renderToStaticMarkup(<ApprovalActions actions={[]} people={[]} />)).toBe('');
   });

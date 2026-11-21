@@ -116,12 +116,11 @@
   }
 }
 
-/* A table wider than its column scrolls inside its card. The scrollbar stays drawn (not an overlay that hides when
-   idle) so a reader can see that Tax, Line total and the other columns are further right, and the description keeps a
-   readable width instead of wrapping one word per line. */
+/* A table wider than its column scrolls inside its card. Thin classic scrollbars show that Tax, Line total and the
+   other columns are further right (where the platform draws overlay scrollbars they appear on scroll), and the
+   description keeps a readable width instead of wrapping one word per line. */
 .scrollTable {
   scrollbar-width: thin;
-  scrollbar-gutter: stable;
 }
 
 .descriptionCell {
