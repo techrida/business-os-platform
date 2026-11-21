@@ -12,6 +12,7 @@
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 
 import {
   CreditHoldDtoSchema,
@@ -42,7 +43,7 @@ import {
   salesOrderTaxSummary,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -73,6 +74,7 @@ import {
 import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome.service';
 import { RecordOutcomeService } from '../quotations/outcome/record-outcome.service';
 import { PricingService } from '../quotations/pricing/pricing.service';
+import { EVIDENCE_PDF, evidenceFixture, type EvidenceFixture } from '../evidence/evidence.fixture';
 import { SalesOrdersService } from './sales-orders.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -99,6 +101,8 @@ let outcomes: QuotationOutcomeService;
 let settings: SettingsService;
 let opportunitiesService: OpportunitiesService;
 let service: SalesOrdersService;
+/** Evidence uploads through the order's evidence route, DocumentsService and the `evidence` owner policy. */
+let evidence: EvidenceFixture;
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
@@ -205,9 +209,11 @@ beforeAll(async () => {
     caller,
     () => NOW,
   );
+  evidence = await evidenceFixture(db, caller.current);
 });
 
 afterAll(async () => {
+  await evidence?.close();
   await appPool?.end();
   await ownerPool?.end();
   await testDb?.drop();
@@ -270,20 +276,30 @@ async function seedOpportunity(): Promise<string> {
   return row!.id;
 }
 
-/** A kernel document of entity A (or B), as an upload leaves it: only its row matters to a sales order. */
-async function seedDocument(scope: TxScope = scopeA): Promise<string> {
+/**
+ * A kernel document of entity A (or B), as an upload leaves it: only its row matters to a sales order. By default
+ * a file of some other record (owner type `test_evidence`), as a confirm's evidence is; `owner` makes it another
+ * kind (`evidence` of an order, a picture).
+ */
+async function seedDocument(
+  scope: TxScope = scopeA,
+  owner: { ownerType: string; ownerId: string } = {
+    ownerType: 'test_evidence',
+    ownerId: randomUUID(),
+  },
+): Promise<string> {
   const [row] = await withTx(db, scope, systemActor('test'), (tx) =>
     tx
       .insert(documents)
-      .values({ ...scope, ownerType: 'test_evidence', ownerId: randomUUID() })
+      .values({ ...scope, ...owner })
       .returning({ id: documents.id }),
   );
   return row!.id;
 }
 
 /** `seedDocument` whose only version the virus scan found infected (TR-Q12e). */
-async function infectedDocument(): Promise<string> {
-  const id = await seedDocument();
+async function infectedDocument(owner?: { ownerType: string; ownerId: string }): Promise<string> {
+  const id = await seedDocument(scopeA, owner);
   await withTx(db, scopeA, systemActor('test'), (tx) =>
     tx.insert(documentVersions).values({
       ...scopeA,
@@ -297,6 +313,48 @@ async function infectedDocument(): Promise<string> {
     }),
   );
   return id;
+}
+
+/** A further version row of a document, as a later new version or upload would leave it; returns its id. */
+async function addVersionRow(
+  documentId: string,
+  version: number,
+  status: 'awaiting_content' | 'quarantined' | 'clean' | 'infected' | 'rejected' | 'scan_failed',
+  uploadedBy: string | null = null,
+): Promise<string> {
+  const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .insert(documentVersions)
+      .values({
+        ...scopeA,
+        documentId,
+        version,
+        filename: 'later.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: EVIDENCE_PDF.length,
+        storageKey: `${scopeA.tenantId}/${randomUUID()}`,
+        status,
+        uploadedBy,
+      })
+      .returning({ id: documentVersions.id }),
+  );
+  return row!.id;
+}
+
+/** Sets the status of one version of a document, as the scan or the type check would. */
+async function setVersionStatus(
+  documentId: string,
+  version: number,
+  status: 'infected' | 'rejected',
+): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .update(documentVersions)
+      .set({ status })
+      .where(
+        and(eq(documentVersions.documentId, documentId), eq(documentVersions.version, version)),
+      ),
+  );
 }
 
 async function draftQuotation(
@@ -596,6 +654,65 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
       code: 'document_infected',
     });
     expect(await orderStatuses(q.id)).toEqual(['draft']);
+  });
+
+  // Round 5 P2: a file uploaded as the evidence of another record (an order, a vendor bill, an RFQ) is that
+  // record's own. Filed here, Mark billable would take it as this order's evidence. A file of an older owner type
+  // (filed before evidence had its own owner type) still confirms.
+  it.each<[string, () => Promise<string>]>([
+    [
+      'evidence uploaded to another order',
+      async () => {
+        const other = await confirm(await acceptedQuotation());
+        current.grants = grantsOf('accountant');
+        try {
+          return await evidence.upload('sales_order', other.order.id);
+        } finally {
+          current.grants = grantsOf('sales');
+        }
+      },
+    ],
+    [
+      "a vendor bill's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+    [
+      "an RFQ's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+  ])(
+    'refuses %s with 422 invalid_evidence_document and leaves the order a draft',
+    async (_label, docOf) => {
+      const q = await acceptedQuotation();
+      const foreign = await docOf();
+      const legacy = await seedDocument();
+      const refused = await confirm(q, [legacy, foreign]).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(HttpException);
+      expect((refused as HttpException).getStatus()).toBe(422);
+      expect((refused as HttpException).getResponse()).toMatchObject({
+        code: 'invalid_evidence_document',
+        message: expect.not.stringMatching(/[0-9a-f]{8}-[0-9a-f]{4}-/) as string,
+      });
+      expect(await orderStatuses(q.id)).toEqual(['draft']);
+
+      const detail = parsed(await confirm(q, [legacy]));
+      expect(detail.evidence).toEqual([{ documentId: legacy, kind: 'signed_quote' }]);
+    },
+  );
+
+  it("leaves another record's evidence out of the files an acceptance recorded, and files the rest", async () => {
+    const q = await portalAcceptedQuotation();
+    const foreign = await seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() });
+    const legacy = await seedDocument();
+    await confirmEvidence(q, {
+      evidenceKinds: ['signed_quote'],
+      evidenceDocumentIds: [foreign, legacy],
+    });
+    const detail = parsed(await confirm(q));
+    expect(detail.evidence).toEqual([{ documentId: legacy, kind: 'signed_quote' }]);
   });
 
   it('takes consecutive SO numbers for consecutive orders', async () => {
@@ -1120,7 +1237,9 @@ describe('SalesOrdersService.markBillable', () => {
     expect(unchanged.schedule[1]!.status).toBe('planned');
     expect(unchanged.order.version).toBe(1);
 
-    const doc = await seedDocument();
+    // Uploaded in place on the order by the Accountant, who holds no documents.upload.
+    expect(principalNow().grants.has('documents.upload')).toBe(false);
+    const doc = await evidence.upload('sales_order', detail.order.id);
     const after = parsed(await mark(detail, 1, { evidenceDocumentId: doc }));
     expect(after.schedule[1]).toMatchObject({
       status: 'billable',
@@ -1133,7 +1252,7 @@ describe('SalesOrdersService.markBillable', () => {
 
   it('refuses a stale order version with 409, a foreign document with 422 and a line already billable with 409', async () => {
     const detail = await confirm(await acceptedQuotation());
-    const doc = await seedDocument();
+    const doc = await evidence.upload('sales_order', detail.order.id);
     await mark(detail, 1, { evidenceDocumentId: doc });
 
     // Version 1 was current when `detail` was read; the first mark moved the order to 2.
@@ -1144,7 +1263,13 @@ describe('SalesOrdersService.markBillable', () => {
     ).toEqual({ status: 422, code: 'invalid_evidence_document' });
     expect(
       await statusOf(
-        mark(detail, 2, { evidenceDocumentId: await infectedDocument(), expectedVersion: 2 }),
+        mark(detail, 2, {
+          evidenceDocumentId: await infectedDocument({
+            ownerType: 'evidence',
+            ownerId: detail.order.id,
+          }),
+          expectedVersion: 2,
+        }),
       ),
     ).toEqual({ status: 409, code: 'document_infected' });
     expect(
@@ -1159,7 +1284,7 @@ describe('SalesOrdersService.markBillable', () => {
 
   it('replays an answered command with the same key and makes one change', async () => {
     const detail = await confirm(await acceptedQuotation());
-    const doc = await seedDocument();
+    const doc = await evidence.upload('sales_order', detail.order.id);
     const body = { evidenceDocumentId: doc, expectedVersion: 1 };
     const lineId = detail.schedule[1]!.id;
     const first = await service.markBillable(detail.order.id, lineId, body, 'mark-same-key');
@@ -1171,7 +1296,7 @@ describe('SalesOrdersService.markBillable', () => {
   it('answers 404 outside the entity and for a line of another order', async () => {
     const detail = await confirm(await acceptedQuotation());
     const other = await confirm(await acceptedQuotation());
-    const doc = await seedDocument();
+    const doc = await evidence.upload('sales_order', detail.order.id);
     expect(
       await statusOf(
         service.markBillable(
@@ -1190,6 +1315,368 @@ describe('SalesOrdersService.markBillable', () => {
     });
     current.scope = scopeA;
     expect((await service.detail(detail.order.id)).schedule[1]!.status).toBe('planned');
+  });
+
+  // Round 5 P2: the evidence is a file uploaded to this order, or one already filed as its evidence.
+  it.each<[string, (orderId: string, otherOrderId: string) => Promise<string>]>([
+    ['a file of another record (any live document of the entity)', () => seedDocument()],
+    [
+      'evidence uploaded to another order',
+      (_id, otherId) => evidence.upload('sales_order', otherId),
+    ],
+    [
+      'a picture (a profile picture)',
+      () => seedDocument(scopeA, { ownerType: 'user_avatar', ownerId: callerId() }),
+    ],
+    [
+      'a payment proof',
+      () => seedDocument(scopeA, { ownerType: 'payment_intake', ownerId: f.customerPartyId }),
+    ],
+    [
+      'removed evidence of this order',
+      async (id) => {
+        const doc = await evidence.upload('sales_order', id);
+        await withTx(db, scopeA, systemActor('test'), (tx) =>
+          tx.update(documents).set({ removedAt: NOW }).where(eq(documents.id, doc)),
+        );
+        return doc;
+      },
+    ],
+  ])(
+    'refuses %s with 422 invalid_evidence_document and leaves the line planned',
+    async (_label, docOf) => {
+      const detail = await confirm(await acceptedQuotation());
+      const other = await confirm(await acceptedQuotation());
+      const doc = await docOf(detail.order.id, other.order.id);
+      expect(await statusOf(mark(detail, 1, { evidenceDocumentId: doc }))).toEqual({
+        status: 422,
+        code: 'invalid_evidence_document',
+      });
+      const after = await service.detail(detail.order.id);
+      expect(after.schedule[1]!.status).toBe('planned');
+      expect(after.order.version).toBe(1);
+    },
+  );
+
+  // Round 5 P2: a line freezes the evidence it takes, so the file must hold its bytes first. 422, the line stays
+  // planned, and nothing is frozen empty.
+  it.each<[string, (orderId: string) => Promise<string>]>([
+    [
+      'reserved on the order route with its bytes never sent',
+      async (id) =>
+        (
+          await evidence.service.create('sales_order', id, {
+            filename: 'evidence.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: EVIDENCE_PDF.length,
+          })
+        ).documentId,
+    ],
+    [
+      'found infected, then given a version 2 that was never sent',
+      async (id) => {
+        const doc = await evidence.upload('sales_order', id);
+        await setVersionStatus(doc, 1, 'infected');
+        await addVersionRow(doc, 2, 'awaiting_content');
+        return doc;
+      },
+    ],
+    [
+      'whose every version was rejected',
+      async (id) => {
+        const doc = await evidence.upload('sales_order', id);
+        await setVersionStatus(doc, 1, 'rejected');
+        return doc;
+      },
+    ],
+  ])('refuses evidence %s with 422 and leaves the line planned', async (_label, docOf) => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await docOf(detail.order.id);
+    const refused = await mark(detail, 1, { evidenceDocumentId: doc }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(HttpException);
+    expect((refused as HttpException).getStatus()).toBe(422);
+    expect((refused as HttpException).getResponse()).toMatchObject({
+      code: 'invalid_evidence_document',
+      message: expect.stringMatching(/has not finished uploading/) as string,
+    });
+    const after = await service.detail(detail.order.id);
+    expect(after.schedule[1]!.status).toBe('planned');
+    expect(after.order.version).toBe(1);
+  });
+
+  it('freezes the evidence a line took: no removal, new version or bytes while the order still takes evidence', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await evidence.upload('sales_order', detail.order.id);
+    // Marked on version 1, whose bytes were received.
+    await mark(detail, 1, { evidenceDocumentId: doc });
+    // A caller with both generic grants (documents.upload) and the order's own grant.
+    current.grants = grantsOf('founder');
+    const { scope, actor } = caller.current();
+    // A later version cannot be opened, and one left waiting for its bytes takes none on the order route.
+    const pending = await addVersionRow(doc, 2, 'awaiting_content', actor.id);
+    expect(
+      (
+        await statusOf(
+          evidence.service.receive(
+            'sales_order',
+            detail.order.id,
+            doc,
+            pending,
+            Readable.from(EVIDENCE_PDF),
+            EVIDENCE_PDF.length,
+          ),
+        )
+      ).status,
+    ).toBe(409);
+    // Its uploader cannot remove it on the order's own route either.
+    expect(await statusOf(evidence.service.remove('sales_order', detail.order.id, doc))).toEqual({
+      status: 409,
+      code: 'conflict',
+    });
+    expect(
+      (
+        await statusOf(
+          withTx(db, scope, actor, (tx) =>
+            evidence.documents.createVersion(tx, doc, {
+              filename: 'swap.pdf',
+              declaredMime: 'application/pdf',
+              sizeBytes: 10,
+            }),
+          ),
+        )
+      ).status,
+    ).toBe(409);
+  });
+
+  // Round 5 P2: Remove in the dialog (and closing it unsaved) goes through the order's own evidence route, which
+  // the Accountant and Finance reach without documents.upload.
+  it.each<[string, RoleKey]>([
+    ['the Accountant', 'accountant'],
+    ['Finance', 'finance'],
+  ])(
+    'lets %s remove their unused upload, which Mark billable then refuses; others and a marked file are refused',
+    async (_label, role) => {
+      const detail = await confirm(await acceptedQuotation());
+      current.grants = grantsOf(role);
+      current.userId = await seedOtherStaffUser(db, f);
+      expect(principalNow().grants.has('documents.upload')).toBe(false);
+      const removedOf = async (id: string) => {
+        const [row] = await db
+          .select({ removedAt: documents.removedAt })
+          .from(documents)
+          .where(eq(documents.id, id));
+        return row?.removedAt !== null;
+      };
+      const abandoned = await evidence.upload('sales_order', detail.order.id);
+      const kept = await evidence.upload('sales_order', detail.order.id);
+      const uploader = current.userId;
+
+      // Another holder of mark_billable on every order did not upload it; the bill and RFQ routes do not take it.
+      current.userId = undefined;
+      expect(
+        await statusOf(evidence.service.remove('sales_order', detail.order.id, abandoned)),
+      ).toEqual({ status: 403, code: 'forbidden' });
+      current.userId = uploader;
+      for (const kind of ['vendor_bill', 'rfq'] as const) {
+        expect(
+          (await statusOf(evidence.service.remove(kind, detail.order.id, abandoned))).status,
+        ).toBe(404);
+      }
+      current.scope = scopeB;
+      expect(
+        (await statusOf(evidence.service.remove('sales_order', detail.order.id, abandoned))).status,
+      ).toBe(404);
+      current.scope = scopeA;
+      expect(await removedOf(abandoned)).toBe(false);
+
+      await evidence.service.remove('sales_order', detail.order.id, abandoned);
+      expect(await removedOf(abandoned)).toBe(true);
+      expect(await statusOf(mark(detail, 1, { evidenceDocumentId: abandoned }))).toEqual({
+        status: 422,
+        code: 'invalid_evidence_document',
+      });
+
+      await mark(detail, 1, { evidenceDocumentId: kept });
+      expect(await statusOf(evidence.service.remove('sales_order', detail.order.id, kept))).toEqual(
+        { status: 409, code: 'conflict' },
+      );
+      expect(await removedOf(kept)).toBe(false);
+    },
+  );
+
+  // Round 5 P2: an evidence file is its uploader's own and changes only on the record's routes. The generic
+  // new-version and remove routes refuse it, even to its uploader holding documents.upload, and its bytes are taken
+  // only from the person who reserved it, on either route.
+  it('refuses the generic new version and removal of evidence, and takes its bytes only from its uploader', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const refusalOf = async (promise: Promise<unknown>) => {
+      const error = await promise.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(HttpException);
+      return {
+        status: (error as HttpException).getStatus(),
+        body: (error as HttpException).getResponse(),
+      };
+    };
+    const managed = {
+      status: 409,
+      body: expect.objectContaining({
+        message: expect.stringMatching(/managed from its record/) as string,
+      }) as Record<string, unknown>,
+    };
+    // Generic grants (documents.upload) and the order's own grant.
+    current.grants = grantsOf('founder');
+    current.userId = await seedOtherStaffUser(db, f);
+    const uploader = caller.current();
+    const unused = await evidence.upload('sales_order', detail.order.id);
+    expect(await refusalOf(evidence.documents.remove(unused, { who: uploader }))).toEqual(managed);
+    expect(
+      await refusalOf(
+        withTx(db, uploader.scope, uploader.actor, (tx) =>
+          evidence.documents.createVersion(tx, unused, {
+            filename: 'swap.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: EVIDENCE_PDF.length,
+          }),
+        ),
+      ),
+    ).toEqual(managed);
+    const [row] = await db
+      .select({ removedAt: documents.removedAt })
+      .from(documents)
+      .where(eq(documents.id, unused));
+    expect(row!.removedAt).toBeNull();
+    expect(
+      await db.select().from(documentVersions).where(eq(documentVersions.documentId, unused)),
+    ).toHaveLength(1);
+
+    // Reserved by the uploader; another holder of the same grants cannot send its bytes on either route.
+    const reserved = await evidence.service.create('sales_order', detail.order.id, {
+      filename: 'evidence.pdf',
+      declaredMime: 'application/pdf',
+      sizeBytes: EVIDENCE_PDF.length,
+    });
+    current.userId = undefined;
+    const other = caller.current();
+    expect(
+      await statusOf(
+        evidence.service.receive(
+          'sales_order',
+          detail.order.id,
+          reserved.documentId,
+          reserved.versionId,
+          Readable.from(EVIDENCE_PDF),
+          EVIDENCE_PDF.length,
+        ),
+      ),
+    ).toEqual({ status: 403, code: 'forbidden' });
+    expect(
+      await statusOf(
+        evidence.documents.receiveContent(
+          reserved.versionId,
+          Readable.from(EVIDENCE_PDF),
+          EVIDENCE_PDF.length,
+          { documentId: reserved.documentId, who: other },
+        ),
+      ),
+    ).toEqual({ status: 403, code: 'forbidden' });
+    current.userId = uploader.actor.id;
+    const received = await evidence.service.receive(
+      'sales_order',
+      detail.order.id,
+      reserved.documentId,
+      reserved.versionId,
+      Readable.from(EVIDENCE_PDF),
+      EVIDENCE_PDF.length,
+    );
+    expect(received.status).toBe('quarantined');
+  });
+
+  it('takes a file already filed as the order evidence (the dialog list), whatever its owner type', async () => {
+    const filed = await seedDocument();
+    const detail = await confirm(await acceptedQuotation(), [filed]);
+    expect(parsed(detail).evidence.map((e) => e.documentId)).toContain(filed);
+    const after = parsed(await mark(detail, 1, { evidenceDocumentId: filed }));
+    expect(after.schedule[1]).toMatchObject({
+      status: 'billable',
+      billableEvidenceDocumentId: filed,
+    });
+  });
+
+  // Round 5 P2: the order's filed list keeps older owner types working, but a file uploaded as another record's
+  // evidence is never this order's, even when a row of the list names it.
+  it.each<[string, (otherOrderId: string) => Promise<string>]>([
+    ['evidence uploaded to another order', (otherId) => evidence.upload('sales_order', otherId)],
+    [
+      "a vendor bill's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+    [
+      "an RFQ's evidence",
+      () => seedDocument(scopeA, { ownerType: 'evidence', ownerId: randomUUID() }),
+    ],
+  ])(
+    'refuses %s found in the filed list with 422 and leaves the line planned',
+    async (_label, docOf) => {
+      const detail = await confirm(await acceptedQuotation());
+      const other = await confirm(await acceptedQuotation());
+      const foreign = await docOf(other.order.id);
+      await withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx.insert(salesOrderEvidence).values({
+          ...scopeA,
+          salesOrderId: detail.order.id,
+          evidenceKind: 'signed_quote',
+          documentId: foreign,
+          createdBy: f.ownerUserId,
+        }),
+      );
+      expect(await statusOf(mark(detail, 1, { evidenceDocumentId: foreign }))).toEqual({
+        status: 422,
+        code: 'invalid_evidence_document',
+      });
+      const after = await service.detail(detail.order.id);
+      expect(after.schedule[1]!.status).toBe('planned');
+      expect(after.order.version).toBe(1);
+    },
+  );
+
+  it('lets only a mark_billable holder upload evidence to the order, and only while a line is planned', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const file = { filename: 'uat.pdf', declaredMime: 'application/pdf', sizeBytes: 10 };
+    current.grants = grantsOf('sales');
+    expect(await statusOf(evidence.service.create('sales_order', detail.order.id, file))).toEqual({
+      status: 403,
+      code: 'forbidden',
+    });
+    // The bill and RFQ routes resolve an order id to nothing of theirs.
+    current.grants = grantsOf('founder');
+    for (const kind of ['vendor_bill', 'rfq'] as const) {
+      expect((await statusOf(evidence.service.create(kind, detail.order.id, file))).status).toBe(
+        404,
+      );
+    }
+    current.scope = scopeB;
+    expect(
+      (await statusOf(evidence.service.create('sales_order', detail.order.id, file))).status,
+    ).toBe(404);
+    current.scope = scopeA;
+    current.grants = grantsOf('accountant');
+    const doc = await evidence.upload('sales_order', detail.order.id);
+    for (const [index, version] of [
+      [1, 1],
+      [2, 2],
+    ] as const) {
+      await mark(detail, index, { evidenceDocumentId: doc, expectedVersion: version });
+    }
+    // Every schedule line is billable now: the order takes no more evidence.
+    expect(
+      (await statusOf(evidence.service.create('sales_order', detail.order.id, file))).status,
+    ).toBe(409);
   });
 });
 

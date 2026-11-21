@@ -71,18 +71,27 @@ describe('parseMarkBillable', () => {
     });
   });
 
-  it('lets a typed document id win over the list', () => {
+  it('lets an uploaded document win over the list', () => {
     const parsed = parseMarkBillable(
       form({ ...base, evidenceDocumentId: IDS.po, otherDocumentId: ` ${IDS.contract} ` }),
     );
     expect(parsed.ok && parsed.value.body.evidenceDocumentId).toBe(IDS.contract);
   });
 
-  it('refuses a missing or malformed document, and a lost hidden field', () => {
+  it('asks for an upload when nothing is chosen, and for a choice or upload when a list is shown', () => {
     const missing = parseMarkBillable(form(base));
-    expect(!missing.ok && missing.errors.document).toMatch(/Choose the document/);
+    expect(!missing.ok && missing.errors.document).toBe(
+      'Upload the document that shows this step was done.',
+    );
+    const listed = parseMarkBillable(form({ ...base, evidenceListed: '1' }));
+    expect(!listed.ok && listed.errors.document).toMatch(
+      /Choose a document from the list, or upload/,
+    );
+  });
+
+  it('refuses a malformed document and a lost hidden field, without asking for an id', () => {
     const bad = parseMarkBillable(form({ ...base, otherDocumentId: 'abc' }));
-    expect(!bad.ok && bad.errors.document).toMatch(/not a valid document id/);
+    expect(!bad.ok && bad.errors.document).toBe('That file could not be used. Upload it again.');
     const lost = parseMarkBillable(
       form({ ...base, expectedVersion: '', evidenceDocumentId: IDS.po }),
     );

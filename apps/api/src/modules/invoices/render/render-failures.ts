@@ -15,6 +15,7 @@ import {
   gt,
   isNotNull,
   isNull,
+  ne,
   notExists,
   notInArray,
   or,
@@ -189,6 +190,29 @@ export function filledVersion(
         eq(documentVersions.tenantId, tenantId),
         eq(documentVersions.documentId, documentId),
         notInArray(documentVersions.status, [...UNFILLED_VERSION_STATUSES]),
+      ),
+    );
+}
+
+/**
+ * For a document query: document `documentId` has an upload the type check did not refuse. Only such a document
+ * stands for "rendered, or being rendered": one whose uploads were all rejected will never hold a PDF, so it must not
+ * keep its owner out of the render candidates (or make a Retry wait for the orphan cleanup). `awaiting_content` still
+ * counts: it is a render that is storing its bytes right now.
+ */
+export function unrefusedUpload(
+  db: Db | DbTransaction,
+  tenantId: string | AnyPgColumn,
+  documentId: string | AnyPgColumn,
+) {
+  return db
+    .select({ one: sql`1` })
+    .from(documentVersions)
+    .where(
+      and(
+        eq(documentVersions.tenantId, tenantId),
+        eq(documentVersions.documentId, documentId),
+        ne(documentVersions.status, 'rejected'),
       ),
     );
 }

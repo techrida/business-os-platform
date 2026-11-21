@@ -8,8 +8,10 @@
 // Once the caller may read the issued invoice, the refusals are told apart so the screen shows one "Preparing PDF"
 // state and never a "not found" for a PDF that is on its way (TR-Q4): no PDF yet, or a file still being stored or
 // scanned, is a 409 `invoice_pdf_not_ready` (the render sweeper is still trying, see render-retry.ts); a render that
-// was given up is a 424 `invoice_pdf_failed` (staff may Retry); a file that was refused by the scan is a 404
-// `invoice_pdf_unavailable`. A draft, a random id or another entity's invoice stays one plain 404 `not_found`.
+// was given up is a 424 `invoice_pdf_failed` (staff may Retry); a file that was refused by the virus scan is a 404
+// `invoice_pdf_scan_refused`, and one that went away between the read and the link a 404 `invoice_pdf_unavailable`.
+// The state comes from generatedPdfState (render-state.ts), which the portal status reads too. A draft, a random id
+// or another entity's invoice stays one plain 404 `not_found`.
 // Staff only: a portal caller reads through the portal API (U13).
 import type { SignedLinkDto } from '@bos/contracts';
 import { documents, documentVersions, invoices, scoped } from '@bos/db';
@@ -31,6 +33,7 @@ import { INVOICE_OWNER_TYPE } from '../invoice-owner.policy';
 import { assertStaff, InvoiceCaller } from '../invoice-support';
 import { RENDERABLE_INVOICE_KINDS } from './invoice-view';
 import { renderGivenUp, retryGivenUpRender, type RenderFailureOwner } from './render-failures';
+import { generatedPdfState } from './render-state';
 
 /** What the retry answers: the invoice is back in the render queue. */
 export interface InvoicePdfRetryDto {
@@ -49,6 +52,12 @@ const renderFailed = () =>
   new HttpException({ code: 'invoice_pdf_failed', message: 'The PDF could not be prepared' }, 424);
 const unavailable = () =>
   new NotFoundException({ code: 'invoice_pdf_unavailable', message: 'This PDF is not available' });
+/** The virus scan refused the stored file (infected, or the scan failed): it is never served. */
+const scanRefused = () =>
+  new NotFoundException({
+    code: 'invoice_pdf_scan_refused',
+    message: 'The virus scan refused this PDF, so it cannot be served',
+  });
 const retryNotNeeded = () =>
   new ConflictException({
     code: 'invoice_pdf_retry_not_needed',
@@ -61,7 +70,7 @@ type LinkState =
   | { kind: 'clean'; documentId: string }
   | { kind: 'preparing' }
   | { kind: 'failed' }
-  | { kind: 'unavailable' };
+  | { kind: 'scan_refused' };
 
 const ownerOf = (scope: { tenantId: string; organizationId: string }, invoiceId: string) =>
   ({
@@ -84,8 +93,8 @@ export class InvoiceDocumentService {
    * A signed link to the clean PDF of one issued invoice: the original (the oldest live document that scanned clean),
    * never a reprint while the original is there. 403 for a portal caller; 404 `not_found` for a draft, a random id or
    * an invoice outside the caller's entity and read scope; then 409 `invoice_pdf_not_ready` while the PDF is being
-   * prepared, 424 `invoice_pdf_failed` once its render was given up, 404 `invoice_pdf_unavailable` when the scan
-   * refused it.
+   * prepared, 424 `invoice_pdf_failed` once its render was given up, 404 `invoice_pdf_scan_refused` when the virus
+   * scan refused it, 404 `invoice_pdf_unavailable` when it went away before the link was issued.
    */
   async link(invoiceId: string): Promise<SignedLinkDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -132,22 +141,15 @@ export class InvoiceDocumentService {
             ),
           )
           .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
-        // The original: the oldest document with a clean upload (issueLinkForOwner then checks its newest upload).
-        const clean = uploads.find((u) => u.status === 'clean');
-        if (clean !== undefined) return { kind: 'clean', documentId: clean.documentId };
-        if (uploads.some((u) => u.status === 'awaiting_content' || u.status === 'quarantined')) {
-          return { kind: 'preparing' };
-        }
-        if (await renderGivenUp(tx, ownerOf(scope, invoiceId))) return { kind: 'failed' };
-        // A live document whose uploads the scan refused will never be offered; no document yet is on its way.
-        return uploads.length > 0 ? { kind: 'unavailable' } : { kind: 'preparing' };
+        // The original is the oldest document with a clean upload (issueLinkForOwner then checks its newest upload).
+        return generatedPdfState(uploads, await renderGivenUp(tx, ownerOf(scope, invoiceId)));
       },
       READ_ONLY,
     );
     if (state.kind === 'hidden') throw notFound();
     if (state.kind === 'preparing') throw notReady();
     if (state.kind === 'failed') throw renderFailed();
-    if (state.kind === 'unavailable') throw unavailable();
+    if (state.kind === 'scan_refused') throw scanRefused();
     try {
       return await this.documents.issueLinkForOwner(
         scope,

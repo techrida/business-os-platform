@@ -18,7 +18,7 @@
 // Generated files (a quotation PDF a job rendered) take the same road under the system actor, minus the scan
 // (decision D28: bytes the system rendered itself are not scanned; uploads always are):
 //   createGenerated() -> receiveGenerated() -> quarantine, type check, sha256, then straight to `clean`
-//   (scan_engine 'generated', no docs.scan job, clamd never called).
+//   (scan_engine 'generated', no docs.scan job, clamd never called), or `rejected` when it cannot be finished.
 // Who is asked differs too: the owner's `allowsSystemActor`, not the request principal's authz. Only
 // receiveGenerated can skip the scan; the HTTP-facing receiveContent never can.
 //
@@ -30,6 +30,8 @@
 // owner policy's `readPermission`, on the owner ref. An owning module's route may also name the action the upload
 // belongs to (`UploadAction`, U20a2-Q3); when the policy lists it in `uploadActions`, that action on the uploader's
 // own file is enough (an `own` bill enterer uploads their own invoice), and the usual check still runs otherwise.
+// An owner type that spans several record kinds names the grant per record instead (`uploadGrants`, round 5 P2:
+// evidence on a sales order, a bill or an RFQ), so one kind's grant never reaches another kind's record.
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -81,7 +83,7 @@ import {
   type ScanJobData,
 } from './documents.ports';
 import { isTenantWideImageOwner, TENANT_WIDE_IMAGE_OWNERS } from './image-scope';
-import { GENERATED_ENGINE, markVersionClean } from './mark-version-clean';
+import { GENERATED_ENGINE, markVersionClean, stillQuarantined } from './mark-version-clean';
 import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
 import {
@@ -106,6 +108,23 @@ function picturesUploadedElsewhere(): ConflictException {
   return new ConflictException({
     code: 'conflict',
     message: 'Pictures are uploaded from their own settings.',
+  });
+}
+
+/** The refusal of a generic new version or removal of a file its owning module manages (`ownRoutesOnly`). */
+function managedByRecord(): ConflictException {
+  return new ConflictException({
+    code: 'conflict',
+    message: 'This file is managed from its record: remove it there and upload a new one.',
+  });
+}
+
+/** The refusal of a version's bytes from anyone but its uploader, for an `ownRoutesOnly` owner. */
+function notVersionUploader(): ForbiddenException {
+  return new ForbiddenException({
+    code: 'forbidden',
+    message: 'Only the person who started this upload can send its file.',
+    reason: 'no_permission',
   });
 }
 
@@ -438,9 +457,9 @@ export class DocumentsService {
    * `who` must be a system actor (anything else is a 403, so a request principal can never skip the scan); the
    * owner is asked again through `allowsSystemActor`. This is the only caller of the skip: `receiveContent`,
    * which the HTTP controller uses, always scans.
-   * If promoting or the database update fails, the version stays `quarantined` and the error is thrown; the
-   * scan is queued as a fallback (and the scan sweeper re-queues it if that fails too), so it ends `clean`
-   * through an ordinary scan.
+   * If promoting or the database update fails, the version is refused (`rejected`, bytes deleted) and the error is
+   * thrown, so the render job counts a failed try and renders again (see finishGenerated). Only when the refusal
+   * cannot be written either does it stay `quarantined`, with the scan queued as the fallback.
    */
   async receiveGenerated(
     created: { documentId: string; versionId: string },
@@ -572,6 +591,7 @@ export class DocumentsService {
     if (!byAction) {
       await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
     }
+    if (this.owners.get(doc.ownerType)?.ownRoutesOnly === true) throw managedByRecord();
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
     if (isImageOwnerType(doc.ownerType)) throw picturesUploadedElsewhere();
     await this.loadDocument(tx, who.scope, documentId, true);
@@ -634,10 +654,10 @@ export class DocumentsService {
   private async removeAndCleanUp(
     documentId: string,
     who: { scope: TxScope; actor: Actor },
-    refuseImages: boolean,
+    genericRoute: boolean,
   ): Promise<void> {
     const unclean = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.removeDocument(tx, who.scope, documentId, refuseImages),
+      this.removeDocument(tx, who.scope, documentId, genericRoute),
     );
     await this.cleanupRemoved(unclean);
   }
@@ -661,17 +681,21 @@ export class DocumentsService {
     return this.removeDocument(tx, scope, documentId, false);
   }
 
+  /** `genericRoute`: the generic DELETE route, which refuses pictures and `ownRoutesOnly` owners' files. */
   private async removeDocument(
     tx: DbTransaction,
     scope: TxScope,
     documentId: string,
-    refuseImages: boolean,
+    genericRoute: boolean,
   ) {
     const doc = await this.loadDocument(tx, scope, documentId, false, true);
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
-    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
     // After the permission check (someone who may not remove learns nothing), before the lock and any write.
-    if (refuseImages && isImageOwnerType(doc.ownerType)) {
+    if (genericRoute && this.owners.get(doc.ownerType)?.ownRoutesOnly === true) {
+      throw managedByRecord();
+    }
+    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx, documentId);
+    if (genericRoute && isImageOwnerType(doc.ownerType)) {
       throw new ConflictException({
         code: 'conflict',
         message: 'This picture is managed from its own settings: replace or remove it there.',
@@ -770,6 +794,12 @@ export class DocumentsService {
           action: opts.action,
           uploaderUserId: found.version.uploadedBy,
         });
+        if (
+          this.owners.get(found.ownerType)?.ownRoutesOnly === true &&
+          (who.actor.kind !== 'user' || found.version.uploadedBy !== who.actor.id)
+        ) {
+          throw notVersionUploader();
+        }
         // The memo may have been submitted since the document was created: no bytes are written then.
         await this.assertCanAttach(
           who.scope,
@@ -877,8 +907,15 @@ export class DocumentsService {
    * Steps 5-6 of a generated file (D28), in place of the scan: move the quarantined bytes to clean storage,
    * then mark the version clean in one transaction (same helper as the scan processor). `promote` is
    * idempotent and the update only applies to a still-quarantined version, so a retry finds either state and
-   * never audits twice. A failure leaves the version `quarantined` (recoverable): the scan is queued as a
-   * fallback, the sweeper re-queues it later if that fails too, and the original error is thrown.
+   * never audits twice.
+   *
+   * A failure refuses the version instead of leaving it `quarantined` (round 5, S3): it becomes `rejected` with the
+   * reason `generated_unfinished` and its bytes are deleted, then the original error is thrown. A rejected upload
+   * holds no PDF, so the render job's own failure path counts the try, removes the document and renders again after
+   * its pause. Left quarantined, the document would hold its owner on "Preparing PDF" until a scan finished it, and
+   * a PDF that turned clean that way would skip the render's bookkeeping (an invoice's print row). Only when that
+   * refusal cannot be written either (the database is away) does the version stay quarantined, with the scan queued
+   * as the fallback (the sweeper re-queues it if that fails too), so it still ends `clean` through an ordinary scan.
    */
   private async finishGenerated(
     who: { scope: TxScope; actor: Actor },
@@ -898,25 +935,89 @@ export class DocumentsService {
       return toVersionDto(found.version);
     } catch (error) {
       this.logger.error(
-        `generated version ${received.id} could not be marked clean, falling back to the scan: ${describe(error)}`,
+        `generated version ${received.id} could not be marked clean, refusing it: ${describe(error)}`,
       );
+      const refused = await this.refuseUnfinishedGenerated(who, received);
+      // It turned clean after all (the mark committed before the error): that is a success.
+      if (refused !== null && refused.status === 'clean') return toVersionDto(refused);
+      if (refused === null) await this.queueFallbackScan(who, received);
+      throw error;
+    }
+  }
+
+  /**
+   * Marks a generated version that could not be finished `rejected`, audits it and deletes both copies of its bytes
+   * (the promote may or may not have moved them). Returns the version as it stands afterwards (`rejected`, or `clean`
+   * when it was finished meanwhile), or null when the refusal itself could not be written.
+   */
+  private async refuseUnfinishedGenerated(
+    who: { scope: TxScope; actor: Actor },
+    received: VersionRow,
+  ): Promise<VersionRow | null> {
+    const s = scoped(who.scope);
+    let row: VersionRow;
+    try {
+      row = await withTx(this.db, who.scope, who.actor, async (tx) => {
+        const [rejected] = await tx
+          .update(documentVersions)
+          .set({ status: 'rejected', updatedAt: new Date() })
+          .where(s.where(documentVersions, stillQuarantined(received.id)))
+          .returning();
+        if (rejected === undefined) {
+          return (await this.loadVersion(tx, who.scope, received.id, received.documentId)).version;
+        }
+        await this.audit.record(tx, {
+          action: 'document.rejected',
+          entityType: 'document_version',
+          entityId: received.id,
+          meta: {
+            reason: 'generated_unfinished',
+            declaredMime: received.declaredMime,
+            detectedMime: received.detectedMime,
+          },
+        });
+        return rejected;
+      });
+    } catch (error) {
+      this.logger.error(
+        `generated version ${received.id} could not be refused either, falling back to the scan: ${describe(error)}`,
+      );
+      return null;
+    }
+    if (row.status === 'rejected') {
       try {
-        await this.queue.add(
-          DOCS_SCAN_JOB,
-          {
-            versionId: received.id,
-            tenantId: who.scope.tenantId,
-            organizationId: who.scope.organizationId,
-          } satisfies ScanJobData,
-          { ...SCAN_JOB_OPTIONS, jobId: received.id },
-        );
-      } catch (queueError) {
-        // The sweeper re-queues a quarantined version after 15 minutes with no live job.
-        this.logger.error(
-          `could not queue the fallback scan for version ${received.id}: ${describe(queueError)}`,
+        await this.storage.removeQuarantine(received.storageKey);
+        await this.storage.removeClean(received.storageKey);
+      } catch (error) {
+        // The version is refused and never served; leftover bytes are only disk space.
+        this.logger.warn(
+          `could not delete the bytes of refused version ${received.id}: ${describe(error)}`,
         );
       }
-      throw error;
+    }
+    return row;
+  }
+
+  /** Queues the ordinary scan for a generated version left quarantined. The sweeper re-queues it if this fails. */
+  private async queueFallbackScan(
+    who: { scope: TxScope; actor: Actor },
+    received: VersionRow,
+  ): Promise<void> {
+    try {
+      await this.queue.add(
+        DOCS_SCAN_JOB,
+        {
+          versionId: received.id,
+          tenantId: who.scope.tenantId,
+          organizationId: who.scope.organizationId,
+        } satisfies ScanJobData,
+        { ...SCAN_JOB_OPTIONS, jobId: received.id },
+      );
+    } catch (queueError) {
+      // The sweeper re-queues a quarantined version after 15 minutes with no live job.
+      this.logger.error(
+        `could not queue the fallback scan for version ${received.id}: ${describe(queueError)}`,
+      );
     }
   }
 
@@ -1200,10 +1301,63 @@ export class DocumentsService {
     }
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
-    this.assertAnyOf(
-      action === 'documents.upload' ? uploadPermissionsOf(policy) : readPermissionsOf(policy),
-      ref,
-    );
+    if (action === 'documents.upload') await this.assertUploadGrant(policy, scope, ownerId, ref);
+    else await this.assertReader(policy, scope, ownerId, ref);
+  }
+
+  /**
+   * The staff read check on an owner that exists: `documents.read` or the policy's `readPermission` on `ref`. An owner
+   * with per-record `uploadGrants` (round 5 P2: evidence) also lets whoever may add files to that record open them,
+   * so the uploader can watch the scan of a file on a record someone else owns. A refusal is the read refusal.
+   */
+  private async assertReader(
+    policy: DocumentOwnerPolicy,
+    scope: TxScope,
+    ownerId: string,
+    ref: ResourceRef,
+  ): Promise<void> {
+    try {
+      this.assertAnyOf(readPermissionsOf(policy), ref);
+    } catch (refused) {
+      if (!(refused instanceof ForbiddenException) || policy.uploadGrants === undefined) {
+        throw refused;
+      }
+      try {
+        await this.assertUploadGrant(policy, scope, ownerId, ref);
+      } catch (error) {
+        throw error instanceof ForbiddenException ? refused : error;
+      }
+    }
+  }
+
+  /**
+   * The staff upload check on an owner that exists: the policy's per-record `uploadGrants` when it has them (any one
+   * action allowed on its ref), else `uploadPermission` (or `documents.upload`) on `ref`. Every upload path (create,
+   * receive, new version, remove, the image pointer routes) ends here.
+   */
+  private async assertUploadGrant(
+    policy: DocumentOwnerPolicy,
+    scope: TxScope,
+    ownerId: string,
+    ref: ResourceRef,
+  ): Promise<void> {
+    if (policy.uploadGrants === undefined) {
+      this.assertAnyOf(uploadPermissionsOf(policy), ref);
+      return;
+    }
+    const grants = await policy.uploadGrants(scope, ownerId);
+    if (grants === null) throw new NotFoundException('Owner record not found');
+    let first: ForbiddenException | undefined;
+    for (const grant of grants) {
+      try {
+        this.authz.assert(grant.action, grant.ref);
+        return;
+      } catch (error) {
+        if (!(error instanceof ForbiddenException)) throw error;
+        first ??= error;
+      }
+    }
+    throw first ?? new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
   }
 
   /**
@@ -1272,7 +1426,7 @@ export class DocumentsService {
     if (ref === null) throw new NotFoundException('Owner record not found');
     // Called as a method, not detached: a policy class may use `this`.
     if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
-    this.assertAnyOf(uploadPermissionsOf(policy), ref);
+    await this.assertUploadGrant(policy, scope, ownerId, ref);
   }
 
   /**

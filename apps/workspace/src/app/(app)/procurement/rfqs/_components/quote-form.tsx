@@ -4,6 +4,7 @@ import { type Currency, type TaxCode } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
+import { EvidenceUpload } from '@/components/ui/evidence-upload';
 import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { FactList, Panel } from '@/components/ui/panel';
@@ -89,6 +90,7 @@ export function QuoteForm({
     submissionId: submission?.id ?? '',
     vendorRef: submission?.vendorRef ?? '',
   }));
+  const [uploadBlocked, setUploadBlocked] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
 
@@ -132,7 +134,7 @@ export function QuoteForm({
             submitLabel={
               pending ? 'Saving' : mode === 'convert' ? 'Convert to quotation' : 'Record quotation'
             }
-            disabled={pending || !hasTaxCodes || hasUnavailableTax}
+            disabled={pending || !hasTaxCodes || hasUnavailableTax || uploadBlocked}
           />
         }
       />
@@ -187,7 +189,7 @@ export function QuoteForm({
         description={
           mode === 'convert'
             ? 'The vendor and the uploaded file come from their submission. Type in what their document says.'
-            : 'Type in what the vendor’s document says. The platform works out the totals.'
+            : 'Upload the vendor’s document and type in what it says. The platform works out the totals.'
         }
       >
         {mode === 'convert' && submission !== undefined ? (
@@ -219,24 +221,16 @@ export function QuoteForm({
                   </Select>
                 )}
               </Field>
-              <Field
+              <EvidenceUpload
+                kind="rfq"
+                ownerId={rfqId}
+                name="documentId"
                 label="Quotation document"
-                hint="The id of the vendor’s file, already uploaded to documents."
+                hint="The vendor’s quotation file."
                 error={err.documentId}
-              >
-                {(control) => (
-                  <Input
-                    name="documentId"
-                    value={values.documentId}
-                    onChange={set('documentId')}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className={styles.numeric}
-                    required
-                    {...control}
-                  />
-                )}
-              </Field>
+                onBlockingChange={setUploadBlocked}
+                className={WIDE}
+              />
             </>
           ) : null}
           <Field label="Vendor’s reference" hint="Optional." error={err.vendorRef}>

@@ -102,7 +102,10 @@ describe('sales order detail', () => {
     mocks.getSalesOrder.mockResolvedValue(salesOrderDetail({ evidence: [] }));
     const html = await render();
     expect(html).toContain('No evidence is attached to this order.');
-    expect(html).toContain('no evidence attached to this order yet');
+    // With no evidence, Mark billable offers only an upload: nobody types a document id.
+    expect(html).toContain('Upload the document that shows this step was done');
+    expect(html).toMatch(/<input type="file"/);
+    expect(html).not.toMatch(/Enter the id|Document id/);
   });
 
   it('labels evidence in the list and billing selector without displaying opaque document keys', async () => {

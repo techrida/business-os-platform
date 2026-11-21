@@ -650,14 +650,14 @@
       "idx": 92,
       "version": "7",
       "when": 1783000000138,
-      "tag": "0153_payment_promise_replaced",
+      "tag": "0157_invoice_pending_prints",
       "breakpoints": true
     },
     {
       "idx": 93,
       "version": "7",
       "when": 1783000000139,
-      "tag": "0155_sales_order_delivery_releases",
+      "tag": "0153_payment_promise_replaced",
       "breakpoints": true
     },
     {
@@ -665,6 +665,13 @@
       "version": "7",
       "when": 1783000000140,
       "tag": "0154_collection_call_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1783000000141,
+      "tag": "0155_sales_order_delivery_releases",
       "breakpoints": true
     }
   ]

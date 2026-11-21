@@ -150,3 +150,17 @@ describe('a currency switched off (U16-Q14, D44)', () => {
     },
   );
 });
+
+describe('evidence refusals on recording a quotation (round 5 P2)', () => {
+  it('words a file that is not this RFQ’s evidence, and an infected file, without a reload', () => {
+    const foreign = rfqFailure(err(422, 'invalid_evidence_document'), 'record');
+    expect(foreign.message).toMatch(/not evidence uploaded to this record/);
+    expect(foreign.reload).toBe(false);
+    const infected = rfqFailure(
+      err(409, 'document_infected', 'A virus was found in this file.'),
+      'record',
+    );
+    expect(infected.message).toBe('A virus was found in this file.');
+    expect(infected.reload).toBe(false);
+  });
+});

@@ -228,7 +228,7 @@ export function quoteValuesFromForm(form: FormData): QuoteValues {
 
 const QUOTE_WORDS: Record<string, string> = {
   vendorId: 'Choose the vendor that sent this quotation.',
-  documentId: 'Enter the id of the uploaded quotation document.',
+  documentId: 'Upload the vendor’s quotation document.',
   submissionId: 'Choose the vendor submission to convert.',
   vendorRef: "The vendor's reference can be up to 100 characters.",
   validUntil: 'Choose the date the quotation is valid until.',
