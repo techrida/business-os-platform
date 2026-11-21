@@ -125,7 +125,8 @@ export class LostReasonReportService {
     for (const c of counts) {
       const i = monthIndex.get(c.month);
       if (i === undefined) continue;
-      const key = c.reasonId ?? null;
+      // A reason that no longer resolves counts with the deals that gave none, not as a second blank row.
+      const key = c.reasonId !== null && refs.has(c.reasonId) ? c.reasonId : null;
       const line = byReason.get(key) ?? months.map(() => 0);
       line[i] = (line[i] ?? 0) + c.n;
       byReason.set(key, line);

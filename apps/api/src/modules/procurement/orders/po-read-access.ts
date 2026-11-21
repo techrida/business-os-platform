@@ -131,12 +131,59 @@ export async function approvesPo(
           ),
           and(
             eq(approvalRequests.documentType, PO_AMENDMENT_DOCUMENT_TYPE),
-            sql`${approvalRequests.snapshot} -> 'amendment' ->> 'purchaseOrderId' = ${poId}`,
+            sql`${approvalRequests.snapshot} -> 'amendment' ->> 'purchaseOrderId' = ${poId.toLowerCase()}`,
           ),
         ),
       ),
     );
-  if (linked.length === 0) return false;
+  return approvesAnyOf(q, scope, p, linked, pendingInbox);
+}
+
+/**
+ * May `p` open the order of the approval request(s) about it found by `documentType` and `documentId`, as their
+ * approver? approvesPo narrowed to those requests, so an approval context links the order only where the detail
+ * route opens it. No transaction: call it outside withTx.
+ */
+export async function approvesRequestOf(
+  q: Db,
+  scope: TxScope,
+  p: Principal,
+  request: { documentType: string; documentId: string },
+  pendingInbox: () => Promise<readonly { requestId: string }[]>,
+): Promise<boolean> {
+  if (
+    !activeStaff(p) ||
+    p.tenantId !== scope.tenantId ||
+    p.organizationId !== scope.organizationId
+  ) {
+    return false;
+  }
+  const own = await q
+    .select({ id: approvalRequests.id, status: approvalRequests.status })
+    .from(approvalRequests)
+    .where(
+      and(
+        eq(approvalRequests.tenantId, scope.tenantId),
+        eq(approvalRequests.organizationId, scope.organizationId),
+        eq(approvalRequests.documentType, request.documentType),
+        eq(approvalRequests.documentId, request.documentId),
+      ),
+    );
+  return approvesAnyOf(q, scope, p, own, pendingInbox);
+}
+
+/**
+ * True when `p` decided a step of one of `requests` (themselves or as the person a delegate acted for), or a pending
+ * one waits in their inbox now.
+ */
+async function approvesAnyOf(
+  q: Db,
+  scope: TxScope,
+  p: Principal,
+  requests: readonly { id: string; status: string }[],
+  pendingInbox: () => Promise<readonly { requestId: string }[]>,
+): Promise<boolean> {
+  if (requests.length === 0) return false;
   const [decided] = await q
     .select({ id: approvalActions.id })
     .from(approvalActions)
@@ -146,7 +193,7 @@ export async function approvesPo(
         eq(approvalActions.organizationId, scope.organizationId),
         inArray(
           approvalActions.requestId,
-          linked.map((r) => r.id),
+          requests.map((r) => r.id),
         ),
         inArray(approvalActions.action, [...STEP_DECISIONS]),
         or(
@@ -157,7 +204,7 @@ export async function approvesPo(
     )
     .limit(1);
   if (decided !== undefined) return true;
-  const pending = new Set(linked.filter((r) => r.status === 'pending').map((r) => r.id));
+  const pending = new Set(requests.filter((r) => r.status === 'pending').map((r) => r.id));
   if (pending.size === 0) return false;
   let inbox: readonly { requestId: string }[];
   try {

@@ -209,7 +209,7 @@ beforeAll(async () => {
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   const renderNudge = new PurchaseOrderRenderNudge(renderQueue as unknown as Queue);
   approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now, renderNudge));
-  approvals.registerSubject(new EmergencyReviewSubject(audit));
+  approvals.registerSubject(new EmergencyReviewSubject(audit, approvals));
   service = new PurchaseOrdersService(
     db,
     approvals,
@@ -1229,12 +1229,77 @@ describe('an approver opens the order they approve, read-only, the detail only (
     });
 
     // The deputy holds no role in the directory: only the delegation puts the review in their inbox.
+    const link = `/procurement/orders/${po.id}`;
     as(deputy, 'management');
     expect((await service.get(po.id)).id).toBe(po.id);
+    expect((await approvals.get(reviewId)).context?.href).toBe(link);
     await decide(deputy, 'management', reviewId);
     as(deputy, 'management');
     expect((await service.get(po.id)).id).toBe(po.id);
+    expect((await approvals.get(reviewId)).context?.href).toBe(link);
     as(U.mgmt, 'management');
+    expect((await service.get(po.id)).id).toBe(po.id);
+    expect((await approvals.get(reviewId)).context?.href).toBe(link);
+  });
+
+  it("links the approval to the order for its approver with no order grant; not for its submitter, another approver or another order's approver", async () => {
+    const hrefOf = async (requestId: string) => (await approvals.get(requestId)).context?.href;
+    const { po, reviewId } = await reviewedPo();
+    const link = `/procurement/orders/${po.id}`;
+    const other = await issued();
+    const amendment = (
+      await service.amend(
+        other.id,
+        { reason, lines: [{ poLineId: other.lineId, unitPrice: '132743.36' }] },
+        randomUUID(),
+      )
+    ).approvalRequestId!;
+    const otherLink = `/procurement/orders/${other.id}`;
+
+    // Management, the review's pending approver, holds no order grant: linked, and the link opens the detail.
+    as(U.mgmt, 'management');
+    expect(await hrefOf(reviewId)).toBe(link);
+    expect((await service.get(po.id)).id).toBe(po.id);
+    // The order's versions and receipt progress stay closed to it (the page hides them on these answers).
+    expect(await statusOf(service.versions(po.id))).toBe(403);
+    expect(await statusOf(receiptsService.progress(po.id))).toBe(403);
+    // Its step on the amendment is not active yet: no link there, and that order is a 404.
+    expect(await hrefOf(amendment)).toBeNull();
+    expect(await statusOf(service.get(other.id))).toBe(404);
+
+    // The accountant, active on the amendment with no order grant: linked to that order only.
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await hrefOf(amendment)).toBe(otherLink);
+    expect((await service.get(other.id)).id).toBe(other.id);
+    expect(await hrefOf(reviewId)).toBeNull();
+    expect(await statusOf(service.get(po.id))).toBe(404);
+
+    // Finance reads every request but holds no active step on either: no link, and both orders are a 404.
+    as(U.fin, 'finance');
+    current.grants = withoutPoGrants('finance');
+    expect(await hrefOf(reviewId)).toBeNull();
+    expect(await hrefOf(amendment)).toBeNull();
+    expect(await statusOf(service.get(po.id))).toBe(404);
+    expect(await statusOf(service.get(other.id))).toBe(404);
+
+    // Whoever submitted the review (the warehouse, without its order grants) reads it, and gets no link.
+    as(U.wh, 'warehouse');
+    current.grants = withoutPoGrants('warehouse');
+    expect(await hrefOf(reviewId)).toBeNull();
+    expect(await statusOf(service.get(po.id))).toBe(404);
+
+    // A decided step keeps the link: the accountant after rejecting the amendment, Management after its review.
+    current.grants = null;
+    await decide(U.acct, 'accountant', amendment, 'reject');
+    as(U.acct, 'accountant');
+    current.grants = withoutPoGrants('accountant');
+    expect(await hrefOf(amendment)).toBe(otherLink);
+    expect((await service.get(other.id)).id).toBe(other.id);
+    current.grants = null;
+    await decide(U.mgmt, 'management', reviewId);
+    as(U.mgmt, 'management');
+    expect(await hrefOf(reviewId)).toBe(link);
     expect((await service.get(po.id)).id).toBe(po.id);
   });
 });
