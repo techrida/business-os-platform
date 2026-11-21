@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { plainAmount } from '@bos/locale';
 import { redirect } from 'next/navigation';
 
 import { ApiError } from '@/lib/api';
@@ -29,7 +30,7 @@ export function text(form: FormData, name: string): string {
 
 /** Vendors type lakh grouping ("20,18,180.00"); the contract wants plain digits. A string clean-up, not arithmetic. */
 export function normalizeAmount(raw: string): string {
-  return raw.replace(/[,\s]/g, '');
+  return plainAmount(raw);
 }
 
 /** The key from the form when it is well-formed, else the one the form state carries. */
