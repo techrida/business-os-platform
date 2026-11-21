@@ -188,9 +188,11 @@ export function EvidenceUpload({
         return;
       }
       submittedRef.current = false;
+      // The chip replaces the drop zone. Focus follows to Remove only when it was in this control;
+      // someone typing in another field while the file uploaded keeps their place.
+      const focusWasHere = rootRef.current?.contains(document.activeElement) === true;
       setStaged(answer.body);
-      // The chip replaces the drop zone that had focus: move it to the chip's Remove button.
-      requestAnimationFrame(() => removeRef.current?.focus());
+      if (focusWasHere) requestAnimationFrame(() => removeRef.current?.focus());
     } catch (err) {
       if (err instanceof SendInterrupted && err.aborted) return;
       setProblem(OFFLINE);
