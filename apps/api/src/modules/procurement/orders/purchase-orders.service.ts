@@ -10,7 +10,8 @@
 // - "one legal entity at a time": every read and write is scoped(); another entity's PO is a 404;
 // - "deny by default": the reads are open to issuers and, read-only, to bill and receipt roles on the orders their
 //   grant reaches (F1-Q52, po-read-access.ts); the writes need procurement.po.issue at route level.
-// A change of vendor is not an amendment (the body has no vendor field): cancel and raise a new PO.
+// A change of vendor is not an amendment (the body has no vendor field): a draft changes vendor through
+// changeVendor() (F1-Q40 a); an issued order is cancelled and raised again (cancelAndRecreate(), one transaction).
 import { WorkflowSpecSchema, canTransitionPo, type PoStatus } from '@bos/contracts';
 import {
   purchaseOrderLines,
@@ -35,6 +36,7 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
+import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
@@ -56,21 +58,28 @@ import {
   amendLines,
   amendmentApprovalReasons,
   shortCloseCancelled,
+  vendorChangePatch,
+  vendorChangeRefusal,
   versionTotals,
   type AmendPurchaseOrderBody,
   type AmendmentFacts,
+  type CancelAndRecreatePurchaseOrderBody,
   type CancelPurchaseOrderBody,
+  type ChangePurchaseOrderVendorBody,
   type ListPurchaseOrdersQuery,
   type ShortClosePurchaseOrderBody,
 } from './purchase-order.rules';
 import {
   applyAmendment,
+  assertVerifiedBankAccount,
   conflict,
+  insertRecreatedDraft,
   insertVersion,
   linesOf,
   lockPo,
   notFound,
   receivedOf,
+  vendorTermsDays,
   type AmendmentProposal,
   type PoLineRow,
   type PoRow,
@@ -287,6 +296,10 @@ export class PurchaseOrdersService {
     @Optional() private readonly notify?: ApprovalsNotify,
     /** Renders a new version's PDF once its command commits; absent in tests that build the service by hand. */
     @Optional() private readonly renderNudge?: PurchaseOrderRenderNudge,
+    // Numbers the draft of cancel-and-recreate. Optional and defaulted so callers that build the service by hand
+    // keep working and the module needs no SettingsModule: NumberingService holds no state (as in VendorBillsService).
+    @Optional()
+    private readonly numbering: NumberingService = new NumberingService(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -536,6 +549,83 @@ export class PurchaseOrdersService {
     // After the commit, so the worker sees version 1: render its PDF now rather than on the next sweep.
     await this.renderNudge?.nudge(scope, issued.id, issued.currentVersion);
     return issued;
+  }
+
+  // ------------------------------------------------------------------------------------------- change vendor
+
+  /**
+   * Changes the vendor of a draft PO (F1-Q40 a). 409 PO_VENDOR_CHANGE_NOT_DRAFT ("Cancel this order and create a new
+   * one") unless a draft, 409 PO_VENDOR_UNCHANGED for the same vendor, and for the new vendor the issue checks
+   * (VENDOR_NOT_APPROVED, which an unknown vendor or one of another tenant also gets, and VENDOR_NOT_IN_ENTITY) plus
+   * 409 VENDOR_NO_VERIFIED_BANK_ACCOUNT. A commitment draft without lines first gets its quotation's lines written,
+   * so the lines, prices, total, currency, rate and approved band stay as the commitment approved them; then the
+   * vendor, its account's payment terms and a zero advance are set and the RFQ and quotation link is cleared.
+   */
+  async changeVendor(
+    id: string,
+    body: ChangePurchaseOrderVendorBody,
+    idempotencyKey: string,
+  ): Promise<PurchaseOrderDto> {
+    const { scope, actor } = this.caller.current();
+    const now = this.clock();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        {
+          command: 'procurement.po.change_vendor',
+          key: idempotencyKey,
+          body: { id, vendorId: body.vendorId },
+        },
+        async () => {
+          const po = await lockPo(tx, scope, id);
+          const refusal = vendorChangeRefusal({
+            status: po.status,
+            vendorId: po.vendorId,
+            nextVendorId: body.vendorId,
+          });
+          if (refusal !== null) throw conflict(refusal.message, refusal.code);
+          await this.assertVendorIssuable(tx, scope, body.vendorId);
+          await assertVerifiedBankAccount(tx, scope, body.vendorId);
+          // Before the link to the old vendor's quotation is cleared: write the lines it approved.
+          let lines = await linesOf(tx, scope, id, true);
+          const linesCopied = lines.length === 0;
+          if (linesCopied) lines = await this.copyQuotationLines(tx, scope, po, now);
+          const patch = vendorChangePatch(po, {
+            vendorId: body.vendorId,
+            paymentTermsDays: await vendorTermsDays(tx, scope, body.vendorId),
+          });
+          const [row] = await tx
+            .update(purchaseOrders)
+            .set({
+              ...patch.set,
+              version: sql`${purchaseOrders.version} + 1`,
+              updatedAt: now,
+            })
+            .where(
+              scoped(scope).where(
+                purchaseOrders,
+                and(eq(purchaseOrders.id, id), eq(purchaseOrders.status, 'draft')),
+              ),
+            )
+            .returning();
+          if (row === undefined)
+            throw conflict('The purchase order changed while its vendor was changed');
+          await this.audit.record(tx, {
+            action: 'procurement.po.vendor_changed',
+            entityType: PO_AUDIT_ENTITY,
+            entityId: id,
+            before: patch.before,
+            after: {
+              ...patch.set,
+              cleared: patch.cleared,
+              linesCopied: linesCopied ? lines.length : 0,
+            },
+          });
+          return { status: 200, response: toDto(row, lines) };
+        },
+      );
+      return done.response;
+    });
   }
 
   /**
@@ -793,6 +883,67 @@ export class PurchaseOrdersService {
     return this.close(id, body.reason, idempotencyKey, 'cancelled');
   }
 
+  /**
+   * Cancels an issued PO (exactly cancel()'s rules and audit row) and raises a new draft from it in the same
+   * transaction: same request, RFQ, quotation, vendor, terms, approved total, rate and band, the same lines with their
+   * ordered quantities and nothing cancelled, a new number, created by the caller. The cancel runs first, so the
+   * one-live-PO-per-quotation index admits the clone; any failure rolls back both. 409 unless issued, 409
+   * PO_HAS_RECEIPTS once anything was received. The request stays po_issued (the first issue moved it there and a
+   * cancel leaves it), so issuing the clone later writes its version 1 and leaves the request as it is.
+   */
+  async cancelAndRecreate(
+    id: string,
+    body: CancelAndRecreatePurchaseOrderBody,
+    idempotencyKey: string,
+  ): Promise<PurchaseOrderDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        {
+          command: 'procurement.po.cancel_and_recreate',
+          key: idempotencyKey,
+          body: { id, reason: body.reason },
+        },
+        async () => {
+          const closed = await this.closeInTx(
+            tx,
+            scope,
+            principal,
+            id,
+            body.reason,
+            'cancelled',
+            now,
+          );
+          const recreated = await insertRecreatedDraft(
+            tx,
+            scope,
+            this.numbering,
+            closed.row,
+            closed.lines,
+            principal.userId,
+            now,
+          );
+          await this.audit.record(tx, {
+            action: 'procurement.po.recreated',
+            entityType: PO_AUDIT_ENTITY,
+            entityId: recreated.po.id,
+            before: { from: id, number: closed.row.number },
+            after: {
+              status: recreated.po.status,
+              number: recreated.po.number,
+              lines: recreated.lines.length,
+              approvedTotal: recreated.po.approvedTotal,
+            },
+          });
+          return { status: 200, response: toDto(recreated.po, recreated.lines) };
+        },
+      );
+      return done.response;
+    });
+  }
+
   private async close(
     id: string,
     reason: string,
@@ -807,74 +958,93 @@ export class PurchaseOrdersService {
         tx,
         { command, key: idempotencyKey, body: { id, reason } },
         async () => {
-          const po = await lockPo(tx, scope, id);
-          if (!canTransitionPo(po.status, to)) {
-            throw conflict(`A ${po.status} purchase order cannot be ${to.replace('_', '-')}`);
-          }
-          const lines = await linesOf(tx, scope, id, true);
-          const received = await receivedOf(tx, scope, id);
-          let cancelled: { id: string; cancelledQuantity: string }[];
-          if (to === 'cancelled') {
-            if (received.any) {
-              throw conflict('Goods or services were received on this order', 'PO_HAS_RECEIPTS');
-            }
-            cancelled = lines.map((l) => ({ id: l.id, cancelledQuantity: l.orderedQuantity }));
-          } else {
-            if (received.hasDraft) {
-              throw conflict('A draft receipt is open on this order; confirm or discard it first');
-            }
-            cancelled = shortCloseCancelled(
-              lines.map((l) => ({
-                id: l.id,
-                orderedQuantity: l.orderedQuantity,
-                receivedQuantity: received.all.get(l.id) ?? '0',
-              })),
-            );
-          }
-          for (const c of cancelled) {
-            await tx
-              .update(purchaseOrderLines)
-              .set({ cancelledQuantity: c.cancelledQuantity, updatedAt: now })
-              .where(
-                scoped(scope).where(
-                  purchaseOrderLines,
-                  and(eq(purchaseOrderLines.id, c.id), eq(purchaseOrderLines.purchaseOrderId, id)),
-                ),
-              );
-          }
-          const [row] = await tx
-            .update(purchaseOrders)
-            .set({
-              status: to,
-              closedReason: reason,
-              version: sql`${purchaseOrders.version} + 1`,
-              updatedAt: now,
-            })
-            .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.status, po.status)))
-            .returning();
-          if (row === undefined) throw conflict('The purchase order changed while it was closed');
-          await this.audit.record(tx, {
-            action: to === 'cancelled' ? 'procurement.po.cancelled' : 'procurement.po.short_closed',
-            entityType: PO_AUDIT_ENTITY,
-            entityId: id,
-            before: { status: po.status },
-            after: { status: to, reason, cancelled },
-          });
-          // A short-close ends the receiving of the order: an emergency purchase is now reviewed (F1-Q41).
-          if (emergencyReviewDue(po.status, to)) {
-            await requestEmergencyReview(
-              tx,
-              scope,
-              { approvals: this.approvals, audit: this.audit },
-              row,
-              principal.userId,
-            );
-          }
-          return { status: 200, response: toDto(row, await linesOf(tx, scope, id, false)) };
+          const { row, lines } = await this.closeInTx(tx, scope, principal, id, reason, to, now);
+          return { status: 200, response: toDto(row, lines) };
         },
       );
       return done.response;
     });
+  }
+
+  /**
+   * The close step inside the caller's transaction (shared by short-close, cancel and cancel-and-recreate): locks the
+   * PO and its lines, refuses what the status or the receipts forbid, writes the cancelled quantities, the status and
+   * the reason, the audit row and (short-close) the emergency review. Returns the closed row and its lines as they
+   * now stand, in line order.
+   */
+  private async closeInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    id: string,
+    reason: string,
+    to: 'short_closed' | 'cancelled',
+    now: Date,
+  ): Promise<{ row: PoRow; lines: PoLineRow[] }> {
+    const po = await lockPo(tx, scope, id);
+    if (!canTransitionPo(po.status, to)) {
+      throw conflict(`A ${po.status} purchase order cannot be ${to.replace('_', '-')}`);
+    }
+    const lines = await linesOf(tx, scope, id, true);
+    const received = await receivedOf(tx, scope, id);
+    let cancelled: { id: string; cancelledQuantity: string }[];
+    if (to === 'cancelled') {
+      if (received.any) {
+        throw conflict('Goods or services were received on this order', 'PO_HAS_RECEIPTS');
+      }
+      cancelled = lines.map((l) => ({ id: l.id, cancelledQuantity: l.orderedQuantity }));
+    } else {
+      if (received.hasDraft) {
+        throw conflict('A draft receipt is open on this order; confirm or discard it first');
+      }
+      cancelled = shortCloseCancelled(
+        lines.map((l) => ({
+          id: l.id,
+          orderedQuantity: l.orderedQuantity,
+          receivedQuantity: received.all.get(l.id) ?? '0',
+        })),
+      );
+    }
+    for (const c of cancelled) {
+      await tx
+        .update(purchaseOrderLines)
+        .set({ cancelledQuantity: c.cancelledQuantity, updatedAt: now })
+        .where(
+          scoped(scope).where(
+            purchaseOrderLines,
+            and(eq(purchaseOrderLines.id, c.id), eq(purchaseOrderLines.purchaseOrderId, id)),
+          ),
+        );
+    }
+    const [row] = await tx
+      .update(purchaseOrders)
+      .set({
+        status: to,
+        closedReason: reason,
+        version: sql`${purchaseOrders.version} + 1`,
+        updatedAt: now,
+      })
+      .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.status, po.status)))
+      .returning();
+    if (row === undefined) throw conflict('The purchase order changed while it was closed');
+    await this.audit.record(tx, {
+      action: to === 'cancelled' ? 'procurement.po.cancelled' : 'procurement.po.short_closed',
+      entityType: PO_AUDIT_ENTITY,
+      entityId: id,
+      before: { status: po.status },
+      after: { status: to, reason, cancelled },
+    });
+    // A short-close ends the receiving of the order: an emergency purchase is now reviewed (F1-Q41).
+    if (emergencyReviewDue(po.status, to)) {
+      await requestEmergencyReview(
+        tx,
+        scope,
+        { approvals: this.approvals, audit: this.audit },
+        row,
+        principal.userId,
+      );
+    }
+    return { row, lines: await linesOf(tx, scope, id, false) };
   }
 
   // ------------------------------------------------------------------------------------------------- helpers

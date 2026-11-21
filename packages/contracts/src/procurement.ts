@@ -386,3 +386,19 @@ export type AmendPurchaseOrderBody = z.infer<typeof AmendPurchaseOrderBodySchema
 
 export const ShortClosePurchaseOrderBodySchema = z.strictObject({ reason: text(500) });
 export type ShortClosePurchaseOrderBody = z.infer<typeof ShortClosePurchaseOrderBodySchema>;
+
+/**
+ * Change the vendor of a draft PO (F1-Q40 a): the new vendor must be approved, active in the entity and have a
+ * verified bank account. An issued order is cancelled and raised again instead.
+ */
+export const ChangePurchaseOrderVendorBodySchema = z.strictObject({ vendorId: z.guid() });
+export type ChangePurchaseOrderVendorBody = z.infer<typeof ChangePurchaseOrderVendorBodySchema>;
+
+/**
+ * Cancel an issued PO and raise a new draft from it in one step: the cancel body, a reason (stored as the old
+ * order's closed_reason).
+ */
+export const CancelAndRecreatePurchaseOrderBodySchema = ShortClosePurchaseOrderBodySchema;
+export type CancelAndRecreatePurchaseOrderBody = z.infer<
+  typeof CancelAndRecreatePurchaseOrderBodySchema
+>;

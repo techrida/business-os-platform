@@ -11,6 +11,7 @@ import {
   searchParam,
   ShortClosePurchaseOrderBodySchema,
   type PoApprovedBand,
+  type PoStatus,
 } from '@bos/contracts';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
@@ -240,6 +241,80 @@ export function shortCloseCancelled(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Vendor change on a draft (F1-Q40 a)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The refusal of a vendor change on an order that is no longer a draft, word for word. */
+export const PO_VENDOR_CHANGE_NOT_DRAFT = {
+  code: 'PO_VENDOR_CHANGE_NOT_DRAFT',
+  message: 'Cancel this order and create a new one',
+} as const;
+
+/**
+ * Why the vendor of an order cannot change to `nextVendorId`, or null when it can as far as the order goes (the new
+ * vendor's own checks are the service's). Only a draft changes vendor: an issued order went to its vendor, so it is
+ * cancelled and raised again. Changing to the same vendor changes nothing and is refused.
+ */
+export function vendorChangeRefusal(i: {
+  status: PoStatus;
+  vendorId: string;
+  nextVendorId: string;
+}): { code: string; message: string } | null {
+  if (i.status !== 'draft') return PO_VENDOR_CHANGE_NOT_DRAFT;
+  if (i.vendorId === i.nextVendorId) {
+    return {
+      code: 'PO_VENDOR_UNCHANGED',
+      message: 'The purchase order already has this vendor',
+    };
+  }
+  return null;
+}
+
+/** The header fields a vendor change rewrites. */
+export interface VendorChangeFields {
+  vendorId: string;
+  paymentTermsDays: number;
+  advancePercent: string;
+  rfqId: string | null;
+  vendorQuotationId: string | null;
+}
+
+/**
+ * What a vendor change writes and audits: the new vendor with its account's payment terms, no advance, and the link
+ * to the RFQ and quotation cleared (the quotation was the old vendor's; both are cleared together, as the
+ * purchase_orders CHECK requires). Lines, prices, currency, rate and the approved total and band are left as the
+ * commitment approved them. `cleared` names the fields the change reset.
+ */
+export function vendorChangePatch(
+  current: VendorChangeFields,
+  next: { vendorId: string; paymentTermsDays: number },
+): {
+  set: VendorChangeFields;
+  before: VendorChangeFields;
+  cleared: (keyof VendorChangeFields)[];
+} {
+  const set: VendorChangeFields = {
+    vendorId: next.vendorId,
+    paymentTermsDays: next.paymentTermsDays,
+    advancePercent: '0',
+    rfqId: null,
+    vendorQuotationId: null,
+  };
+  const before: VendorChangeFields = {
+    vendorId: current.vendorId,
+    paymentTermsDays: current.paymentTermsDays,
+    advancePercent: current.advancePercent,
+    rfqId: current.rfqId,
+    vendorQuotationId: current.vendorQuotationId,
+  };
+  const cleared: (keyof VendorChangeFields)[] = [];
+  if (!new Decimal(current.advancePercent).isZero()) cleared.push('advancePercent');
+  if (current.rfqId !== null) cleared.push('rfqId');
+  if (current.vendorQuotationId !== null) cleared.push('vendorQuotationId');
+  return { set, before, cleared };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Bodies (the contracts own them; re-exported so the controller and the service keep one import)
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -257,7 +332,11 @@ export type ListPurchaseOrdersQuery = z.infer<typeof ListPurchaseOrdersQuerySche
 
 export {
   AmendPurchaseOrderBodySchema,
+  CancelAndRecreatePurchaseOrderBodySchema,
+  ChangePurchaseOrderVendorBodySchema,
   ShortClosePurchaseOrderBodySchema,
   type AmendPurchaseOrderBody,
+  type CancelAndRecreatePurchaseOrderBody,
+  type ChangePurchaseOrderVendorBody,
   type ShortClosePurchaseOrderBody,
 } from '@bos/contracts';
