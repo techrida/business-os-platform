@@ -19,8 +19,8 @@ import {
   type SalesVatRegisterTotal,
 } from '@bos/contracts';
 import { invoices, scoped } from '@bos/db';
+import { Dec } from '@bos/money-rules';
 import { Inject, Injectable } from '@nestjs/common';
-import Decimal from 'decimal.js';
 import { and, asc, between, eq, inArray } from 'drizzle-orm';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -36,7 +36,7 @@ function buyerOf(snapshot: unknown): { name: string; pan: string | null } {
   return { name, pan };
 }
 
-const zero = () => new Decimal(0);
+const zero = () => new Dec(0);
 
 @Injectable()
 export class InvoiceVatRegisterService {
@@ -87,11 +87,11 @@ export class InvoiceVatRegisterService {
           Currency,
           {
             n: number;
-            taxable: Decimal;
-            vat: Decimal;
-            exempt: Decimal;
-            zeroRated: Decimal;
-            total: Decimal;
+            taxable: Dec;
+            vat: Dec;
+            exempt: Dec;
+            zeroRated: Dec;
+            total: Dec;
           }
         >();
         const npr = {
@@ -104,11 +104,11 @@ export class InvoiceVatRegisterService {
         };
         const rows = documents.map((d): SalesVatRegisterRow => {
           const sign = d.kind === 'credit_note' ? -1 : 1;
-          const taxable = new Decimal(d.taxable).times(sign);
-          const vat = new Decimal(d.vat).times(sign);
-          const exempt = new Decimal(d.exempt).times(sign);
-          const zeroRated = new Decimal(d.zeroRated).times(sign);
-          const total = new Decimal(d.total).times(sign);
+          const taxable = new Dec(d.taxable).times(sign);
+          const vat = new Dec(d.vat).times(sign);
+          const exempt = new Dec(d.exempt).times(sign);
+          const zeroRated = new Dec(d.zeroRated).times(sign);
+          const total = new Dec(d.total).times(sign);
           const acc = sums.get(d.currency) ?? {
             n: 0,
             taxable: zero(),
@@ -126,11 +126,11 @@ export class InvoiceVatRegisterService {
             total: acc.total.plus(total),
           });
           // Issued implies a frozen rate and NPR total (invoices_issued_snapshot_check).
-          const rate = new Decimal(d.fxRate!);
-          const nprVat = vat.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-          const nprExempt = exempt.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-          const nprZeroRated = zeroRated.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-          const nprTotal = new Decimal(d.amountNpr!).times(sign);
+          const rate = new Dec(d.fxRate!);
+          const nprVat = vat.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP);
+          const nprExempt = exempt.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP);
+          const nprZeroRated = zeroRated.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP);
+          const nprTotal = new Dec(d.amountNpr!).times(sign);
           // The taxable base takes the rounding remainder (money rule C-2), so the NPR columns add up to the frozen NPR total.
           const nprTaxable = nprTotal.minus(nprVat).minus(nprExempt).minus(nprZeroRated);
           npr.n += 1;

@@ -62,6 +62,8 @@ interface Doc {
   zero?: string;
   buyer?: { legalName: string; panVatNo: string | null };
   originalId?: string;
+  /** The exact document total, when a float sum of the parts would lose digits. */
+  total?: string;
 }
 
 /** An invoice written the way the app does: a draft row, then one UPDATE that issues it with its snapshots. */
@@ -71,7 +73,7 @@ async function document(d: Doc): Promise<string> {
   const exempt = d.exempt ?? '0.00';
   const zero = d.zero ?? '0.00';
   const subtotal = (Number(d.taxable) + Number(exempt) + Number(zero)).toFixed(2);
-  const total = (Number(subtotal) + Number(d.vat)).toFixed(2);
+  const total = d.total ?? (Number(subtotal) + Number(d.vat)).toFixed(2);
   const currency = d.currency ?? 'NPR';
   const { tenantId, organizationId } = d.scope;
   return withTx(db, d.scope, systemActor('test'), async (tx) => {
@@ -357,6 +359,29 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
     expect(register.nprTotal.exemptAmount).toBe(sum((r) => r.nprExemptAmount));
     expect(register.nprTotal.zeroRatedAmount).toBe(sum((r) => r.nprZeroRatedAmount));
     expect(register.nprTotal.totalAmount).toBe(sum((r) => r.nprTotalAmount));
+  });
+
+  it('converts at full precision and rounds once: a cent is not rounded early (FU11)', async () => {
+    const scope: TxScope = { tenantId: a.tenantId, organizationId: a.organizationId };
+    await document({
+      scope,
+      customerId: a.customerId,
+      currency: 'USD',
+      rate: '100.000001',
+      issueDate: '2027-06-02',
+      taxable: '0.00',
+      vat: '10000000004999.99',
+      total: '10000000004999.99',
+    });
+    current.scope = scope;
+    const register = SalesVatRegisterSchema.parse(
+      await service().register('2027-06-01', '2027-06-30'),
+    );
+    // 10000000004999.99 x 100.000001 = 1000000010499999.00499999: half-up to the cent is .00. Rounding the product at 20
+    // significant digits first gave .005, which then rounded up to .01.
+    expect(register.rows).toHaveLength(1);
+    expect(register.rows[0]!.nprVatAmount).toBe('1000000010499999.00');
+    expect(register.nprTotal.vatAmount).toBe('1000000010499999.00');
   });
 
   it('is scoped to the acting entity and tenant, and an empty period is an empty register', async () => {
