@@ -435,7 +435,6 @@ describe('DraftingService.create', () => {
     for (const [label, grants] of [
       ['accountant', grantsOf('accountant')],
       ['finance', grantsOf('finance')],
-      ['management', grantsOf('management')],
       ['read-all', readsEveryOpportunity()],
     ] as const) {
       await asCaller({ userId: otherUserId, grants, roles: [label as RoleKey] }, async () => {
@@ -450,6 +449,21 @@ describe('DraftingService.create', () => {
         );
       });
     }
+    expect(await quotationCount(f.opportunityId)).toBe(before);
+  });
+
+  it('refuses Management with no tie to the deal: it holds no quotation.draft, so 403 and nothing written', async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const before = await quotationCount(f.opportunityId);
+    await asCaller(
+      { userId: otherUserId, grants: grantsOf('management'), roles: ['management'] },
+      async () => {
+        expect(await draftFlagOn(f.opportunityId)).toBe(false);
+        expect(
+          await statusOf(service.create(goldenCreateBody(f), 'create-management-no-tie')),
+        ).toBe(403);
+      },
+    );
     expect(await quotationCount(f.opportunityId)).toBe(before);
   });
 

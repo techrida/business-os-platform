@@ -810,6 +810,7 @@ describe('releaseDelivery: the small-team rule (F1-Q11 a)', () => {
       [ONE_PAISA_BELOW, finance, 'finance'],
     ] as const) {
       await resetTeam();
+      await giveRoles(f.ownerUserId, ['founder']);
       await giveRoles(other, [role]);
       await setThreshold(threshold);
       const orderId = await confirmedOrder();
