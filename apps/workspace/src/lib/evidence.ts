@@ -9,8 +9,12 @@ import { ErrorBodySchema } from '@bos/contracts';
  */
 export const EVIDENCE_OWNER_TYPE = 'evidence';
 
-/** The records that take evidence, as they appear in `/api/evidence/:kind/:ownerId`. */
-export const EVIDENCE_KINDS = ['sales-order', 'vendor-bill', 'rfq'] as const;
+/**
+ * The records that take evidence, as they appear in `/api/evidence/:kind/:ownerId`. A
+ * `quotation-version` is the accepted quotation version a sales order is confirmed from: its
+ * evidence is uploaded before the order exists.
+ */
+export const EVIDENCE_KINDS = ['sales-order', 'vendor-bill', 'rfq', 'quotation-version'] as const;
 export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 
 /** Where the browser uploads evidence for one record, and asks for its scan status. */

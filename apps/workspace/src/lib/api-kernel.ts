@@ -375,6 +375,7 @@ const EVIDENCE_BASE: Record<EvidenceKind, string> = {
   'sales-order': '/v1/sales-orders',
   'vendor-bill': '/v1/payables/bills',
   rfq: '/v1/procurement/rfqs',
+  'quotation-version': '/v1/sales-orders/quotation-versions',
 };
 
 function evidencePath(kind: EvidenceKind, ownerId: string): string {

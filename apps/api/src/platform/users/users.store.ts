@@ -129,11 +129,11 @@ export abstract class UsersStore {
   abstract idpOrgByZitadelId(zitadelOrgId: string): Promise<IdpOrgRow | null>;
   abstract idpOrgById(idpOrgId: string): Promise<IdpOrgRow | null>;
   /** The tenant's one staff IdP org: where invites are created and grants are set. */
-  abstract staffIdpOrgOf(tenantId: string): Promise<IdpOrgRow | null>;
+  abstract staffIdpOrgOf(tenantId: string, q?: Queryable): Promise<IdpOrgRow | null>;
   /** Every staff IdP org; reconcile walks these (portal orgs are invisible to the provisioner token). */
   abstract listStaffIdpOrgs(): Promise<IdpOrgRow[]>;
   /** The tenant's default entity id: bootstrap memberships land here and user writes are audited under it. */
-  abstract defaultEntityOf(tenantId: string): Promise<string | null>;
+  abstract defaultEntityOf(tenantId: string, q?: Queryable): Promise<string | null>;
   /** The scope withTx put on this transaction (bos.tenant_id / bos.organization_id). */
   abstract txScope(tx: DbTransaction): Promise<TxScope>;
 
@@ -295,8 +295,8 @@ export class SqlUsersStore extends UsersStore {
     return found[0] ?? null;
   }
 
-  async staffIdpOrgOf(tenantId: string): Promise<IdpOrgRow | null> {
-    const found = await this.db
+  async staffIdpOrgOf(tenantId: string, q: Queryable = this.db): Promise<IdpOrgRow | null> {
+    const found = await (q as Db)
       .select(IDP_ORG_COLUMNS)
       .from(idpOrgs)
       .where(and(eq(idpOrgs.tenantId, tenantId), eq(idpOrgs.kind, 'staff')))
@@ -308,8 +308,8 @@ export class SqlUsersStore extends UsersStore {
     return this.db.select(IDP_ORG_COLUMNS).from(idpOrgs).where(eq(idpOrgs.kind, 'staff'));
   }
 
-  async defaultEntityOf(tenantId: string): Promise<string | null> {
-    const found = await this.db
+  async defaultEntityOf(tenantId: string, q: Queryable = this.db): Promise<string | null> {
+    const found = await (q as Db)
       .select({ id: organizations.id })
       .from(organizations)
       .where(and(eq(organizations.tenantId, tenantId), eq(organizations.isDefault, true)))
