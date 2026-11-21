@@ -75,6 +75,7 @@ import {
 } from './purchase-order.rules';
 import {
   applyAmendment,
+  assertPoNotReferenced,
   assertVerifiedBankAccount,
   conflict,
   insertRecreatedDraft,
@@ -582,11 +583,14 @@ export class PurchaseOrdersService {
 
   /**
    * Changes the vendor of a draft PO (F1-Q40 a). 409 PO_VENDOR_CHANGE_NOT_DRAFT ("Cancel this order and create a new
-   * one") unless a draft, 409 PO_VENDOR_UNCHANGED for the same vendor, and for the new vendor the issue checks
-   * (VENDOR_NOT_APPROVED, which an unknown vendor or one of another tenant also gets, and VENDOR_NOT_IN_ENTITY) plus
-   * 409 VENDOR_NO_VERIFIED_BANK_ACCOUNT. A commitment draft without lines first gets its quotation's lines written,
-   * so the lines, prices, total, currency, rate and approved band stay as the commitment approved them; then the
-   * vendor, its account's payment terms and a zero advance are set and the RFQ and quotation link is cleared.
+   * one") unless a draft, 409 PO_VENDOR_UNCHANGED for the same vendor, 409 PO_REFERENCED when a payment request, bill
+   * or portal bill submission names the draft (each holds a foreign key on the PO and its vendor), and for the new
+   * vendor the issue checks (VENDOR_NOT_APPROVED, which an unknown vendor or one of another tenant also gets, and
+   * VENDOR_NOT_IN_ENTITY) plus 409 VENDOR_NO_VERIFIED_BANK_ACCOUNT. 409 PO_HAS_NO_LINES, writing nothing, when the
+   * draft has no lines and no quotation lines to copy. A commitment draft without lines first gets its quotation's
+   * lines written, so the lines, prices, total, currency, rate and approved band stay as the commitment approved
+   * them; then the vendor, its account's payment terms and a zero advance are set and the RFQ and quotation link is
+   * cleared.
    */
   async changeVendor(
     id: string,
@@ -611,12 +615,17 @@ export class PurchaseOrdersService {
             nextVendorId: body.vendorId,
           });
           if (refusal !== null) throw conflict(refusal.message, refusal.code);
+          await assertPoNotReferenced(tx, scope, id);
           await this.assertVendorIssuable(tx, scope, body.vendorId);
           await assertVerifiedBankAccount(tx, scope, body.vendorId);
           // Before the link to the old vendor's quotation is cleared: write the lines it approved.
           let lines = await linesOf(tx, scope, id, true);
           const linesCopied = lines.length === 0;
           if (linesCopied) lines = await this.copyQuotationLines(tx, scope, po, now);
+          // Nothing was written: the quotation it could copy from would be unlinked, leaving a draft that can never
+          // get lines or issue.
+          if (lines.length === 0)
+            throw conflict('The purchase order has no lines', 'PO_HAS_NO_LINES');
           const patch = vendorChangePatch(po, {
             vendorId: body.vendorId,
             paymentTermsDays: await vendorTermsDays(tx, scope, body.vendorId),

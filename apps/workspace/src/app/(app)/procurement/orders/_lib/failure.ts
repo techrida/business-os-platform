@@ -71,6 +71,14 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
             : undefined;
         case 'PO_VENDOR_CHANGE_NOT_DRAFT':
           return moving ? { message: VENDOR_CHANGE_NOT_DRAFT, reload: true } : undefined;
+        case 'PO_REFERENCED':
+          return moving
+            ? {
+                message:
+                  'Payment requests or bills already refer to this order. Cancel it and create a new one.',
+                reload: false,
+              }
+            : undefined;
         case 'PO_HAS_NO_LINES':
           return {
             message:

@@ -274,6 +274,7 @@ describe('changeVendorAction', () => {
       ['VENDOR_NOT_APPROVED', /cannot move to it/i],
       ['VENDOR_NOT_IN_ENTITY', /choose another vendor/i],
       ['VENDOR_NO_VERIFIED_BANK_ACCOUNT', /no verified bank account/i],
+      ['PO_REFERENCED', /cancel it and create a new one/i],
     ];
     for (const [code, words] of cases) {
       api.changePurchaseOrderVendor.mockRejectedValue(apiError(409, code));
