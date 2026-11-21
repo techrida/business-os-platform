@@ -29,10 +29,15 @@ export async function GET(req: Request): Promise<Response> {
       signal: req.signal,
     });
     const body: unknown = await res.json().catch(() => undefined);
-    if (!res.ok) throw new ApiError(res.status, `GET /v1/leads/duplicates failed with ${res.status}`, body);
+    if (!res.ok)
+      throw new ApiError(res.status, `GET /v1/leads/duplicates failed with ${res.status}`, body);
     const parsed = LeadDuplicatesResponseSchema.safeParse(body);
     if (!parsed.success) {
-      throw new ApiError(502, 'GET /v1/leads/duplicates returned an invalid body', parsed.error.issues);
+      throw new ApiError(
+        502,
+        'GET /v1/leads/duplicates returned an invalid body',
+        parsed.error.issues,
+      );
     }
     return jsonResponse(parsed.data);
   } catch (err) {
