@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { DocumentFormatSnapshotSchema } from './document-style.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
+import { decimalPattern } from './number-limits.js';
 import { DiscountSchema, NonNegativeDecimalString, QuantityString } from './quotations.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -539,15 +540,23 @@ export const SalesVatRegisterRowSchema = z.strictObject({
 });
 export type SalesVatRegisterRow = z.infer<typeof SalesVatRegisterRowSchema>;
 
+/**
+ * A sum of many rows. Each row is a numeric(18,2) amount (16 whole digits), so two of them can already pass that: a
+ * filing or per-currency total has its own, wider limit (24 whole digits, 2 decimals) instead of the single-amount one.
+ */
+export const AggregateDecimalString = z
+  .string()
+  .regex(decimalPattern({ intDigits: 24, scale: 2 }, { signed: true }));
+
 /** The totals of one currency. Never summed across currencies. */
 export const SalesVatRegisterTotalSchema = z.strictObject({
   currency: CurrencySchema,
   documents: z.number().int().min(0),
-  taxableAmount: DecimalString,
-  vatAmount: DecimalString,
-  exemptAmount: DecimalString,
-  zeroRatedAmount: DecimalString,
-  totalAmount: DecimalString,
+  taxableAmount: AggregateDecimalString,
+  vatAmount: AggregateDecimalString,
+  exemptAmount: AggregateDecimalString,
+  zeroRatedAmount: AggregateDecimalString,
+  totalAmount: AggregateDecimalString,
 });
 export type SalesVatRegisterTotal = z.infer<typeof SalesVatRegisterTotalSchema>;
 
@@ -557,11 +566,11 @@ export type SalesVatRegisterTotal = z.infer<typeof SalesVatRegisterTotalSchema>;
  */
 export const SalesVatRegisterNprTotalSchema = z.strictObject({
   documents: z.number().int().min(0),
-  taxableAmount: DecimalString,
-  vatAmount: DecimalString,
-  exemptAmount: DecimalString,
-  zeroRatedAmount: DecimalString,
-  totalAmount: DecimalString,
+  taxableAmount: AggregateDecimalString,
+  vatAmount: AggregateDecimalString,
+  exemptAmount: AggregateDecimalString,
+  zeroRatedAmount: AggregateDecimalString,
+  totalAmount: AggregateDecimalString,
 });
 export type SalesVatRegisterNprTotal = z.infer<typeof SalesVatRegisterNprTotalSchema>;
 
