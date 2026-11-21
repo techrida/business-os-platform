@@ -301,7 +301,7 @@ beforeAll(async () => {
     drafting,
     now,
   );
-  controller = new InvoicesController(drafting, issuing, submitting);
+  controller = new InvoicesController(drafting, issuing, submitting, {} as never);
 });
 
 beforeEach(() => {
