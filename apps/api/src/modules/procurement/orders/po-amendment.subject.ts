@@ -7,6 +7,7 @@
 //   asks for its review, F1-Q41).
 // - returned or rejected: the PO leaves amendment_pending unchanged (back to issued, or to the received status).
 // A PO that is not waiting for this decision is refused (409), never silently skipped.
+// Round 5 (S3): once an approval commits, afterDecided enqueues the render of the version it wrote.
 import type { ApprovalContext } from '@bos/contracts';
 import {
   documents,
@@ -18,6 +19,7 @@ import {
 } from '@bos/db';
 import { Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { Principal } from '../../../platform/authz/principal';
@@ -29,6 +31,7 @@ import type { ApprovalSubject, ApprovalsService } from '../../approvals/requests
 import { idAt, procurementReferenceNames } from '../reference-names';
 import { mayReadPo, requestFactsColumns, requestOf } from './po-read-access';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AUDIT_ENTITY } from './purchase-order.rules';
+import type { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
 import {
   drizzlePoVersionHeadLoader,
   PO_VERSION_OWNER_TYPE,
@@ -46,6 +49,11 @@ import {
 
 type Outcome = 'approved' | 'returned' | 'rejected';
 
+/** What afterDecided needs of the frozen proposal: the order and the version it amended. */
+const AmendedOrderSchema = z.object({
+  amendment: z.object({ purchaseOrderId: z.guid(), fromVersion: z.number().int().positive() }),
+});
+
 export class PoAmendmentSubject implements ApprovalSubject {
   readonly documentType = PO_AMENDMENT_DOCUMENT_TYPE;
   private readonly log = new Logger(PoAmendmentSubject.name);
@@ -55,7 +63,25 @@ export class PoAmendmentSubject implements ApprovalSubject {
     /** Asks for the review of an emergency purchase that the amendment leaves fully received (F1-Q41). */
     private readonly approvals: ApprovalsService,
     private readonly clock: () => Date = () => new Date(),
+    /** Renders the approved version's PDF once the approval commits; absent, the render sweep draws it. */
+    private readonly renderNudge?: PurchaseOrderRenderNudge,
   ) {}
+
+  /**
+   * After an approval commits: the version onDecided wrote (the amended one plus one) is rendered now rather than on
+   * the next sweep. A snapshot that does not name the order is left to the sweep.
+   */
+  async afterDecided(decided: {
+    scope: TxScope;
+    outcome: Outcome;
+    snapshot: unknown;
+  }): Promise<void> {
+    if (decided.outcome !== 'approved' || this.renderNudge === undefined) return;
+    const parsed = AmendedOrderSchema.safeParse(decided.snapshot);
+    if (!parsed.success) return;
+    const { purchaseOrderId, fromVersion } = parsed.data.amendment;
+    await this.renderNudge.nudge(decided.scope, purchaseOrderId, fromVersion + 1);
+  }
 
   /** The order by number, its vendor by legal name and each amended line as "Line N: description". */
   referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
