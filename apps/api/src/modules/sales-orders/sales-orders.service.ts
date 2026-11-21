@@ -78,7 +78,10 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import { type Decision, type Principal } from '../../platform/authz/principal';
+import { liveGrantsOf } from '../../platform/authz/live-grants';
 import { RoleCache } from '../../platform/authz/role-cache';
+import { SqlUsersStore } from '../../platform/users/users.store';
+import { lockAccessRevision } from '../access-settings/access-revision';
 import { isSoleEligible, otherEligibleUsers } from '../../platform/authz/sole-eligible';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
@@ -884,7 +887,7 @@ export class SalesOrdersService {
     // read now on this transaction. Anyone else, or a Founder with a second releaser (even one away), keeps the 403.
     const soleEligible =
       refusal === 'requester_cannot_release' &&
-      (await this.soleEligibleToRelease(tx, scope, principal, order, thresholdNpr));
+      (await this.soleEligibleToRelease(tx, scope, principal, order, thresholdNpr, true));
     if (refusal !== null && !soleEligible) {
       const allowedRoles = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
       throw new ForbiddenException({
@@ -972,8 +975,20 @@ export class SalesOrdersService {
     principal: Principal,
     order: Pick<OrderRow, 'amountNpr' | 'createdBy'>,
     thresholdNpr: string,
+    /** True on the command: take the access-revision lock first and read the caller's roles live, not from the token. */
+    live = false,
   ): Promise<boolean> {
     if (!principal.roles.includes('founder')) return false;
+    if (live) {
+      await lockAccessRevision(tx, scope.tenantId);
+      const now = await liveGrantsOf(
+        tx,
+        { users: new SqlUsersStore(this.db), grants: this.roleCache },
+        scope,
+        principal.userId,
+      );
+      if (now.status !== 'active' || !now.roles.includes('founder')) return false;
+    }
     const allowed: readonly string[] = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
     const others = await otherEligibleUsers(
       tx,
