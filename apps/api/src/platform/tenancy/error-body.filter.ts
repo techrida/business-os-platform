@@ -40,6 +40,19 @@ export type ErrorCode =
   | 'quotation_not_sent'
   | 'quotation_expired'
   | 'quotation_pdf_not_ready'
+  // The staff PDF downloads and their Retry (PDF_STATE_CODES): each code has one status.
+  | 'quotation_pdf_failed'
+  | 'quotation_pdf_unavailable'
+  | 'quotation_pdf_retry_not_needed'
+  | 'invoice_pdf_not_ready'
+  | 'invoice_pdf_failed'
+  | 'invoice_pdf_unavailable'
+  | 'invoice_pdf_scan_refused'
+  | 'invoice_pdf_retry_not_needed'
+  | 'purchase_order_pdf_not_ready'
+  | 'purchase_order_pdf_failed'
+  | 'purchase_order_pdf_unavailable'
+  | 'purchase_order_pdf_retry_not_needed'
   | 'kyb_not_verified'
   | 'customer_merged'
   | 'idp_org_taken'
@@ -174,6 +187,18 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   quotation_not_sent: 'This quotation is not open for an answer',
   quotation_expired: 'This quotation has expired',
   quotation_pdf_not_ready: 'The PDF of this quotation version is not ready to download',
+  quotation_pdf_failed: 'The PDF could not be prepared',
+  quotation_pdf_unavailable: 'This PDF is not available',
+  quotation_pdf_retry_not_needed: 'The PDF has not failed, so there is nothing to retry',
+  invoice_pdf_not_ready: 'The PDF of this invoice is still being prepared',
+  invoice_pdf_failed: 'The PDF could not be prepared',
+  invoice_pdf_unavailable: 'This PDF is not available',
+  invoice_pdf_scan_refused: 'The virus scan refused this PDF, so it cannot be served',
+  invoice_pdf_retry_not_needed: 'The PDF has not failed, so there is nothing to retry',
+  purchase_order_pdf_not_ready: 'The PDF of this purchase order is still being prepared',
+  purchase_order_pdf_failed: 'The PDF could not be prepared',
+  purchase_order_pdf_unavailable: 'This PDF is not available',
+  purchase_order_pdf_retry_not_needed: 'The PDF has not failed, so there is nothing to retry',
   kyb_not_verified: 'Portal access needs an approved KYB verification case',
   customer_merged: 'This customer was merged into another',
   idp_org_taken: 'The portal organization is already used by another party',
@@ -473,6 +498,35 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'supporting_document_unsupported',
 ];
 
+/**
+ * The state of a staff PDF download (and of its Retry), each code bound to the one status its service throws it with:
+ * not ready (409, the render is still trying), failed (424, the render was given up), unavailable (404, there is no
+ * file to serve), scan refused (404, the virus scan refused the stored file) and retry not needed (409). A code passes
+ * only with its own status, so a screen can switch on it (P5's portal pending and failed states); anything else reads
+ * as the plain code of its status. `quotation_pdf_not_ready` is in CONFLICT_CODES, from before this list.
+ */
+const PDF_STATE_CODES: Readonly<Partial<Record<ErrorCode, number>>> = {
+  quotation_pdf_failed: 424,
+  quotation_pdf_unavailable: 404,
+  quotation_pdf_retry_not_needed: 409,
+  invoice_pdf_not_ready: 409,
+  invoice_pdf_failed: 424,
+  invoice_pdf_unavailable: 404,
+  invoice_pdf_scan_refused: 404,
+  invoice_pdf_retry_not_needed: 409,
+  purchase_order_pdf_not_ready: 409,
+  purchase_order_pdf_failed: 424,
+  purchase_order_pdf_unavailable: 404,
+  purchase_order_pdf_retry_not_needed: 409,
+};
+
+function pdfStateCodeOf(exception: HttpException): ErrorCode | undefined {
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('code' in response)) return undefined;
+  const code = (Object.keys(PDF_STATE_CODES) as ErrorCode[]).find((c) => c === response.code);
+  return code !== undefined && PDF_STATE_CODES[code] === exception.getStatus() ? code : undefined;
+}
+
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
   if (exception.getStatus() !== 422) return undefined;
   const response = exception.getResponse();
@@ -625,7 +679,8 @@ export class ErrorBodyFilter implements ExceptionFilter {
         reason = reportedReason;
       }
       stepUp = isStepUp(exception);
-      conflictCode = conflictCodeOf(exception) ?? unprocessableCodeOf(exception);
+      conflictCode =
+        conflictCodeOf(exception) ?? unprocessableCodeOf(exception) ?? pdfStateCodeOf(exception);
       if (conflictCode !== undefined) details = detailsOf(exception);
       // A refused hand-over names its rule (`details.assignmentReason`) so the client can say why; nothing
       // else rides on a plain 400.
