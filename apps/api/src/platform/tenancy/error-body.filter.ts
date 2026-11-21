@@ -78,6 +78,7 @@ export type ErrorCode =
   | 'credit_hold'
   | 'sales_order_not_open'
   | 'delivery_already_released'
+  | 'contact_activity_required'
   | 'schedule_line_not_planned'
   | 'SCHEDULE_LINE_TAKEN'
   | 'NOT_APPROVED'
@@ -233,6 +234,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   credit_hold: 'The customer is over its credit limit; the deal needs a credit override first',
   sales_order_not_open: 'This sales order is not open for this change',
   delivery_already_released: 'The delivery of this sales order is already released',
+  contact_activity_required:
+    'Log a call, email or meeting before moving this lead to Contacted.',
   schedule_line_not_planned: 'This schedule line is no longer planned',
   SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
   NOT_APPROVED: 'This invoice is issued only after it has been approved',
@@ -383,6 +386,7 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'credit_hold',
   'sales_order_not_open',
   'delivery_already_released',
+  'contact_activity_required',
   'schedule_line_not_planned',
   // U10 invoices: the line already has a live invoice; a tax invoice, credit or debit note needs approval first.
   'SCHEDULE_LINE_TAKEN',
