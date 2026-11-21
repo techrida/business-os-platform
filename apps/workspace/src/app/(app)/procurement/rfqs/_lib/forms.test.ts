@@ -225,7 +225,7 @@ describe('parseQuoteValues', () => {
     if (!out.ok) {
       expect(out.errors.lines).toMatch(/at least one line/i);
       expect(out.errors.vendorId).toBeDefined();
-      expect(out.errors.documentId).toBeDefined();
+      expect(out.errors.documentId).toBe('Upload the vendor’s quotation document.');
     }
   });
 
