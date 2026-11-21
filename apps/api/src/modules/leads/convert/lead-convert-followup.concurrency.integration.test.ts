@@ -259,6 +259,7 @@ describe("lead convert racing a change to the lead's follow-up", () => {
   it('never deadlocks: the convert succeeds, the change succeeds or gets 409, and the rows agree', async () => {
     const lockPool = h.ownerPool as unknown as ConnectPool;
     const rounds: Round[] = [];
+    const forcedOrder: { round: string; firstWaited: boolean; bothWaited: boolean }[] = [];
 
     // Forced: convert claims its key under the held audit lock; the change locks the follow-up and waits at its first
     // audited write; then the lock goes to convert, which reaches the follow-up's row last.
@@ -274,6 +275,11 @@ describe("lead convert racing a change to the lead's follow-up", () => {
       console.log(
         `[S2 step4 pair4] forced ${change}: firstWaited=${forced.firstWaited} bothWaited=${forced.bothWaited} waiters=${JSON.stringify(forced.waiters)}`,
       );
+      forcedOrder.push({
+        round: change,
+        firstWaited: forced.firstWaited,
+        bothWaited: forced.bothWaited,
+      });
       rounds.push(await finish(x, change, 0, 'forced', forced.first, forced.second));
     }
 
@@ -301,6 +307,8 @@ describe("lead convert racing a change to the lead's follow-up", () => {
     console.log(`[S2 step4 pair4] first 40P01: ${JSON.stringify(firstDeadlock, null, 1)}`);
 
     const cleanAct = new Set(['ok', 'http-409:-', 'http-409:conflict']);
+    // The forced rounds ran in the order they claim only if both sides were seen waiting (forcedRound).
+    expect(forcedOrder.filter((r) => !r.firstWaited || !r.bothWaited)).toEqual([]);
     expect(rounds.filter((r) => r.convert !== 'ok' || !cleanAct.has(r.act))).toEqual([]);
     expect(rounds.filter((r) => !coherent(r))).toEqual([]);
   });

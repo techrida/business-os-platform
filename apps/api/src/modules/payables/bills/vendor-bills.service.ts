@@ -1381,100 +1381,106 @@ export class VendorBillsService {
    */
   async vatRegister(from: string, to: string): Promise<VatRegisterDto> {
     const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const bills = await tx
-        .select({
-          id: vendorBills.id,
-          kind: vendorBills.kind,
-          number: vendorBills.number,
-          vendorId: vendorBills.vendorId,
-          vendorInvoiceNo: vendorBills.vendorInvoiceNo,
-          invoiceDate: vendorBills.invoiceDate,
-          vendorName: vendors.legalName,
-          vendorPan: vendors.pan,
-        })
-        .from(vendorBills)
-        .innerJoin(
-          vendors,
-          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
-        )
-        .where(
-          scoped(scope).where(
-            vendorBills,
-            and(
-              inArray(vendorBills.status, [...VAT_REGISTER_STATUSES]),
-              between(vendorBills.invoiceDate, from, to),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const bills = await tx
+          .select({
+            id: vendorBills.id,
+            kind: vendorBills.kind,
+            number: vendorBills.number,
+            vendorId: vendorBills.vendorId,
+            vendorInvoiceNo: vendorBills.vendorInvoiceNo,
+            invoiceDate: vendorBills.invoiceDate,
+            vendorName: vendors.legalName,
+            vendorPan: vendors.pan,
+          })
+          .from(vendorBills)
+          .innerJoin(
+            vendors,
+            and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+          )
+          .where(
+            scoped(scope).where(
+              vendorBills,
+              and(
+                inArray(vendorBills.status, [...VAT_REGISTER_STATUSES]),
+                between(vendorBills.invoiceDate, from, to),
+              ),
             ),
-          ),
-        )
-        .orderBy(
-          asc(vendorBills.invoiceDate),
-          asc(vendorBills.vendorInvoiceNo),
-          asc(vendorBills.id),
-        );
-      const lines =
-        bills.length === 0
-          ? []
-          : await tx
-              .select({
-                billId: vendorBillLines.vendorBillId,
-                net: vendorBillLines.netAmount,
-                vat: vendorBillLines.vatAmount,
-              })
-              .from(vendorBillLines)
-              .innerJoin(
-                taxCodes,
-                and(
-                  eq(taxCodes.tenantId, vendorBillLines.tenantId),
-                  eq(taxCodes.id, vendorBillLines.taxCodeId),
-                ),
-              )
-              .where(
-                scoped(scope).where(
-                  vendorBillLines,
+          )
+          .orderBy(
+            asc(vendorBills.invoiceDate),
+            asc(vendorBills.vendorInvoiceNo),
+            asc(vendorBills.id),
+          );
+        const lines =
+          bills.length === 0
+            ? []
+            : await tx
+                .select({
+                  billId: vendorBillLines.vendorBillId,
+                  net: vendorBillLines.netAmount,
+                  vat: vendorBillLines.vatAmount,
+                })
+                .from(vendorBillLines)
+                .innerJoin(
+                  taxCodes,
                   and(
-                    inArray(
-                      vendorBillLines.vendorBillId,
-                      bills.map((b) => b.id),
-                    ),
-                    eq(taxCodes.creditable, true),
+                    eq(taxCodes.tenantId, vendorBillLines.tenantId),
+                    eq(taxCodes.id, vendorBillLines.taxCodeId),
                   ),
-                ),
-              );
-      const byBill = new Map<string, { net: Decimal; vat: Decimal }>();
-      for (const l of lines) {
-        const acc = byBill.get(l.billId) ?? { net: new Decimal(0), vat: new Decimal(0) };
-        byBill.set(l.billId, { net: acc.net.plus(l.net), vat: acc.vat.plus(l.vat) });
-      }
-      let totalNet = new Decimal(0);
-      let totalVat = new Decimal(0);
-      const rows = bills.map((b): VatRegisterRowDto => {
-        const sign = b.kind === 'vendor_credit_note' ? -1 : 1;
-        const sums = byBill.get(b.id) ?? { net: new Decimal(0), vat: new Decimal(0) };
-        const net = sums.net.times(sign);
-        const vat = sums.vat.times(sign);
-        totalNet = totalNet.plus(net);
-        totalVat = totalVat.plus(vat);
+                )
+                .where(
+                  scoped(scope).where(
+                    vendorBillLines,
+                    and(
+                      inArray(
+                        vendorBillLines.vendorBillId,
+                        bills.map((b) => b.id),
+                      ),
+                      eq(taxCodes.creditable, true),
+                    ),
+                  ),
+                );
+        const byBill = new Map<string, { net: Decimal; vat: Decimal }>();
+        for (const l of lines) {
+          const acc = byBill.get(l.billId) ?? { net: new Decimal(0), vat: new Decimal(0) };
+          byBill.set(l.billId, { net: acc.net.plus(l.net), vat: acc.vat.plus(l.vat) });
+        }
+        let totalNet = new Decimal(0);
+        let totalVat = new Decimal(0);
+        const rows = bills.map((b): VatRegisterRowDto => {
+          const sign = b.kind === 'vendor_credit_note' ? -1 : 1;
+          const sums = byBill.get(b.id) ?? { net: new Decimal(0), vat: new Decimal(0) };
+          const net = sums.net.times(sign);
+          const vat = sums.vat.times(sign);
+          totalNet = totalNet.plus(net);
+          totalVat = totalVat.plus(vat);
+          return {
+            vendorBillId: b.id,
+            billNumber: b.number,
+            vendorPartyId: b.vendorId,
+            vendorName: b.vendorName,
+            vendorPan: b.vendorPan,
+            vendorInvoiceNo: b.vendorInvoiceNo,
+            invoiceDate: b.invoiceDate,
+            invoiceDateBs: formatBs(invoiceInstant(b.invoiceDate), 'YYYY-MM-DD'),
+            taxableAmount: net.toFixed(2),
+            vatAmount: vat.toFixed(2),
+          };
+        });
         return {
-          vendorBillId: b.id,
-          billNumber: b.number,
-          vendorPartyId: b.vendorId,
-          vendorName: b.vendorName,
-          vendorPan: b.vendorPan,
-          vendorInvoiceNo: b.vendorInvoiceNo,
-          invoiceDate: b.invoiceDate,
-          invoiceDateBs: formatBs(invoiceInstant(b.invoiceDate), 'YYYY-MM-DD'),
-          taxableAmount: net.toFixed(2),
-          vatAmount: vat.toFixed(2),
+          from,
+          to,
+          rows,
+          total: { taxableAmount: totalNet.toFixed(2), vatAmount: totalVat.toFixed(2) },
         };
-      });
-      return {
-        from,
-        to,
-        rows,
-        total: { taxableAmount: totalNet.toFixed(2), vatAmount: totalVat.toFixed(2) },
-      };
-    });
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- helpers

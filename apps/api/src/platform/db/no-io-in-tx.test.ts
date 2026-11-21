@@ -13,6 +13,10 @@ import { describe, expect, it } from 'vitest';
 // Only calls written in the callback itself are seen; I/O reached through another service's method is not. The
 // structural rule below covers the known indirect case: a transaction wrapped in zitadelCall() calls ZITADEL
 // through a service, so it must be one of ALLOWED and must pass `audit: 'lazy'`.
+//
+// A second rule, for the same lock: a transaction that only reads should pass READ_ONLY, or it queues behind every
+// write of its tenant for nothing. "Only reads" is a heuristic over the callback's own text (no insert, update,
+// delete, row lock, idempotency claim, writing SQL or call to a helper named like a writer); see READ_ONLY_CANDIDATES.
 
 const SELF = resolve(fileURLToPath(import.meta.url));
 const SRC_DIR = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -216,6 +220,46 @@ function txCalls(src: string): TxCall[] {
   return calls;
 }
 
+/**
+ * Signs that a callback writes, in its code: an insert, update, delete or row lock (`.for(`), an idempotency claim,
+ * or a call to a function or `this.` method named like a writer (createInTx, updateVersioned, this.audit.record,
+ * lockVendor, markVersionClean, ...). A method of a local value (`map.set(`) does not count. Misses are fine (an
+ * unflagged read only costs a wait); a false alarm must stay rare, so the verbs are generous.
+ */
+const WRITE_CODE =
+  /\.\s*(?:insert|update|delete|for)\s*\(|\bwithIdempotency\b|(?<![.\w])(?:this\.(?:\w+\.)?)?(?:create|insert|update|upsert|delete|remove|set|mark|submit|issue|confirm|reverse|discard|cancel|revise|reopen|send|record|allocate|seed|bootstrap|requeue|retry|journal|preserve|apply|copy|write|move|finish|grant|granted|accept|reject|decide|change|choose|lock|notify|run|work|on)(?:[A-Z]\w*)?\s*\(/;
+/** The same in SQL text (the callback's raw source: template text is masked out of the code). */
+const WRITE_SQL =
+  /\b(?:INSERT\s+INTO|UPDATE\s+["\w.]+\s+SET|DELETE\s+FROM|FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE)\b|\baudit\.seal\b|pg_advisory/i;
+
+/**
+ * Transactions that write through a helper the heuristic cannot see (named unlike a writer), so they keep the default
+ * tenant lock. Add one only after checking it writes: marking a writer READ_ONLY brings back the 40P01 deadlock that
+ * taking the tenant lock first prevents (tx.ts).
+ */
+const WRITES_UNSEEN: readonly { file: string; fn: string }[] = [];
+
+/** `file:line (fn)` of each withTx call with a callback that shows no sign of a write and no options argument. */
+function readOnlyCandidates(file: string, src: string): string[] {
+  const masked = mask(src);
+  const out: string[] = [];
+  for (const m of masked.matchAll(/\bwithTx\s*\(/g)) {
+    const start = m.index ?? 0;
+    const open = start + m[0].length - 1;
+    const end = closeOf(masked, open);
+    if (end < 0) continue;
+    const args = argsOf(src, masked, open, end);
+    // Options given, or a callback passed through from a caller (a RunInTx port): the caller decides.
+    if (args.length >= 5 || /^\w+$/.test(args[3] ?? '')) continue;
+    const body = { code: masked.slice(open + 1, end), raw: src.slice(open + 1, end) };
+    if (WRITE_CODE.test(body.code) || WRITE_SQL.test(body.raw)) continue;
+    const fn = enclosingFunction(masked, start);
+    if (WRITES_UNSEEN.some((w) => w.file === file && w.fn === fn)) continue;
+    out.push(`${file}:${src.slice(0, start).split('\n').length} (${fn})`);
+  }
+  return out;
+}
+
 /** `file:line (fn): why` for every call that breaks a rule. `file` is relative to apps/api/src. */
 function offenders(file: string, src: string): string[] {
   const out: string[] = [];
@@ -328,6 +372,72 @@ class Fine {
     expect(calls.map((c) => ({ hits: c.hits, lazy: c.lazy, end: c.end > 0 }))).toEqual([
       { hits: [], lazy: false, end: true },
       { hits: [], lazy: true, end: true },
+    ]);
+  });
+});
+
+describe('a withTx that only reads passes READ_ONLY', () => {
+  const files = sourceFiles(SRC_DIR).map((file) => ({
+    rel: relative(SRC_DIR, file).replaceAll('\\', '/'),
+    src: readFileSync(file, 'utf8'),
+  }));
+
+  it('has no read-only transaction without READ_ONLY in apps/api/src', () => {
+    // If this fails: pass READ_ONLY only if the callback never writes. A transaction that writes through a helper the
+    // heuristic cannot see goes on WRITES_UNSEEN instead.
+    expect(files.flatMap((f) => readOnlyCandidates(f.rel, f.src))).toEqual([]);
+  });
+
+  it('every WRITES_UNSEEN entry names a real withTx call (no stale entries)', () => {
+    for (const w of WRITES_UNSEEN) {
+      const src = files.find((f) => f.rel === w.file)?.src ?? '';
+      const masked = mask(src);
+      const fns = [...masked.matchAll(/\bwithTx\s*\(/g)].map((m) =>
+        enclosingFunction(masked, m.index ?? 0),
+      );
+      expect(fns, `${w.file} ${w.fn}`).toContain(w.fn);
+    }
+  });
+
+  it('flags a pure read and nothing that writes, passes options or passes a callback through', () => {
+    const planted = `
+class Planted {
+  async read(id: string) {
+    return withTx(this.db, scope, actor, async (tx) => {
+      const rows = await tx.select().from(t).where(eq(t.id, id));
+      const seen = new Map<string, number>();
+      seen.set(id, rows.length);
+      return { rows, total: settlementRow(rows) };
+    });
+  }
+
+  async marked(id: string) {
+    return withTx(this.db, scope, actor, (tx) => tx.select().from(t), READ_ONLY);
+  }
+
+  async inserts(id: string) {
+    return withTx(this.db, scope, actor, (tx) => tx.insert(t).values({ id }));
+  }
+
+  async viaHelper(id: string) {
+    return withTx(this.db, scope, actor, async (tx) => {
+      const row = await this.find(tx, id);
+      await this.audit.record(tx, { action: 'x', entityId: row.id });
+    });
+  }
+
+  async viaSql(id: string) {
+    return withTx(this.db, scope, actor, (tx) => tx.execute(sql\`SELECT 1 FROM t WHERE id = \${id} FOR UPDATE\`));
+  }
+
+  async claims(id: string) {
+    return withTx(this.db, scope, actor, (tx) => withIdempotency(tx, key, (q) => go(q)));
+  }
+}
+const run = (scope, actor, fn) => withTx(db, scope, actor, fn);
+`;
+    expect(readOnlyCandidates('modules/planted.ts', planted)).toEqual([
+      'modules/planted.ts:4 (read)',
     ]);
   });
 });

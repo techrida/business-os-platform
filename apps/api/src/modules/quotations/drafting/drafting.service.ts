@@ -714,12 +714,18 @@ export class DraftingService {
   async getVersion(id: string, versionId: string): Promise<QuotationVersionDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    return withTx(this.db, scope, actor, async (tx) => {
-      const quotation = await this.findVisible(tx, principal, id);
-      const version = await this.findVersion(tx, quotation, versionId);
-      const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
-      return versionVisibleTo(principal, toQuotationVersionDto({ ...parts!, quotation }));
-    });
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const quotation = await this.findVisible(tx, principal, id);
+        const version = await this.findVersion(tx, quotation, versionId);
+        const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
+        return versionVisibleTo(principal, toQuotationVersionDto({ ...parts!, quotation }));
+      },
+      READ_ONLY,
+    );
   }
 
   // ------------------------------------------------------------------------------------------- update draft

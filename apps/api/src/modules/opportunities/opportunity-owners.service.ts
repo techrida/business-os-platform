@@ -84,39 +84,47 @@ export class OpportunityOwnersService {
    */
   async ownerFilter(): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const owned = await tx
-        .selectDistinct({ userId: opportunities.ownerUserId })
-        .from(opportunities)
-        .where(
-          scoped(scope).where(
-            opportunities,
-            and(
-              scopeWhereFor(principal, opportunities, 'crm.opportunity.read'),
-              isNotNull(opportunities.ownerUserId),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        const owned = await tx
+          .selectDistinct({ userId: opportunities.ownerUserId })
+          .from(opportunities)
+          .where(
+            scoped(scope).where(
+              opportunities,
+              and(
+                scopeWhereFor(principal, opportunities, 'crm.opportunity.read'),
+                isNotNull(opportunities.ownerUserId),
+              ),
             ),
-          ),
+          );
+        const ids = new Set<string>();
+        for (const { userId } of owned) if (userId !== null) ids.add(userId);
+        if (can(principal, 'crm.opportunity.write').allowed) {
+          const targets = await assignableParties(tx, principal, scope, {
+            roleCache: this.roleCache,
+            context: 'reassign',
+            rule: storedAssignmentRule(tx, scope, 'opportunities'),
+            subjectRead: 'crm.opportunity.read',
+          });
+          for (const { userId } of targets) ids.add(userId);
+        }
+        const named = new Map(
+          (await personNames(tx, scope.tenantId, ids)).map((p) => [p.userId, p]),
         );
-      const ids = new Set<string>();
-      for (const { userId } of owned) if (userId !== null) ids.add(userId);
-      if (can(principal, 'crm.opportunity.write').allowed) {
-        const targets = await assignableParties(tx, principal, scope, {
-          roleCache: this.roleCache,
-          context: 'reassign',
-          rule: storedAssignmentRule(tx, scope, 'opportunities'),
-          subjectRead: 'crm.opportunity.read',
-        });
-        for (const { userId } of targets) ids.add(userId);
-      }
-      const named = new Map((await personNames(tx, scope.tenantId, ids)).map((p) => [p.userId, p]));
-      return [...ids]
-        .map((userId) => ({
-          userId,
-          displayName: named.get(userId)?.name ?? 'Unnamed user',
-          email: '',
-          avatarDocumentId: named.get(userId)?.avatarDocumentId ?? null,
-        }))
-        .sort(byName);
-    });
+        return [...ids]
+          .map((userId) => ({
+            userId,
+            displayName: named.get(userId)?.name ?? 'Unnamed user',
+            email: '',
+            avatarDocumentId: named.get(userId)?.avatarDocumentId ?? null,
+          }))
+          .sort(byName);
+      },
+      READ_ONLY,
+    );
   }
 }

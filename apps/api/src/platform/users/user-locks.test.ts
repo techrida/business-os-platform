@@ -28,6 +28,8 @@ class LockZitadel {
   users = new Map<string, ZitadelUser>();
   unlockCalls: string[] = [];
   lockCalls: string[] = [];
+  lockAttempts = 0;
+  failLock: Error | null = null;
   failUnlock: Error | null = null;
   failGetUser: Error | null = null;
   policyCalls: { orgId: string; want: OrgLockoutPolicy }[] = [];
@@ -56,6 +58,8 @@ class LockZitadel {
   }
   lockUser(id: string) {
     this.called('lockUser');
+    this.lockAttempts += 1;
+    if (this.failLock) return Promise.reject(this.failLock);
     this.lockCalls.push(id);
     const user = this.users.get(id);
     if (user) Object.assign(user, { status: 'inactive', locked: true });
@@ -267,6 +271,81 @@ describe('UserLocks.expire (F1-Q4)', () => {
     expect(zitadel.users.get(`z-${USER}`)).toMatchObject({ status: 'inactive', locked: true });
     expect(audit.record).not.toHaveBeenCalled();
     expect(store.authzBumps).toBe(0);
+  });
+
+  describe('fails closed when the write here does not go through after ZITADEL was unlocked', () => {
+    class LockNotAvailable extends Error {
+      override readonly name = 'LockNotAvailable';
+    }
+    class ZitadelDown extends Error {
+      override readonly name = 'ZitadelDown';
+    }
+    /** The row lock times out (55P03 behind an admin action), before anything is written here. */
+    function rowLockTimesOut() {
+      const real = store.findById.bind(store);
+      vi.spyOn(store, 'findById').mockImplementation((q, s, id, lock) =>
+        lock === true ? Promise.reject(new LockNotAvailable('lock timeout')) : real(q, s, id, lock),
+      );
+    }
+    const errorLines = () =>
+      vi.mocked(Logger.prototype.error).mock.calls.map((call) => String(call[0]));
+
+    it('locks ZITADEL again and logs the original error (old code: ZITADEL left unlocked)', async () => {
+      lockedUser(USER);
+      rowLockTimesOut();
+
+      expect(await locks.expire(NOW)).toEqual({ unlocked: 0, cleared: 0, postponed: 0 });
+
+      expect(zitadel.unlockCalls).toEqual([`z-${USER}`]);
+      expect(zitadel.lockCalls).toEqual([`z-${USER}`]);
+      expect(zitadel.users.get(`z-${USER}`)).toMatchObject({ status: 'inactive', locked: true });
+      expect(row(USER)).toMatchObject({ status: 'inactive', lockReason: 'failed_sign_ins' });
+      expect(errorLines()).toEqual([`users.lock-expiry failed for ${USER}: kind=LockNotAvailable`]);
+      expect(zitadel.callsInTx).toEqual([]);
+    });
+
+    it('retries the re-lock, logs its failure with the user id, and still logs the original error', async () => {
+      lockedUser(USER);
+      rowLockTimesOut();
+      zitadel.failLock = new ZitadelDown('503');
+
+      expect(await locks.expire(NOW)).toEqual({ unlocked: 0, cleared: 0, postponed: 0 });
+
+      expect(zitadel.lockAttempts).toBe(3);
+      const lines = errorLines();
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain(`could not lock ${USER} again in ZITADEL`);
+      expect(lines[0]).toContain('kind=LockNotAvailable');
+      expect(lines[0]).toContain('kind=ZitadelDown');
+      expect(lines[1]).toBe(`users.lock-expiry failed for ${USER}: kind=LockNotAvailable`);
+    });
+
+    it('locks ZITADEL again when the row cannot be read afterwards either', async () => {
+      lockedUser(USER);
+      vi.spyOn(store, 'findById').mockImplementation((_q, s, id, lock) => {
+        const found = store.users.find((u) => u.id === id && u.tenantId === s.tenantId);
+        // The first read (before ZITADEL) works; everything after it fails.
+        if (lock !== true && zitadel.unlockCalls.length === 0) {
+          return Promise.resolve(found ? { ...found, version: '0' } : null);
+        }
+        return Promise.reject(new LockNotAvailable('database gone'));
+      });
+
+      await locks.expire(NOW);
+
+      expect(zitadel.lockCalls).toEqual([`z-${USER}`]);
+    });
+
+    it('does not lock ZITADEL again when the row read afterwards shows no lock', async () => {
+      lockedUser(USER);
+      audit.record.mockRejectedValueOnce(new ZitadelDown('after the write'));
+
+      await locks.expire(NOW);
+
+      // The fake store has no rollback, so the row reads unlocked, as after a commit that answered with an error.
+      expect(row(USER)).toMatchObject({ lockReason: null });
+      expect(zitadel.lockAttempts).toBe(0);
+    });
   });
 
   it('writes nothing and leaves ZITADEL unlocked when an admin unlocked the person meanwhile', async () => {

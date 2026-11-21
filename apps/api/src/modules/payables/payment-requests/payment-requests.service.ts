@@ -243,88 +243,94 @@ export class PaymentRequestsService {
 
   private async requestableItems(bank: 'verified' | 'missing'): Promise<PaymentRequestItemDto[]> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
-      // The same account activeVerifiedAccount() snapshots at create and submit: the vendor's `active` one.
-      const activeBank = and(
-        eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
-        eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
-        eq(vendorBankAccounts.status, 'active'),
-      );
-      const base = tx
-        .select({
-          openItemId: openItems.id,
-          vendorPartyId: vendorBills.vendorId,
-          vendorName: vendors.legalName,
-          vendorBillId: vendorBills.id,
-          billNumber: vendorBills.number,
-          vendorInvoiceNo: vendorBills.vendorInvoiceNo,
-          currency: openItems.currency,
-        })
-        .from(openItems)
-        .innerJoin(
-          vendorBills,
-          and(
-            eq(vendorBills.tenantId, openItems.tenantId),
-            eq(vendorBills.organizationId, openItems.organizationId),
-            eq(vendorBills.id, openItems.sourceId),
-            eq(vendorBills.vendorId, openItems.vendorPartyId),
-            eq(vendorBills.currency, openItems.currency),
-          ),
-        )
-        .innerJoin(
-          vendors,
-          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
-        )
-        .innerJoin(
-          vendorAccounts,
-          and(
-            eq(vendorAccounts.tenantId, vendorBills.tenantId),
-            eq(vendorAccounts.organizationId, vendorBills.organizationId),
-            eq(vendorAccounts.vendorId, vendorBills.vendorId),
-            eq(vendorAccounts.active, true),
-          ),
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        // The same account activeVerifiedAccount() snapshots at create and submit: the vendor's `active` one.
+        const activeBank = and(
+          eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
+          eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
+          eq(vendorBankAccounts.status, 'active'),
         );
-      // One active account per vendor at most (vendor_bank_accounts_tenant_vendor_active_unique), so the left join
-      // never repeats a row.
-      const joined =
-        bank === 'verified'
-          ? base.innerJoin(vendorBankAccounts, activeBank)
-          : base.leftJoin(vendorBankAccounts, activeBank);
-      const rows = await joined
-        .where(
-          scoped(scope).where(
-            openItems,
+        const base = tx
+          .select({
+            openItemId: openItems.id,
+            vendorPartyId: vendorBills.vendorId,
+            vendorName: vendors.legalName,
+            vendorBillId: vendorBills.id,
+            billNumber: vendorBills.number,
+            vendorInvoiceNo: vendorBills.vendorInvoiceNo,
+            currency: openItems.currency,
+          })
+          .from(openItems)
+          .innerJoin(
+            vendorBills,
             and(
-              eq(openItems.side, 'payable'),
-              eq(openItems.direction, 'credit'),
-              eq(openItems.sourceType, 'vendor_bill'),
-              eq(vendorBills.kind, 'bill'),
-              inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
-              scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
-              bank === 'missing' ? isNull(vendorBankAccounts.id) : undefined,
+              eq(vendorBills.tenantId, openItems.tenantId),
+              eq(vendorBills.organizationId, openItems.organizationId),
+              eq(vendorBills.id, openItems.sourceId),
+              eq(vendorBills.vendorId, openItems.vendorPartyId),
+              eq(vendorBills.currency, openItems.currency),
             ),
-          ),
-        )
-        .orderBy(asc(vendors.legalName), asc(vendorBills.invoiceDate), asc(openItems.id));
-      if (rows.length === 0) return [];
-      const ids = rows.map((row) => row.openItemId);
-      const open = await this.ledger.openAmounts(tx, scope, ids);
-      const claimed = await this.claims(tx, scope, ids, null);
-      return rows.flatMap((row) => {
-        const openAmount = parseDecimal(open.get(row.openItemId) ?? '0');
-        const claimedAmount = parseDecimal(claimed.get(row.openItemId) ?? '0');
-        const availableAmount = openAmount.minus(claimedAmount);
-        if (availableAmount.lte(0)) return [];
-        return [
-          {
-            ...row,
-            openAmount: moneyToString(openAmount),
-            claimedAmount: moneyToString(claimedAmount),
-            availableAmount: moneyToString(availableAmount),
-          },
-        ];
-      });
-    });
+          )
+          .innerJoin(
+            vendors,
+            and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+          )
+          .innerJoin(
+            vendorAccounts,
+            and(
+              eq(vendorAccounts.tenantId, vendorBills.tenantId),
+              eq(vendorAccounts.organizationId, vendorBills.organizationId),
+              eq(vendorAccounts.vendorId, vendorBills.vendorId),
+              eq(vendorAccounts.active, true),
+            ),
+          );
+        // One active account per vendor at most (vendor_bank_accounts_tenant_vendor_active_unique), so the left join
+        // never repeats a row.
+        const joined =
+          bank === 'verified'
+            ? base.innerJoin(vendorBankAccounts, activeBank)
+            : base.leftJoin(vendorBankAccounts, activeBank);
+        const rows = await joined
+          .where(
+            scoped(scope).where(
+              openItems,
+              and(
+                eq(openItems.side, 'payable'),
+                eq(openItems.direction, 'credit'),
+                eq(openItems.sourceType, 'vendor_bill'),
+                eq(vendorBills.kind, 'bill'),
+                inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
+                scopeWhereFor(principal, vendorBills, 'payables.bill.read'),
+                bank === 'missing' ? isNull(vendorBankAccounts.id) : undefined,
+              ),
+            ),
+          )
+          .orderBy(asc(vendors.legalName), asc(vendorBills.invoiceDate), asc(openItems.id));
+        if (rows.length === 0) return [];
+        const ids = rows.map((row) => row.openItemId);
+        const open = await this.ledger.openAmounts(tx, scope, ids);
+        const claimed = await this.claims(tx, scope, ids, null);
+        return rows.flatMap((row) => {
+          const openAmount = parseDecimal(open.get(row.openItemId) ?? '0');
+          const claimedAmount = parseDecimal(claimed.get(row.openItemId) ?? '0');
+          const availableAmount = openAmount.minus(claimedAmount);
+          if (availableAmount.lte(0)) return [];
+          return [
+            {
+              ...row,
+              openAmount: moneyToString(openAmount),
+              claimedAmount: moneyToString(claimedAmount),
+              availableAmount: moneyToString(availableAmount),
+            },
+          ];
+        });
+      },
+      READ_ONLY,
+    );
   }
 
   /**

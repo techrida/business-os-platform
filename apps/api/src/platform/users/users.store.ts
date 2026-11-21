@@ -137,15 +137,20 @@ export abstract class UsersStore {
   /** The scope withTx put on this transaction (bos.tenant_id / bos.organization_id). */
   abstract txScope(tx: DbTransaction): Promise<TxScope>;
 
-  /** `lock` takes FOR UPDATE, so a hook sync and a reconcile of the same user run one after the other. */
+  /**
+   * `lock` takes FOR NO KEY UPDATE, so a hook sync and a reconcile of the same user run one after the other. Not FOR
+   * UPDATE: a row inserted with a foreign key to app.users takes FOR KEY SHARE on the user, which FOR UPDATE would
+   * block, and that insert may hold its tenant's audit lock while it waits.
+   */
   abstract findByZitadelId(
     q: Queryable,
     zitadelUserId: string,
     lock?: boolean,
   ): Promise<UserRow | null>;
   /**
-   * Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. `lock` takes FOR UPDATE, the same row
-   * lock a sync takes in findByZitadelId, so a status action and a sync of the same user run one after the other.
+   * Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. `lock` takes FOR NO KEY UPDATE, the
+   * same row lock a sync takes in findByZitadelId, so a status action and a sync of the same user run one after the
+   * other while foreign-key checks against the user still go through.
    */
   abstract findById(
     q: Queryable,
@@ -332,7 +337,7 @@ export class SqlUsersStore extends UsersStore {
     const [row] = await rows<UserRecord>(
       q,
       sql`SELECT ${FOUND_USER_COLUMNS} FROM app.users u WHERE u.zitadel_user_id = ${zitadelUserId}
-          ${lock ? sql`FOR UPDATE` : sql``}`,
+          ${lock ? sql`FOR NO KEY UPDATE` : sql``}`,
     );
     return row ?? null;
   }
@@ -347,7 +352,7 @@ export class SqlUsersStore extends UsersStore {
       q,
       sql`SELECT ${FOUND_USER_COLUMNS} FROM app.users u
           WHERE u.tenant_id = ${scope.tenantId} AND u.id = ${userId}
-          ${lock ? sql`FOR UPDATE` : sql``}`,
+          ${lock ? sql`FOR NO KEY UPDATE` : sql``}`,
     );
     return row ?? null;
   }

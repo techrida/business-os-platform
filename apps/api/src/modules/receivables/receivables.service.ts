@@ -47,10 +47,14 @@ export class ReceivablesService {
     customerId: string,
     filter: StatementFilter,
   ): Promise<InvoiceSettlement[]> {
-    return withTx(this.db, scope, this.readActor(), async (tx) => {
-      await this.assertCustomer(tx, scope, customerId);
-      // The net of allocations on the debit item whose credit item is a credit note (U12's), reversals included.
-      const credited = sql<string>`(
+    return withTx(
+      this.db,
+      scope,
+      this.readActor(),
+      async (tx) => {
+        await this.assertCustomer(tx, scope, customerId);
+        // The net of allocations on the debit item whose credit item is a credit note (U12's), reversals included.
+        const credited = sql<string>`(
         SELECT COALESCE(sum(a."amount"), 0)::text
           FROM "app"."open_item_allocations" a
           JOIN "app"."open_items" c ON c."tenant_id" = a."tenant_id" AND c."id" = a."credit_item_id"
@@ -58,59 +62,61 @@ export class ReceivablesService {
            AND a."organization_id" = ${openItemBalances.organizationId}
            AND a."debit_item_id" = ${openItemBalances.openItemId}
            AND c."source_type" = 'credit_note')`;
-      const rows = await tx
-        .select({
-          invoiceId: invoices.id,
-          number: invoices.number,
-          kind: invoices.kind,
-          currency: invoices.currency,
-          issueDate: invoices.issueDate,
-          dueDate: invoices.dueDate,
-          total: openItemBalances.amount,
-          allocated: openItemBalances.allocatedAmount,
-          credited,
-        })
-        .from(invoices)
-        .innerJoin(
-          openItemBalances,
-          and(
-            eq(openItemBalances.tenantId, invoices.tenantId),
-            eq(openItemBalances.organizationId, invoices.organizationId),
-            eq(openItemBalances.sourceId, invoices.id),
-            sql`${openItemBalances.sourceType} = ${invoices.kind}`,
+        const rows = await tx
+          .select({
+            invoiceId: invoices.id,
+            number: invoices.number,
+            kind: invoices.kind,
+            currency: invoices.currency,
+            issueDate: invoices.issueDate,
+            dueDate: invoices.dueDate,
+            total: openItemBalances.amount,
+            allocated: openItemBalances.allocatedAmount,
+            credited,
+          })
+          .from(invoices)
+          .innerJoin(
+            openItemBalances,
+            and(
+              eq(openItemBalances.tenantId, invoices.tenantId),
+              eq(openItemBalances.organizationId, invoices.organizationId),
+              eq(openItemBalances.sourceId, invoices.id),
+              sql`${openItemBalances.sourceType} = ${invoices.kind}`,
+            ),
+          )
+          .where(
+            and(
+              eq(invoices.tenantId, scope.tenantId),
+              eq(invoices.organizationId, scope.organizationId),
+              eq(invoices.customerPartyId, customerId),
+              eq(invoices.status, 'issued'),
+              inArray(invoices.kind, [...STATEMENT_KINDS]),
+              filter.currency === undefined ? undefined : eq(invoices.currency, filter.currency),
+              filter.open === true ? gt(openItemBalances.openAmount, '0') : undefined,
+            ),
+          )
+          .orderBy(asc(invoices.issueDate), asc(invoices.number));
+        const today = this.today();
+        return rows.map((r) =>
+          settlementRow(
+            {
+              invoiceId: r.invoiceId,
+              number: r.number ?? '',
+              kind: r.kind,
+              customerId,
+              currency: r.currency,
+              issueDate: r.issueDate ?? '',
+              dueDate: r.dueDate,
+              total: r.total ?? '0',
+              allocated: r.allocated ?? '0',
+              credited: r.credited,
+            },
+            today,
           ),
-        )
-        .where(
-          and(
-            eq(invoices.tenantId, scope.tenantId),
-            eq(invoices.organizationId, scope.organizationId),
-            eq(invoices.customerPartyId, customerId),
-            eq(invoices.status, 'issued'),
-            inArray(invoices.kind, [...STATEMENT_KINDS]),
-            filter.currency === undefined ? undefined : eq(invoices.currency, filter.currency),
-            filter.open === true ? gt(openItemBalances.openAmount, '0') : undefined,
-          ),
-        )
-        .orderBy(asc(invoices.issueDate), asc(invoices.number));
-      const today = this.today();
-      return rows.map((r) =>
-        settlementRow(
-          {
-            invoiceId: r.invoiceId,
-            number: r.number ?? '',
-            kind: r.kind,
-            customerId,
-            currency: r.currency,
-            issueDate: r.issueDate ?? '',
-            dueDate: r.dueDate,
-            total: r.total ?? '0',
-            allocated: r.allocated ?? '0',
-            credited: r.credited,
-          },
-          today,
-        ),
-      );
-    });
+        );
+      },
+      READ_ONLY,
+    );
   }
 
   /** Every open receivable debit of the acting entity, aged as of Kathmandu today. */

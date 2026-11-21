@@ -16,8 +16,9 @@
 // connection or row lock. ZITADEL is re-read first: a person unlocked or deactivated in the meantime is only mirrored,
 // never unlocked. Each write then takes the user's row lock (the one admin actions and syncs take) and goes ahead only
 // while the lock is still the one read; when an admin changed it while ZITADEL was being unlocked, the person is locked
-// again in ZITADEL and the admin's lock stands. A lock that cannot be ended now (ZITADEL down, a refusal, an unknown
-// state) is postponed by one window instead of being retried every minute.
+// again in ZITADEL and the admin's lock stands. So are they when the write here fails after ZITADEL was unlocked (the
+// row lock timed out, say) and the row still shows a lock. A lock that cannot be ended now (ZITADEL down, a refusal,
+// an unknown state) is postponed by one window instead of being retried every minute.
 import { ACCOUNT_LOCKOUT } from '@bos/contracts';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
@@ -35,6 +36,8 @@ export const LOCKOUT_POLICY_ACTOR = 'users.lockout-policy';
 /** Locks handled per run; the rest wait for the next run a minute later. */
 const EXPIRY_BATCH = 100;
 const WINDOW_MS = ACCOUNT_LOCKOUT.lockMinutes * 60_000;
+/** Waits before each try of locking a person in ZITADEL again; the first try is at once. */
+const RELOCK_DELAYS_MS = [0, 250, 1_000] as const;
 
 export interface ExpiryResult {
   /** Unlocked in ZITADEL and here. */
@@ -171,26 +174,57 @@ export class UserLocks {
       if (error instanceof ZitadelNotConfiguredError) throw error;
       return postpone(`ZITADEL did not unlock the user (kind=${errorName(error)})`);
     }
-    const unlocked = await this.whileLockHeld(scope, row, async (tx, current) => {
-      await this.store.updateUser(tx, current.id, {
-        email: current.email,
-        displayName: current.displayName,
-        status: 'active',
-        lock: null,
+    // ZITADEL lets the person in from here on. Every way out that does not end the lock here too locks them again
+    // there, or the next sync would clear the stored lock to match ZITADEL (UserMirror.lockChange).
+    let unlocked: Awaited<ReturnType<UserLocks['whileLockHeld']>>;
+    try {
+      unlocked = await this.whileLockHeld(scope, row, async (tx, current) => {
+        await this.store.updateUser(tx, current.id, {
+          email: current.email,
+          displayName: current.displayName,
+          status: 'active',
+          lock: null,
+        });
+        await this.store.bumpAuthzVersion(tx, scope);
+        await this.audit.record(tx, {
+          action: 'users.unlocked',
+          entityType: 'users',
+          entityId: current.id,
+          before: { status: current.status, lockReason: 'failed_sign_ins' },
+          after: { status: 'active', lockReason: null },
+          meta: { reason: 'lock_expired', lockedUntil: current.lockedUntil },
+        });
       });
-      await this.store.bumpAuthzVersion(tx, scope);
-      await this.audit.record(tx, {
-        action: 'users.unlocked',
-        entityType: 'users',
-        entityId: current.id,
-        before: { status: current.status, lockReason: 'failed_sign_ins' },
-        after: { status: 'active', lockReason: null },
-        meta: { reason: 'lock_expired', lockedUntil: current.lockedUntil },
-      });
-    });
+    } catch (error) {
+      // A row lock that timed out (55P03 behind an admin action), a failed write or commit: the lock may still stand.
+      await this.relockIfStillLocked(
+        scope,
+        row,
+        `ending the lock here failed (kind=${errorName(error)})`,
+      );
+      throw error;
+    }
     if (unlocked.done) return 'unlocked';
-    if (unlocked.current?.lockReason) await this.lockAgain(row.id, row.zitadelUserId);
+    if (unlocked.current?.lockReason) {
+      await this.lockAgain(row.id, row.zitadelUserId, 'its lock changed while it was being ended');
+    }
     return 'skipped';
+  }
+
+  /**
+   * After ZITADEL was unlocked and the write here did not go through: locks ZITADEL again unless the row, read again
+   * with no transaction open, shows no lock any more (or no user). A row that cannot be read counts as still locked.
+   * Never throws, so the caller's own error is the one that propagates.
+   */
+  private async relockIfStillLocked(scope: TxScope, seen: UserRow, why: string): Promise<void> {
+    let current: UserRow | null | undefined;
+    try {
+      current = await this.store.findById(this.db, scope, seen.id);
+    } catch {
+      current = undefined;
+    }
+    if (current === null || (current !== undefined && !current.lockReason)) return;
+    await this.lockAgain(seen.id, seen.zitadelUserId, why);
   }
 
   /**
@@ -226,20 +260,26 @@ export class UserLocks {
   }
 
   /**
-   * ZITADEL was unlocked while someone changed the person's lock here (an admin lock replacing the timed one, say).
-   * That lock stands, so ZITADEL holds the person locked again; otherwise the next sync would let them in.
+   * ZITADEL was unlocked but the lock here still stands (an admin lock replaced the timed one meanwhile, or ending it
+   * here failed), so ZITADEL holds the person locked again; otherwise the next sync would let them in. Tried a few
+   * times; never throws.
    */
-  private async lockAgain(userId: string, zitadelUserId: string): Promise<void> {
-    try {
-      await this.zitadel.lockUser(zitadelUserId);
-      this.logger.warn(
-        `users.lock-expiry: the lock of ${userId} changed while it was being ended; locked again in ZITADEL`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `users.lock-expiry: could not lock ${userId} again in ZITADEL after its lock changed (kind=${errorName(error)}); the next sync mirrors what ZITADEL holds`,
-      );
+  private async lockAgain(userId: string, zitadelUserId: string, why: string): Promise<void> {
+    let last: unknown;
+    for (const delay of RELOCK_DELAYS_MS) {
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      try {
+        await this.zitadel.lockUser(zitadelUserId);
+        this.logger.warn(`users.lock-expiry: ${userId} locked again in ZITADEL: ${why}`);
+        return;
+      } catch (error) {
+        last = error;
+        if (error instanceof ZitadelNotConfiguredError) break;
+      }
     }
+    this.logger.error(
+      `users.lock-expiry: could not lock ${userId} again in ZITADEL (${why}; kind=${errorName(last)}); ZITADEL lets them sign in while the lock here stands, and the next sync clears it to match`,
+    );
   }
 
   /** The tenant and its default entity: users have no entity, and the audit row takes its scope from here. */

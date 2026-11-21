@@ -25,7 +25,7 @@ import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { AuditService } from '../../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../../platform/authz/authz.service';
 import { DB, type Db } from '../../../platform/db/db.module';
-import { withTx } from '../../../platform/db/tx';
+import { READ_ONLY, withTx } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { INVOICE_OWNER_TYPE } from '../invoice-owner.policy';
 import { assertStaff, InvoiceCaller } from '../invoice-support';
@@ -91,53 +91,59 @@ export class InvoiceDocumentService {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     const visible = scopeWhereFor(principal, invoices, 'invoice.read');
-    const state = await withTx(this.db, scope, actor, async (tx): Promise<LinkState> => {
-      const [invoice] = await tx
-        .select({ id: invoices.id })
-        .from(invoices)
-        .where(
-          and(
-            visible,
-            eq(invoices.id, invoiceId),
-            eq(invoices.status, 'issued'),
-            // The sweeper's own filter: "preparing" (409) only for an invoice it will render.
-            inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
-          ),
-        )
-        .limit(1);
-      if (invoice === undefined) return { kind: 'hidden' };
-      // Every upload of every live document of the invoice: oldest document first, newest upload first within it.
-      const uploads = await tx
-        .select({ documentId: documents.id, status: documentVersions.status })
-        .from(documents)
-        .innerJoin(
-          documentVersions,
-          and(
-            eq(documentVersions.tenantId, documents.tenantId),
-            eq(documentVersions.documentId, documents.id),
-          ),
-        )
-        .where(
-          scoped(scope).where(
-            documents,
+    const state = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx): Promise<LinkState> => {
+        const [invoice] = await tx
+          .select({ id: invoices.id })
+          .from(invoices)
+          .where(
             and(
-              eq(documents.ownerType, INVOICE_OWNER_TYPE),
-              eq(documents.ownerId, invoiceId),
-              isNull(documents.removedAt),
+              visible,
+              eq(invoices.id, invoiceId),
+              eq(invoices.status, 'issued'),
+              // The sweeper's own filter: "preparing" (409) only for an invoice it will render.
+              inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
             ),
-          ),
-        )
-        .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
-      // The original: the oldest document with a clean upload (issueLinkForOwner then checks its newest upload).
-      const clean = uploads.find((u) => u.status === 'clean');
-      if (clean !== undefined) return { kind: 'clean', documentId: clean.documentId };
-      if (uploads.some((u) => u.status === 'awaiting_content' || u.status === 'quarantined')) {
-        return { kind: 'preparing' };
-      }
-      if (await renderGivenUp(tx, ownerOf(scope, invoiceId))) return { kind: 'failed' };
-      // A live document whose uploads the scan refused will never be offered; no document yet is on its way.
-      return uploads.length > 0 ? { kind: 'unavailable' } : { kind: 'preparing' };
-    });
+          )
+          .limit(1);
+        if (invoice === undefined) return { kind: 'hidden' };
+        // Every upload of every live document of the invoice: oldest document first, newest upload first within it.
+        const uploads = await tx
+          .select({ documentId: documents.id, status: documentVersions.status })
+          .from(documents)
+          .innerJoin(
+            documentVersions,
+            and(
+              eq(documentVersions.tenantId, documents.tenantId),
+              eq(documentVersions.documentId, documents.id),
+            ),
+          )
+          .where(
+            scoped(scope).where(
+              documents,
+              and(
+                eq(documents.ownerType, INVOICE_OWNER_TYPE),
+                eq(documents.ownerId, invoiceId),
+                isNull(documents.removedAt),
+              ),
+            ),
+          )
+          .orderBy(asc(documents.createdAt), asc(documents.id), desc(documentVersions.version));
+        // The original: the oldest document with a clean upload (issueLinkForOwner then checks its newest upload).
+        const clean = uploads.find((u) => u.status === 'clean');
+        if (clean !== undefined) return { kind: 'clean', documentId: clean.documentId };
+        if (uploads.some((u) => u.status === 'awaiting_content' || u.status === 'quarantined')) {
+          return { kind: 'preparing' };
+        }
+        if (await renderGivenUp(tx, ownerOf(scope, invoiceId))) return { kind: 'failed' };
+        // A live document whose uploads the scan refused will never be offered; no document yet is on its way.
+        return uploads.length > 0 ? { kind: 'unavailable' } : { kind: 'preparing' };
+      },
+      READ_ONLY,
+    );
     if (state.kind === 'hidden') throw notFound();
     if (state.kind === 'preparing') throw notReady();
     if (state.kind === 'failed') throw renderFailed();
