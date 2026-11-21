@@ -46,6 +46,17 @@ export interface PaymentPrefill {
 }
 
 /**
+ * The customer a form opened from an invoice pays (item 3b), resolved on the server from that invoice. Shown read-only
+ * by name: the form reads no customer list, so a role without customer.read can record the payment. The action reads
+ * the invoice again and pays its customer, whatever the posted customer field says.
+ */
+export interface FixedCustomer {
+  id: string;
+  name: string;
+  invoiceId: string;
+}
+
+/**
  * The currency the form starts on for a customer: their usual one while it is enabled in Settings,
  * else blank when that usual one is switched off (the person chooses; no silent move to NPR), else
  * NPR for a customer with no usual currency.
@@ -108,6 +119,7 @@ export function PaymentForm({
   enabledCurrencies,
   initialCustomerId,
   prefill = null,
+  fixedCustomer = null,
   reloadHref,
   children,
 }: {
@@ -121,6 +133,8 @@ export function PaymentForm({
   initialCustomerId: string;
   /** Set when the form was opened from an invoice that still owes; null or left out starts blank. */
   prefill?: PaymentPrefill | null;
+  /** Set when the invoice fixes the customer: no picker, and the customer cannot be changed. */
+  fixedCustomer?: FixedCustomer | null;
   reloadHref: string;
   children?: ReactNode;
 }) {
@@ -269,6 +283,9 @@ export function PaymentForm({
         <input type="hidden" name="idempotencyKey" value={state.key} />
         {/* The select below is locked while proof is held, and a locked select sends nothing. */}
         <input type="hidden" name="customerId" value={customerId} />
+        {fixedCustomer !== null ? (
+          <input type="hidden" name="invoiceId" value={fixedCustomer.invoiceId} />
+        ) : null}
         {proofs.map((p) => (
           <input key={p.documentId} type="hidden" name="proofDocumentId" value={p.documentId} />
         ))}
@@ -330,32 +347,44 @@ export function PaymentForm({
           description="What the customer paid, as it appears on the bank slip."
         >
           <div className={styles.form}>
-            <Field
-              label="Customer"
-              hint={
-                customerLocked
-                  ? 'Remove the proof files below to change the customer.'
-                  : 'Proof is stored against this customer.'
-              }
-              error={fe.customerId}
-            >
-              {(control) => (
-                <Select
-                  value={customerId}
-                  disabled={customerLocked}
-                  onChange={(e) => chooseCustomer(e.target.value)}
-                  required
-                  {...control}
-                >
-                  <option value="">Choose a customer</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.number})
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+            {fixedCustomer !== null ? (
+              <Field
+                label="Customer"
+                hint="From the invoice. Proof is stored against this customer. To pay for another customer, record the payment from Payments."
+                error={fe.customerId}
+              >
+                {(control) => (
+                  <Input value={fixedCustomer.name} readOnly autoComplete="off" {...control} />
+                )}
+              </Field>
+            ) : (
+              <Field
+                label="Customer"
+                hint={
+                  customerLocked
+                    ? 'Remove the proof files below to change the customer.'
+                    : 'Proof is stored against this customer.'
+                }
+                error={fe.customerId}
+              >
+                {(control) => (
+                  <Select
+                    value={customerId}
+                    disabled={customerLocked}
+                    onChange={(e) => chooseCustomer(e.target.value)}
+                    required
+                    {...control}
+                  >
+                    <option value="">Choose a customer</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.number})
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
 
             <div className={styles.grid}>
               <Field label="Currency" hint={currencyHint} error={fe.currency}>
