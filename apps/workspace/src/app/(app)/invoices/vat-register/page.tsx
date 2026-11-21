@@ -200,7 +200,7 @@ export default async function SalesVatRegisterPage({
                   </tr>
                 ))}
                 <tr>
-                  <Td>Total NPR</Td>
+                  <Td>NPR filing total</Td>
                   <Td>{register.nprTotal.documents} documents</Td>
                   <Td colSpan={7}>All currencies at their issue rates, for the filing</Td>
                   <Td />

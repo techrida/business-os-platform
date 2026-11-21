@@ -323,7 +323,7 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
       ]),
     ).toEqual([
       ['NPR', '1.000000', '1000.00', '130.00', '300.00', '200.00', '1630.00'],
-      ['USD', '133.500000', '4449.56', '578.06', '0.00', '0.00', '5027.61'],
+      ['USD', '133.500000', '4449.55', '578.06', '0.00', '0.00', '5027.61'],
       ['INR', '1.600000', '1600.00', '208.00', '400.80', '0.00', '2208.80'],
       ['USD', '133.500000', '-1335.00', '-173.55', '0.00', '0.00', '-1508.55'],
     ]);
@@ -341,10 +341,10 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
       ['INR', 1, '1000.00', '130.00', '1380.50'],
       ['USD', 2, '23.33', '3.03', '26.36'],
     ]);
-    // The NPR filing total: 1000 + 4449.56 + 1600 - 1335 = 5714.56 and so on, and it is exactly the sum of the rows.
+    // The NPR filing total: taxable is the NPR total less VAT, exempt and zero-rated, so 1000 + 4449.55 + 1600 - 1335 = 5714.55; every row adds up to its NPR total, and it is exactly the sum of the rows.
     expect(register.nprTotal).toEqual({
       documents: 4,
-      taxableAmount: '5714.56',
+      taxableAmount: '5714.55',
       vatAmount: '742.51',
       exemptAmount: '700.80',
       zeroRatedAmount: '200.00',
