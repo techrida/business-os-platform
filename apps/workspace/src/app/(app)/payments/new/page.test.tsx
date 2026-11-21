@@ -367,10 +367,14 @@ describe('record payment page', () => {
       }
     });
 
-    it('stays blank when the linked customer is not in the picker', async () => {
+    // Item 3b: the invoice fixes the customer, so one the customer list would not return is still the one paid.
+    it('fixes the invoice’s customer and prefills, with no customer list read, even for one the picker would not list', async () => {
       mocks.getInvoice.mockResolvedValue(owed({ customerId: OTHER_ID }));
       const html = await render({ customerId: OTHER_ID, invoiceId: INVOICE_ID });
-      expect(amountInput(html)).toContain('value=""');
+      expect(amountInput(html)).toContain('value="750.00"');
+      expect(html).toContain(`name="customerId" value="${OTHER_ID}"`);
+      expect(mocks.listCustomers).not.toHaveBeenCalled();
+      expect(mocks.getCustomer).not.toHaveBeenCalled();
     });
 
     it('reads no invoice for the standalone form, a customer-only link or an invoice without a customer', async () => {
@@ -387,6 +391,90 @@ describe('record payment page', () => {
         expect(html).toContain('The cash that arrived, for example 20,18,180.00.');
       }
       expect(mocks.getInvoice).not.toHaveBeenCalled();
+    });
+
+    // Item 3b: invoice.read and payment.record without customer.read. The customer comes from the invoice, read-only.
+    describe('for a role without customer.read', () => {
+      const customerInput = (html: string) => /<input[^>]*readonly=""[^>]*>/i.exec(html)?.[0] ?? '';
+
+      beforeEach(() => {
+        mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+        mocks.getMe.mockResolvedValue(liveGrants('invoice.read', 'payment.read', 'payment.record'));
+        mocks.listCustomers.mockRejectedValue(new ApiError(403, 'no'));
+        mocks.getCustomer.mockRejectedValue(new ApiError(403, 'no'));
+      });
+
+      it('shows the invoice’s customer read-only by name, prefilled, and never reads the customer list', async () => {
+        mocks.getInvoice.mockResolvedValue(owed());
+        const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+        // Old code read the customer list first, got 403 and showed the "no customers" notice instead of a form.
+        expect(html).toContain('<form');
+        expect(html).not.toContain('Your roles do not include customers');
+        expect(html).not.toContain('role="alert"');
+        expect(customerInput(html)).toContain('value="Himalayan Agro Foods"');
+        // No picker: its hint and its listbox trigger are absent.
+        expect(html).not.toContain('>Proof is stored against this customer.</span>');
+        expect(html).not.toContain('Himalayan Traders');
+        expect(html).toContain(`name="customerId" value="${CUSTOMER_ID}"`);
+        expect(html).toContain(`name="invoiceId" value="${INVOICE_ID}"`);
+        expect(amountInput(html)).toContain('value="750.00"');
+        expect(currencySelect(html)).toContain(
+          '<input type="hidden" name="currency" value="USD"/>',
+        );
+        expect(html).toContain('You can add several files at once.');
+        expect(html).not.toContain('Find a customer');
+        expect(mocks.listCustomers).not.toHaveBeenCalled();
+        expect(mocks.getCustomer).not.toHaveBeenCalled();
+      });
+
+      it('keeps the standalone form as it was: the picker needs customers, so it says the roles lack them', async () => {
+        mocks.getInvoice.mockResolvedValue(owed());
+        const html = await render();
+        expect(mocks.listCustomers).toHaveBeenCalled();
+        expect(mocks.getInvoice).not.toHaveBeenCalled();
+        expect(html).toContain('Your roles do not include customers');
+        expect(html).not.toContain('name="invoiceId"');
+      });
+
+      it.each([
+        [
+          'another customer’s invoice',
+          () => mocks.getInvoice.mockResolvedValue(owed({ customerId: OTHER_ID })),
+        ],
+        [
+          'an unreadable invoice',
+          () => mocks.getInvoice.mockRejectedValue(new ApiError(403, 'no')),
+        ],
+        ['a missing invoice', () => mocks.getInvoice.mockRejectedValue(new ApiError(404, 'no'))],
+        [
+          'a settled invoice',
+          () =>
+            mocks.getInvoice.mockResolvedValue(
+              owed({}, { settlement: 'paid', openAmount: '0.00' }),
+            ),
+        ],
+      ])('falls back to the standalone form for %s', async (_, arrange) => {
+        arrange();
+        const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+        expect(mocks.listCustomers).toHaveBeenCalled();
+        expect(html).toContain('Your roles do not include customers');
+        expect(html).not.toContain('name="invoiceId"');
+        expect(customerInput(html)).toBe('');
+      });
+    });
+
+    it('falls back to the blank picker, for a role with customers, when the invoice is another customer’s or unreadable', async () => {
+      for (const arrange of [
+        () => mocks.getInvoice.mockResolvedValue(owed({ customerId: OTHER_ID })),
+        () => mocks.getInvoice.mockRejectedValue(new ApiError(404, 'no')),
+      ]) {
+        arrange();
+        const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
+        expect(html).toContain('>Proof is stored against this customer.</span>');
+        expect(html).toContain('Himalayan Traders Pvt. Ltd. (CUS-0001)');
+        expect(html).not.toContain('name="invoiceId"');
+        expect(amountInput(html)).toContain('value=""');
+      }
     });
   });
 

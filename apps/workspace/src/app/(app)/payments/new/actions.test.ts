@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   getMe: vi.fn(),
   findPaymentReferenceMatches: vi.fn(),
+  getInvoice: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn((url: string) => {
     throw new Error(`REDIRECT:${url}`);
@@ -36,6 +37,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 vi.mock('@/lib/api-payments', () => ({
   findPaymentReferenceMatches: mocks.findPaymentReferenceMatches,
 }));
+// The invoice read of a form opened from an invoice (item 3b); mocked so it never takes an apiFetch call.
+vi.mock('@/lib/api-billing', () => ({ getInvoice: mocks.getInvoice }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
@@ -303,6 +306,40 @@ describe('recordPaymentAction', () => {
     expect(out.to).toBeNull();
     expect(out.state?.key).toBe(KEY);
     expect(out.state?.error).toBeTruthy();
+  });
+});
+
+// Item 3b: a form opened from an invoice pays that invoice's customer, read again here as the caller.
+describe('recordPaymentAction from an invoice', () => {
+  const INVOICE_ID = '11111111-1111-4111-8111-111111111111';
+  const TAMPERED = '44444444-4444-4444-8444-444444444444';
+
+  it('posts the invoice’s customer and ignores a tampered customer field', async () => {
+    mocks.getInvoice.mockResolvedValue({ invoice: { id: INVOICE_ID, customerId: CUSTOMER_ID } });
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const out = await run(form({ invoiceId: INVOICE_ID, customerId: TAMPERED }));
+    expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+    expect(mocks.getInvoice).toHaveBeenCalledWith(expect.anything(), INVOICE_ID);
+    expect(call(0)[1]).toBe('/v1/payments');
+    expect(sentBody(0)['customerId']).toBe(CUSTOMER_ID);
+    expect(sentBody(0)).not.toHaveProperty('invoiceId');
+  });
+
+  it('records nothing and offers a reload, keeping the key, when the invoice cannot be read', async () => {
+    mocks.getInvoice.mockRejectedValue(new Error('403'));
+    const out = await run(form({ invoiceId: INVOICE_ID }));
+    expect(out.to).toBeNull();
+    expect(out.state).toMatchObject({ key: KEY, reload: true });
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('reads no invoice for the standalone form, nor for an invoice id that is not a UUID', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    await run(form());
+    await run(form({ invoiceId: 'not-a-uuid' }));
+    expect(mocks.getInvoice).not.toHaveBeenCalled();
+    expect(sentBody(0)['customerId']).toBe(CUSTOMER_ID);
+    expect(sentBody(1)['customerId']).toBe(CUSTOMER_ID);
   });
 });
 
