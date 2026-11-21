@@ -20,6 +20,7 @@ import {
   openSignedFile,
   previewRoute,
   removeDocument,
+  removeEvidenceDocument,
   submitMemo,
   updateMemo,
   uploadDocumentContent,
@@ -565,6 +566,32 @@ describe('documents', () => {
       expect(lastCall().init.method).toBe('PUT');
     },
   );
+
+  it.each([
+    ['sales-order', '/v1/sales-orders'],
+    ['vendor-bill', '/v1/payables/bills'],
+    ['rfq', '/v1/procurement/rfqs'],
+  ] as const)(
+    'removes %s evidence through the record route, not DELETE /v1/documents/:id',
+    async (kind, base) => {
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+      await expect(removeEvidenceDocument(session, kind, ID_A, ID_B)).resolves.toBeUndefined();
+      expect(lastCall().url).toBe(`http://api:3001${base}/${ID_A}/evidence-documents/${ID_B}`);
+      expect(lastCall().init.method).toBe('DELETE');
+    },
+  );
+
+  it('encodes the ids of an evidence removal and surfaces its refusals', async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply({ error: { code: 'conflict', message: 'taken', correlationId: 'req-12345678' } }, 409),
+    );
+    await expect(removeEvidenceDocument(session, 'rfq', '../a', '../b')).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/procurement/rfqs/..%2Fa/evidence-documents/..%2Fb',
+    );
+  });
 
   it('refuses an evidence upload path of another record or the generic documents route', async () => {
     const body = new ReadableStream<Uint8Array>();
