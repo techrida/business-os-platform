@@ -2,12 +2,16 @@ import 'server-only';
 
 import {
   ContactDtoSchema,
+  CustomerActingEntitySchema,
   CustomerCanSchema,
+  CustomerOwnerOptionSchema,
   CustomerPortalAccessSchema,
   CustomerDtoSchema,
   CustomerVerificationPresenceSchema,
   PartyAccountDtoSchema,
+  type CustomerActingEntity,
   type CustomerCan,
+  type CustomerOwnerOption,
   type CustomerPortalAccess,
   type CustomerVerificationPresence,
   type PersonName,
@@ -20,6 +24,7 @@ import {
   type PartyAccountDto,
   type ReviewVerificationBody,
   type UpdateCustomerBody,
+  type UpdateCustomerTermsBody,
   type VerificationCaseDto,
   type VerificationStatus,
 } from '@bos/contracts';
@@ -173,6 +178,8 @@ export function getCustomer(session: Session, id: string): Promise<CustomerDto> 
  */
 const CustomerDetailSchema = CustomerDtoSchema.extend({
   accounts: z.array(PartyAccountDtoSchema).optional(),
+  /** The legal entity this person acts for: the one whose terms the Commercial terms card shows and saves. */
+  actingEntity: CustomerActingEntitySchema.optional(),
   /** The account owner by name, sent with the record (staff only); older APIs leave it out. */
   people: z.array(PersonNameSchema).optional(),
   /** What this person may do with this customer, decided by the API on the record; absent reads as "nothing". */
@@ -184,6 +191,7 @@ const CustomerDetailSchema = CustomerDtoSchema.extend({
 });
 export type CustomerDetail = CustomerDto & {
   accounts?: PartyAccountDto[] | undefined;
+  actingEntity?: CustomerActingEntity | undefined;
   people?: PersonName[] | undefined;
   can?: CustomerCan | undefined;
   verification?: CustomerVerificationPresence | undefined;
@@ -192,7 +200,16 @@ export type CustomerDetail = CustomerDto & {
 
 /** The record's `can` flags, every one "no" when the API sent none. */
 export function customerCan(customer: Pick<CustomerDetail, 'can'>): CustomerCan {
-  return customer.can ?? { write: false, readVerification: false, openVerification: false };
+  return (
+    customer.can ?? {
+      write: false,
+      readVerification: false,
+      openVerification: false,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: false,
+    }
+  );
 }
 
 /** `GET /v1/customers/:id` with the optional `accounts` kept. */
@@ -236,6 +253,31 @@ export function updateCustomer(
   body: UpdateCustomerBody,
 ): Promise<CustomerDto> {
   return call(session, `/v1/customers/${seg(id)}`, CustomerDtoSchema, jsonInit('PATCH', body));
+}
+
+/**
+ * `GET /v1/customers/owners`: the active staff a customer's owner may be changed to, by name. Only for someone who
+ * may change owners (`customers.owner.write`); 403 otherwise.
+ */
+export function listCustomerOwners(session: Session): Promise<CustomerOwnerOption[]> {
+  return call(session, '/v1/customers/owners', z.array(CustomerOwnerOptionSchema));
+}
+
+/**
+ * `PATCH /v1/customers/:id/terms`: the customer's payment term or credit limit with the acting entity. Send one
+ * field; leave `expectedVersion` out only on the first save (no terms row yet).
+ */
+export function updateCustomerTerms(
+  session: Session,
+  id: string,
+  body: UpdateCustomerTermsBody,
+): Promise<PartyAccountDto> {
+  return call(
+    session,
+    `/v1/customers/${seg(id)}/terms`,
+    PartyAccountDtoSchema,
+    jsonInit('PATCH', body),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
