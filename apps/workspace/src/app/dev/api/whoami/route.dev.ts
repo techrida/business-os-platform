@@ -1,3 +1,4 @@
+import { devToolsEnabled } from '@/dev/enabled';
 import { getMe } from '@/lib/api';
 import { getSession, type Session } from '@/lib/session';
 import { SessionUnavailableError, sessionUnavailableResponse } from '@/lib/session-unavailable';
@@ -9,7 +10,7 @@ import { SessionUnavailableError, sessionUnavailableResponse } from '@/lib/sessi
  * Three walls keep it out of production (risk R12, ADR-0009):
  *  1. The `.dev.ts` suffix: `pageExtensions` in next.config.ts only lists `dev.ts` in
  *     development, so a production build does not see `route.dev.ts` as a route.
- *  2. The NODE_ENV check below, for the day wall 1 is misconfigured or NODE_ENV is wrong.
+ *  2. The devToolsEnabled() check below, for the day wall 1 is misconfigured.
  *  3. scripts/check-no-dev-routes.mjs fails CI if a /dev route or BOS_DEV_MENU is in `.next/`.
  */
 
@@ -25,7 +26,7 @@ function json(status: number, body: Record<string, unknown>): Response {
 
 export async function GET(): Promise<Response> {
   // Wall 2. A route handler cannot call `notFound()` like a page, so answer 404 directly.
-  if (process.env.NODE_ENV !== 'development') return new Response(null, { status: 404 });
+  if (!devToolsEnabled()) return new Response(null, { status: 404 });
 
   let session: Session | null;
   try {
