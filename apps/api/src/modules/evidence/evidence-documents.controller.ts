@@ -1,4 +1,4 @@
-// HTTP routes of evidence uploads (round 5 P2). Three routes per record kind, each with that kind's own permission:
+// HTTP routes of evidence uploads (round 5 P2). Four routes per record kind, each with that kind's own permission:
 // create the document (JSON body: filename, declaredMime, sizeBytes), PUT its raw bytes to the `uploadPath` the
 // create returned (send the file with its own Content-Type and an exact Content-Length, as for every upload), and
 // GET the file with its versions (the dialog's scan-status poll), and DELETE a file its uploader abandoned before
@@ -84,6 +84,42 @@ export class EvidenceDocumentsController {
   @HttpCode(204)
   removeForSalesOrder(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
     return this.evidence.remove('sales_order', id, docId);
+  }
+
+  @Post('sales-orders/quotation-versions/:id/evidence-documents')
+  @Can('sales_order.confirm')
+  createForQuotationVersion(
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ): Promise<CreatedEvidenceDocument> {
+    return this.evidence.create('quotation_version', id, body);
+  }
+
+  @Put('sales-orders/quotation-versions/:id/evidence-documents/:docId/versions/:verId/content')
+  @Can('sales_order.confirm')
+  uploadForQuotationVersion(
+    @Param('id') id: string,
+    @Param('docId') docId: string,
+    @Param('verId') verId: string,
+    @Req() req: Request,
+  ): Promise<DocumentVersionDto> {
+    return this.receive('quotation_version', id, docId, verId, req);
+  }
+
+  @Get('sales-orders/quotation-versions/:id/evidence-documents/:docId')
+  @Can('sales_order.confirm')
+  readForQuotationVersion(
+    @Param('id') id: string,
+    @Param('docId') docId: string,
+  ): Promise<DocumentDto> {
+    return this.evidence.read('quotation_version', id, docId);
+  }
+
+  @Delete('sales-orders/quotation-versions/:id/evidence-documents/:docId')
+  @Can('sales_order.confirm')
+  @HttpCode(204)
+  removeForQuotationVersion(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
+    return this.evidence.remove('quotation_version', id, docId);
   }
 
   @Post('payables/bills/:id/evidence-documents')

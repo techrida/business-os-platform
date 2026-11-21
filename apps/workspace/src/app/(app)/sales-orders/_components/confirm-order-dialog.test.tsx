@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest';
 
 import { choose, click, mountForm } from '@/test/form-interactions';
 
@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   overrideCreditHoldAction: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  uploads: [] as {
+    url: string;
+    resolve: (answer: { status: number; body: unknown }) => void;
+  }[],
 }));
 vi.mock('../_lib/actions', () => ({ confirmOrderAction: mocks.confirmOrderAction }));
 vi.mock('@/app/(app)/opportunities/actions', () => ({
@@ -20,6 +24,20 @@ vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
+vi.mock('@/components/ui/send-file', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui/send-file')>();
+  return {
+    ...actual,
+    sendFile: vi.fn((url: string) => {
+      let resolve!: (answer: { status: number; body: unknown }) => void;
+      const done = new Promise<{ status: number; body: unknown }>((res) => {
+        resolve = res;
+      });
+      mocks.uploads.push({ url, resolve });
+      return { done, abort: vi.fn() };
+    }),
+  };
+});
 
 const { ConfirmOrderDialog } = await import('./confirm-order-dialog');
 
@@ -35,10 +53,19 @@ const QUOTE_B = {
   number: 'QT-2',
   label: 'QT-2 · Bolt',
 };
+const DOC = '44444444-4444-4444-8444-444444444444';
+const FILE_VERSION = '55555555-5555-4555-8555-555555555555';
+
+let fetchMock: Mock<(url: string, init?: RequestInit) => Promise<Response>>;
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.clearAllMocks();
+  mocks.uploads = [];
+  fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(() =>
+    Promise.resolve(new Response(null, { status: 204 })),
+  );
+  vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -223,5 +250,154 @@ it("offers no Override or link for quotation A once quotation B is selected, and
   expect(document.querySelector('[role="dialog"] [role="status"]')?.textContent).toContain(
     'Credit hold overridden',
   );
+  await mounted.unmount();
+});
+
+// Evidence: uploaded to the chosen quotation version in place, never typed as ids.
+
+async function settle() {
+  await act(async () => {
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  });
+}
+
+async function openDialog() {
+  const mounted = await mountForm(
+    <ConfirmOrderDialog
+      options={[QUOTE_A, QUOTE_B]}
+      idempotencyKey={KEY}
+      reloadHref="/sales-orders"
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  return mounted;
+}
+
+const confirmDialog = () => document.querySelector('[role="dialog"]')!;
+const fileInput = () =>
+  confirmDialog().querySelector<HTMLInputElement>('input[type="file"]') ?? null;
+const evidenceField = () =>
+  confirmDialog().querySelector<HTMLInputElement>('input[name="evidenceDocumentIds"]')!;
+const submitButton = () =>
+  confirmDialog().querySelector<HTMLButtonElement>('button[type="submit"]')!;
+const deletes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE');
+
+async function chooseFile() {
+  const input = fileInput();
+  if (!input) throw new Error('No file input');
+  const file = new File([new Uint8Array(512)], 'Purchase order.pdf', { type: 'application/pdf' });
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  await act(() => {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return Promise.resolve();
+  });
+  await settle();
+}
+
+async function finishUpload() {
+  await act(() => {
+    mocks.uploads.at(-1)!.resolve({
+      status: 201,
+      body: {
+        documentId: DOC,
+        versionId: FILE_VERSION,
+        filename: 'Purchase order.pdf',
+        sizeBytes: 512,
+        mimeType: 'application/pdf',
+        status: 'quarantined',
+      },
+    });
+    return Promise.resolve();
+  });
+  await settle();
+}
+
+async function submitConfirm() {
+  const form = confirmDialog().querySelector<HTMLFormElement>('form');
+  await act(() => Promise.resolve(form?.requestSubmit()));
+  await settle();
+}
+
+it('asks for a quotation before it offers an upload, and has no ids to type', async () => {
+  const mounted = await openDialog();
+  expect(confirmDialog().querySelector('textarea')).toBeNull();
+  expect(fileInput()).toBeNull();
+  expect(confirmDialog().textContent).toContain(
+    'Choose a quotation first, then upload its evidence.',
+  );
+  expect(confirmDialog().textContent).not.toMatch(/document id|one per line/i);
+  expect(evidenceField().value).toBe('');
+
+  await choose(document.body, 'quotationVersionId', QUOTE_A.label);
+  expect(fileInput()).not.toBeNull();
+  expect(confirmDialog().textContent).toContain('Evidence document (optional)');
+  expect(confirmDialog().textContent).not.toContain('Choose a quotation first');
+  expect(confirmDialog().querySelector('textarea')).toBeNull();
+  await mounted.unmount();
+});
+
+it('uploads to the chosen quotation, blocks Confirm while it uploads, then posts the one id', async () => {
+  mocks.confirmOrderAction.mockResolvedValue({
+    key: KEY,
+    error: HELD,
+    creditHold: {
+      opportunityId: DEAL,
+      number: null,
+      canOpen: false,
+      canOverride: false,
+      quotationVersionId: QUOTE_A.versionId,
+    },
+  });
+  const mounted = await openDialog();
+  await choose(document.body, 'quotationVersionId', QUOTE_A.label);
+  expect(submitButton().disabled).toBe(false);
+  await chooseFile();
+  expect(mocks.uploads[0]!.url).toBe(`/api/evidence/quotation-version/${QUOTE_A.versionId}`);
+  expect(submitButton().disabled).toBe(true);
+  await finishUpload();
+  expect(submitButton().disabled).toBe(false);
+  expect(evidenceField().value).toBe(DOC);
+
+  await submitConfirm();
+  const sent = mocks.confirmOrderAction.mock.calls[0]![1] as FormData;
+  expect(sent.get('quotationVersionId')).toBe(QUOTE_A.versionId);
+  expect(sent.getAll('evidenceDocumentIds')).toEqual([DOC]);
+  // Refused: the file stays staged for the next try and is not deleted.
+  expect(confirmDialog().textContent).toContain('over its credit limit');
+  expect(evidenceField().value).toBe(DOC);
+  expect(deletes()).toHaveLength(0);
+  await mounted.unmount();
+});
+
+it('drops the staged file when another quotation is chosen', async () => {
+  const mounted = await openDialog();
+  await choose(document.body, 'quotationVersionId', QUOTE_A.label);
+  await chooseFile();
+  await finishUpload();
+  expect(evidenceField().value).toBe(DOC);
+
+  await choose(document.body, 'quotationVersionId', QUOTE_B.label);
+  await settle();
+  expect(deletes().map(([url]) => url)).toEqual([
+    `/api/evidence/quotation-version/${QUOTE_A.versionId}/${DOC}`,
+  ]);
+  expect(evidenceField().value).toBe('');
+  await chooseFile();
+  expect(mocks.uploads.at(-1)!.url).toBe(`/api/evidence/quotation-version/${QUOTE_B.versionId}`);
+  await mounted.unmount();
+});
+
+it('shows the evidence refusal on the upload control', async () => {
+  const INVALID = 'The uploaded document is not valid. Remove it and upload it again.';
+  mocks.confirmOrderAction.mockResolvedValue({ key: KEY, errors: { evidence: INVALID } });
+  const mounted = await openDialog();
+  await choose(document.body, 'quotationVersionId', QUOTE_A.label);
+  await submitConfirm();
+  const input = fileInput()!;
+  expect(input.getAttribute('aria-invalid')).toBe('true');
+  expect(
+    document.getElementById(input.getAttribute('aria-describedby')!.split(' ').at(-1)!)
+      ?.textContent,
+  ).toBe(INVALID);
   await mounted.unmount();
 });
