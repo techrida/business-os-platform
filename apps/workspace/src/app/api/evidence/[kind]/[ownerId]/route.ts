@@ -1,7 +1,8 @@
-import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
+import { CreateDocumentBodySchema, ErrorBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
 import { getDocument } from '@/components/p2/crm/verification-api';
 import { projectVersion } from '@/components/p2/crm/verification-file';
+import { ApiError } from '@/lib/api';
 import { createEvidenceDocument, uploadEvidenceContent } from '@/lib/api-kernel';
 import {
   errorResponse,
@@ -29,6 +30,42 @@ type Params = { params: Promise<{ kind: string; ownerId: string }> };
 
 const bad = (message: string, status = 400): Response =>
   jsonResponse({ error: { message } }, status);
+
+/**
+ * This route's words for the refusals the shared upload wording gives to a memo: any record kind
+ * takes evidence here (an order, a bill, an RFQ), so the sentence names none of them.
+ */
+function evidenceRefusal(err: unknown): Response | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  if (err.status === 409) {
+    return jsonResponse(
+      {
+        error: {
+          message: 'This record no longer takes evidence files. Reload it to see where it stands.',
+          reload: true,
+        },
+      },
+      409,
+    );
+  }
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  if (
+    err.status === 422 &&
+    parsed.success &&
+    parsed.data.error.code === 'invalid_evidence_document'
+  ) {
+    return jsonResponse(
+      {
+        error: {
+          message: 'This file could not be kept as evidence for this record. Upload it again.',
+          reload: false,
+        },
+      },
+      422,
+    );
+  }
+  return undefined;
+}
 
 function isKind(value: string): value is EvidenceKind {
   return (EVIDENCE_KINDS as readonly string[]).includes(value);
@@ -115,6 +152,6 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     });
     return jsonResponse(projectVersion(version), 201);
   } catch (err) {
-    return errorResponse(err, 'upload');
+    return evidenceRefusal(err) ?? errorResponse(err, 'upload');
   }
 }
