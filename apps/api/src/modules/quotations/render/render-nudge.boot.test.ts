@@ -7,6 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { InvoiceIssueService } from '../../invoices/invoice-issue.service';
 import { InvoiceRenderNudge } from '../../invoices/render/invoice-render.nudge';
+import { PurchaseOrdersModule } from '../../procurement/orders/purchase-orders.module';
+import { PurchaseOrdersService } from '../../procurement/orders/purchase-orders.service';
+import { PurchaseOrderRenderNudge } from '../../procurement/orders/render/purchase-order-render.nudge';
+import { ApprovalsService } from '../../approvals/requests.service';
 
 // Render on commit (S3): the commands take their render nudge as an optional dependency, so a module that forgets to
 // import the nudge's module still boots, and quietly renders on the sweep alone. This compiles the real AppModule and
@@ -39,6 +43,22 @@ describe('render nudges on the real AppModule (DI graph)', () => {
     const issuing = moduleRef.get(InvoiceIssueService, { strict: false });
     expect((issuing as unknown as { renderNudge?: unknown }).renderNudge).toBeInstanceOf(
       InvoiceRenderNudge,
+    );
+  });
+
+  it('gives PurchaseOrdersService and the po_amendment subject the purchase order render nudge', () => {
+    const orders = moduleRef.get(PurchaseOrdersService, { strict: false });
+    expect((orders as unknown as { renderNudge?: unknown }).renderNudge).toBeInstanceOf(
+      PurchaseOrderRenderNudge,
+    );
+    // The subject is registered in onModuleInit, which compile() does not run: run it as Nest would.
+    const approvals = moduleRef.get(ApprovalsService, { strict: false });
+    moduleRef.get(PurchaseOrdersModule, { strict: false }).onModuleInit();
+    const subject = (approvals as unknown as { subjectOf(t: string): unknown }).subjectOf(
+      'po_amendment',
+    );
+    expect((subject as { renderNudge?: unknown }).renderNudge).toBeInstanceOf(
+      PurchaseOrderRenderNudge,
     );
   });
 });
