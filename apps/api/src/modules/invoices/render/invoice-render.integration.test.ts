@@ -241,8 +241,10 @@ beforeAll(async () => {
   sweeper = makeSweeper(
     new GotenbergClient(gotenbergUrl, { timeoutMs: 10_000, maxBytes: 1_000_000 }),
   );
-  service = new InvoiceDocumentService(db, documents, caller, renderAudit);
+  service = new InvoiceDocumentService(db, documents, caller, renderAudit, retryNudge as never);
 });
+
+const retryNudge = { nudge: vi.fn().mockResolvedValue(undefined) };
 
 afterAll(async () => {
   await fakeClamd?.close();
@@ -903,9 +905,16 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     // Retry needs invoice.issue on the invoice: a reader who may not issue sees the same 404 as a stranger.
     await expect(service.retry(inv.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
     asStaff(scope, 'finance');
+    retryNudge.nudge.mockClear();
     await expect(service.retry(inv.invoiceId)).resolves.toEqual({ state: 'queued' });
+    // The Retry enqueues the render at once (after its commit), not on the next sweep; a refused Retry does not.
+    expect(retryNudge.nudge).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ tenantId: scope.tenantId, organizationId: scope.organizationId }),
+      inv.invoiceId,
+    );
     expect(await failureRow(inv.invoiceId)).toBeUndefined();
     await expect(service.retry(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
+    expect(retryNudge.nudge).toHaveBeenCalledTimes(1);
     expect(await actions(scope, inv.invoiceId)).toEqual([
       'invoice.pdf_render_failed',
       'invoice.pdf_retry_requested',

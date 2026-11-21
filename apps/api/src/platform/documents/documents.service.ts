@@ -1032,10 +1032,45 @@ export class DocumentsService {
       .limit(1);
     if (doc === undefined) throw new NotFoundException('Document not found');
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.read');
+    return this.documentDto(scope, doc);
+  }
+
+  /**
+   * One live document of an owner with its versions, for a caller that already authorised the read by the owner's own
+   * grant (the evidence scan-status poll: the record's permission, not `documents.read`). Null when the document is not
+   * a live one of exactly this owner in this scope.
+   */
+  async getOwnedBy(
+    scope: TxScope,
+    owner: { ownerType: string; ownerId: string },
+    documentId: string,
+  ): Promise<DocumentDto | null> {
+    const [doc] = await this.db
+      .select()
+      .from(documents)
+      .where(
+        scoped(scope).where(
+          documents,
+          and(
+            eq(documents.id, documentId),
+            eq(documents.ownerType, owner.ownerType),
+            eq(documents.ownerId, owner.ownerId),
+            isNull(documents.removedAt),
+          ),
+        ),
+      )
+      .limit(1);
+    return doc === undefined ? null : this.documentDto(scope, doc);
+  }
+
+  private async documentDto(
+    scope: TxScope,
+    doc: typeof documents.$inferSelect,
+  ): Promise<DocumentDto> {
     const versions = await this.db
       .select()
       .from(documentVersions)
-      .where(s.where(documentVersions, eq(documentVersions.documentId, documentId)))
+      .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, doc.id)))
       .orderBy(asc(documentVersions.version));
     return {
       id: doc.id,

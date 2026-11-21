@@ -43,7 +43,7 @@ import {
   salesOrderTaxSummary,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,6 +76,7 @@ import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome
 import { RecordOutcomeService } from '../quotations/outcome/record-outcome.service';
 import { PricingService } from '../quotations/pricing/pricing.service';
 import { EVIDENCE_PDF, evidenceFixture, type EvidenceFixture } from '../evidence/evidence.fixture';
+import { EvidenceSweeper } from '../evidence/evidence-sweeper';
 import { SalesOrdersService } from './sales-orders.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -347,7 +348,7 @@ async function addVersionRow(
 async function setVersionStatus(
   documentId: string,
   version: number,
-  status: 'infected' | 'rejected',
+  status: 'infected' | 'rejected' | 'quarantined',
 ): Promise<void> {
   await withTx(db, scopeA, systemActor('test'), (tx) =>
     tx
@@ -1376,6 +1377,18 @@ describe('SalesOrdersService.markBillable', () => {
         ).documentId,
     ],
     [
+      'whose upload claimed its version but has not recorded its bytes yet',
+      async (id) => {
+        const created = await evidence.service.create('sales_order', id, {
+          filename: 'evidence.pdf',
+          declaredMime: 'application/pdf',
+          sizeBytes: EVIDENCE_PDF.length,
+        });
+        await setVersionStatus(created.documentId, 1, 'quarantined');
+        return created.documentId;
+      },
+    ],
+    [
       'found infected, then given a version 2 that was never sent',
       async (id) => {
         const doc = await evidence.upload('sales_order', id);
@@ -1408,6 +1421,106 @@ describe('SalesOrdersService.markBillable', () => {
     const after = await service.detail(detail.order.id);
     expect(after.schedule[1]!.status).toBe('planned');
     expect(after.order.version).toBe(1);
+  });
+
+  // Round 5 FU2: the dialog polls the scan status of its upload through the record's own route. A custom role holding the
+  // record's grant but not documents.read is refused by the generic read route (assertReadRoute); this one needs only the grant.
+  it('reads the scan status of an order evidence file by the order grant alone, and nothing else', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await evidence.upload('sales_order', detail.order.id);
+    const grants = grantsOf('accountant');
+    grants.delete('documents.read');
+    grants.delete('documents.upload');
+    current.grants = grants;
+
+    const read = await evidence.service.read('sales_order', detail.order.id, doc);
+    expect(read).toMatchObject({ id: doc, ownerType: 'evidence', ownerId: detail.order.id });
+    expect(read.versions).toHaveLength(1);
+    expect(read.versions[0]?.status).toBe('quarantined');
+
+    // Not of this record, not of this kind, not a file, and no grant: each is refused without learning more.
+    const other = await confirm(await acceptedQuotation());
+    expect((await statusOf(evidence.service.read('sales_order', other.order.id, doc))).status).toBe(
+      404,
+    );
+    expect(
+      (await statusOf(evidence.service.read('vendor_bill', detail.order.id, doc))).status,
+    ).toBe(404);
+    expect(
+      (await statusOf(evidence.service.read('sales_order', detail.order.id, randomUUID()))).status,
+    ).toBe(404);
+    current.grants = new Map();
+    expect(
+      (await statusOf(evidence.service.read('sales_order', detail.order.id, doc))).status,
+    ).toBe(403);
+  });
+
+  // Round 5 FU2: an evidence file nobody saved is removed after 24 hours; a file a line took, and a young one, stay.
+  it('sweeps evidence no record uses after 24 hours, and leaves a used or a young file alone', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const used = await evidence.upload('sales_order', detail.order.id);
+    await mark(detail, 1, { evidenceDocumentId: used });
+    const abandoned = await evidence.upload('sales_order', detail.order.id);
+    const young = await evidence.upload('sales_order', detail.order.id);
+    const aged = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx
+        .update(documents)
+        .set({ createdAt: new Date(aged) })
+        .where(inArray(documents.id, [used, abandoned]));
+      await tx
+        .update(documentVersions)
+        .set({ updatedAt: new Date(aged) })
+        .where(inArray(documentVersions.documentId, [used, abandoned]));
+    });
+    const removeQuarantine = vi.fn().mockResolvedValue(undefined);
+    const sweeper = new EvidenceSweeper(db, new AuditService(db), { removeQuarantine });
+
+    expect(await sweeper.sweep()).toEqual({ removed: 1 });
+
+    const removedAt = async (id: string) =>
+      (
+        await withTx(db, scopeA, systemActor('test'), (tx) =>
+          tx.select({ removedAt: documents.removedAt }).from(documents).where(eq(documents.id, id)),
+        )
+      )[0]!.removedAt;
+    expect(await removedAt(abandoned)).not.toBeNull();
+    expect(await removedAt(used)).toBeNull();
+    expect(await removedAt(young)).toBeNull();
+    // The scan had not finished, so the quarantined bytes are deleted with the document.
+    expect(removeQuarantine).toHaveBeenCalledOnce();
+    // Nothing is left to do on the next pass.
+    expect(await sweeper.sweep()).toEqual({ removed: 0 });
+  });
+
+  it('keeps an old evidence file a confirmed order filed in its evidence list', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const filed = await evidence.upload('sales_order', detail.order.id);
+    const aged = new Date(Date.now() - 25 * 60 * 60_000);
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.update(documents).set({ createdAt: aged }).where(eq(documents.id, filed));
+      await tx
+        .update(documentVersions)
+        .set({ updatedAt: aged })
+        .where(eq(documentVersions.documentId, filed));
+      await tx.insert(salesOrderEvidence).values({
+        ...scopeA,
+        salesOrderId: detail.order.id,
+        evidenceKind: 'signed_quote',
+        documentId: filed,
+        createdBy: f.ownerUserId,
+      });
+    });
+    const sweeper = new EvidenceSweeper(db, new AuditService(db), {
+      removeQuarantine: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(await sweeper.sweep()).toEqual({ removed: 0 });
+    const [row] = await db
+      .select({ removedAt: documents.removedAt })
+      .from(documents)
+      .where(eq(documents.id, filed));
+    expect(row!.removedAt).toBeNull();
   });
 
   it('freezes the evidence a line took: no removal, new version or bytes while the order still takes evidence', async () => {

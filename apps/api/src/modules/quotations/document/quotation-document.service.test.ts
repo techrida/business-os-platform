@@ -93,6 +93,7 @@ function setup(p: Principal = principal()) {
     listForOwner: vi.fn().mockResolvedValue([upload()]),
   };
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
+  const nudge = { nudge: vi.fn().mockResolvedValue(undefined) };
   const caller = {
     current: () => ({
       scope: { tenantId: p.tenantId, organizationId: p.organizationId },
@@ -106,8 +107,9 @@ function setup(p: Principal = principal()) {
     store,
     caller,
     audit as never,
+    nudge as never,
   );
-  return { service, store, documents, audit };
+  return { service, store, documents, audit, nudge };
 }
 
 const errorOf = async (promise: Promise<unknown>) => {
@@ -289,10 +291,16 @@ describe('QuotationDocumentService.link', () => {
 
 describe('QuotationDocumentService.retry', () => {
   it('requeues a given-up render in the caller transaction, audits it and answers queued', async () => {
-    const { service, store, audit } = setup();
+    const { service, store, audit, nudge } = setup();
     store.head.mockResolvedValue(givenUp());
 
     await expect(service.retry(QID, VID)).resolves.toEqual({ state: 'queued' });
+
+    // The render is enqueued at once, after the commit, not left to the next sweep.
+    expect(nudge.nudge).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ tenantId: TENANT, organizationId: ORG }),
+      VID,
+    );
 
     expect(store.head).toHaveBeenCalledWith(
       TX,
