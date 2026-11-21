@@ -60,7 +60,15 @@ describe('sales VAT register contract and grant', () => {
     expect(
       SalesVatRegisterQuerySchema.safeParse({ from: '2026-02-30', to: '2026-11-01' }).success,
     ).toBe(false);
-    const empty = { from: '2026-11-01', to: '2026-11-30', rows: [], totals: [] };
+    const nprTotal = {
+      documents: 0,
+      taxableAmount: '0.00',
+      vatAmount: '0.00',
+      exemptAmount: '0.00',
+      zeroRatedAmount: '0.00',
+      totalAmount: '0.00',
+    };
+    const empty = { from: '2026-11-01', to: '2026-11-30', rows: [], totals: [], nprTotal };
     expect(SalesVatRegisterSchema.safeParse(empty).success).toBe(true);
     const total = {
       currency: 'NPR',
@@ -78,6 +86,12 @@ describe('sales VAT register contract and grant', () => {
     ).toBe(false);
     expect(
       SalesVatRegisterSchema.safeParse({ ...empty, totals: [{ ...total, currency: 'EUR' }] })
+        .success,
+    ).toBe(false);
+    // The NPR filing total is required, and keeps two decimals.
+    expect(SalesVatRegisterSchema.safeParse({ ...empty, nprTotal: undefined }).success).toBe(false);
+    expect(
+      SalesVatRegisterSchema.safeParse({ ...empty, nprTotal: { ...nprTotal, vatAmount: '0.123' } })
         .success,
     ).toBe(false);
   });

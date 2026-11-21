@@ -1,6 +1,7 @@
 // The customer and vendor CSV import (round 5, K1; Kuu decision K-M3).
 //   preview  parses the upload, checks every line, marks the lines that duplicate an existing record or an earlier
 //            line, and stores the result as a `previewed` batch (party_import_batches). Nothing else is written.
+//   (a preview left uncommitted for 7 days is `expired` and its rows cleared by the worker, see party-import-expiry.sweeper)
 //   commit   creates the valid lines of a batch in ONE transaction (customer through CustomersService.createInTx and
 //            its first contact; vendor through VendorsService.createInTx, status `draft` like a hand-created one),
 //            then marks the batch `committed` with its counts. The importer is the actor of every audited row.
@@ -21,6 +22,7 @@ import {
 import { customers, partyImportBatches, scoped, vendors } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -184,6 +186,13 @@ export class PartyImportsService {
       if (batch === undefined) throw batchNotFound();
       this.assertMay(batch.kind);
       if (batch.status === 'committed') return toDetail(batch);
+      // An expired preview holds no rows any more (migration 0185): there is nothing to create.
+      if (batch.status === 'expired')
+        throw new ConflictException({
+          code: 'conflict',
+          message:
+            'This preview expired after 7 days without being imported. Upload the file again.',
+        });
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`party-import:${scope.tenantId}:${batch.kind}`}, 0))`,
       );
