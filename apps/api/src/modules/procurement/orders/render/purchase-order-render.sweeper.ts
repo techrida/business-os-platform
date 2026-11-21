@@ -53,7 +53,7 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
-import { and, asc, eq, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNull, lt, not, notExists, sql } from 'drizzle-orm';
 
 import type { Db, DbTransaction } from '../../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../../platform/db/tx';
@@ -64,6 +64,7 @@ import {
   filledVersion,
   recordRenderFailure,
   renderHeldBack,
+  unrefusedUpload,
   type RecordedFailure,
   type RenderFailureOwner,
 } from '../../../invoices/render/render-failures';
@@ -415,6 +416,7 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
             eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
             eq(documents.ownerId, purchaseOrderVersions.id),
             isNull(documents.removedAt),
+            exists(unrefusedUpload(db, documents.tenantId, documents.id)),
           ),
         );
       const page = (cursor?: string) =>
@@ -541,6 +543,7 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
               eq(documents.ownerType, PO_VERSION_OWNER_TYPE),
               eq(documents.ownerId, c.versionId),
               isNull(documents.removedAt),
+              exists(unrefusedUpload(tx, documents.tenantId, documents.id)),
             ),
           ),
         )
