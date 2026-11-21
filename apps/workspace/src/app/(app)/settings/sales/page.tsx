@@ -40,7 +40,8 @@ export default async function SalesSettingsPage() {
     },
     {
       title: 'Delivery holds',
-      description: 'Who may release a delivery that is on hold.',
+      description:
+        'Who may release a held delivery before its advance is paid. The Founder may release any amount; the person who created the order never can.',
       result: deliveryHold,
     },
   ];

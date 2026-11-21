@@ -34,6 +34,8 @@ import {
   scheduleLineStatusMeta,
   triggerLabel,
 } from '../_lib/status';
+import { ReleaseDelivery } from './release-delivery';
+import { releasedText } from './release-delivery-text';
 
 export const metadata: Metadata = { title: 'Sales order · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -76,7 +78,37 @@ function Totals({ order, numberSystems }: { order: Order; numberSystems: NumberS
   );
 }
 
-function summaryFacts(order: Order, deliveryReleased: boolean): Fact[] {
+/** The delivery fact: whether it is released, how, and the release action on a held, confirmed order. */
+function deliveryFact(data: SalesOrderDetail, reloadHref: string): Fact['value'] {
+  const { order, deliveryReleased } = data;
+  const how = deliveryReleased ? releasedText(data.deliveryRelease) : null;
+  return (
+    <span className={local.release}>
+      <Badge tone={deliveryReleased ? 'success' : 'neutral'}>
+        {deliveryReleased ? 'Released' : 'Not released'}
+      </Badge>
+      {deliveryReleased ? (
+        how !== null ? (
+          <span className={local.meta}>{how}</span>
+        ) : null
+      ) : (
+        <span className={local.meta}>
+          Released once the advance invoice has nothing left to pay.
+        </span>
+      )}
+      {!deliveryReleased && order.status === 'confirmed' ? (
+        <ReleaseDelivery
+          salesOrderId={order.id}
+          can={data.can}
+          idempotencyKey={randomUUID()}
+          reloadHref={reloadHref}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function summaryFacts(order: Order, delivery: Fact['value']): Fact[] {
   return [
     {
       key: 'customer',
@@ -109,16 +141,7 @@ function summaryFacts(order: Order, deliveryReleased: boolean): Fact[] {
     {
       key: 'delivery',
       label: 'Delivery',
-      value: (
-        <span className={local.release}>
-          <Badge tone={deliveryReleased ? 'success' : 'neutral'}>
-            {deliveryReleased ? 'Released' : 'Not released'}
-          </Badge>
-          <span className={local.meta}>
-            Released once the advance invoice has nothing left to pay.
-          </span>
-        </span>
-      ),
+      value: delivery,
     },
   ];
 }
@@ -458,7 +481,7 @@ export default async function SalesOrderPage({
       )}
       <div className={detail.columns}>
         <Panel title="Order overview">
-          <FactList facts={summaryFacts(order, data.deliveryReleased)} />
+          <FactList facts={summaryFacts(order, deliveryFact(data, path))} />
         </Panel>
         <Totals numberSystems={numberSystems} order={order} />
       </div>
