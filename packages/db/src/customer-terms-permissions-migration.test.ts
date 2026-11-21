@@ -31,6 +31,7 @@ let testDb: TestDatabase;
 let pool: Pool;
 let url: string;
 let folder: string;
+let throughFolder: string | undefined;
 let running: TenantWithEntity;
 let customised: TenantWithEntity;
 let onDefaults: TenantWithEntity;
@@ -119,13 +120,28 @@ beforeAll(async () => {
   onDefaults = await createTenantWithEntity(pool);
   for (const org of [running, customised]) versionsBefore.set(org.tenantId, (await version(org))!);
 
-  await runMigrations(url, MIGRATIONS_FOLDER);
+  // Migrate only through 0150, so a later migration that bumps the authz version again (0155) cannot move the counts.
+  throughFolder = await mkdtemp(join(tmpdir(), 'bos-through-0150-'));
+  await mkdir(join(throughFolder, 'meta'));
+  const through = journal.entries.slice(0, index + 1);
+  await writeFile(
+    join(throughFolder, 'meta/_journal.json'),
+    JSON.stringify({ ...journal, entries: through }),
+  );
+  for (const entry of through) {
+    await copyFile(
+      join(MIGRATIONS_FOLDER, `${entry.tag}.sql`),
+      join(throughFolder, `${entry.tag}.sql`),
+    );
+  }
+  await runMigrations(url, throughFolder);
 }, 180_000);
 
 afterAll(async () => {
   await pool?.end();
   await testDb?.drop();
   if (folder !== undefined) await rm(folder, { recursive: true, force: true });
+  if (throughFolder !== undefined) await rm(throughFolder, { recursive: true, force: true });
 });
 
 describe('0150 customers.credit_limit.write and customers.owner.write', () => {
@@ -177,7 +193,7 @@ describe('0150 customers.credit_limit.write and customers.owner.write', () => {
 
   it('is not re-applied by the runner', async () => {
     const v = await version(running);
-    await runMigrations(url, MIGRATIONS_FOLDER);
+    await runMigrations(url, throughFolder);
     expect(await grants(running, CREDIT_LIMIT)).toHaveLength(2);
     expect(await grants(running, OWNER)).toHaveLength(2);
     expect(await version(running)).toBe(v);
