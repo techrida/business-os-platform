@@ -158,35 +158,37 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
   };
 
   /** `keepalive` lets the request finish even when the click navigates away. */
-  const markRead = useCallback((id: string) => {
-    void fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
+  const markRead = useCallback((id: string): Promise<unknown> => {
+    return fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
       method: 'POST',
       keepalive: true,
     }).catch(() => undefined);
   }, []);
 
-  // Marking items read lowers the count at once; the next shared read replaces it with the server's.
-  const lowerCount = (by: number) => {
-    if (shell && shared !== undefined) shell.lowerNotifications(by);
+  // Marking items read lowers the count at once; the next shared read replaces it with the server's. `settled` is
+  // the mark requests finishing: the shell starts no read before then, so a poll cannot count the unrecorded
+  // marks as unread again and ring the bell for a rise that never happened.
+  const lowerCount = (by: number, settled: Promise<unknown>) => {
+    if (shell && shared !== undefined) shell.lowerNotifications(by, settled);
     else setOwnCount((c) => Math.max(0, c - by));
   };
 
   const onItemClick = (item: Item) => {
     if (item.readAt !== null) return;
-    markRead(item.id);
+    const settled = markRead(item.id);
     setItems((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, readAt: new Date().toISOString() } : i)),
     );
-    lowerCount(1);
+    lowerCount(1, settled);
     setOpen(false);
   };
 
   const unreadItems = items.filter((i) => i.readAt === null);
   const markAll = () => {
-    for (const item of unreadItems) markRead(item.id);
+    const settled = Promise.all(unreadItems.map((item) => markRead(item.id)));
     const stamp = new Date().toISOString();
     setItems((prev) => prev.map((i) => (i.readAt === null ? { ...i, readAt: stamp } : i)));
-    lowerCount(unreadItems.length);
+    lowerCount(unreadItems.length, settled);
   };
 
   return (

@@ -100,12 +100,14 @@ const DID: Partial<Record<ActivityDto['kind'], string>> = {
   meeting: 'logged a meeting',
   email: 'logged an email',
   note: 'added a note',
+  collection_call: 'completed a collection call',
 };
 const HAPPENED: Record<string, string> = {
   call: 'Call logged',
   meeting: 'Meeting logged',
   email: 'Email logged',
   note: 'Note added',
+  collection_call: 'Collection call completed',
   task: 'Task',
   stage_change: 'Stage changed',
   system: 'System update',

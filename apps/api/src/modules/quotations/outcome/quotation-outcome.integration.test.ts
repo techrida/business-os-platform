@@ -599,8 +599,10 @@ describe('RecordOutcomeService.record', () => {
 
 // ------------------------------------------------------------------------------- Accountant notices
 
-describe('Accountant notices on acceptance (S4: a drafted order, pending portal evidence)', () => {
+describe('Accountant and Finance notices on acceptance (S4: a drafted order, pending portal evidence)', () => {
   let accountantUserId: string;
+  let financeUserId: string;
+  let bothRolesUserId: string;
   let noticed: RecordOutcomeService;
   let noticedOutcomes: QuotationOutcomeService;
 
@@ -612,6 +614,9 @@ describe('Accountant notices on acceptance (S4: a drafted order, pending portal 
     const staff = (roleKeys: readonly string[]) =>
       createStaffUser(appPool, { ...scopeA, idpOrgId: owner!.idpOrgId, roleKeys });
     accountantUserId = (await staff(['accountant'])).userId;
+    financeUserId = (await staff(['finance'])).userId;
+    // Holds both roles that can confirm a draft order: it is told once, not twice.
+    bothRolesUserId = (await staff(['accountant', 'finance'])).userId;
     // Another role holder of the same entity, next to the role-less owner: neither may get these notices.
     await staff(['sales']);
     // The real directory chain, so the role lookup reads app.user_roles; ZITADEL and audit are never reached.
@@ -654,7 +659,10 @@ describe('Accountant notices on acceptance (S4: a drafted order, pending portal 
         'SELECT user_id, link FROM app.notifications WHERE tenant_id = $1 AND dedupe_key = $2',
         [f.tenantId, dedupeKey],
       )
-    ).rows;
+    ).rows.sort((a, b) => a.user_id.localeCompare(b.user_id));
+
+  const byUser = (rows: readonly { user_id: string; link: string }[]) =>
+    [...rows].sort((a, b) => a.user_id.localeCompare(b.user_id));
 
   const draftOrderId = async (quotationId: string) => {
     const rows = await db
@@ -665,7 +673,7 @@ describe('Accountant notices on acceptance (S4: a drafted order, pending portal 
     return rows[0]!.id;
   };
 
-  it('a portal acceptance tells only the Accountant of the drafted order and of the evidence to confirm', async () => {
+  it('a portal acceptance tells Accountants and Finance of the drafted order, and the Accountants of the evidence to confirm', async () => {
     const q = await createQuotation();
     await advance(q, 'sent');
 
@@ -681,15 +689,27 @@ describe('Accountant notices on acceptance (S4: a drafted order, pending portal 
     );
 
     const orderId = await draftOrderId(q.id);
-    expect(await bellRows(`sales_order.drafted:${orderId}`)).toEqual([
-      { user_id: accountantUserId, link: `/sales-orders/${orderId}` },
-    ]);
-    expect(await bellRows(`quotation.evidence_pending:${q.currentVersionId}`)).toEqual([
-      { user_id: accountantUserId, link: `/quotations/${q.id}` },
-    ]);
+    // One bell row each: the Accountant, the Finance user and the user holding both roles (once, not twice).
+    expect(await bellRows(`sales_order.drafted:${orderId}`)).toEqual(
+      byUser(
+        [accountantUserId, financeUserId, bothRolesUserId].map((user_id) => ({
+          user_id,
+          link: `/sales-orders/${orderId}`,
+        })),
+      ),
+    );
+    // The evidence notice stays with the Accountants (Finance is not told).
+    expect(await bellRows(`quotation.evidence_pending:${q.currentVersionId}`)).toEqual(
+      byUser(
+        [accountantUserId, bothRolesUserId].map((user_id) => ({
+          user_id,
+          link: `/quotations/${q.id}`,
+        })),
+      ),
+    );
   });
 
-  it('a staff acceptance tells the Accountant of the drafted order only (its evidence is confirmed on entry), once on a replay', async () => {
+  it('a staff acceptance tells Accountants and Finance of the drafted order only (its evidence is confirmed on entry), once on a replay', async () => {
     const q = await createQuotation();
     const expectedVersion = await advance(q, 'sent');
     const key = `outcome-${randomUUID()}`;
@@ -698,9 +718,15 @@ describe('Accountant notices on acceptance (S4: a drafted order, pending portal 
     await noticed.record(q.id, q.currentVersionId, acceptBody(expectedVersion), key);
 
     const orderId = await draftOrderId(q.id);
-    expect(await bellRows(`sales_order.drafted:${orderId}`)).toEqual([
-      { user_id: accountantUserId, link: `/sales-orders/${orderId}` },
-    ]);
+    // One bell row each: the Accountant, the Finance user and the user holding both roles (once, not twice).
+    expect(await bellRows(`sales_order.drafted:${orderId}`)).toEqual(
+      byUser(
+        [accountantUserId, financeUserId, bothRolesUserId].map((user_id) => ({
+          user_id,
+          link: `/sales-orders/${orderId}`,
+        })),
+      ),
+    );
     expect(await bellRows(`quotation.evidence_pending:${q.currentVersionId}`)).toEqual([]);
   });
 });

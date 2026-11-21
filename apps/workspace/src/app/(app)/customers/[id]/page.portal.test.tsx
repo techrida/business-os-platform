@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getCustomerDetail: vi.fn(),
   listContacts: vi.fn(),
   listVerificationCases: vi.fn(),
+  listCustomerPaymentTerms: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -22,9 +23,6 @@ vi.mock('@/lib/bff', () => ({
 }));
 vi.mock('@/lib/display-settings', () => ({ getNumberSystems: vi.fn().mockResolvedValue({}) }));
 vi.mock('@/lib/business-labels', () => ({ userNames: vi.fn().mockResolvedValue(new Map()) }));
-vi.mock('@/components/p2/quote-builder/api', () => ({
-  listPaymentTerms: vi.fn().mockResolvedValue([]),
-}));
 vi.mock('@/components/p2/customers/actions', () => ({
   addContactAction: vi.fn(),
   invitePortalAdminAction: vi.fn(),
