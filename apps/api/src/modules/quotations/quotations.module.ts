@@ -2,7 +2,8 @@
 // DraftingService and ReviseService, and serves drafting, revise, preview, reference and PDF download routes. Imports
 // DocumentsModule, SettingsModule (MoneyService, NumberingService, SettingsService), ApprovalsModule (preview
 // route, approval cancel on revise), AuditModule, OpportunitiesModule (Won on acceptance) and NotifyModule (the
-// owner's notice); the database is global. Q3b adds the outcome route and exports its accept/reject core.
+// owner's notice); the database is global. Q3b adds the outcome route and exports its accept/reject core. Round 5
+// (S3) adds QuotationRenderNudgeModule: an approved version's render is enqueued once the approval commits.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -47,6 +48,7 @@ import { ReferenceService } from './reference/reference.service';
 import { QuotationSendCaller } from './send/quotation-send.caller';
 import { QuotationSendController } from './send/quotation-send.controller';
 import { QuotationSendService, QuotationSendStore } from './send/quotation-send.service';
+import { QuotationRenderNudge, QuotationRenderNudgeModule } from './render/quotation-render.nudge';
 
 @Module({
   imports: [
@@ -55,6 +57,7 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
     DocumentsModule,
     NotifyModule,
     OpportunitiesModule,
+    QuotationRenderNudgeModule,
     SettingsModule,
   ],
   controllers: [
@@ -100,6 +103,7 @@ export class QuotationsModule implements OnModuleInit {
     @Inject(DB) private readonly db: Db,
     private readonly documents: DocumentsService,
     private readonly approvals: ApprovalsService,
+    private readonly renderNudge: QuotationRenderNudge,
   ) {}
 
   /**
@@ -108,6 +112,6 @@ export class QuotationsModule implements OnModuleInit {
    */
   onModuleInit(): void {
     this.documents.registerOwner(new QuotationOwnerPolicy(drizzleHeadLoader(this.db)));
-    this.approvals.registerSubject(new QuotationVersionSubject());
+    this.approvals.registerSubject(new QuotationVersionSubject(undefined, this.renderNudge));
   }
 }

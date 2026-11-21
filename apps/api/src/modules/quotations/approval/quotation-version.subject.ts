@@ -2,7 +2,8 @@
 // Serves the NFR "approvals are auditable" and "what was approved is what was seen": before the outcome is
 // recorded, the material fields are rebuilt from the rows and hashed again, and a version whose hash no longer
 // matches the one stored at submit is refused (M10), which rolls the decision back. Nothing slow runs here (M3):
-// an approved version keeps render_state 'none' and the render sweeper (worker) draws its PDF.
+// an approved version keeps render_state 'none' and the render worker draws its PDF: since round 5 (S3) at once,
+// through the job afterDecided enqueues when the approval commits, with the sweep as the safety net.
 // Registered by QuotationsModule in the API only. ApprovalsService.act is an API route, so the worker never
 // calls onDecided.
 import type { ApprovalContext } from '@bos/contracts';
@@ -24,6 +25,7 @@ import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
 import { fact, hrefIfVisible } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import type { QuotationRenderNudge } from '../render/quotation-render.nudge';
 import { contentSha256, materialFieldsOf } from './quotation-approval-snapshot';
 
 /** approval_requests.document_type of a quotation version; the document id is the version id. */
@@ -57,7 +59,21 @@ export class QuotationVersionSubject implements ApprovalSubject {
   readonly documentType = QUOTATION_VERSION_DOCUMENT_TYPE;
   private readonly log = new Logger(QuotationVersionSubject.name);
 
-  constructor(private readonly clock: () => Date = () => new Date()) {}
+  constructor(
+    private readonly clock: () => Date = () => new Date(),
+    /** Renders an approved version's PDF once the approval commits; absent, the render sweep draws it. */
+    private readonly renderNudge?: QuotationRenderNudge,
+  ) {}
+
+  /** After an approval commits: the version is rendered now rather than on the next sweep. */
+  async afterDecided(decided: {
+    scope: TxScope;
+    documentId: string;
+    outcome: Outcome;
+  }): Promise<void> {
+    if (decided.outcome !== 'approved') return;
+    await this.renderNudge?.nudge(decided.scope, decided.documentId);
+  }
 
   /** The decided notice opens the quotation, not the request in the inbox. */
   readonly link = (tx: DbTransaction, versionId: string): Promise<string | undefined> =>
