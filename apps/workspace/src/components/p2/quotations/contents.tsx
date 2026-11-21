@@ -67,7 +67,11 @@ function LineItems({
   );
   if (lines.length === 0) return <p className={styles.note}>No line items.</p>;
   return (
-    <Table caption="Line items" minWidth={showCost ? 900 : 760}>
+    <Table
+      caption="Line items"
+      minWidth={showCost ? 960 : 820}
+      className={styles.scrollTable ?? ''}
+    >
       <thead>
         <tr>
           <Th>Description</Th>
@@ -82,7 +86,7 @@ function LineItems({
       <tbody>
         {lines.map((line) => (
           <tr key={line.lineNo}>
-            <Td>
+            <Td className={styles.descriptionCell ?? ''}>
               <span className={styles.lineNo}>{line.lineNo}. </span>
               {line.description}
             </Td>
@@ -122,7 +126,7 @@ function PaymentSchedule({
 }) {
   const { currency, paymentSchedule } = version;
   return (
-    <Table caption="Payment schedule" minWidth={560}>
+    <Table caption="Payment schedule" minWidth={560} className={styles.scrollTable ?? ''}>
       <thead>
         <tr>
           <Th>Milestone</Th>
