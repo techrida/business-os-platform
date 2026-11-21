@@ -75,9 +75,9 @@ describe('render nudges on the real AppModule (DI graph)', () => {
     expect(nudgeOf(moduleRef.get(InvoiceDocumentService, { strict: false }))).toBeInstanceOf(
       InvoiceRenderNudge,
     );
-    expect(
-      nudgeOf(moduleRef.get(PurchaseOrderDocumentService, { strict: false })),
-    ).toBeInstanceOf(PurchaseOrderRenderNudge);
+    expect(nudgeOf(moduleRef.get(PurchaseOrderDocumentService, { strict: false }))).toBeInstanceOf(
+      PurchaseOrderRenderNudge,
+    );
   });
 
   it('gives the quotation_version subject the quotation render nudge', () => {
