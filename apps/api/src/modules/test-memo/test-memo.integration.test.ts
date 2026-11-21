@@ -1879,7 +1879,10 @@ describe('GET /v1/test-memos (the Memos list)', () => {
   };
 
   it('keeps draft and returned current content private despite broad grants or historical editing', async () => {
-    as(U.salesA, 'sales');
+    // A fresh owner, so the owner's list holds only this test's memo: U.salesA owns dozens of memos made at the same
+    // fake clock, and among equal created_at the id decides the order, so the memo could fall off a 50-item page.
+    const owner = await freshStaff();
+    as(owner, 'sales');
     const dept = await createDepartment(appPool, scope);
     const memo = await createMemo({
       title: 'Private draft',
@@ -1887,7 +1890,7 @@ describe('GET /v1/test-memos (the Memos list)', () => {
         departmentId: dept.departmentId,
         date: '2026-11-10',
         closing: '',
-        preparedByUserId: U.salesA,
+        preparedByUserId: owner,
         recommenderUserIds: [U.acc],
         approvedByUserId: U.fin,
       },
@@ -1918,7 +1921,7 @@ describe('GET /v1/test-memos (the Memos list)', () => {
         ).toBe(404);
         expect((await submitMemo(memo.id)).status).toBe(404);
       }
-      as(U.salesA, 'sales');
+      as(owner, 'sales');
       expect((await request(baseUrl).get(`/v1/test-memos/${memo.id}`)).status).toBe(200);
       expect((await parsed('?limit=50')).items.map((m) => m.id)).toContain(memo.id);
     }
