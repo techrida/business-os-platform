@@ -13,6 +13,7 @@ import {
   type CustomerDto,
   type CustomerOwnerOption,
   type PartyAccountDto,
+  type PaymentTerm,
 } from '@bos/contracts';
 import {
   Body,
@@ -63,6 +64,16 @@ export class CustomersController {
   @Can('customers.owner.write')
   owners(): Promise<CustomerOwnerOption[]> {
     return this.customers.owners();
+  }
+
+  /**
+   * 200 with a bare array of PaymentTerm: the tenant's active terms, shortest first. Behind `customer.read`, not
+   * `quotation.read`, so an editor of a customer's terms keeps the control. Declared before `:id`.
+   */
+  @Get('payment-terms')
+  @Can('customer.read')
+  paymentTerms(): Promise<PaymentTerm[]> {
+    return this.customers.paymentTerms();
   }
 
   /** 201 with the new CustomerDto. 409 for a PAN/VAT number another customer already holds. */

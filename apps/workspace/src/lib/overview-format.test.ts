@@ -117,6 +117,11 @@ describe('activity wording', () => {
     expect(activityHeadline('call', undefined)).toBe('Call logged');
     // Server-written kinds have no person's verb.
     expect(activityHeadline('stage_change', 'Amanda Vance')).toBe('Stage changed');
+    // A completed collection call has its own words, not the catch-all "Activity".
+    expect(activityHeadline('collection_call', 'Amanda Vance')).toBe(
+      'Amanda Vance completed a collection call',
+    );
+    expect(activityHeadline('collection_call', undefined)).toBe('Collection call completed');
     expect(activityHeadline('mystery', undefined)).toBe('Activity');
   });
 

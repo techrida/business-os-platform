@@ -2,7 +2,7 @@
 // filter a list query to the same rows `can()` would allow, and `invalidate()` after a role change.
 // Serves the NFR "authorization is deny-by-default" (P1 plan §1, k-authz; §6.2): a list query and a
 // record check give the same answer, so a user cannot see a row in a list that they could not open.
-import type { Permission } from '@bos/contracts';
+import type { Permission, RoleKey } from '@bos/contracts';
 import { authzVersions, type Scoped, scoped } from '@bos/db';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { eq, or, type SQL, sql } from 'drizzle-orm';
@@ -181,6 +181,20 @@ export class AuthzService {
         reason: decision.reason,
       });
     }
+  }
+
+  /**
+   * True when `roles` (already narrowed to one user's roles in the entity) hold `permission` in the tenant's live
+   * role rows: the same answer the request path gives, including the built-in defaults of a tenant with no stored
+   * rows. For listing who could do something, where there is no request principal to ask.
+   */
+  async rolesHold(
+    tenantId: string,
+    organizationId: string,
+    roles: readonly RoleKey[],
+    permission: Permission,
+  ): Promise<boolean> {
+    return (await this.roleCache.grantsFor(tenantId, organizationId, roles)).has(permission);
   }
 
   /** A `.where()` condition limiting `table` to the rows the current principal may `action`. */
