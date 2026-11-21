@@ -984,7 +984,9 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
           .set('authorization', await bearer('finance'));
         const waiting =
           res.status === 404 ||
-          (res.status === 409 && res.body?.error?.code === 'invoice_pdf_not_ready');
+          (res.status === 409 &&
+            (res.body as { error?: { code?: string } } | undefined)?.error?.code ===
+              'invoice_pdf_not_ready');
         if (res.status !== 200 && !waiting) throw new Error(show(res));
         return {
           done: res.status === 200 ? SignedLinkDtoSchema.parse(res.body) : undefined,
