@@ -225,3 +225,40 @@ export async function softKey(
   }
   await settle();
 }
+
+/** Types `text` into one segment of a React Aria date or time field, a character at a time. */
+async function typeSegment(segment: Element, text: string) {
+  for (const data of text) {
+    const event = new InputEvent('beforeinput', {
+      data,
+      inputType: 'insertText',
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => Promise.resolve(segment.dispatchEvent(event)));
+  }
+}
+
+/**
+ * Sets a DatePicker or DateTimePicker the way a user does: typing into its segments. Finds the picker
+ * by the `name` of the hidden input it posts, so a test says `pickDate(form, 'dueAt', '2026-11-20T10:30')`.
+ * `value` is `YYYY-MM-DD`, or `YYYY-MM-DDTHH:mm` for a DateTimePicker (the time field shows 12-hour
+ * segments in the test locale, so the hour is converted).
+ */
+export async function pickDate(container: ParentNode, name: string, value: string) {
+  const posted = container.querySelector(`input[name="${name}"]`);
+  const root = posted?.parentElement;
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value);
+  if (!root || !match) throw new Error(`No date picker named ${name}, or a bad value: ${value}`);
+  const segment = (type: string) => root.querySelector(`[data-type="${type}"]`);
+  const [, year, month, day, hour, minute] = match;
+  await typeSegment(segment('month')!, String(Number(month)));
+  await typeSegment(segment('day')!, String(Number(day)));
+  await typeSegment(segment('year')!, year!);
+  if (hour !== undefined && minute !== undefined) {
+    const h = Number(hour);
+    await typeSegment(segment('hour')!, String(h % 12 === 0 ? 12 : h % 12));
+    await typeSegment(segment('minute')!, minute);
+    await typeSegment(segment('dayPeriod')!, h >= 12 ? 'P' : 'A');
+  }
+}
