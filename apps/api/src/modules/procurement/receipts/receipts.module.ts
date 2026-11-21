@@ -42,6 +42,6 @@ export class ReceiptsModule implements OnModuleInit {
 
   /** The registry throws on a duplicate, so this runs once, when the module starts. */
   onModuleInit(): void {
-    this.approvals.registerSubject(new EmergencyReviewSubject(this.audit));
+    this.approvals.registerSubject(new EmergencyReviewSubject(this.audit, this.approvals));
   }
 }

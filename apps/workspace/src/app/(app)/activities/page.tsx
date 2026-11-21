@@ -13,7 +13,6 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { type ActivitiesPage, listActivitiesPage } from '@/components/p2/crm/activities-api';
-import { followUpActionsFor } from '@/components/p2/crm/follow-up-subject';
 import { FollowUpActions } from '@/components/p2/crm/follow-ups-card';
 import { ListFooter } from '@/components/p2/crm/list-footer';
 import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
@@ -33,7 +32,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -71,24 +70,18 @@ interface Loaded {
   problem: { message: string; status: number } | null;
 }
 
-/** What the caller may do with a planned follow-up: see `followUpActionsFor`. */
-type ActionsOf = (activity: ActivityDto) => 'all' | 'complete' | 'none';
-
 function ActivityRow({
   activity,
   status,
   owners,
   now,
-  actionsOf,
 }: {
   activity: ActivityDto;
   status: ActivityStatus;
   owners: readonly LeadOwnerOption[];
   now: Date;
-  actionsOf: ActionsOf;
 }) {
   const state = activityState(activity, now);
-  const actions = activity.planned ? actionsOf(activity) : 'none';
   // Planned rows are timed by when they are due; logged ones by when they were done or happened.
   const at = status === 'planned' ? activity.dueAt : (activity.completedAt ?? activity.occurredAt);
   return (
@@ -121,15 +114,9 @@ function ActivityRow({
       </Td>
       {status === 'planned' ? (
         <Td>
-          {/* Any subject (a lead, a deal, a migrated task on a customer) can be finished here, by whoever
-              may: the subject's writer, or its assignee for Complete alone (U20a2-Q7). */}
-          {actions === 'none' ? null : (
-            <FollowUpActions
-              item={activity}
-              owners={owners}
-              completeOnly={actions === 'complete'}
-            />
-          )}
+          {/* Any subject (a lead, a deal, a migrated task on a customer) can be finished here, with
+              the actions the row's own `can` flags allow. */}
+          {activity.planned ? <FollowUpActions item={activity} owners={owners} /> : null}
         </Td>
       ) : null}
     </tr>
@@ -142,14 +129,12 @@ function ActivityTable({
   owners,
   now,
   footer,
-  actionsOf,
 }: {
   status: ActivityStatus;
   items: ActivityDto[];
   owners: readonly LeadOwnerOption[];
   now: Date;
   footer: ReactNode;
-  actionsOf: ActionsOf;
 }) {
   const planned = status === 'planned';
   return (
@@ -176,7 +161,6 @@ function ActivityTable({
               status={status}
               owners={owners}
               now={now}
-              actionsOf={actionsOf}
             />
           ))}
         </tbody>
@@ -247,11 +231,7 @@ export default async function ActivitiesPage({
       .catch(() => null),
   ]);
   const owners = people?.owners ?? [];
-  const [can, me] = await Promise.all([
-    getPermissionCheck(session),
-    getMeOrNull(session.accessToken),
-  ]);
-  const actionsOf: ActionsOf = (activity) => followUpActionsFor(activity, can, me?.id ?? null);
+  const can = await getPermissionCheck(session);
   // The empty state tells only someone who may log one where to do it.
   const mayLog = can('crm.lead.write') || can('crm.opportunity.write');
   const now = new Date();
@@ -330,7 +310,6 @@ export default async function ActivitiesPage({
                 items={planned.items}
                 owners={owners}
                 now={now}
-                actionsOf={actionsOf}
                 footer={
                   <p className={styles.footer}>
                     {planned.total > planned.items.length
@@ -363,7 +342,6 @@ export default async function ActivitiesPage({
                 items={logged.items}
                 owners={owners}
                 now={now}
-                actionsOf={actionsOf}
                 footer={
                   <ListFooter
                     label="Activity pages"
