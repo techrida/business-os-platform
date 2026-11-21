@@ -808,10 +808,12 @@ describe('credit hold on the deal (F1-Q20)', () => {
     currency: 'NPR',
     creditLimit: '500000.00',
     exposure: '512345.50',
+    uninvoiced: '0.00',
     orderValue: '0.00',
     exposureWithOrder: '512345.50',
     held: true,
     override: null,
+    overrideCovers: false,
   });
   const grants = (...held: string[]) =>
     mocks.getPermissionCheck.mockResolvedValue((p: string) => held.includes(p));
