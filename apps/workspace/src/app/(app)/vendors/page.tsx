@@ -139,12 +139,17 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
 
   const live = grantsFrom(await getMeOrNull(session.accessToken), session.roles);
   const addButton = vendorGrants(live).write ? (
-    <LinkButton href="/vendors/new" size="large">
-      <span aria-hidden="true" className={styles.plus}>
-        +
-      </span>
-      Add vendor
-    </LinkButton>
+    <>
+      <LinkButton href="/imports/vendors" variant="secondary" size="large">
+        Import from CSV
+      </LinkButton>
+      <LinkButton href="/vendors/new" size="large">
+        <span aria-hidden="true" className={styles.plus}>
+          +
+        </span>
+        Add vendor
+      </LinkButton>
+    </>
   ) : null;
   const filtersOn = activeFilterLabels(state, FILTER_LABELS, 'Search');
   const clearHref = clearFiltersHref('/vendors', params, LIST);
