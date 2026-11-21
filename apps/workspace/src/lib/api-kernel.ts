@@ -398,6 +398,25 @@ export async function uploadEvidenceContent(
   return await streamContent(session, expected, upload);
 }
 
+/**
+ * Removes an evidence file its uploader abandoned before saving, through the record's own route
+ * (`DELETE <record>/:id/evidence-documents/:documentId`, that record's permission, not
+ * `documents.upload`). 204 also when it is already removed; 403 for anyone but the uploader; 409
+ * once the record took the file or stopped taking evidence.
+ */
+export async function removeEvidenceDocument(
+  session: Session,
+  kind: EvidenceKind,
+  ownerId: string,
+  documentId: string,
+): Promise<void> {
+  const path = `${evidencePath(kind, ownerId)}/${seg(documentId)}`;
+  const res = await apiFetch(session, path, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new ApiError(res.status, `DELETE ${path} failed with ${res.status}`, await readBody(res));
+  }
+}
+
 /** `POST /v1/documents/:id/versions/:versionId/link`: a 60-second, single-use signed link. */
 export function issueDocumentLink(
   session: Session,
