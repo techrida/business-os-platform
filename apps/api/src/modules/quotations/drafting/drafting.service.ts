@@ -68,6 +68,7 @@ import { NO_LIMIT, type Reader, searchPage } from '../../../platform/list';
 import { withTx, type Actor, type TxScope, READ_ONLY } from '../../../platform/db/tx';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { draftReachPrincipal } from '../../opportunities/quotation-draft-reach';
 import { quotationRef } from '../preview/quotation-preview.service';
 import { personNames } from '../../../platform/users/person-names';
 import { PricingService } from '../pricing/pricing.service';
@@ -991,10 +992,11 @@ export class DraftingService {
 
   /**
    * The opportunity of the acting entity the caller may draft on, locked so its stage cannot move under the
-   * create: `crm.opportunity.read` reaching it as owner, department, lead creator (FX-Q1) or a broader scope, but
-   * NOT through a follow-up assigned to the caller (FX-Q2): that lets them read and complete the follow-up, not
-   * start a quotation whose sending moves someone else's deal. The record-check twin is `mayDraftQuotationOn`
-   * (OpportunityDto.canDraftQuotation). An opportunity out of that reach is a 404 like a missing one.
+   * create: `crm.opportunity.read` reaching it as owner, department or lead creator (FX-Q1, R4a Q4 a). Reading
+   * every deal does not count (`draftReachPrincipal` caps it at department), nor does a follow-up assigned to the
+   * caller (FX-Q2): that lets them read and complete the follow-up, not start a quotation whose sending moves
+   * someone else's deal. The record-check twin is `mayStartQuotationOn` (OpportunityDto.canDraftQuotation). An
+   * opportunity out of that reach is a 404 like a missing one.
    */
   private async findOpportunity(
     tx: DbTransaction,
@@ -1010,7 +1012,9 @@ export class DraftingService {
           opportunities,
           and(
             eq(opportunities.id, id),
-            scopeWhereFor(principal, opportunities, 'crm.opportunity.read', { assignees: false }),
+            scopeWhereFor(draftReachPrincipal(principal), opportunities, 'crm.opportunity.read', {
+              assignees: false,
+            }),
           ),
         ),
       )
