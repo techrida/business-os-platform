@@ -22,7 +22,7 @@ import { type Actor, type TxScope, systemActor, withTx } from '../db/tx';
 import { configureTx } from '../db/tx-settings';
 import { UserLocks } from './user-locks';
 import { UserMirror } from './user-mirror';
-import { type StatusAction, UserStatusService } from './user-status';
+import { type UserStatusAction, UserStatusService } from './user-status';
 import type { UsersSyncData } from './users.constants';
 import { FakeZitadel, fakeQueue, zUser } from './users.fakes';
 import { UsersService } from './users.service';
@@ -411,7 +411,7 @@ describe('Admin status actions outside any tx against Postgres (FU1)', () => {
     label: string;
     initial: 'active' | 'inactive';
     lock?: UserUpdate['lock'];
-    action: StatusAction;
+    action: UserStatusAction;
     expectedCalls: string[];
     expectedAudit: string;
   }>([
@@ -501,7 +501,7 @@ describe('Admin status actions outside any tx against Postgres (FU1)', () => {
     label: string;
     initial: 'active' | 'inactive';
     lock?: UserUpdate['lock'];
-    action: StatusAction;
+    action: UserStatusAction;
     expectedCalls: string[];
   }>([
     {
