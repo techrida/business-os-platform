@@ -10,6 +10,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { ApprovalsModule } from '../../approvals/approvals.module';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PoAmendmentSubject } from './po-amendment.subject';
+import { PoVendorChangeSubject } from './po-vendor-change.subject';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
@@ -36,5 +37,6 @@ export class PurchaseOrdersModule implements OnModuleInit {
     this.approvals.registerSubject(
       new PoAmendmentSubject(this.audit, this.approvals, undefined, this.renderNudge),
     );
+    this.approvals.registerSubject(new PoVendorChangeSubject(this.audit, this.approvals));
   }
 }
