@@ -27,7 +27,7 @@ async function logOneRequest(path: string): Promise<string> {
   const server = createServer((req: ExpressLikeRequest, res) => {
     // Express sets both before nestjs-pino's middleware runs; the std serializer copies them.
     const url = new URL(req.url ?? '/', 'http://localhost');
-    req.originalUrl = req.url;
+    req.originalUrl = req.url ?? '';
     req.query = Object.fromEntries(url.searchParams);
     log(req, res);
     res.end('ok');

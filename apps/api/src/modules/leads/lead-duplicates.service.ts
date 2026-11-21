@@ -37,11 +37,11 @@ const CUSTOMER_CANDIDATES = 25;
 
 /** The typed fields, normalised; a field too short to be useful is undefined and never looked up. */
 export interface DuplicateProbe {
-  company?: string;
-  name?: string;
-  email?: string;
+  company?: string | undefined;
+  name?: string | undefined;
+  email?: string | undefined;
   /** The last 7 to 10 digits of the typed phone. */
-  phoneTail?: string;
+  phoneTail?: string | undefined;
 }
 
 /** Normalises the query; null when no field is long enough to look up. */
