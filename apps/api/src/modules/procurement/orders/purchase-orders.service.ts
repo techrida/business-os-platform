@@ -9,7 +9,8 @@
 //   then a conditional UPDATE on the status it read;
 // - "one legal entity at a time": every read and write is scoped(); another entity's PO is a 404;
 // - "deny by default": the reads are open to issuers and, read-only, to bill and receipt roles on the orders their
-//   grant reaches (F1-Q52, po-read-access.ts); the writes need procurement.po.issue at route level.
+//   grant reaches (F1-Q52, po-read-access.ts), and the detail to an approver of an approval about the order
+//   (R4f Q1 b); the writes need procurement.po.issue at route level.
 // A change of vendor is not an amendment (the body has no vendor field): a draft changes vendor through
 // changeVendor() (F1-Q40 a); an issued order is cancelled and raised again (cancelAndRecreate(), one transaction).
 import { WorkflowSpecSchema, canTransitionPo, type PoStatus } from '@bos/contracts';
@@ -43,12 +44,15 @@ import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
 import { emergencyReviewDue, requestEmergencyReview } from '../receipts/emergency-review';
 import { purchaseRequestRef } from '../requests/purchase-requests.service';
 import {
+  approvesPo,
   assertHoldsPoRead,
+  holdsPoRead,
   mayReadPo,
   mayReceivePo,
   poReadWhere,
   requestFactsColumns,
   requestOf,
+  type PoRequestFacts,
 } from './po-read-access';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
@@ -372,10 +376,33 @@ export class PurchaseOrdersService {
     );
   }
 
-  /** 404 outside the acting entity, and for a read-only reader whose grant does not reach the order (F1-Q52). */
+  /**
+   * 404 outside the acting entity, and for staff whose grant does not reach the order (F1-Q52) unless they approve
+   * an approval about it (approvesPo, R4f Q1 b): that opens this detail only, with the `can` flags of their own
+   * grants. Staff with no grant and no such approval get a 404 here too, so the answer never says whether the order
+   * exists; a portal or inactive caller is still a 403.
+   */
   async get(id: string): Promise<PurchaseOrderDto> {
+    const { scope, principal } = this.caller.current();
+    if (holdsPoRead(principal)) {
+      const dto = await this.detail(id, (request) => mayReadPo(principal, request));
+      if (dto !== undefined) return dto;
+    } else if (principal.status !== 'active' || principal.orgKind !== 'staff') {
+      assertHoldsPoRead(principal);
+    }
+    if (await approvesPo(this.db, scope, principal, id, () => this.approvals.inbox())) {
+      const dto = await this.detail(id, () => true);
+      if (dto !== undefined) return dto;
+    }
+    throw notFound();
+  }
+
+  /** The detail of order `id` in the acting entity, or undefined when it is not there or `reads` refuses its request. */
+  private async detail(
+    id: string,
+    reads: (request: PoRequestFacts) => boolean,
+  ): Promise<PurchaseOrderDto | undefined> {
     const { scope, actor, principal } = this.caller.current();
-    assertHoldsPoRead(principal);
     return withTx(
       this.db,
       scope,
@@ -392,7 +419,7 @@ export class PurchaseOrdersService {
           .innerJoin(vendors, vendorOf(purchaseOrders))
           .innerJoin(purchaseRequests, requestOf(purchaseOrders))
           .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
-        if (row === undefined || !mayReadPo(principal, row.request)) throw notFound();
+        if (row === undefined || !reads(row.request)) return undefined;
         const lines = await linesOf(tx, scope, id, false);
         // A draft from the commitment route has no lines until issue copies them from the approved quotation:
         // show those as the lines it will be issued with, from the same source issue() reads.

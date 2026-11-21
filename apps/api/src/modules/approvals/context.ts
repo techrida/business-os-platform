@@ -92,6 +92,9 @@ export async function readableDocuments(
         filename: documentVersions.filename,
         detectedMime: documentVersions.detectedMime,
         status: documentVersions.status,
+        sizeBytes: documentVersions.sizeBytes,
+        uploadedBy: documentVersions.uploadedBy,
+        createdAt: documentVersions.createdAt,
       })
       .from(documentVersions)
       .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, id)))
@@ -103,6 +106,9 @@ export async function readableDocuments(
       versionId: newest.id,
       filename: newest.filename,
       detectedMime: newest.detectedMime,
+      sizeBytes: newest.sizeBytes,
+      uploadedBy: newest.uploadedBy,
+      uploadedAt: newest.createdAt.toISOString(),
     });
   }
   return out;

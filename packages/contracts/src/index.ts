@@ -6,6 +6,7 @@ export * from './audit.js';
 export * from './authz.js';
 export * from './crm.js';
 export * from './leads-duplicates.js';
+export * from './crm-reports.js';
 export * from './customer-detail.js';
 export * from './departments-admin.js';
 export * from './document-style.js';

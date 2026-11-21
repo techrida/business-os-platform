@@ -23,7 +23,9 @@ import {
   type PortalQuotationListItem,
 } from '@bos/contracts';
 import {
+  ConflictException,
   ForbiddenException,
+  HttpException,
   Inject,
   Injectable,
   NotFoundException,
@@ -47,6 +49,7 @@ import {
   IssuerIncompleteError,
   parseStoredDocumentStyle,
 } from '../quotations/render/issuer';
+import { quotationRenderGivenUp } from '../quotations/render/render-retry';
 import { assertCustomerCaller, PortalCaller } from './portal.caller';
 import {
   PORTAL_QUOTATION_STORE,
@@ -64,6 +67,21 @@ export function isPortalVisible(v: Pick<PortalVersionHead, 'status' | 'rejection
 }
 
 const notFound = () => new NotFoundException('Quotation not found');
+/** The PDF of a visible version is still being prepared (rendered soon, or its file awaits the scan). */
+const pdfNotReady = () =>
+  new ConflictException({
+    code: 'quotation_pdf_not_ready',
+    message: 'The PDF of this quotation is not ready yet',
+  });
+/** 424 Failed Dependency: the PDF will not come without the team (render given up, or the scan refused the file). */
+const pdfFailed = () =>
+  new HttpException(
+    { code: 'quotation_pdf_failed', message: 'The PDF could not be prepared' },
+    424,
+  );
+
+/** The PDF of a visible version as the customer sees it: one answer for the view and the file route. */
+export type PortalPdfState = 'ready' | 'pending' | 'failed';
 
 type DisplaySettings = Pick<SettingsService, 'get'>;
 
@@ -204,18 +222,25 @@ export class PortalService {
     const display =
       frozenDisplay(source.documentStyle) ?? (await liveDisplay(this.settings, scope));
 
-    const { issuerLegalName: _legalName, documentStyle: _documentStyle, ...input } = source;
+    const {
+      issuerLegalName: _legalName,
+      documentStyle: _documentStyle,
+      renderAttempts,
+      ...input
+    } = source;
     const afterAcceptance =
       source.version.status === 'accepted'
         ? await this.afterAcceptance(p, scope, versionId)
         : undefined;
+    const pdf = await this.pdfState(scope, { ...source.version, renderAttempts });
     try {
       const view = toCustomerQuotationView(
         {
           ...input,
           issuer,
           display,
-          renderedScanClean: await this.renderedScanClean(scope, source.version),
+          renderedScanClean: pdf === 'ready',
+          renderFailed: pdf === 'failed',
         },
         { purpose: 'portal' },
       );
@@ -261,24 +286,25 @@ export class PortalService {
   }
 
   /**
-   * A short-lived signed link to the frozen PDF of one version. 404 unless the version is the caller's, customer-visible
-   * and its rendered document scanned clean; the document module then re-checks the owner and the newest version's scan
-   * status itself. DocumentsService.issueLinkForOwner asks no permission (customers hold no `documents.read`, which
-   * would also show them draft versions), so this method is the whole authorization: caller, scope, visibility, scan.
-   * The link is scoped by the quotation's own tenant and entity (the selling entity), read from its row.
+   * A short-lived signed link to the frozen PDF of one version. 404 unless the version is the caller's and
+   * customer-visible; then 409 `quotation_pdf_not_ready` while the PDF is being prepared, 424 `quotation_pdf_failed`
+   * when it will not come without the team (render given up, or the scan refused the file). The document module then
+   * re-checks the owner and the newest version's scan status itself. DocumentsService.issueLinkForOwner asks no
+   * permission (customers hold no `documents.read`, which would also show them draft versions), so this method is the
+   * whole authorization: caller, scope, visibility, scan. The link is scoped by the quotation's own tenant and entity
+   * (the selling entity), read from its row.
    */
   async quotationPdfLink(versionId: string): Promise<SignedLinkDto> {
     const p = this.caller.current();
     assertCustomerCaller(p);
     const head = await this.store.loadDocumentHead(p, versionId);
+    // Visibility first: a foreign or hidden version is the same plain 404 whatever its PDF is doing.
     if (head === undefined || !isPortalVisible(head)) throw notFound();
     const scope: TxScope = { tenantId: head.tenantId, organizationId: head.organizationId };
+    const state = await this.pdfState(scope, { id: versionId, ...head });
     const { renderedDocumentId } = head;
-    if (
-      renderedDocumentId === null ||
-      !(await this.renderedScanClean(scope, { id: versionId, ...head }))
-    ) {
-      throw notFound();
+    if (state !== 'ready' || renderedDocumentId === null) {
+      throw state === 'failed' ? pdfFailed() : pdfNotReady();
     }
     return this.documents.issueLinkForOwner(
       scope,
@@ -288,21 +314,32 @@ export class PortalService {
   }
 
   /**
-   * True when the newest not-rejected version of the rendered document is `clean`. Read through listForOwner,
-   * which has no permission check of its own: this module authorized the caller already.
+   * Where the PDF of a visible version stands. Failed: the render was given up, or the newest upload of the rendered
+   * document was refused by the scan (infected, scan_failed) or there is none left (removed, or only rejected uploads),
+   * since nothing renders a `rendered` version again without the team. Pending: not rendered yet (a failed render with
+   * tries left included), or the file awaits its scan. Ready: the newest upload is `clean`. The uploads are read
+   * through listForOwner, which has no permission check of its own: this module authorized the caller already.
    */
-  private async renderedScanClean(
+  private async pdfState(
     scope: TxScope,
-    version: { id: string; renderState: string; renderedDocumentId: string | null },
-  ): Promise<boolean> {
-    if (version.renderState !== 'rendered' || version.renderedDocumentId === null) return false;
+    version: {
+      id: string;
+      renderState: string;
+      renderAttempts: number;
+      renderedDocumentId: string | null;
+    },
+  ): Promise<PortalPdfState> {
+    if (quotationRenderGivenUp(version)) return 'failed';
+    if (version.renderState !== 'rendered' || version.renderedDocumentId === null) return 'pending';
     const versions = await this.documents.listForOwner(scope, QUOTATION_OWNER_TYPE, version.id);
     let newest: (typeof versions)[number] | undefined;
     for (const v of versions) {
       if (v.documentId !== version.renderedDocumentId || v.status === 'rejected') continue;
       if (newest === undefined || v.version > newest.version) newest = v;
     }
-    return newest?.status === 'clean';
+    if (newest?.status === 'clean') return 'ready';
+    if (newest?.status === 'awaiting_content' || newest?.status === 'quarantined') return 'pending';
+    return 'failed';
   }
 }
 

@@ -450,6 +450,12 @@ export const CustomerInvoiceViewSchema = z.strictObject({
     .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })
     .nullable(),
   /**
+   * True when the PDF could not be prepared (its render was given up, or the virus scan refused the file); our team
+   * has been told. With `file` null and this false, the PDF is still being prepared. Optional for older answers; the
+   * API always sends it.
+   */
+  renderFailed: z.boolean().optional(),
+  /**
    * The number grouping and date pattern the original PDF was drawn with (print 1). Null when it was never printed
    * or printed before the format was stored: then draw with `GET /v1/portal/display`. Optional for older answers.
    */
