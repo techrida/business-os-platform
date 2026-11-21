@@ -50,6 +50,8 @@ function pdfAvailability(invoice: InvoiceDetail['invoice']) {
  * The issued invoice's payment position, derived by the server from its allocations and credit notes (plan A8), read
  * from the customer statement this invoice appears on. Null for a draft, a proforma or a credit note (they have no
  * open item), for a role without `ar.read`, or when the statement does not load: the rest of the page stands.
+ * It feeds the badge and the Open amount; Record payment reads the invoice's own `settlement` and comes here only
+ * when an older API answer leaves that out.
  */
 async function settlementOf(
   session: Session,
@@ -213,11 +215,17 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     invoicePromisesOf(session, invoice, can),
   ]);
   const payment = settlement === null ? null : settlementMeta(settlement.settlement);
-  // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing.
+  // Only while something is still owed, as the server's settlement says; unknown settlement offers nothing. The
+  // invoice read carries it, so recording a payment needs no ar.read; null there is the server saying there is no
+  // open item. Only an older API answer without it falls back to the statement row.
   const recordPayment = recordPaymentHref(
     { ...invoice, can: detail.can },
     can,
-    settlement === null ? null : settlement.settlement,
+    detail.settlement !== undefined
+      ? detail.settlement
+      : settlement === null
+        ? null
+        : settlement.settlement,
   );
 
   return (
