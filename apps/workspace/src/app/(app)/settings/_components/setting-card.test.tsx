@@ -106,12 +106,23 @@ describe('SettingCard markup and typed controls', () => {
     expect(save).toContain('disabled');
   });
 
-  it('renders numeric inputs with contract min/max/step attributes', () => {
+  it('renders a percent setting as the shared percent input: a labelled box and a posted plain value', () => {
     const html = render([vat(true)]);
-    expect(html).toContain('type="number"');
-    expect(html).toContain('min="0"');
-    expect(html).toContain('max="100"');
-    expect(html).toContain('step="0.01"');
+    // The 0-100 bounds and 2-decimal step are enforced while typing (settings-form.test.tsx).
+    expect(html).not.toContain('type="number"');
+    const labelFor = html.match(
+      /<label[^>]*for="([^"]+)"[^>]*>Default VAT rate \(%\)<\/label>/,
+    )?.[1];
+    expect(labelFor).toBeDefined();
+    const box = html.match(new RegExp(`<input[^>]*id="${labelFor}"[^>]*>`))?.[0] ?? '';
+    expect(box).toContain('type="text"');
+    expect(box).toContain('inputMode="decimal"');
+    expect(box).toContain('value="13"');
+    expect(box).not.toContain('name=');
+    const hidden = html.match(/<input[^>]*name="v:tax\.vat_rate"[^>]*>/)?.[0] ?? '';
+    expect(hidden).toContain('type="hidden"');
+    expect(hidden).toContain('value="13"');
+    expect(html).toContain('>%</span>');
   });
 
   it('renders SLA as flat labelled typed controls with no JSON and no fieldset nesting', () => {

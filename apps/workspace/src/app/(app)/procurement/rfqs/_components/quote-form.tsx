@@ -1,12 +1,14 @@
 'use client';
 
-import { type Currency, type TaxCode } from '@bos/contracts';
+import { CURRENCIES, type Currency, type TaxCode } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
+import { DatePicker } from '@/components/ui/date-picker';
 import { EvidenceUpload } from '@/components/ui/evidence-upload';
 import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
+import { DecimalInput, MoneyInput, QuantityInput } from '@/components/ui/number-input';
 import { FactList, Panel } from '@/components/ui/panel';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -24,6 +26,10 @@ import type { VendorOption } from './rfq-form';
 import rows from './line-rows.module.css';
 
 const WIDE = styles.wide ?? '';
+
+/** The picked currency for the number boxes' grouping and prefix; NPR until a known one is chosen. */
+const asCurrency = (value: string): Currency =>
+  (CURRENCIES as readonly string[]).includes(value) ? (value as Currency) : 'NPR';
 
 export interface PrLineOption {
   id: string;
@@ -262,25 +268,25 @@ export function QuoteForm({
           </Field>
           <Field label="Valid until" hint="Optional." error={err.validUntil}>
             {(control) => (
-              <Input
-                type="date"
+              <DatePicker
+                {...control}
                 name="validUntil"
                 value={values.validUntil}
-                onChange={set('validUntil')}
-                {...control}
+                onChange={(iso) => set('validUntil')({ target: { value: iso } })}
               />
             )}
           </Field>
           <Field label="Delivery time (days)" hint="Optional." error={err.deliveryDays}>
             {(control) => (
-              <Input
-                name="deliveryDays"
-                value={values.deliveryDays}
-                onChange={set('deliveryDays')}
-                inputMode="numeric"
-                autoComplete="off"
-                className={styles.numeric}
+              <DecimalInput
                 {...control}
+                name="deliveryDays"
+                intDigits={4}
+                scale={0}
+                min="0"
+                max="3650"
+                value={values.deliveryDays}
+                onValueChange={(plain) => set('deliveryDays')({ target: { value: plain } })}
               />
             )}
           </Field>
@@ -366,15 +372,14 @@ export function QuoteForm({
                     </div>
                     <Field label={lineLabel('Quantity')} error={err[`lines.${i}.quantity`]}>
                       {(control) => (
-                        <Input
-                          name={`lines.${i}.quantity`}
-                          value={line.quantity}
-                          onChange={(e) => setLine(i, { quantity: e.target.value })}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          className={styles.numeric}
-                          disabled={!line.include}
+                        <QuantityInput
                           {...control}
+                          name={`lines.${i}.quantity`}
+                          uom={pl.uom}
+                          currency={asCurrency(values.currency)}
+                          value={line.quantity}
+                          onValueChange={(plain) => setLine(i, { quantity: plain })}
+                          disabled={!line.include}
                         />
                       )}
                     </Field>
@@ -383,15 +388,13 @@ export function QuoteForm({
                       error={err[`lines.${i}.unitPrice`]}
                     >
                       {(control) => (
-                        <Input
-                          name={`lines.${i}.unitPrice`}
-                          value={line.unitPrice}
-                          onChange={(e) => setLine(i, { unitPrice: e.target.value })}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          className={styles.numeric}
-                          disabled={!line.include}
+                        <MoneyInput
                           {...control}
+                          name={`lines.${i}.unitPrice`}
+                          currency={asCurrency(values.currency)}
+                          value={line.unitPrice}
+                          onValueChange={(plain) => setLine(i, { unitPrice: plain })}
+                          disabled={!line.include}
                         />
                       )}
                     </Field>

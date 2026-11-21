@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { DecimalInput } from '@/components/ui/number-input';
 import { toast } from '@/components/ui/toast';
 
 import styles from '../../requests/requests.module.css';
@@ -118,14 +119,16 @@ export function ScoreForm({
               </Field>
               <Field label={`Score ${i + 1} (0 to 100)`} error={err[`scores.${i}.score`]}>
                 {(control) => (
-                  <Input
-                    name={`scores.${i}.score`}
-                    value={row.score}
-                    onChange={(e) => setRow(i, { score: e.target.value })}
-                    inputMode="decimal"
-                    autoComplete="off"
-                    className={styles.numeric}
+                  // The same bounds the form's own check uses: 0 to 100 with up to 2 decimals.
+                  <DecimalInput
                     {...control}
+                    name={`scores.${i}.score`}
+                    intDigits={3}
+                    scale={2}
+                    min="0"
+                    max="100"
+                    value={row.score}
+                    onValueChange={(plain) => setRow(i, { score: plain })}
                   />
                 )}
               </Field>

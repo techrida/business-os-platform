@@ -1,6 +1,7 @@
 'use client';
 
 import { getLocalTimeZone, isToday, parseDate, type CalendarDate } from '@internationalized/date';
+import { useRef } from 'react';
 import {
   Button,
   Calendar,
@@ -19,6 +20,7 @@ import {
 } from 'react-aria-components';
 
 import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
+import { useFormReset } from './use-form-reset';
 import styles from './date-picker.module.css';
 
 /** `YYYY-MM-DD` to a calendar date, or null for an empty or malformed value. */
@@ -99,6 +101,10 @@ export function DatePicker({
   ...aria
 }: DatePickerProps) {
   const contextContainer = usePopoverContainer();
+  const rootRef = useRef<HTMLDivElement>(null);
+  // React 19 resets the form after every function action; React Aria then reports its reset as a
+  // change, which would put a controlled parent back to its first value. Swallow that report.
+  const isResetting = useFormReset(rootRef, () => {});
   const container = popoverContainer ?? contextContainer;
   const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
   const minValue = toCalendarDate(min);
@@ -121,7 +127,11 @@ export function DatePicker({
   return (
     <AriaDatePicker
       {...optional}
-      onChange={(next) => onChange?.(next ? next.toString() : '')}
+      ref={rootRef}
+      onChange={(next) => {
+        if (value !== undefined && isResetting()) return;
+        onChange?.(next ? next.toString() : '');
+      }}
       minValue={minValue}
       maxValue={maxValue}
       className={[styles.picker, className].filter(Boolean).join(' ')}
