@@ -134,7 +134,7 @@ class RepairableZitadel {
     try {
       applyZitadelStatusTransition(this.users.get(userId), call);
     } catch (error) {
-      return Promise.reject(error);
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     this.statusCalls.push(`${call}:${userId}`);
     return Promise.resolve();
