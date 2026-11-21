@@ -415,7 +415,12 @@ export class VendorBillsService {
       return await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency(
           tx,
-          { command: 'payables.bill.create', key: idempotencyKey, body },
+          {
+            command: 'payables.bill.create',
+            key: idempotencyKey,
+            // The entity is part of the request, so a retry made while acting in another entity is refused, not replayed.
+            body: { ...body, organizationId: scope.organizationId },
+          },
           async () => {
             const bill =
               body.sourceSubmissionId === undefined
@@ -467,7 +472,7 @@ export class VendorBillsService {
           {
             command: 'payables.bill.convert_submission',
             key: idempotencyKey,
-            body: { submissionId, body },
+            body: { submissionId, body, organizationId: scope.organizationId },
           },
           async () => {
             const sub = await this.lockSubmission(tx, scope, submissionId);

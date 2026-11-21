@@ -459,7 +459,12 @@ export class PaymentRequestsService {
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
-        { command: 'payables.payment_request.create', key: idempotencyKey, body },
+        {
+          command: 'payables.payment_request.create',
+          key: idempotencyKey,
+          // The entity is part of the request, so a retry made while acting in another entity is refused, not replayed.
+          body: { ...body, organizationId: scope.organizationId },
+        },
         async () => {
           if (body.paymentType !== 'settlement') {
             throw unprocessable(
