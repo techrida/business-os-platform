@@ -277,6 +277,14 @@ export const InvoiceDetailSchema = z.object({
    * so an older API answer still parses.
    */
   issueBlockedBySod: z.boolean().optional(),
+  /**
+   * The derived settlement, as on a list row: set by `GET /v1/invoices/:id` for an issued tax invoice or debit note,
+   * null for anything without an open item. The command answers leave it out; optional so an older API answer still
+   * parses.
+   */
+  settlement: SettlementStatusSchema.nullable().optional(),
+  /** What is still owed, in the invoice's currency; null exactly when `settlement` is. */
+  openAmount: DecimalString.nullable().optional(),
   /** Set by `GET /v1/invoices/:id`; the command answers leave it out. */
   can: InvoiceCanSchema.optional(),
 });
@@ -441,6 +449,12 @@ export const CustomerInvoiceViewSchema = z.strictObject({
   file: z
     .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })
     .nullable(),
+  /**
+   * True when the PDF could not be prepared (its render was given up, or the virus scan refused the file); our team
+   * has been told. With `file` null and this false, the PDF is still being prepared. Optional for older answers; the
+   * API always sends it.
+   */
+  renderFailed: z.boolean().optional(),
   /**
    * The number grouping and date pattern the original PDF was drawn with (print 1). Null when it was never printed
    * or printed before the format was stored: then draw with `GET /v1/portal/display`. Optional for older answers.

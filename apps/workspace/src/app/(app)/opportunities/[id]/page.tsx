@@ -23,6 +23,7 @@ import { moneyOrNull } from '@/components/p2/crm/format';
 import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
 import { PutOnHoldDialog } from '@/components/p2/crm/put-on-hold-dialog';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
+import crmStyles from '@/components/p2/crm/crm.module.css';
 import { StageConfirmDialog } from '@/components/p2/crm/stage-confirm-dialog';
 import {
   resolvedMoves,
@@ -32,6 +33,7 @@ import {
   type Move,
 } from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
+import { startQuotationBlocker } from '@/components/p2/quotations/opportunity-gate';
 import {
   editQuotationHref,
   newQuotationHref,
@@ -90,7 +92,7 @@ interface PrimaryStageAction {
 }
 
 function primaryOpportunityMove(
-  opp: Pick<OpportunityDto, 'stage' | 'number'>,
+  opp: Pick<OpportunityDto, 'stage' | 'number' | 'heldFromStage'>,
   moves: readonly Move[],
 ): PrimaryStageAction | null {
   const has = (stage: string) => moves.some((m) => m.stage === stage);
@@ -128,15 +130,19 @@ function primaryOpportunityMove(
     };
   }
   // A held deal resumes only to the stage it was held at (F1-Q53): the server sends that one move.
+  // A hold older than that has no recorded stage, so the words name none.
   const resume = resumeMove(opp.stage, moves);
   if (resume) {
+    const named = opp.heldFromStage ? resume.label : null;
     return {
       stage: resume.stage,
       triggerLabel: 'Resume',
       title: 'Resume this opportunity?',
-      description: `${opp.number} will move from On Hold back to ${resume.label}.`,
+      description: named
+        ? `${opp.number} will move from On Hold back to ${named}.`
+        : `${opp.number} will be taken off hold.`,
       confirmLabel: 'Resume opportunity',
-      successMessage: `Moved to ${resume.label}.`,
+      successMessage: named ? `Moved to ${named}.` : 'Opportunity resumed.',
       errorMessage: 'The opportunity could not be resumed.',
     };
   }
@@ -158,22 +164,26 @@ function primaryOpportunityMove(
 const SENT_STATUSES: ReadonlySet<string> = new Set(['sent', 'accepted', 'rejected', 'expired']);
 
 /**
- * The stages this deal has actually reached. The API records no stage history for deals, so only
- * what the record proves counts: Qualified (deals start there), the stage it stands at or was held
- * at, Quotation Sent once a quotation went out, and the stages the state machine says it passed
- * through (`stagesBefore`). A stage it may have skipped reads "Not recorded", never "Reached".
+ * The stages this deal has actually reached. Stage history starts with R4a Q13 and is listed on its
+ * own, so the timeline counts only what the record proves: Qualified (deals start there), the stage
+ * it stands at or was held at, Quotation Sent once a quotation went out, and the stages the state
+ * machine says it passed through (`stagesBefore`). A stage it may have skipped reads "Not recorded",
+ * never "Reached". A hold older than F1-Q53 has no recorded stage, so it proves nothing past Qualified.
  */
 function opportunityTimeline(
   opp: Pick<OpportunityDto, 'stage' | 'heldFromStage'>,
   quotations: readonly Pick<QuotationListItem, 'status'>[],
 ): TimelineStep[] {
-  const heldAt = opp.stage === 'on_hold' ? (opp.heldFromStage ?? 'negotiation') : null;
+  const held = opp.stage === 'on_hold';
+  const heldAt = held ? (opp.heldFromStage ?? null) : null;
   const reached = new Set<string>(['qualified']);
   const add = (stage: string) => {
     reached.add(stage);
     for (const before of stagesBefore('opportunity', stage)) reached.add(before);
   };
-  add(opp.stage);
+  // On Hold says nothing by itself about the stage before it; only a recorded held-from stage does.
+  if (held) reached.add(opp.stage);
+  else add(opp.stage);
   if (heldAt) add(heldAt);
   if (opp.stage === 'won' || quotations.some((q) => SENT_STATUSES.has(q.status))) {
     add('quotation_sent');
@@ -188,7 +198,8 @@ function opportunityTimeline(
       return { key: stage, title, status: won ? 'Won' : 'Current', tone: won ? 'done' : 'current' };
     }
     if (reached.has(stage)) return { key: stage, title, status: 'Reached', tone: 'done' };
-    return index < furthest
+    // The unknown stage of an old hold could be any open one, so none of them reads "Not yet".
+    return index < furthest || (held && heldAt === null && stage !== 'won')
       ? { key: stage, title, status: 'Not recorded', tone: 'muted' }
       : { key: stage, title, status: 'Not yet', tone: 'upcoming' };
   });
@@ -200,11 +211,15 @@ function opportunityTimeline(
   return steps;
 }
 
+/**
+ * `resume` is null when the caller cannot resume the deal; its `label` is null when the hold has no recorded
+ * stage (a hold older than F1-Q53), and then no stage is named.
+ */
 function opportunityStageMessage(
   stage: OpportunityDto['stage'],
   canEdit: boolean,
   canReopen: boolean,
-  resumeLabel: string | null,
+  resume: { label: string | null } | null,
 ): string {
   if (!canEdit) return 'You have read-only access to this opportunity.';
   if (stage === 'won') return 'This opportunity is won. Its stage is final.';
@@ -214,9 +229,10 @@ function opportunityStageMessage(
       : 'This opportunity is lost. Reopening needs reopen access.';
   }
   if (stage === 'on_hold') {
-    return resumeLabel
-      ? `This opportunity is on hold. Use Resume in the header to return it to ${resumeLabel}.`
-      : 'This opportunity is on hold.';
+    if (resume === null) return 'This opportunity is on hold.';
+    return resume.label
+      ? `This opportunity is on hold. Use Resume in the header to return it to ${resume.label}.`
+      : 'This opportunity is on hold. Use Resume in the header to take it off hold.';
   }
   return 'Sending and accepting quotations update the stage automatically.';
 }
@@ -284,6 +300,33 @@ function CreditHoldBanner({
         ? 'Override the hold to let it go ahead, or wait for a payment to bring the customer under the limit.'
         : 'Someone with credit override access can override the hold. A payment that brings the customer under the limit also lifts it.'}
     </Alert>
+  );
+}
+
+/**
+ * Every recorded stage change, oldest first (R4a Q13): when, who, and from which stage to which. A move no person
+ * made reads System. Recording started with this list, so an older deal may have none yet.
+ */
+function StageHistory({ entries }: { entries: NonNullable<OpportunityDto['stageHistory']> }) {
+  if (entries.length === 0) {
+    return <p className={styles.quiet}>No stage changes recorded yet.</p>;
+  }
+  return (
+    <ol className={crmStyles.timeline} aria-label="Stage changes">
+      {entries.map((entry, index) => (
+        <li key={`${entry.at}-${index}`} className={crmStyles.entry}>
+          <div className={crmStyles.entryHead}>
+            <span className={crmStyles.entryTitle}>
+              {`${stageLabel('opportunity', entry.from)} to ${stageLabel('opportunity', entry.to)}`}
+            </span>
+          </div>
+          <p className={crmStyles.entryWhen}>
+            <time dateTime={entry.at}>{when(entry.at)}</time>
+            {` · ${entry.actorName ?? 'System'}`}
+          </p>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -371,6 +414,8 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   // Quotations follow the server's own answer for this deal (FX-Q1, FX-Q2): quotation.draft plus reach
   // as owner, department or lead creator. An assigned follow-up alone does not count; omitted means no.
   const canDraft = opp.canDraftQuotation === true;
+  // Said in place of New quotation on an open deal the server refuses (R4a Q4 a).
+  const draftBlocker = startQuotationBlocker(opp);
   const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
   const moves = resolvedMoves(
     'opportunity',
@@ -468,9 +513,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           actions={
             <>
               {!canDraft ? (
-                <LinkButton href={quotesHref} variant="secondary">
-                  View quotations
-                </LinkButton>
+                <>
+                  {draftBlocker !== null ? (
+                    <span className={styles.quiet}>{draftBlocker}</span>
+                  ) : null}
+                  <LinkButton href={quotesHref} variant="secondary">
+                    View quotations
+                  </LinkButton>
+                </>
               ) : entry.kind === 'resume' ? (
                 <>
                   <LinkButton href={quotesHref} variant="secondary">
@@ -580,7 +630,9 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
               opp.stage,
               canEdit,
               moves.some((move) => move.stage === 'qualified'),
-              resumeMove(opp.stage, moves)?.label ?? null,
+              resumeMove(opp.stage, moves)
+                ? { label: opp.heldFromStage ? stageLabel('opportunity', opp.heldFromStage) : null }
+                : null,
             )}
           </p>
         </div>
@@ -596,6 +648,10 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           )}
           className={styles.facts ?? ''}
         />
+      </Panel>
+
+      <Panel title="Stage history" className={styles.summary}>
+        <StageHistory entries={opp.stageHistory ?? []} />
       </Panel>
 
       <Panel title="Quotations" className={styles.records}>

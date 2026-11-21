@@ -256,6 +256,15 @@ describe('the purchase order list', () => {
     expect(out).toContain('PO-2082-0001');
   });
 
+  it('leaves the cards out when the list itself fails, even though the counts loaded', async () => {
+    api.listPurchaseOrdersPage.mockImplementation((_s: unknown, query: { limit: number }) =>
+      query.limit === 1 ? Promise.resolve(page([], 3)) : Promise.reject(apiError(500)),
+    );
+    const out = await list();
+    expect(out).toContain('Purchase orders did not load');
+    expect(out).not.toContain('Purchase order summary');
+  });
+
   it('ends each row with the status and a View link named after the order', async () => {
     api.listPurchaseOrdersPage.mockResolvedValue(
       page([order(), order({ id: LINE, number: 'PO-2082-0002' })]),
