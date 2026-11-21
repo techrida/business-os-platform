@@ -1,4 +1,9 @@
-import { InvoiceDetailSchema, InvoiceSettlementSchema, type InvoiceDetail } from '@bos/contracts';
+import {
+  InvoiceDetailSchema,
+  InvoiceSettlementSchema,
+  PaymentPromiseListSchema,
+  type InvoiceDetail,
+} from '@bos/contracts';
 import { DEFAULT_NUMBER_SYSTEMS } from '@bos/locale';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -674,5 +679,65 @@ describe('invoice detail under the per-invoice can flags', () => {
     const out = await render();
     expect(out).toMatch(NOTE);
     expect(out).toContain(RECORD);
+  });
+});
+
+describe('promise to pay card', () => {
+  const PROMISES = `/v1/receivables/invoices/${ID}/promises`;
+  /** `GET .../promises` as the API answers it, checked against the contract; every other call answers nothing. */
+  function promisesAnswer(res: () => Response) {
+    mocks.apiFetch.mockImplementation((_session: unknown, path: string) =>
+      path === PROMISES ? Promise.resolve(res()) : Promise.resolve(undefined),
+    );
+  }
+  const list = PaymentPromiseListSchema.parse({
+    items: [
+      {
+        id: '99999999-9999-4999-8999-999999999999',
+        invoiceId: ID,
+        promisedDate: '2026-12-01',
+        note: 'Pays after the harvest sale',
+        status: 'open',
+        recordedByUserId: '55555555-5555-4555-8555-555555555555',
+        missedAt: null,
+        collectionActivityId: null,
+        createdAt: '2026-11-20T04:00:00.000Z',
+        recordedByName: 'Asha Rai',
+        updatedAt: '2026-11-20T04:00:00.000Z',
+      },
+    ],
+    can: { record: true, reason: null },
+  });
+  const promiseCalls = () =>
+    mocks.apiFetch.mock.calls.filter((call: unknown[]) => call[1] === PROMISES);
+
+  it("shows the open promise and Record promise from the API's list on an issued tax invoice", async () => {
+    promisesAnswer(() => Response.json(list));
+    const out = textOf(await render());
+    expect(promiseCalls()).toHaveLength(1);
+    expect(out).toContain('Promise to pay');
+    expect(out).toContain('Pays after the harvest sale');
+    expect(out).toContain('Recorded by Asha Rai');
+    expect(out).toContain('Record promise');
+  });
+
+  it('leaves the card out, and the invoice standing, when the API refuses the list (403)', async () => {
+    promisesAnswer(() => Response.json({ error: { code: 'forbidden' } }, { status: 403 }));
+    const out = textOf(await render());
+    expect(promiseCalls()).toHaveLength(1);
+    expect(out).not.toContain('Promise to pay');
+    expect(out).toContain('INV-2083/84-00001');
+  });
+
+  it('asks for no promises on a draft, or for a role without ar.read', async () => {
+    promisesAnswer(() => Response.json(list));
+    mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'draft' }));
+    expect(textOf(await render())).not.toContain('Promise to pay');
+    mocks.getInvoice.mockResolvedValue(issued());
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    const out = textOf(await render());
+    expect(out).toContain('INV-2083/84-00001');
+    expect(out).not.toContain('Promise to pay');
+    expect(promiseCalls()).toHaveLength(0);
   });
 });

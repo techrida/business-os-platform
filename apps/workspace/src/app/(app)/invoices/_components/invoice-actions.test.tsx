@@ -1,5 +1,10 @@
 import type { ReactNode } from 'react';
-import type { InvoiceKind, InvoiceStatus } from '@bos/contracts';
+import {
+  InvoiceCanSchema,
+  type InvoiceCan,
+  type InvoiceKind,
+  type InvoiceStatus,
+} from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -42,7 +47,7 @@ function render(
   roles: string[],
   number: string | null = null,
 ): string {
-  const invoice = { id: ID, kind, status, number, version: 7 };
+  const invoice = { id: ID, kind, status, number, version: 7, dueDate: null, salesOrderId: null };
   return renderToStaticMarkup(
     <InvoiceActions
       invoice={invoice}
@@ -129,6 +134,8 @@ describe('a note its viewer created (TR-Q12f)', () => {
     status: 'approved' as const,
     number: null,
     version: 7,
+    dueDate: null,
+    salesOrderId: '8d0c1f2e-4b5a-4c6d-9e7f-0a1b2c3d4e5f',
   };
   const html = renderToStaticMarkup(
     <InvoiceActions
@@ -152,5 +159,129 @@ describe('a note its viewer created (TR-Q12f)', () => {
     expect(html).not.toContain('<h2>Issue ');
     expect(html.match(/name="idempotencyKey"/g)).toHaveLength(1);
     expect(html).toContain('<h2>Move debit note back to draft</h2>');
+  });
+});
+
+// The detail's `can`, through the contract, with the API's own words (invoice-mapping.ts `dueDateEditRefusal`).
+const ORDER_REASON =
+  "This invoice's due date is set when it is issued, from the sales order's credit days";
+const ORDER_ID = '8d0c1f2e-4b5a-4c6d-9e7f-0a1b2c3d4e5f';
+
+function detailCan(editDueDate: InvoiceCan['editDueDate'], over: Partial<InvoiceCan> = {}) {
+  return InvoiceCanSchema.parse({
+    submit: true,
+    issue: true,
+    discard: true,
+    notes: true,
+    recordPayment: false,
+    editDueDate,
+    ...over,
+  });
+}
+
+function renderDetail(
+  over: {
+    kind?: InvoiceKind;
+    status?: InvoiceStatus;
+    dueDate?: string | null;
+    salesOrderId?: string | null;
+    can?: InvoiceCan;
+  },
+  roles: string[] = ['accountant'],
+): string {
+  const invoice = {
+    id: ID,
+    kind: over.kind ?? ('tax_invoice' as const),
+    status: over.status ?? ('draft' as const),
+    number: null,
+    version: 7,
+    dueDate: over.dueDate ?? null,
+    salesOrderId: over.salesOrderId ?? null,
+  };
+  return renderToStaticMarkup(
+    <InvoiceActions
+      invoice={invoice}
+      gates={invoiceGates({ ...invoice, can: over.can }, permissionChecker(roles))}
+      reloadHref={`/invoices/${ID}`}
+    />,
+  );
+}
+
+describe('Edit due date', () => {
+  it('opens a date dialog on a draft that shows the current due date in AD and BS and sends the version', () => {
+    const html = renderDetail({ dueDate: '2026-11-30', can: detailCan({ allowed: true }) });
+    expect(html).toMatch(/<button[^>]*>Edit due date<\/button>/);
+    expect(html).toContain('<h2>Edit the due date of tax invoice</h2>');
+    expect(html).toContain('The due date is now 30 Nov 2026 (');
+    expect(html).toMatch(/\d{1,2} [A-Z][a-z]+ 208\d BS\)\./);
+    expect(html).toMatch(
+      /name="dueDate"[^>]*value="2026-11-30"|value="2026-11-30"[^>]*name="dueDate"/,
+    );
+    // Submit, Edit due date and Discard each carry their own form, version and key.
+    expect(html.match(/name="expectedVersion" value="7"/g)).toHaveLength(3);
+    const keys = [...html.matchAll(/name="idempotencyKey" value="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(keys).size).toBe(3);
+    expect(html).toContain('Save due date');
+  });
+
+  it('offers it on a returned invoice too', () => {
+    const html = renderDetail({ status: 'returned', can: detailCan({ allowed: true }) });
+    expect(html).toMatch(/<button[^>]*>Edit due date<\/button>/);
+    expect(html).toContain('This invoice has no due date yet.');
+  });
+
+  it("shows an order's invoice the button off, with the API's reason under it and as its tooltip", () => {
+    const html = renderDetail({
+      salesOrderId: ORDER_ID,
+      can: detailCan({ allowed: false, reason: ORDER_REASON }),
+    });
+    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Edit due date<\/button>/);
+    const described = /aria-describedby="([^"]+)"[^>]*>Edit due date/.exec(html)?.[1];
+    expect(described).toBeDefined();
+    expect(html).toContain(`id="${described ?? 'missing'}" class`);
+    expect(html).toContain(`title="${ORDER_REASON.replaceAll("'", '&#x27;')}"`);
+    expect(html).not.toContain('name="dueDate"');
+  });
+
+  it('is not offered outside draft and returned, without the draft grant, or when the grant does not reach', () => {
+    const allowed = detailCan({ allowed: true });
+    expect(renderDetail({ status: 'submitted', can: allowed })).not.toContain('Edit due date');
+    expect(renderDetail({ status: 'issued', can: allowed })).not.toContain('Edit due date');
+    expect(renderDetail({ can: allowed }, ['management'])).not.toContain('Edit due date');
+    expect(
+      renderDetail({ can: detailCan({ allowed: false, reason: 'x' }, { discard: false }) }),
+    ).not.toContain('Edit due date');
+    // A list row or an older API sends no `editDueDate`: nothing to go on, so no button.
+    expect(renderDetail({ can: detailCan(undefined) })).not.toContain('Edit due date');
+  });
+});
+
+describe('Back to draft says what happens to the approval and the due date', () => {
+  const words = (html: string) => /<h2>Move [^<]+<\/h2><p>([^<]+)<\/p>/.exec(html)?.[1] ?? '';
+
+  it('a manual tax invoice: the approval no longer counts, its due date can be changed, then submit again', () => {
+    const text = words(renderDetail({ status: 'approved' }, ['finance']));
+    expect(text).toMatch(/approval will no longer count/);
+    expect(text).toMatch(/due date can be changed/);
+    expect(text).toMatch(/submitted for approval again before it is issued/);
+    expect(text).not.toMatch(/approved again/);
+  });
+
+  it("an order's invoice and a debit note: their due date is set at issue, not edited", () => {
+    for (const html of [
+      renderDetail({ status: 'approved', salesOrderId: ORDER_ID }, ['finance']),
+      renderDetail({ status: 'approved', kind: 'debit_note' }, ['finance']),
+    ]) {
+      const text = words(html);
+      expect(text).toMatch(/due date is set when it is issued/);
+      expect(text).not.toMatch(/can be changed/);
+      expect(text).toMatch(/submitted for approval again/);
+    }
+  });
+
+  it('a credit note: nothing about a due date', () => {
+    const text = words(renderDetail({ status: 'approved', kind: 'credit_note' }, ['finance']));
+    expect(text).toMatch(/submitted for approval again/);
+    expect(text).not.toMatch(/due date/);
   });
 });
