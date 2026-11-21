@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
   openSignedFile: vi.fn(),
 }));
 
-vi.mock('@/lib/bff', () => ({ routeSession: mocks.routeSession }));
+vi.mock('@/lib/bff', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/bff')>()),
+  routeSession: mocks.routeSession,
+}));
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
@@ -144,6 +147,22 @@ describe('signedFileResponse', () => {
     const res = await signedFileResponse({ mode: 'download', issueLink });
     expect(res.status).toBe(502);
     expect(await res.text()).not.toContain(session.accessToken);
+  });
+
+  it('keeps a 503 db_busy and its wait instead of calling it a gateway fault', async () => {
+    issueLink.mockRejectedValueOnce(
+      new ApiError(503, 'busy', {
+        error: { code: 'db_busy', message: 'Busy', details: { retryAfterSeconds: 2 } },
+      }),
+    );
+    const res = await signedFileResponse({ mode: 'download', issueLink });
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('2');
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    expect(await res.text()).toBe('Busy, please try again.');
+    // Any other 503 is still a gateway fault.
+    issueLink.mockRejectedValueOnce(new ApiError(503, 'down', { error: { code: 'other' } }));
+    expect((await signedFileResponse({ mode: 'download', issueLink })).status).toBe(502);
   });
 
   it('passes the safe headers of a download through', async () => {
