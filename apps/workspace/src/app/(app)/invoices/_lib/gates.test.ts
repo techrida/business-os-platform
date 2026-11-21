@@ -9,12 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { permissionChecker } from '@/components/p2/customers/permissions';
 
-import {
-  type Can,
-  invoiceGates,
-  NOTE_CREATOR_CANNOT_ISSUE,
-  recordPaymentHref,
-} from './gates';
+import { type Can, invoiceGates, NOTE_CREATOR_CANNOT_ISSUE, recordPaymentHref } from './gates';
 
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];

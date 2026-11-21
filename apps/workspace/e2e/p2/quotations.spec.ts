@@ -80,7 +80,10 @@ test('the customer PDF downloads from one click on the link', async ({ browser, 
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
     const download = page.waitForEvent('download');
-    await page.getByRole('link', { name: /^Download/ }).first().click();
+    await page
+      .getByRole('link', { name: /^Download/ })
+      .first()
+      .click();
     expect((await download).suggestedFilename()).toMatch(/\.pdf$/i);
   });
 });

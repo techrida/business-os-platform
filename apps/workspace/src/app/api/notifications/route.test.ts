@@ -32,8 +32,16 @@ const row = (id: string, title: string, body: string) => ({
 describe('GET /api/notifications', () => {
   it('shows document types as words, not internal keys', async () => {
     listNotifications.mockResolvedValue([
-      row('n1', 'Approval needed: Draft tax_invoice 242d0b45', 'Tax invoice for Himal Traders (NPR 1130.00)'),
-      row('n2', 'Draft credit_note 0a1b2c3d was approved', 'Draft credit_note 0a1b2c3d was approved.'),
+      row(
+        'n1',
+        'Approval needed: Draft tax_invoice 242d0b45',
+        'Tax invoice for Himal Traders (NPR 1130.00)',
+      ),
+      row(
+        'n2',
+        'Draft credit_note 0a1b2c3d was approved',
+        'Draft credit_note 0a1b2c3d was approved.',
+      ),
       row('n3', 'Reminder: Draft debit_note 7d92d5bf awaits you', 'Debit note for Himal Traders'),
       row('n4', 'Approval needed: QT-2026-0007', 'Quotation for Himal Traders'),
     ]);

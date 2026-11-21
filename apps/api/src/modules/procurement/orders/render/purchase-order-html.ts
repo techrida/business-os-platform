@@ -33,7 +33,11 @@ const escapeHtml = (text: string): string =>
  * on the invoice. The issue date's BS form is the one frozen at issue; any other date is converted. Outside the
  * converter's range (BS 2000 to 2090) the Gregorian date shows alone.
  */
-function dateCell(isoDate: string, bsFrozen: string | null, dateFormat: CustomerDateFormat): string {
+function dateCell(
+  isoDate: string,
+  bsFrozen: string | null,
+  dateFormat: CustomerDateFormat,
+): string {
   const gregorian = escapeHtml(formatCustomerDate(isoDate, dateFormat));
   const bs = bsFrozen !== null ? formatBsLong(bsFrozen) : bsLongOfDay(isoDate);
   return bs === null ? gregorian : `${gregorian} <span class="bs">(${escapeHtml(bs)})</span>`;

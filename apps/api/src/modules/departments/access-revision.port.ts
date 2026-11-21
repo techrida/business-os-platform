@@ -37,7 +37,10 @@ export class AccessRevisionTableStore implements AccessRevisionPort {
   async bump(
     tx: DbTransaction,
     scope: TxScope,
-    options: { expectedRevision?: string | undefined; actorUserId?: string | null | undefined } = {},
+    options: {
+      expectedRevision?: string | undefined;
+      actorUserId?: string | null | undefined;
+    } = {},
   ): Promise<string> {
     const { expectedRevision, actorUserId } = options;
     await lockAccessRevision(tx, scope.tenantId);

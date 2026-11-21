@@ -254,9 +254,9 @@ describe('a missed promise to pay (F1-Q33)', () => {
     now = new Date('2026-11-09T18:25:00Z');
     await expect(lateNight.record(scope, actor, invoice, body, key)).resolves.toEqual(first);
     // A new key with that day is a new command, and the day is now in the past.
-    await expect(lateNight.record(scope, actor, invoice, body, randomUUID())).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      lateNight.record(scope, actor, invoice, body, randomUUID()),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('refuses an invoice of another legal entity as unknown', async () => {

@@ -104,11 +104,7 @@ export const SALES_ORDER_LIST_SPEC = {
 } as const;
 
 export type LineAction =
-  | 'mark_billable'
-  | 'draft_invoice'
-  | 'open_invoice'
-  | 'show_invoice'
-  | 'none';
+  'mark_billable' | 'draft_invoice' | 'open_invoice' | 'show_invoice' | 'none';
 
 /**
  * What one schedule line offers this person. A line that already has an invoice links to it when the
@@ -121,7 +117,8 @@ export function lineAction(
   line: Pick<SalesOrderDetail['schedule'][number], 'status' | 'trigger' | 'invoiceId' | 'can'>,
   can: { mark: boolean; draft: boolean },
 ): LineAction {
-  if (line.invoiceId !== null) return line.can?.openInvoice === true ? 'open_invoice' : 'show_invoice';
+  if (line.invoiceId !== null)
+    return line.can?.openInvoice === true ? 'open_invoice' : 'show_invoice';
   if (orderStatus !== 'confirmed') return 'none';
   if (line.status === 'planned' && line.trigger !== 'advance') {
     return can.mark ? 'mark_billable' : 'none';
