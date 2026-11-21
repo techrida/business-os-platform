@@ -14,6 +14,13 @@ if (buildProfile !== 'dev' && buildProfile !== 'production') {
 const devBuild = buildProfile === 'dev';
 const devTools = isDev || devBuild;
 
+// Where this build writes. The gate sets BOS_NEXT_DIST_DIR so its builds land in scratch folders
+// (`.next-gate`, `.next-gate-devtools`) and never overwrite the `.next` a dev server is using.
+const scratchDistDir = process.env.BOS_NEXT_DIST_DIR;
+if (scratchDistDir !== undefined && !/^\.next-[a-z0-9-]{1,40}$/.test(scratchDistDir)) {
+  throw new Error(`BOS_NEXT_DIST_DIR must look like ".next-<name>", got "${scratchDistDir}"`);
+}
+
 // The monorepo root. Standalone output only copies files under this root, and pnpm keeps
 // workspace packages (@bos/contracts) outside apps/workspace, so tracing must start higher up.
 const monorepoRoot = path.join(__dirname, '../..');
@@ -46,7 +53,7 @@ const nextConfig: NextConfig = {
   // Inlined into server and client bundles at build time. A production-profile build gets '0'.
   env: { BOS_DEV_TOOLS: devBuild ? '1' : '0' },
   // The dev build has its own output folder, so it never overwrites (or is checked as) the production build.
-  distDir: devBuild ? '.next-devtools' : '.next',
+  distDir: scratchDistDir ?? (devBuild ? '.next-devtools' : '.next'),
   output: 'standalone',
   outputFileTracingRoot: monorepoRoot,
   // Turbopack (the default bundler) has its own root setting. Keep it equal to the tracing

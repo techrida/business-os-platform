@@ -19,7 +19,9 @@
     "e2e",
     "scripts/**/*.ts",
     ".next/types/**/*.ts",
-    ".next-devtools/types/**/*.ts"
+    ".next-devtools/types/**/*.ts",
+    ".next-gate/types/**/*.ts",
+    ".next-gate-devtools/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

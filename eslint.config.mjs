@@ -29,6 +29,7 @@ export default defineConfig([
     '**/node_modules/**',
     '**/dist/**',
     '**/.next/**',
+    '**/.next-*/**',
     '**/coverage/**',
     '**/playwright-report/**',
     '**/test-results/**',
