@@ -672,6 +672,24 @@ describe('the paying bank account (round 5, P1)', () => {
     expect(codeOf(refused)).toBe('BANK_ACCOUNT_INVALID');
   });
 
+  it("does not replay entity A's request when the same key and body arrive while acting in entity B", async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    as(U.fin2, 'finance');
+    const key = randomUUID();
+    const request = body(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+    const created = await service.create(request, key);
+    current.inB = true;
+    try {
+      as(U.fin2, 'finance');
+      const refused = await httpErrorOf(service.create(request, key));
+      expect(refused.getStatus()).toBe(422);
+      expect(JSON.stringify(refused.getResponse())).not.toContain(created.id);
+    } finally {
+      current.inB = false;
+    }
+  });
+
   it('refuses at submit a draft whose account was retired after it was made, and writes nothing', async () => {
     const v = await vendor();
     const bill = await approvedBill(v);
