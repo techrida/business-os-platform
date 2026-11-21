@@ -1696,6 +1696,37 @@ describe('evidence uploads on a bill (round 5 P2)', () => {
     );
   });
 
+  it('(c) another tenant: its caller gets a 404 on both paths, and its evidence on the same id is refused', async () => {
+    const bill = await varianceBill();
+    const other = await createTenantWithEntity(appPool);
+    const scopeC: TxScope = { tenantId: other.tenantId, organizationId: other.organizationId };
+
+    current.scope = scopeC;
+    current.grants = new Map<Permission, Scope>([
+      ['documents.upload', 'all'],
+      ['payables.bill.enter', 'all'],
+    ]);
+    expect(
+      (await httpErrorOf(evidence.service.create('vendor_bill', bill.id, file))).getStatus(),
+    ).toBe(404);
+    expect((await httpErrorOf(genericCreate(bill.id))).getStatus()).toBe(404);
+    current.scope = null;
+    current.grants = undefined;
+    expect(await evidenceRows(bill.id)).toBe(0);
+
+    // A file of the other tenant filed as evidence on the same id is not this bill's.
+    const foreign = await ownedDoc('evidence', bill.id, ['clean'], scopeC);
+    const refused = await httpErrorOf(
+      service.requestException(
+        bill.id,
+        { reason: 'Vendor raised the price', evidenceDocumentId: foreign },
+        randomUUID(),
+      ),
+    );
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({ code: 'invalid_evidence_document' });
+  });
+
   it('refuses evidence once the bill is past entry (409) and on a discarded bill', async () => {
     const bill = await billWithoutPo(await doc());
     await service.discard(bill.id, randomUUID());
