@@ -8,7 +8,7 @@ import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
-import { getInboxCount } from '@/lib/api-kernel';
+import { getInboxCount, getUnreadCount } from '@/lib/api-kernel';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getMeOrNull, permissionsFrom } from '@/lib/live-permissions';
 import { getSession } from '@/lib/session';
@@ -30,10 +30,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const roles = accountLabel(session.roles);
   // None throws: a failed read falls back to the default grouping, to initials and to the role defaults for the
   // nav. A failed or refused inbox read leaves the badge out; it never shows a zero in its place.
-  const [numberSystems, me, approvalsWaiting] = await Promise.all([
+  const [numberSystems, me, approvalsWaiting, unreadNotifications] = await Promise.all([
     getNumberSystems(),
     getMeOrNull(session.accessToken),
     getInboxCount(session).then(
+      ({ count }) => count,
+      () => undefined,
+    ),
+    getUnreadCount(session).then(
       ({ count }) => count,
       () => undefined,
     ),
@@ -46,9 +50,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     <ShellFrame>
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
-      {/* One counts poll per tab feeds the sidebar's Inbox badge and the header bell. The bell's unread count is
-          not read here, so the poller reads it once on arrival. */}
-      <ShellCountsProvider initialInbox={approvalsWaiting}>
+      {/* One counts poll per tab feeds the sidebar's Inbox badge and the header bell. Both first-paint numbers are
+          read here, so the poller does not repeat them on arrival. */}
+      <ShellCountsProvider
+        initialInbox={approvalsWaiting}
+        initialNotifications={unreadNotifications}
+      >
         <Sidebar
           user={{
             name: displayName ?? roles,
