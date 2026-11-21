@@ -19,6 +19,7 @@ export * from './me.js';
 export * from './master-data.js';
 export * from './memo.js';
 export * from './money.js';
+export * from './number-limits.js';
 export * from './notify.js';
 export * from './payables.js';
 export * from './portal.js';
