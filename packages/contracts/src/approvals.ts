@@ -343,3 +343,9 @@ export const InboxItemDtoSchema = z.object({
   version: z.number().int(),
 });
 export type InboxItemDto = z.infer<typeof InboxItemDtoSchema>;
+
+/** GET /v1/approvals/inbox/count: how many requests the caller may decide now (the inbox list's total). */
+export const InboxCountDtoSchema = z.object({
+  count: z.number().int().min(0),
+});
+export type InboxCountDto = z.infer<typeof InboxCountDtoSchema>;

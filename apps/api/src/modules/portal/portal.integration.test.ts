@@ -78,6 +78,7 @@ const NOW = new Date('2026-11-10T06:00:00Z');
 const clock = () => NOW;
 const notify = {
   notifyUser: vi.fn(() => Promise.resolve()),
+  notifyRole: vi.fn(() => Promise.resolve()),
   nudge: vi.fn(() => Promise.resolve()),
 };
 

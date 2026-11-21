@@ -4,9 +4,11 @@ import { SearchInput } from '@/components/ui/search-input';
 import { isBuilt, searchNavGroups, type NavGroup } from '@/lib/nav';
 
 import { NavLink } from './nav-link';
+import { useShellCounts } from './shell-counts';
 import { useShell } from './shell-state';
 import styles from './sidebar.module.css';
-import { INBOX_HREF, useInboxCount } from './use-inbox-count';
+
+export const INBOX_HREF = '/inbox';
 
 export function ShellNavSearch({ className }: { className?: string | undefined }) {
   const { navQuery, setNavQuery } = useShell();
@@ -31,9 +33,9 @@ export function ShellNav({
 }) {
   const { navQuery } = useShell();
   const matches = searchNavGroups(groups, navQuery);
-  // The Inbox badge stays live; any other count is what the layout passed.
-  const hasInbox = groups.some((group) => group.items.some((item) => item.href === INBOX_HREF));
-  const inbox = useInboxCount(counts[INBOX_HREF], hasInbox);
+  // The Inbox badge stays live through the shell's one counts poll; any other count is what the layout passed.
+  const live = useShellCounts();
+  const inbox = live ? live.inbox : counts[INBOX_HREF];
   const shown = inbox === undefined ? counts : { ...counts, [INBOX_HREF]: inbox };
 
   return (

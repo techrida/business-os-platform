@@ -25,9 +25,21 @@ vi.mock('@/components/shell/sidebar', () => ({
   },
 }));
 const lastSidebarUser = () => sidebarProps.mock.calls.at(-1)?.[0].user;
-const getInboxPage = vi.fn<() => Promise<{ items: never[]; total: number }>>();
-vi.mock('@/lib/api-kernel', () => ({ getInboxPage: () => getInboxPage() }));
+const getInboxCount = vi.fn<() => Promise<{ count: number }>>();
+const getUnreadCount = vi.fn<() => Promise<{ count: number }>>();
+vi.mock('@/lib/api-kernel', () => ({
+  getInboxCount: () => getInboxCount(),
+  getUnreadCount: () => getUnreadCount(),
+}));
 vi.mock('@/components/shell/header', () => ({ Header: () => null }));
+type CountsProps = { initialInbox?: number; initialNotifications?: number; children: ReactNode };
+const countsProps = vi.fn<(props: Omit<CountsProps, 'children'>) => void>();
+vi.mock('@/components/shell/shell-counts', () => ({
+  ShellCountsProvider: ({ children, ...props }: CountsProps) => {
+    countsProps(props);
+    return <>{children}</>;
+  },
+}));
 vi.mock('@/components/shell/shell-state', () => ({
   ShellFrame: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ShellMain: ({ children }: { children: ReactNode }) => <main>{children}</main>,
@@ -70,8 +82,11 @@ beforeEach(() => {
   getMe.mockReset();
   getMe.mockResolvedValue({ avatarDocumentId: null });
   sidebarProps.mockReset();
-  getInboxPage.mockReset();
-  getInboxPage.mockResolvedValue({ items: [], total: 0 });
+  countsProps.mockReset();
+  getInboxCount.mockReset();
+  getInboxCount.mockResolvedValue({ count: 0 });
+  getUnreadCount.mockReset();
+  getUnreadCount.mockResolvedValue({ count: 2 });
 });
 
 describe('web vitals reporter placement', () => {
@@ -140,16 +155,27 @@ describe('the account picture in the sidebar', () => {
 describe('approvals badge in the sidebar', () => {
   it('passes the waiting count for the inbox link', async () => {
     getSession.mockResolvedValue(staff);
-    getInboxPage.mockResolvedValue({ items: [], total: 4 });
+    getInboxCount.mockResolvedValue({ count: 4 });
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
     expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: { '/inbox': 4 } }));
+    // The live poller starts from the same number, and both first-paint counts are read in the layout.
+    expect(countsProps).toHaveBeenCalledTimes(1);
+    expect(countsProps.mock.calls[0]?.[0]).toEqual({ initialInbox: 4, initialNotifications: 2 });
   });
 
   it('shows no badge, not a zero, when the read is refused', async () => {
     getSession.mockResolvedValue(staff);
-    getInboxPage.mockRejectedValue(new Error('403'));
+    getInboxCount.mockRejectedValue(new Error('403'));
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
     expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: {} }));
+    expect(countsProps.mock.calls[0]?.[0].initialInbox).toBeUndefined();
+  });
+
+  it('shows a zero count as a zero when the read succeeds', async () => {
+    getSession.mockResolvedValue(staff);
+    getInboxCount.mockResolvedValue({ count: 0 });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: { '/inbox': 0 } }));
   });
 });
 
