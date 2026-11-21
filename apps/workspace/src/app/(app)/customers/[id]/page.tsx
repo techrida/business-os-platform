@@ -1,11 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  ContactDto,
-  CustomerPortalAccess,
-  PartyAccountDto,
-  VerificationCaseDto,
-} from '@bos/contracts';
+import type { ContactDto, PartyAccountDto, VerificationCaseDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -16,10 +11,12 @@ import {
   customerCan,
   getCustomerDetail,
   listContacts,
+  listCustomerOwners,
   listVerificationCases,
   type CustomerDetail,
   type Listing,
 } from '@/components/p2/customers/api';
+import { CommercialTerms } from '@/components/p2/customers/commercial-terms';
 import { ContactForm } from '@/components/p2/customers/contact-form';
 import { CustomerAddress } from '@/components/p2/customers/customer-address';
 import { PortalInviteForm } from '@/components/p2/customers/portal-invite-form';
@@ -342,66 +339,6 @@ function Verification({
 }
 
 /**
- * Portal access (F1-Q31). The first portal admin is invited by the account owner, and only from the customer's
- * existing contacts; once the portal has a user, anyone who may change the customer can invite more. Shown to
- * those who may change the customer; the API decides every invite.
- */
-function PortalAccess({
-  customerId,
-  access,
-  contacts,
-  ownerLabel,
-}: {
-  customerId: string;
-  access: CustomerPortalAccess;
-  contacts: PromiseSettledResult<Listing<ContactDto>>;
-  /** The account owner by name, or null when the customer has none. */
-  ownerLabel: string | null;
-}) {
-  const options =
-    contacts.status === 'fulfilled'
-      ? contacts.value.items.map((c) => ({
-          id: c.id,
-          label: c.email !== null ? `${c.fullName} (${c.email})` : c.fullName,
-          hasEmail: c.email !== null && c.email !== '',
-        }))
-      : [];
-  const note =
-    access.blocked === 'kyb_not_verified'
-      ? "Portal access opens once this customer's KYB verification is approved."
-      : access.hasUser
-        ? 'This customer has portal access.'
-        : access.blocked === 'owner_only' && ownerLabel !== null
-          ? `No one from this customer has portal access yet. The account owner, ${ownerLabel}, invites the first portal admin.`
-          : access.blocked === 'owner_missing'
-            ? 'No one from this customer has portal access yet. It has no account owner, and the account owner invites the first portal admin.'
-            : access.canInvite
-              ? 'No one from this customer has portal access yet. Invite one of its contacts as the portal admin.'
-              : 'No one from this customer has portal access yet.';
-  return (
-    <Panel title="Portal access" as="aside">
-      <div className={styles.cases}>
-        <p className={styles.note}>{note}</p>
-        {access.canInvite ? (
-          options.length > 0 ? (
-            <PortalInviteForm
-              action={invitePortalAdminAction}
-              customerId={customerId}
-              contacts={options}
-              // One key per render, so retrying names the same request.
-              idempotencyKey={randomUUID()}
-              first={!access.hasUser}
-            />
-          ) : contacts.status === 'fulfilled' ? (
-            <p className={styles.note}>Add a contact with an email first.</p>
-          ) : null
-        ) : null}
-      </div>
-    </Panel>
-  );
-}
-
-/**
  * The account owner's name: from the record itself first (the API sends it to every staff reader), then from the
  * admin directory, which only administrators can read.
  */
@@ -466,19 +403,35 @@ export default async function CustomerPage({
   const can = customerCan(customer);
   // The panels below load on their own: one failing leaves the profile and the other panels usable.
   // The case list is asked for only when the API says this person may read this customer's case.
-  const [contacts, cases, people, paymentTerms] = await Promise.allSettled([
+  const merged = customer.mergedIntoId !== null;
+  // The people list is asked for only when this person may change the owner (it is a 403 otherwise).
+  const mayChangeOwner = can.owner === true && !merged;
+  const [contacts, cases, people, paymentTerms, owners] = await Promise.allSettled([
     listContacts(session, id),
     can.readVerification
       ? listVerificationCases(session, { partyId: id })
       : Promise.resolve<Listing<VerificationCaseDto>>({ items: [], total: 0 }),
     userNames(session),
     listPaymentTerms(session),
+    mayChangeOwner ? listCustomerOwners(session) : Promise.resolve([]),
   ]);
 
   const mayWrite = can.write;
   const maySeeVerification = can.readVerification;
   const relationship = RELATIONSHIP[customer.relationship];
-  const merged = customer.mergedIntoId !== null;
+  const ownerLabel = customer.ownerUserId !== null ? ownerName(customer, people) : null;
+  // Portal access (F1-Q31): the invite offers only the customer's own contacts; one without an email is listed but
+  // cannot be chosen. The API decides every invite.
+  const portalAccess = customer.portalAccess;
+  const inviteOptions =
+    contacts.status === 'fulfilled'
+      ? contacts.value.items.map((c) => ({
+          id: c.id,
+          label: c.email !== null ? `${c.fullName} (${c.email})` : c.fullName,
+          hasEmail: c.email !== null && c.email !== '',
+        }))
+      : [];
+  const mayInvite = portalAccess?.canInvite === true && mayWrite && !merged;
 
   const facts: Fact[] = [
     { key: 'number', label: 'Customer number', value: customer.number },
@@ -496,16 +449,6 @@ export default async function CustomerPage({
       key: 'currency',
       label: 'Default currency',
       value: customer.defaultCurrency ?? <span className={styles.quiet}>Not set</span>,
-    },
-    {
-      key: 'owner',
-      label: 'Account owner',
-      value:
-        customer.ownerUserId !== null ? (
-          <span>{ownerName(customer, people)}</span>
-        ) : (
-          <span className={styles.quiet}>Not assigned</span>
-        ),
     },
     {
       key: 'updated',
@@ -601,6 +544,35 @@ export default async function CustomerPage({
             </TabPanel>
           </div>
           <div className={styles.verification}>
+            <CommercialTerms
+              customerId={customer.id}
+              customerVersion={customer.version}
+              merged={merged}
+              can={can}
+              owner={{ userId: customer.ownerUserId, name: ownerLabel }}
+              actingEntity={customer.actingEntity}
+              accounts={customer.accounts}
+              paymentTerms={paymentTerms}
+              owners={mayChangeOwner ? owners : null}
+              numberSystems={numberSystems}
+              portal={{
+                access: portalAccess,
+                ownerLabel,
+                invite:
+                  mayInvite && inviteOptions.length > 0 ? (
+                    <PortalInviteForm
+                      action={invitePortalAdminAction}
+                      customerId={customer.id}
+                      contacts={inviteOptions}
+                      // One key per render, so retrying names the same request.
+                      idempotencyKey={randomUUID()}
+                      first={portalAccess?.hasUser !== true}
+                    />
+                  ) : null,
+                noContact:
+                  mayInvite && contacts.status === 'fulfilled' && inviteOptions.length === 0,
+              }}
+            />
             <Verification
               result={cases}
               here={here}
@@ -613,14 +585,6 @@ export default async function CustomerPage({
                   : null
               }
             />
-            {mayWrite && !merged && customer.portalAccess !== undefined ? (
-              <PortalAccess
-                customerId={customer.id}
-                access={customer.portalAccess}
-                contacts={contacts}
-                ownerLabel={customer.ownerUserId !== null ? ownerName(customer, people) : null}
-              />
-            ) : null}
           </div>
         </div>
       </Tabs>

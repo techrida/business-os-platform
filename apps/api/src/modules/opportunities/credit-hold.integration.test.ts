@@ -1,6 +1,8 @@
-// The credit position's money rule (D22, F1-Q20): each open item's NPR amount is rounded half-up to two decimals
-// before the items are summed, so the exposure is the sum of the amounts a statement would print, and the hold
-// compares that sum with the limit. Real: migrations, the ledger views and row security, LedgerService.
+// The credit position's money rule (D22, F1-Q20, Kuu R4a Q1b): each open item's NPR amount is rounded half-up to
+// two decimals before the items are summed, so the exposure is the sum of the amounts a statement would print, and
+// the hold compares that sum plus the pending order's gross NPR value with the limit, strictly. Real: migrations,
+// the ledger views and row security, LedgerService. The deal-level pending order (accepted quotations, sales
+// orders) is covered with real quotations in sales-orders.integration.test.ts.
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -14,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { LedgerService } from '../ledger/ledger.service';
 import { startHarness, type Harness } from '../leads/test/harness';
-import { creditPosition } from './credit-hold';
+import { creditPosition, orderValueOf, type VersionNprSnapshot } from './credit-hold';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -66,8 +68,22 @@ async function openItem(
   );
 }
 
-const positionOf = (partyId: string) =>
-  withTx(h.db, h.scopeA, systemActor('test'), (tx) => creditPosition(tx, h.scopeA, partyId));
+/** An NPR quotation version of `total` (its NPR snapshot is its total). */
+const nprOrder = (total: string): VersionNprSnapshot => ({
+  currency: 'NPR',
+  total,
+  amountNpr: null,
+});
+
+const positionOf = (partyId: string, order: VersionNprSnapshot = nprOrder('0.00')) =>
+  withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+    creditPosition(tx, h.scopeA, partyId, { version: order }),
+  );
+
+/** A customer with no limit set at all (no party_accounts row). */
+async function customerWithoutLimit(): Promise<string> {
+  return h.seedCustomer();
+}
 
 describe('the credit exposure rounds each item, then sums (D22)', () => {
   // USD 0.03 at 133.50 is NPR 4.005: each such item counts as 4.01, so two count 8.02, not the 8.01 a sum of the
@@ -80,6 +96,8 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
     expect(await positionOf(party)).toEqual({
       creditLimit: '100000.00',
       exposure: '100000.00',
+      orderValue: '0.00',
+      exposureWithOrder: '100000.00',
       held: false,
     });
   });
@@ -92,6 +110,8 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
     expect(await positionOf(party)).toEqual({
       creditLimit: '100000.00',
       exposure: '100000.01',
+      orderValue: '0.00',
+      exposureWithOrder: '100000.01',
       held: true,
     });
   });
@@ -104,7 +124,91 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
     expect(await positionOf(party)).toEqual({
       creditLimit: '100000.00',
       exposure: '100000.00',
+      orderValue: '0.00',
+      exposureWithOrder: '100000.00',
       held: false,
     });
+  });
+});
+
+describe('the hold counts the order being confirmed on top of the receivables (Kuu R4a Q1b)', () => {
+  it('holds a customer at 90,000 of a 100,000 limit for a 20,000 order, not with no order', async () => {
+    const party = await customerWithLimit('100000.00');
+    await openItem(party, 'debit', 'NPR', '90000.00');
+    expect(await positionOf(party)).toMatchObject({ exposure: '90000.00', held: false });
+    expect(await positionOf(party, nprOrder('20000.00'))).toEqual({
+      creditLimit: '100000.00',
+      exposure: '90000.00',
+      orderValue: '20000.00',
+      exposureWithOrder: '110000.00',
+      held: true,
+    });
+  });
+
+  it('is not held when receivables plus the order are exactly the limit, and is 0.01 over', async () => {
+    const party = await customerWithLimit('100000.00');
+    await openItem(party, 'debit', 'NPR', '90000.00');
+    expect(await positionOf(party, nprOrder('10000.00'))).toMatchObject({
+      exposureWithOrder: '100000.00',
+      held: false,
+    });
+    expect(await positionOf(party, nprOrder('10000.01'))).toMatchObject({
+      exposureWithOrder: '100000.01',
+      held: true,
+    });
+  });
+
+  it('nets credits and debits before adding the order', async () => {
+    // 95,000.00 invoiced + USD 100.00 at 133.50 (13,350.00) less 18,350.00 paid = 90,000.00 owed.
+    const party = await customerWithLimit('100000.00');
+    await openItem(party, 'debit', 'NPR', '95000.00');
+    await openItem(party, 'debit', 'USD', '100.00', '133.50');
+    await openItem(party, 'credit', 'NPR', '18350.00');
+    expect(await positionOf(party, nprOrder('10000.00'))).toMatchObject({
+      exposure: '90000.00',
+      exposureWithOrder: '100000.00',
+      held: false,
+    });
+    // A customer in credit has the credit counted against the order.
+    const inCredit = await customerWithLimit('100000.00');
+    await openItem(inCredit, 'credit', 'NPR', '5000.00');
+    expect(await positionOf(inCredit, nprOrder('105000.00'))).toMatchObject({
+      exposure: '-5000.00',
+      exposureWithOrder: '100000.00',
+      held: false,
+    });
+  });
+
+  it('never holds without a limit, and a 0.00 limit holds any order', async () => {
+    const free = await customerWithoutLimit();
+    await openItem(free, 'debit', 'NPR', '900000.00');
+    expect(await positionOf(free, nprOrder('5000000.00'))).toMatchObject({
+      creditLimit: null,
+      exposureWithOrder: '5900000.00',
+      held: false,
+    });
+    const none = await customerWithLimit('0.00');
+    expect(await positionOf(none)).toMatchObject({ creditLimit: '0.00', held: false });
+    expect(await positionOf(none, nprOrder('0.01'))).toMatchObject({
+      creditLimit: '0.00',
+      orderValue: '0.01',
+      held: true,
+    });
+  });
+
+  it('counts a foreign quotation at its NPR snapshot, gross, rounded half-up to two decimals', () => {
+    expect(orderValueOf({ currency: 'USD', total: '150.00', amountNpr: '20025.00' })).toBe(
+      '20025.00',
+    );
+    expect(orderValueOf({ currency: 'NPR', total: '22600.00', amountNpr: null })).toBe('22600.00');
+    expect(orderValueOf({ currency: 'NPR', total: '0.005', amountNpr: null })).toBe('0.01');
+    expect(orderValueOf({ currency: 'NPR', total: '100.004', amountNpr: null })).toBe('100.00');
+    expect(orderValueOf({ currency: 'NPR', total: '100.0050', amountNpr: '100.005' })).toBe(
+      '100.01',
+    );
+    // Without its NPR snapshot a foreign version cannot be valued; never as zero.
+    expect(() => orderValueOf({ currency: 'USD', total: '150.00', amountNpr: null })).toThrow(
+      /no NPR snapshot/,
+    );
   });
 });

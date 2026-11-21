@@ -593,3 +593,19 @@ describe('default Sales order permissions', () => {
     expect(can(salesperson, 'sales_order.mark_billable')).toEqual(DENIED('no_permission'));
   });
 });
+
+describe('default delivery-hold release permission (F1-Q32)', () => {
+  it('lets Finance, Management and the Founder ask to release, at every order', () => {
+    for (const role of ['finance', 'management', 'founder'] as const) {
+      const principal = principalWith(DEFAULT_ROLE_PERMISSIONS[role]);
+      expect(can(principal, 'sales_order.delivery_release'), role).toEqual(ALLOWED('all'));
+    }
+  });
+
+  it('denies every other role, including the Accountant who confirms orders', () => {
+    for (const role of ['accountant', 'sales', 'marketing', 'pmo', 'operations_head'] as const) {
+      const principal = principalWith(DEFAULT_ROLE_PERMISSIONS[role]);
+      expect(can(principal, 'sales_order.delivery_release'), role).toEqual(DENIED('no_permission'));
+    }
+  });
+});

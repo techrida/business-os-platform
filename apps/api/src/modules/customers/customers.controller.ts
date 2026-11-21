@@ -1,13 +1,18 @@
 // HTTP routes of the customers. Thin on purpose: validation here, every rule in CustomersService. Serves the NFR
 // "authorization is deny-by-default": each route names its permission with @Can (does the role hold it at all),
 // and the service then checks the record (a customer is tenant-level, so the record check is the scope of the
-// grant). Both creates need an Idempotency-Key, so a double click or a retry cannot create twice.
+// grant). The two routes more than one permission opens (PATCH :id and :id/terms) are @AnyAuthenticated, and the
+// service makes the same route-level check first. Both creates need an Idempotency-Key, so a double click or a
+// retry cannot create twice.
 import {
   CreateContactBodySchema,
   CreateCustomerBodySchema,
   UpdateCustomerBodySchema,
+  UpdateCustomerTermsBodySchema,
   type ContactDto,
   type CustomerDto,
+  type CustomerOwnerOption,
+  type PartyAccountDto,
 } from '@bos/contracts';
 import {
   Body,
@@ -21,7 +26,7 @@ import {
   Query,
 } from '@nestjs/common';
 
-import { Can } from '../../platform/authz/decorators';
+import { AnyAuthenticated, Can } from '../../platform/authz/decorators';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { CustomersService } from './customers.service';
 import {
@@ -50,6 +55,16 @@ export class CustomersController {
     return this.customers.industries();
   }
 
+  /**
+   * 200 with CustomerOwnerOption[]: the active staff of the tenant a customer's owner may be changed to, by name.
+   * Declared before `:id`, so "owners" never reaches the UUID pipe.
+   */
+  @Get('owners')
+  @Can('customers.owner.write')
+  owners(): Promise<CustomerOwnerOption[]> {
+    return this.customers.owners();
+  }
+
   /** 201 with the new CustomerDto. 409 for a PAN/VAT number another customer already holds. */
   @Post()
   @Can('customer.write')
@@ -68,13 +83,34 @@ export class CustomersController {
     return this.customers.get(id);
   }
 
-  /** 200 with the updated CustomerDto. 409 when `expectedVersion` is stale. Only the keys sent are changed. */
+  /**
+   * 200 with the updated CustomerDto. 409 when `expectedVersion` is stale. Only the keys sent are changed.
+   * @AnyAuthenticated because two permissions open it: customer.write (every field) and `customers.owner.write`
+   * (a new owner; Management holds it without customer.write). The service requires one of them before anything
+   * else, then customer.write for any field but the owner, and `customers.owner.write` for a changed owner.
+   */
   @Patch(':id')
-  @Can('customer.write')
+  @AnyAuthenticated()
   update(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<CustomerDto> {
     const parsed = parseOr400(UpdateCustomerBodySchema, body);
     const { expectedVersion, ...fields } = sentFields(body, parsed);
     return this.customers.update(id, expectedVersion ?? parsed.expectedVersion, fields);
+  }
+
+  /**
+   * 200 with the PartyAccountDto: the customer's terms with the acting entity (created on the first save).
+   * @AnyAuthenticated because no single permission fits: Finance sets a credit limit
+   * (`customers.credit_limit.write`) without customer.write, which a payment term needs. The service checks the
+   * caller holds one of the two before anything else, then each sent field against its own permission (403), the
+   * record (404 for another tenant or out of scope), the term (422) and the version (409).
+   */
+  @Patch(':id/terms')
+  @AnyAuthenticated()
+  updateTerms(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<PartyAccountDto> {
+    return this.customers.updateTerms(id, parseOr400(UpdateCustomerTermsBodySchema, body));
   }
 
   /** 200 with the contacts of the customer, the primary one first. */

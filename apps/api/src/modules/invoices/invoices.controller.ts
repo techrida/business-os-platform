@@ -9,6 +9,7 @@ import {
   CreateProformaBodySchema,
   DiscardInvoiceBodySchema,
   DraftFromScheduleBodySchema,
+  EditInvoiceDueDateBodySchema,
   InvoiceKindSchema,
   InvoiceStatusSchema,
   IssueInvoiceBodySchema,
@@ -30,6 +31,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -166,6 +168,22 @@ export class InvoicesController {
   }
 
   /**
+   * 200 with the InvoiceDetail carrying the new due date. 404 outside the caller's read, 403 without `invoice.draft` on
+   * the drafter, 409 for a kind whose due date is set at issue, a status other than draft or returned or a stale
+   * `expectedVersion`, 422 DUE_DATE_BEFORE_ISSUE for a date before today.
+   */
+  @Patch(':id/due-date')
+  @Can('invoice.draft')
+  editDueDate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: unknown,
+  ): Promise<InvoiceDetail> {
+    const key = requireIdempotencyKey(idempotencyKey);
+    return this.drafting.editDueDate(id, parseOr400(EditInvoiceDueDateBodySchema, body), key);
+  }
+
+  /**
    * 200 with the submitted InvoiceDetail (U6). 404 outside the entity, 409 for a proforma, a status other than draft or
    * returned or a stale `expectedVersion`, 422 NO_ELIGIBLE_APPROVER when the route has nobody who may decide.
    */
@@ -183,8 +201,9 @@ export class InvoicesController {
 
   /**
    * 200 with the InvoiceDetail back in draft: an approved invoice that can no longer be issued as approved (its due
-   * date passed). 404 outside the entity, 409 for any other status or a stale `expectedVersion`. It needs a new
-   * approval before issue.
+   * date passed). 404 outside the entity, 409 for any other status or a stale `expectedVersion`. The approval no longer
+   * counts: a manual tax invoice's due date can then be changed (PATCH :id/due-date), and it must be submitted for
+   * approval again before issue.
    */
   @Post(':id/reopen')
   @HttpCode(200)

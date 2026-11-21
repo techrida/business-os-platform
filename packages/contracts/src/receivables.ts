@@ -223,6 +223,10 @@ const AgingBucketsSchema = z.strictObject({
   d91_plus: DecimalString,
 });
 
+/** The invoice an aging flag points at, so the row can link to it. */
+export const AgingInvoiceRefSchema = z.object({ id: z.guid(), number: z.string().min(1) });
+export type AgingInvoiceRef = z.infer<typeof AgingInvoiceRefSchema>;
+
 export const ArAgingRowSchema = z.object({
   customerId: z.guid(),
   customerName: z.string().min(1),
@@ -231,10 +235,18 @@ export const ArAgingRowSchema = z.object({
   totalOpen: DecimalString,
   /**
    * F1-Q33: true when an invoice of this customer in this currency is still open and a promise to pay it was
-   * missed. `promiseMissedOn` is the latest promised day among those missed promises, null when there is none.
+   * missed. `promiseMissedOn` is the latest promised day among those missed promises, null when there is none;
+   * `promiseMissedInvoice` is the invoice of that promise.
    */
   promiseMissed: z.boolean(),
   promiseMissedOn: isoDate.nullable(),
+  promiseMissedInvoice: AgingInvoiceRefSchema.nullable(),
+  /**
+   * The earliest promised day among the open promises on this customer's still-open invoices in this currency (the
+   * next one due), and that promise's invoice. Both null when no promise is open. Derived on read, never stored.
+   */
+  openPromiseDate: isoDate.nullable(),
+  openPromiseInvoice: AgingInvoiceRefSchema.nullable(),
 });
 export type ArAgingRow = z.infer<typeof ArAgingRowSchema>;
 

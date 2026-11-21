@@ -77,6 +77,7 @@ export type ErrorCode =
   | 'quotation_not_accepted'
   | 'credit_hold'
   | 'sales_order_not_open'
+  | 'delivery_already_released'
   | 'schedule_line_not_planned'
   | 'SCHEDULE_LINE_TAKEN'
   | 'NOT_APPROVED'
@@ -87,6 +88,9 @@ export type ErrorCode =
   | 'payment_not_submitted'
   | 'payment_not_verified'
   | 'proof_not_clean'
+  // F1-Q33 promises to pay.
+  | 'invoice_not_open'
+  | 'promise_open'
   | 'invalid_proof'
   | 'unknown_customer'
   | 'unknown_withholding_code'
@@ -228,6 +232,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   quotation_not_accepted: 'Only an accepted quotation can be confirmed',
   credit_hold: 'The customer is over its credit limit; the deal needs a credit override first',
   sales_order_not_open: 'This sales order is not open for this change',
+  delivery_already_released: 'The delivery of this sales order is already released',
   schedule_line_not_planned: 'This schedule line is no longer planned',
   SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
   NOT_APPROVED: 'This invoice is issued only after it has been approved',
@@ -238,6 +243,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   payment_not_submitted: 'This payment is not waiting for verification',
   payment_not_verified: 'Only a verified payment can be reversed',
   proof_not_clean: 'Every proof must pass the virus scan first',
+  invoice_not_open:
+    'Only an issued invoice or debit note with an amount still owed can take a promise to pay',
+  promise_open: 'This invoice already has an open promise to pay',
   invalid_proof: 'A proof file is not valid for this payment',
   unknown_customer: 'No such customer',
   unknown_withholding_code: 'No such withholding code',
@@ -374,6 +382,7 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // opportunity id only; the limit and exposure are for credit.override holders).
   'credit_hold',
   'sales_order_not_open',
+  'delivery_already_released',
   'schedule_line_not_planned',
   // U10 invoices: the line already has a live invoice; a tax invoice, credit or debit note needs approval first.
   'SCHEDULE_LINE_TAKEN',
@@ -386,6 +395,10 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'payment_not_submitted',
   'payment_not_verified',
   'proof_not_clean',
+  // F1-Q33 promises to pay: the invoice owes nothing (or is not issued), or an open promise cannot be replaced
+  // (recorded concurrently, or its day has passed and the hourly job has not checked it yet).
+  'invoice_not_open',
+  'promise_open',
   // P4 vendors (V1) and vendor bank accounts (V2): lifecycle and maker-checker refusals a client can switch on.
   'invalid_transition',
   'kyb_not_submitted',
@@ -690,9 +703,14 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
-      // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
+      // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4); 409 for a stale
+      // memo or a customer-terms form rendered for another acting entity (`entity_changed`).
       const reportedReason = reasonOf(exception);
-      if (status === 403 || status === 400 || (status === 409 && reportedReason === 'stale_memo')) {
+      if (
+        status === 403 ||
+        status === 400 ||
+        (status === 409 && (reportedReason === 'stale_memo' || reportedReason === 'entity_changed'))
+      ) {
         reason = reportedReason;
       }
       stepUp = isStepUp(exception);

@@ -45,6 +45,9 @@ describe('customerCapabilities', () => {
       write: true,
       readVerification: true,
       openVerification: true,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: true,
     });
   });
 
@@ -53,6 +56,9 @@ describe('customerCapabilities', () => {
       write: true,
       readVerification: false,
       openVerification: false,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: true,
     });
     expect(customerCapabilities(customer(null), as('sales')).openVerification).toBe(false);
   });
@@ -62,6 +68,9 @@ describe('customerCapabilities', () => {
       write: false,
       readVerification: true,
       openVerification: false,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: false,
     });
   });
 
@@ -81,6 +90,37 @@ describe('customerCapabilities', () => {
       write: false,
       readVerification: false,
       openVerification: false,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: false,
+    });
+  });
+});
+
+describe('customerCapabilities: commercial terms (R4a Q12, R4c2 Q5a)', () => {
+  const terms = (p: Principal) => {
+    const c = customerCapabilities(customer(COLLEAGUE), p);
+    return { creditLimit: c.creditLimit, owner: c.owner, paymentTerms: c.paymentTerms };
+  };
+
+  it.each([
+    ['founder', { creditLimit: true, owner: true, paymentTerms: true }],
+    ['finance', { creditLimit: true, owner: false, paymentTerms: false }],
+    ['management', { creditLimit: false, owner: true, paymentTerms: false }],
+    ['sales', { creditLimit: false, owner: false, paymentTerms: true }],
+    ['accountant', { creditLimit: false, owner: false, paymentTerms: false }],
+    ['marketing', { creditLimit: false, owner: false, paymentTerms: false }],
+  ] as const)('%s holds the default flags', (role, expected) => {
+    expect(terms(as(role))).toEqual(expected);
+  });
+
+  it('gives a portal caller holding the grants by mistake, or an inactive Founder, none of them', () => {
+    const portal = as('founder', { orgKind: 'customer', partyId: CUSTOMER });
+    expect(terms(portal)).toEqual({ creditLimit: false, owner: false, paymentTerms: false });
+    expect(terms(as('founder', { status: 'inactive' }))).toEqual({
+      creditLimit: false,
+      owner: false,
+      paymentTerms: false,
     });
   });
 });

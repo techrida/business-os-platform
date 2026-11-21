@@ -12,6 +12,9 @@ import { customerRef } from '../customers/customers.service';
 import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import {
+  COLLECTION_CALL_CHANGE,
+  COLLECTION_CALL_KIND,
+  COLLECTION_CALL_READ,
   isPlannedRow,
   SUBJECT_PERMISSION,
   type ActivityRow,
@@ -26,6 +29,18 @@ export const CUSTOMER_KEYS: ReadonlySet<SubjectKey> = new Set<SubjectKey>([
   'customerId',
   'contactId',
 ]);
+
+/** The acting entity as a ResourceRef: a collection call belongs to the entity's receivables, not to a record. */
+const entityRef = (where: { tenantId: string; organizationId: string }): ResourceRef => ({
+  tenantId: where.tenantId,
+  organizationId: where.organizationId,
+});
+
+/** Whether the caller may read this entity's collection calls (`ar.read`, as the receivables aging). */
+export const mayReadCollectionCalls = (
+  p: Principal,
+  where: { tenantId: string; organizationId: string },
+): boolean => can(p, COLLECTION_CALL_READ, entityRef(where)).allowed;
 
 /** Kinds only the server writes: they record what happened and are never planned, done or called off by hand. */
 export const SYSTEM_KINDS: ReadonlySet<ActivityRow['kind']> = new Set(['system', 'stage_change']);
@@ -61,14 +76,38 @@ function onSubject(
   return d.reason === 'out_of_scope' ? NOT_FOUND : forbidden(d.reason);
 }
 
-/** Whether `ref` must be loaded to decide `what` on this row: the assignee completing on a customer needs none. */
-export function needsSubjectRef(
+/** Whether the assignee completes a follow-up on a customer or contact, which needs only the read grant (U20a2-Q7). */
+const assigneeCompletesOnCustomer = (
   p: Principal,
   row: Pick<ActivityRow, 'assigneeUserId'>,
   key: SubjectKey,
   what: PlannedChange,
+): boolean => row.assigneeUserId === p.userId && what === 'complete' && CUSTOMER_KEYS.has(key);
+
+/**
+ * Whether `ref` must be loaded to decide `what` on this row: a collection call (decided on the entity) and the
+ * assignee completing on a customer need none.
+ */
+export function needsSubjectRef(
+  p: Principal,
+  row: Pick<ActivityRow, 'assigneeUserId' | 'kind'>,
+  key: SubjectKey,
+  what: PlannedChange,
 ): boolean {
-  return !(row.assigneeUserId === p.userId && what === 'complete' && CUSTOMER_KEYS.has(key));
+  return row.kind !== COLLECTION_CALL_KIND && !assigneeCompletesOnCustomer(p, row, key, what);
+}
+
+/**
+ * A collection call (R4c1 Q1) takes no permission from its customer: no `ar.read` is a 404 like any unreadable
+ * row, reading without `payment.record` (Management) a 403. The assignee gets no shortcut.
+ */
+function onCollectionCall(
+  p: Principal,
+  row: Pick<ActivityRow, 'tenantId' | 'organizationId'>,
+): PlannedChangeDecision {
+  if (!mayReadCollectionCalls(p, row)) return NOT_FOUND;
+  const d = can(p, COLLECTION_CALL_CHANGE, entityRef(row));
+  return d.allowed ? OK : forbidden(d.reason);
 }
 
 /**
@@ -77,17 +116,30 @@ export function needsSubjectRef(
  * Rescheduling or calling it off still needs the subject's write permission, and they get a 403 for it rather
  * than a 404: the follow-up is on their own list, so it is no secret. On a customer or contact, which has no
  * assigned reach, the assignee completes it with the customer read grant at any scope (U20a2-Q7). `ref` is the
- * subject's ref, with its readers when the caller is the assignee.
+ * subject's ref, with its readers when the caller is the assignee. A collection call follows `onCollectionCall`
+ * instead, and needs no ref.
  */
 export function plannedChangeDecision(
   p: Principal,
-  row: Pick<ActivityRow, 'assigneeUserId' | 'kind' | 'dueAt' | 'completedAt' | 'cancelledAt'>,
+  row: Pick<
+    ActivityRow,
+    | 'tenantId'
+    | 'organizationId'
+    | 'assigneeUserId'
+    | 'kind'
+    | 'dueAt'
+    | 'completedAt'
+    | 'cancelledAt'
+  >,
   key: SubjectKey,
   ref: ResourceRef | undefined,
   what: PlannedChange,
 ): PlannedChangeDecision {
   const perm = SUBJECT_PERMISSION[key];
-  if (!needsSubjectRef(p, row, key, what)) {
+  if (row.kind === COLLECTION_CALL_KIND) {
+    const call = onCollectionCall(p, row);
+    if (!call.ok) return call;
+  } else if (assigneeCompletesOnCustomer(p, row, key, what)) {
     const d = can(p, perm.read);
     if (!d.allowed) return forbidden(d.reason);
   } else if (row.assigneeUserId === p.userId) {

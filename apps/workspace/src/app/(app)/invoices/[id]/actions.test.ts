@@ -6,6 +6,7 @@ import { ID, KEY } from '../_lib/test-fixtures';
 
 import {
   discardInvoiceAction,
+  editInvoiceDueDateAction,
   issueInvoiceAction,
   submitInvoiceAction,
   type InvoiceActionState,
@@ -285,8 +286,70 @@ describe('discardInvoiceAction', () => {
   });
 });
 
+describe('editInvoiceDueDateAction', () => {
+  it('patches the due date with the version and the page key, and says the new date', async () => {
+    const state = await editInvoiceDueDateAction(prev, form(base({ dueDate: '2026-12-15' })));
+    expect(state).toEqual({ key: KEY, done: true, message: 'Due date changed to 15 Dec 2026.' });
+    const [, path, init] = call();
+    expect(path).toBe(`/v1/invoices/${ID}/due-date`);
+    expect(init.method).toBe('PATCH');
+    expect((init.headers as Record<string, string>)['idempotency-key']).toBe(KEY);
+    expect(JSON.parse(init.body as string)).toEqual({ expectedVersion: 4, dueDate: '2026-12-15' });
+  });
+
+  it('never calls the API without a plain date, and keeps the key unused', async () => {
+    for (const dueDate of ['', '15/12/2026', '2026-12-15; x']) {
+      const state = await editInvoiceDueDateAction(prev, form(base({ dueDate })));
+      expect(state.errors?.dueDate).toMatch(/pick the new due date/i);
+      expect(state.key).toBe(KEY);
+    }
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('puts a date before today (422 DUE_DATE_BEFORE_ISSUE) on the field, not as a reload', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      answer(422, { error: { code: 'DUE_DATE_BEFORE_ISSUE', details: { dueDate: '2026-01-01' } } }),
+    );
+    const state = await editInvoiceDueDateAction(prev, form(base({ dueDate: '2026-01-01' })));
+    expect(state.errors?.dueDate).toMatch(/today or a later date/i);
+    expect(state.error).toBeUndefined();
+    expect(state.reload).toBeUndefined();
+    expect(state.key).not.toBe(KEY);
+  });
+
+  it('asks for a reload when the invoice moved (409)', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(409, { error: { code: 'conflict' } }));
+    const state = await editInvoiceDueDateAction(prev, form(base({ dueDate: '2026-12-15' })));
+    expect(state.reload).toBe(true);
+    expect(state.done).toBeUndefined();
+  });
+
+  it('keeps the key after a 5xx and while the first request is in progress', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(503));
+    expect((await editInvoiceDueDateAction(prev, form(base({ dueDate: '2026-12-15' })))).key).toBe(
+      KEY,
+    );
+    mocks.apiFetch.mockImplementation(() =>
+      answer(409, {
+        error: {
+          code: 'conflict',
+          message: 'A request with this Idempotency-Key is still being processed.',
+        },
+      }),
+    );
+    expect((await editInvoiceDueDateAction(prev, form(base({ dueDate: '2026-12-15' })))).key).toBe(
+      KEY,
+    );
+  });
+});
+
 describe('every action', () => {
-  const actions = [submitInvoiceAction, issueInvoiceAction, discardInvoiceAction];
+  const actions = [
+    submitInvoiceAction,
+    issueInvoiceAction,
+    discardInvoiceAction,
+    editInvoiceDueDateAction,
+  ];
 
   it.each([
     ['an id that is not a UUID', { invoiceId: '../admin' }],
@@ -295,7 +358,10 @@ describe('every action', () => {
     ['a version that is not a number', { expectedVersion: '4; drop' }],
   ])('refuses %s without reaching the API', async (_name, over) => {
     for (const action of actions) {
-      const state = await action(prev, form(base({ reason: 'ok', ...over })));
+      const state = await action(
+        prev,
+        form(base({ reason: 'ok', dueDate: '2026-12-15', ...over })),
+      );
       expect(state.reload).toBe(true);
       expect(state.error).toMatch(/incomplete/i);
     }

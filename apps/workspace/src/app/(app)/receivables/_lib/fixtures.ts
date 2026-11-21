@@ -26,6 +26,9 @@ export function agingRow(over: Record<string, unknown> = {}) {
     totalOpen: '999999.00',
     promiseMissed: false,
     promiseMissedOn: null,
+    promiseMissedInvoice: null,
+    openPromiseDate: null,
+    openPromiseInvoice: null,
     ...over,
   };
 }

@@ -3,6 +3,7 @@
 // to map (plan A8). Money stays text; the content hash is hex; the NPR value exists only once frozen at issue.
 import {
   DocumentFormatSnapshotSchema,
+  isInvoiceEditable,
   PartySnapshotSchema,
   type DocumentFormatSnapshot,
   type InvoiceCan,
@@ -183,6 +184,71 @@ export function invoiceCan(
         sodUserIds: [],
       }).allowed,
   };
+}
+
+/** Why `PATCH /v1/invoices/:id/due-date` refuses: 403 for the caller, 409 for the invoice's kind or status. */
+export interface DueDateEditRefusal {
+  status: 403 | 409;
+  reason: string;
+}
+
+const DUE_DATE_STATUS_REASON: Partial<Record<InvoiceRow['status'], string>> = {
+  submitted: 'The invoice is waiting for approval; its due date can be changed once it is returned',
+  approved: 'Take the invoice back to draft to change its due date',
+  issued: 'An issued invoice cannot be changed',
+  discarded: 'A discarded invoice cannot be changed',
+};
+
+/**
+ * The one rule behind the due-date route and its `can.editDueDate` flag, so the page never offers what the route
+ * refuses. Who: `invoice.draft` on the drafter, as discard. Which kinds: only those that issue with the drafted due
+ * date (`dueDateOf` in the issue service recomputes it for an order's tax invoice and a debit note, so an edit there
+ * would be thrown away at issue). When: while the lines are editable (draft, returned). Null when allowed.
+ */
+export function dueDateEditRefusal(
+  principal: Principal,
+  scope: TxScope,
+  row: Pick<InvoiceRow, 'createdBy' | 'kind' | 'status' | 'salesOrderId'>,
+): DueDateEditRefusal | null {
+  if (!can(principal, 'invoice.draft', { ...scope, ownerUserId: row.createdBy }).allowed) {
+    return {
+      status: 403,
+      reason: 'Only someone who may draft this invoice can change its due date',
+    };
+  }
+  if (row.kind === 'credit_note') {
+    return { status: 409, reason: 'A credit note has no due date of its own' };
+  }
+  if (row.kind === 'debit_note') {
+    return {
+      status: 409,
+      reason: "A debit note's due date is set when it is issued",
+    };
+  }
+  if (row.kind === 'tax_invoice' && row.salesOrderId !== null) {
+    return {
+      status: 409,
+      reason:
+        "This invoice's due date is set when it is issued, from the sales order's credit days",
+    };
+  }
+  if (!isInvoiceEditable(row.status)) {
+    return {
+      status: 409,
+      reason: DUE_DATE_STATUS_REASON[row.status] ?? 'This invoice cannot be changed',
+    };
+  }
+  return null;
+}
+
+/** `can.editDueDate` for the detail answer. */
+export function editDueDateCan(
+  principal: Principal,
+  scope: TxScope,
+  row: Pick<InvoiceRow, 'createdBy' | 'kind' | 'status' | 'salesOrderId'>,
+): NonNullable<InvoiceCan['editDueDate']> {
+  const refusal = dueDateEditRefusal(principal, scope, row);
+  return refusal === null ? { allowed: true } : { allowed: false, reason: refusal.reason };
 }
 
 export function toInvoiceListItem(row: InvoiceRow, customerName: string): InvoiceListItem {

@@ -2,6 +2,8 @@
 // Founder, Management and Finance roles of a tenant that already holds role_permissions rows, as `seeded` rows written by
 // system:migration-0104, with the authz version bumped once; a tenant still on the code defaults gets no row (a row
 // there would strip every other role's defaults); a role that already holds the permission keeps its own row.
+// Migrates only through 0104, so a later migration that grants something else (and bumps the version again, like
+// 0155) cannot move the numbers this test reads.
 // Needs Docker: an unmigrated database of its own on the run's shared postgres:16-alpine. Run with:
 //   pnpm --filter @bos/db exec vitest run src/credit-override-permission-migration.test.ts
 import { randomUUID } from 'node:crypto';
@@ -28,7 +30,8 @@ interface JournalEntry {
 let testDb: TestDatabase;
 let pool: Pool;
 let url: string;
-let folder: string;
+const folders: string[] = [];
+let through: string;
 let running: TenantWithEntity;
 let customised: TenantWithEntity;
 let onDefaults: TenantWithEntity;
@@ -90,17 +93,20 @@ beforeAll(async () => {
   ) as { entries: JournalEntry[] };
   const index = journal.entries.findIndex((entry) => entry.tag === TAG);
   expect(index, `${TAG} is in the journal`).toBeGreaterThan(0);
-  folder = await mkdtemp(join(tmpdir(), 'bos-before-0104-'));
-  await mkdir(join(folder, 'meta'));
-  const before = journal.entries.slice(0, index);
-  await writeFile(
-    join(folder, 'meta/_journal.json'),
-    JSON.stringify({ ...journal, entries: before }),
-  );
-  for (const entry of before) {
-    await copyFile(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
-  }
-  await runMigrations(url, folder);
+  /** A migrations folder holding the journal's first `end` entries. */
+  const folderOf = async (name: string, end: number): Promise<string> => {
+    const folder = await mkdtemp(join(tmpdir(), `bos-${name}-`));
+    folders.push(folder);
+    await mkdir(join(folder, 'meta'));
+    const entries = journal.entries.slice(0, end);
+    await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }));
+    for (const entry of entries) {
+      await copyFile(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
+    }
+    return folder;
+  };
+  await runMigrations(url, await folderOf('before-0104', index));
+  through = await folderOf('through-0104', index + 1);
 
   running = await createTenantWithEntity(pool);
   await seedRows(running, [
@@ -117,13 +123,13 @@ beforeAll(async () => {
   onDefaults = await createTenantWithEntity(pool);
   for (const org of [running, customised]) versionsBefore.set(org.tenantId, (await version(org))!);
 
-  await runMigrations(url, MIGRATIONS_FOLDER);
+  await runMigrations(url, through);
 }, 180_000);
 
 afterAll(async () => {
   await pool?.end();
   await testDb?.drop();
-  if (folder !== undefined) await rm(folder, { recursive: true, force: true });
+  for (const folder of folders) await rm(folder, { recursive: true, force: true });
 });
 
 describe('0104 credit.override', () => {
@@ -162,7 +168,7 @@ describe('0104 credit.override', () => {
 
   it('is not re-applied by the runner', async () => {
     const v = await version(running);
-    await runMigrations(url, MIGRATIONS_FOLDER);
+    await runMigrations(url, through);
     expect(await grants(running)).toHaveLength(3);
     expect(await version(running)).toBe(v);
   });

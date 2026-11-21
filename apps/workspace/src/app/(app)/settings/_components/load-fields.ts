@@ -4,8 +4,8 @@ import {
   EVIDENCE_POLICIES,
   SETTING_DEFAULTS,
   type EvidencePolicy,
-  type LeadOwnerOption,
   type SettingKey,
+  type SettingsPerson,
 } from '@bos/contracts';
 
 import { defaultText, isDefaultValue } from '@/components/settings/default-value';
@@ -37,15 +37,12 @@ function defaultLabel(key: SettingKey, kind: FieldKind): string {
 type Option = { value: string; label: string };
 
 /**
- * The people a `person` field offers, named as the lead owner select names them (`ownerOptionName`). A saved person
+ * The people a `person` field offers, by the name the API sends. A saved person
  * the list no longer holds stays selectable under a plain label, so the field never shows the Sales head while the
  * stored value names someone else; the API hands such leads to the Sales head.
  */
-function personOptions(people: readonly LeadOwnerOption[], saved: unknown): Option[] {
-  const options = people.map((p) => ({
-    value: p.userId,
-    label: p.displayName || p.email || 'Unnamed user',
-  }));
+function personOptions(people: readonly SettingsPerson[], saved: unknown): Option[] {
+  const options = people.map((p) => ({ value: p.userId, label: p.displayName || 'Unnamed user' }));
   if (typeof saved === 'string' && saved !== '' && !options.some((o) => o.value === saved)) {
     options.push({ value: saved, label: 'Unavailable person (Sales head is used)' });
   }
@@ -55,7 +52,7 @@ function personOptions(people: readonly LeadOwnerOption[], saved: unknown): Opti
 function optionsFor(
   kind: FieldKind,
   saved: unknown,
-  people: readonly LeadOwnerOption[],
+  people: readonly SettingsPerson[],
 ): Option[] | undefined {
   if (kind === 'select') {
     return EVIDENCE_POLICIES.map((value) => ({ value, label: EVIDENCE_LABEL[value] }));
@@ -67,7 +64,7 @@ function optionsFor(
 function toSpec(
   key: SettingKey,
   current: SettingCurrent,
-  people: readonly LeadOwnerOption[],
+  people: readonly SettingsPerson[],
 ): FieldSpec {
   const copy = SETTING_COPY[key];
   if (copy === undefined) throw new Error(`No settings copy for ${key}`);
@@ -95,7 +92,7 @@ function toSpec(
 export async function loadFields(
   session: Session,
   keys: readonly SettingKey[],
-  people?: () => Promise<readonly LeadOwnerOption[]>,
+  people?: () => Promise<readonly SettingsPerson[]>,
 ): Promise<Section<FieldSpec[]>> {
   return section('view these settings', async () => {
     const [list, currents] = await Promise.all([

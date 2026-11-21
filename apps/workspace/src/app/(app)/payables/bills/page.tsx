@@ -26,7 +26,6 @@ import {
 } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
-import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { getGrants, hasGrant } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
@@ -86,14 +85,12 @@ export default async function BillsPage({
     listBillsPage(session, { status: statuses, limit: 1, offset: 0 }).then((r) => r.total),
   );
   // "Request payment" on a row: only for someone the payment request form lets in (the same check it makes), and
-  // only on a bill with a balance still free to claim. If those reads fail the rows just go without it.
+  // only on a bill with a balance still free to claim, in any currency (D56 U16-Q1). If that read fails the rows
+  // just go without it.
   const mayRequest = hasGrant(await getGrants(session), 'payables.payment.request');
-  const requestable: Promise<{ items: PaymentRequestItem[]; currencies: string[] }> = mayRequest
-    ? Promise.all([listPaymentRequestItems(session), loadEnabledCurrencies(session)]).then(
-        ([items, currencies]) => ({ items, currencies }),
-        () => ({ items: [], currencies: [] }),
-      )
-    : Promise.resolve({ items: [], currencies: [] });
+  const requestable: Promise<PaymentRequestItem[]> = mayRequest
+    ? listPaymentRequestItems(session).catch(() => [])
+    : Promise.resolve([]);
   let bills: BillListItem[];
   let total = 0;
   let window = pageWindow(list.page, list.rows);
@@ -254,8 +251,7 @@ export default async function BillsPage({
                       </Td>
                       <Td nowrap pinned>
                         <span className={styles.rowActions}>
-                          {requestableItem(payable.items, b.id, payable.currencies) !==
-                          undefined ? (
+                          {requestableItem(payable, b.id) !== undefined ? (
                             <LinkButton
                               href={`/payables/payment-requests/new?bill=${encodeURIComponent(b.id)}`}
                               variant="secondary"

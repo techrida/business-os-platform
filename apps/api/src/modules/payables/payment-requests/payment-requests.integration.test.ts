@@ -602,15 +602,22 @@ describe('the paying bank account (round 5, P1)', () => {
     expect(await writes()).toEqual(before);
   });
 
-  it('answers CURRENCY_NOT_ENABLED before looking at the account', async () => {
+  it('accepts a currency the company switched off and goes on to the account and lines (D56 U16-Q1)', async () => {
     const v = await vendor();
     // Entity B alone switches USD off, so no other test here meets the setting.
     await withTx(db, scopeB, systemActor('test'), (tx) =>
       new SettingsService(db).set(tx, 'currency.enabled', ['NPR', 'INR']),
     );
+    const usdB = await createCompanyBankAccount(appPool, {
+      ...scopeB,
+      name: 'Dollar account B',
+      last4: 'USB1',
+      currency: 'USD',
+    });
     current.inB = true;
     as(U.fin2, 'finance');
-    const refused = await httpErrorOf(
+    // An unknown account is now the first refusal: the currency is not checked against the setting.
+    const noAccount = await httpErrorOf(
       service.create(
         {
           ...body(v, [{ openItemId: randomUUID(), amount: '100.00' }]),
@@ -620,7 +627,20 @@ describe('the paying bank account (round 5, P1)', () => {
         randomUUID(),
       ),
     );
-    expect(codeOf(refused)).toBe('CURRENCY_NOT_ENABLED');
+    expect(codeOf(noAccount)).toBe('BANK_ACCOUNT_INVALID');
+    // With a USD account the vendor is read and the lines are checked; old code stopped at CURRENCY_NOT_ENABLED.
+    const noItem = await httpErrorOf(
+      service.create(
+        {
+          ...body(v, [{ openItemId: randomUUID(), amount: '100.00' }]),
+          currency: 'USD',
+          fromBankAccountId: usdB.id,
+        },
+        randomUUID(),
+      ),
+    );
+    expect(noItem.getStatus()).toBe(404);
+    expect(noItem.getResponse()).toEqual({ code: 'not_found', message: 'Open item not found' });
   });
 
   it('keeps an active account in the currency on the request and replays the same request for the same key', async () => {

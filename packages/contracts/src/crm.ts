@@ -145,6 +145,38 @@ export const PartyAccountDtoSchema = z.object({
 export type PartyAccountDto = z.infer<typeof PartyAccountDtoSchema>;
 
 /**
+ * A credit limit in NPR (D22): at most two decimals, never negative, no sign. '0.00' is a real limit (it holds
+ * every order); "no limit" is null, never zero.
+ */
+export const CreditLimitSchema = z
+  .string()
+  .regex(/^\d{1,16}(\.\d{1,2})?$/, 'must be an NPR amount with at most two decimals, not negative');
+
+/**
+ * `PATCH /v1/customers/:id/terms`: the customer's terms with the ACTING entity (its `party_accounts` row, created
+ * on the first save). Send only what changes; at least one of `paymentTermId` and `creditLimit` is required.
+ * - `paymentTermId`: an active payment term of the tenant, or null to clear it. Needs customer.write on the record.
+ * - `creditLimit`: NPR, or null for no limit. Needs `customers.credit_limit.write`; sent without it is a 403, never
+ *   dropped.
+ * - `expectedVersion`: the row's version the client saw. Required once the row exists (409 when stale or missing);
+ *   leave it out on the first save (409 when the row was created in between). Answered with the PartyAccountDto.
+ * - `organizationId`: the acting entity the form was rendered for (the detail's `actingEntity.organizationId`).
+ *   When the caller now acts for another entity (switched in another tab), the save is 409 `conflict` with reason
+ *   `entity_changed` and nothing is written, so a stale form never lands on another entity's terms.
+ */
+export const UpdateCustomerTermsBodySchema = z
+  .strictObject({
+    organizationId: z.guid(),
+    paymentTermId: z.guid().nullable().optional(),
+    creditLimit: CreditLimitSchema.nullable().optional(),
+    expectedVersion: z.number().int().min(1).optional(),
+  })
+  .refine((b) => b.paymentTermId !== undefined || b.creditLimit !== undefined, {
+    message: 'at least one of paymentTermId and creditLimit is required',
+  });
+export type UpdateCustomerTermsBody = z.infer<typeof UpdateCustomerTermsBodySchema>;
+
+/**
  * `POST /v1/customers/:id/contacts`. The email is optional here only because a later contact may
  * have none: the API refuses a contact without one while the customer has no contact with an email.
  */
@@ -562,9 +594,11 @@ export const CreditOverrideBodySchema = z.strictObject({ reason: text(500) });
 export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
 
 /**
- * A deal's credit position (F1-Q20/F1-Q26), for holders of `credit.override`. Amounts are NPR with two decimals
- * (D22). `exposure` is what the customer owes the acting entity now: its open receivable debits less its open
- * credits (unapplied payments, credit notes), each at its own NPR rate. `held` is `exposure > creditLimit`; never
+ * A deal's credit position (F1-Q20/F1-Q26, Kuu R4a Q1b), for holders of `credit.override`. Amounts are NPR with
+ * two decimals (D22). `exposure` is what the customer owes the acting entity now: its open receivable debits less
+ * its open credits (unapplied payments, credit notes), each at its own NPR rate. `orderValue` is the gross NPR
+ * value (VAT included) of the deal's accepted quotation that has not become a confirmed sales order yet ('0.00'
+ * when none). `held` is `exposureWithOrder > creditLimit`, where `exposureWithOrder = exposure + orderValue`; never
  * held without a limit. The override, once given, lets the deal's accepted quotation become a sales order.
  */
 export const CreditHoldDtoSchema = z.object({
@@ -573,6 +607,8 @@ export const CreditHoldDtoSchema = z.object({
   currency: z.literal('NPR'),
   creditLimit: DecimalString.nullable(),
   exposure: z.string().regex(/^-?\d+\.\d{2}$/),
+  orderValue: z.string().regex(/^\d+\.\d{2}$/),
+  exposureWithOrder: z.string().regex(/^-?\d+\.\d{2}$/),
   held: z.boolean(),
   override: z
     .object({
@@ -833,7 +869,11 @@ export type OpportunityDto = z.infer<typeof OpportunityDtoSchema>;
 // Activities
 // ---------------------------------------------------------------------------------------------
 
-/** A2 section 2.1. `stage_change` and `system` are written by the server, never posted by a user. */
+/**
+ * A2 section 2.1. `stage_change`, `system` and `collection_call` are written by the server, never posted by a user.
+ * A `collection_call` is the call the payment-promise job plans for Finance after a missed promise (R4c1 Q1): it is
+ * read and changed by the receivables permissions, not the customer's activity reach.
+ */
 export const ACTIVITY_KINDS = [
   'call',
   'meeting',
@@ -842,6 +882,7 @@ export const ACTIVITY_KINDS = [
   'task',
   'stage_change',
   'system',
+  'collection_call',
 ] as const;
 export const ActivityKindSchema = z.enum(ACTIVITY_KINDS);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;

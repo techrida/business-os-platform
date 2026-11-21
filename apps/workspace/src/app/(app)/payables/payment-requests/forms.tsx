@@ -1,6 +1,6 @@
 'use client';
 
-import type { CompanyBankAccount, Currency } from '@bos/contracts';
+import { CURRENCIES, type CompanyBankAccount, type Currency } from '@bos/contracts';
 import Link from 'next/link';
 import { useActionState, useId, useRef, useState } from 'react';
 
@@ -18,7 +18,6 @@ import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
 import { bankAccountOptions } from '@/lib/company-account-options';
-import { currencyChoices } from '@/lib/enabled-currencies';
 import { money } from '@/lib/kernel-format';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
@@ -34,7 +33,6 @@ export function PaymentRequestEntry({
   idempotencyKey,
   items,
   orders = [],
-  enabledCurrencies,
   start,
   bankAccounts = [],
   bankAccountsHref,
@@ -48,12 +46,6 @@ export function PaymentRequestEntry({
    * picker shows. Only the chosen vendor's orders are offered.
    */
   orders?: readonly { id: string; vendorId: string; label: string }[];
-  /**
-   * The currencies the company has switched on (`currency.enabled`, D44), read once on the server. The
-   * platform refuses a request in any other currency, so bills in a switched-off one cannot be chosen; the
-   * Currency field still names that currency (U16-Q9) instead of leaving it out silently.
-   */
-  enabledCurrencies: readonly Currency[];
   /**
    * The company's active bank accounts, read once on the server. "Pay from bank account" offers those in
    * the request currency.
@@ -95,21 +87,17 @@ export function PaymentRequestEntry({
   const vendors = [
     ...new Map(items.map((item) => [item.vendorPartyId, item.vendorName])).entries(),
   ];
-  const enabled = new Set<string>(currencyChoices(enabledCurrencies).map((c) => c.value));
-  const vendorCurrencies = new Set(
-    items
-      .filter((item) => item.vendorPartyId === header.vendorPartyId)
-      .map((item) => item.currency),
-  );
-  const currencies = [...vendorCurrencies].filter((currency) => enabled.has(currency));
-  const switchedOff = [...vendorCurrencies].filter((currency) => !enabled.has(currency)).sort();
-  const offList = switchedOff.join(' and ');
-  const currencyHint =
-    switchedOff.length === 0
-      ? undefined
-      : currencies.length === 0
-        ? `This vendor's approved bills are only in ${offList}, switched off in Settings.`
-        : `This vendor also has approved bills in ${offList}, switched off in Settings.`;
+  /**
+   * The currencies of a vendor's approved bills, NPR first, then the fixed order. Every one may be
+   * requested, switched off in Settings or not (D56 U16-Q1).
+   */
+  const currenciesOf = (vendorPartyId: string) => {
+    const billed = new Set<string>(
+      items.filter((item) => item.vendorPartyId === vendorPartyId).map((item) => item.currency),
+    );
+    return CURRENCIES.filter((currency) => billed.has(currency));
+  };
+  const currencies = currenciesOf(header.vendorPartyId);
   const eligible = items.filter(
     (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
   );
@@ -185,11 +173,7 @@ export function PaymentRequestEntry({
                     value={header.vendorPartyId}
                     onChange={(e) => {
                       const vendorPartyId = e.target.value;
-                      const currency =
-                        items.find(
-                          (item) =>
-                            item.vendorPartyId === vendorPartyId && enabled.has(item.currency),
-                        )?.currency ?? '';
+                      const currency = currenciesOf(vendorPartyId)[0] ?? '';
                       setHeader((current) => ({
                         ...current,
                         vendorPartyId,
@@ -267,7 +251,7 @@ export function PaymentRequestEntry({
                   </Select>
                 )}
               </Field>
-              <Field label="Currency" hint={currencyHint} error={errors['currency']}>
+              <Field label="Currency" error={errors['currency']}>
                 {(control) => (
                   <Select
                     name="currency"
@@ -287,11 +271,6 @@ export function PaymentRequestEntry({
                     {currencies.map((currency) => (
                       <option key={currency} value={currency}>
                         {currency}
-                      </option>
-                    ))}
-                    {switchedOff.map((currency) => (
-                      <option key={currency} value={currency} disabled>
-                        {`${currency}, switched off`}
                       </option>
                     ))}
                   </Select>

@@ -694,6 +694,8 @@ describe('PATCH with expectedVersion', () => {
       request(baseUrl)
         .patch(`/v1/customers/${id}`)
         .send(body as object);
+    // A new owner needs customers.owner.write (customers-owner.integration.test.ts); with it, an unknown user is a 400.
+    current.grants.set('customers.owner.write', 'all');
     expect((await patch({ expectedVersion: 1, ownerUserId: randomUUID() })).status).toBe(400);
     expect((await patch({ expectedVersion: 1 })).status).toBe(400);
     expect((await patch({ industry: 'x' })).status).toBe(400);
@@ -1035,6 +1037,8 @@ describe('detail people (the account owner by name)', () => {
 
   it('names a different owner, and only that owner, for a Sales colleague who reads the customer', async () => {
     const { userId: mate } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
+    // Naming another owner on create needs customers.owner.write (R4c2 Q5a); asStaff below drops it again.
+    current.grants.set('customers.owner.write', 'all');
     const customer = await createCustomer({ ownerUserId: mate });
     asStaff(a);
     expect(await readPeople(customer.id)).toEqual([
@@ -1082,7 +1086,7 @@ describe('detail people (the account owner by name)', () => {
 
 describe('detail can and verification presence (audit #6)', () => {
   type Detail = {
-    can?: { write: boolean; readVerification: boolean; openVerification: boolean };
+    can?: Record<string, boolean>;
     verification?: { exists: boolean };
   };
   const detail = async (id: string) => {
@@ -1117,7 +1121,14 @@ describe('detail can and verification presence (audit #6)', () => {
     asStaff(a);
     const mine = await createCustomer({ ownerUserId: a.userId });
     const body = await detail(mine.id);
-    expect(body.can).toEqual({ write: true, readVerification: true, openVerification: true });
+    expect(body.can).toEqual({
+      write: true,
+      readVerification: true,
+      openVerification: true,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: true,
+    });
     expect(body.verification).toEqual({ exists: false });
     // F1-Q31: the owner may invite the first portal admin once the customer's KYB case is approved.
     expect(body.portalAccess).toEqual({
@@ -1155,11 +1166,20 @@ describe('detail can and verification presence (audit #6)', () => {
   it("tells Sales a colleague's customer has a case, without offering to start one or leaking the case", async () => {
     const { userId: mate } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
     asStaff(a);
+    current.grants.set('customers.owner.write', 'all');
     const theirs = await createCustomer({ ownerUserId: mate });
+    asStaff(a);
     const caseId = await addCase(theirs.id);
 
     const body = await detail(theirs.id);
-    expect(body.can).toEqual({ write: true, readVerification: false, openVerification: false });
+    expect(body.can).toEqual({
+      write: true,
+      readVerification: false,
+      openVerification: false,
+      creditLimit: false,
+      owner: false,
+      paymentTerms: true,
+    });
     // F1-Q31: only the account owner invites the first portal admin.
     expect(body.portalAccess).toEqual({ hasUser: false, canInvite: false, blocked: 'owner_only' });
     expect(body.verification).toEqual({ exists: true });

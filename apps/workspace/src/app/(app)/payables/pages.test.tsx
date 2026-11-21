@@ -331,7 +331,7 @@ describe('bills list', () => {
     expect(out).toContain('aria-label="Rows per page"');
   });
 
-  it('offers Request payment only to the payment request role, on a bill with a free balance', async () => {
+  it('offers Request payment only to the payment request role, on a bill with a free balance, in any currency', async () => {
     const item = (billId: string, availableAmount: string, currency = 'NPR') => ({
       openItemId: billId,
       vendorPartyId: VENDOR,
@@ -362,7 +362,13 @@ describe('bills list', () => {
     const links = [...out.matchAll(/href="(\/payables\/payment-requests\/new[^"]*)"/g)].map(
       (m) => m[1],
     );
-    expect(links).toEqual([`/payables/payment-requests/new?bill=${SUB}`]);
+    // USD is switched off (only NPR is on), yet its bill is still requestable (D56 U16-Q1): payment requests are
+    // exempt, so the list does not read the enabled currencies at all. Old code hid the link on the USD bill.
+    expect(links).toEqual([
+      `/payables/payment-requests/new?bill=${SUB}`,
+      `/payables/payment-requests/new?bill=${PO}`,
+    ]);
+    expect(api.loadEnabledCurrencies).not.toHaveBeenCalled();
     expect(out).toContain(
       'aria-label="Request payment of BILL-2083-0001 for invoice INV-001 from Himal Traders"',
     );

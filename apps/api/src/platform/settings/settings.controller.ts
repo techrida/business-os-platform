@@ -2,7 +2,14 @@
 // every route names the permission it needs, and every write goes through withTx so it is audited.
 // The routes several permissions may use (F1-Q48) carry @AnyAuthenticated and check settings-access.ts first,
 // before any key lookup or read: one @Can names one permission.
-import { RateString, SettingKeySchema, type SettingKey, type SettingValue } from '@bos/contracts';
+import {
+  RateString,
+  SETTINGS,
+  SettingKeySchema,
+  type SettingKey,
+  type SettingValue,
+  type SettingsPerson,
+} from '@bos/contracts';
 import { Dec } from '@bos/locale';
 import {
   BadRequestException,
@@ -20,8 +27,10 @@ import {
 import { z } from 'zod';
 
 import { AnyAuthenticated, Can } from '../authz/decorators';
+import { RoleCache } from '../authz/role-cache';
 import { DB, type Db } from '../db/db.module';
-import { requestTx, withTx } from '../db/tx';
+import { type DbTransaction, READ_ONLY, requestTx, type TxScope, withTx } from '../db/tx';
+import { assertDefaultLeadOwner, defaultLeadOwnerCandidates } from './default-lead-owner';
 import { MoneyService } from './money.service';
 import {
   ANY_SETTING_EDITORS,
@@ -107,6 +116,7 @@ export class SettingsController {
     @Inject(DB) private readonly db: Db,
     private readonly settings: SettingsService,
     private readonly money: MoneyService,
+    private readonly roleCache: RoleCache,
   ) {}
 
   /** The caller must hold one of settingEditors(key): the same rule as the write, so an editor can load its version. */
@@ -114,6 +124,25 @@ export class SettingsController {
   @AnyAuthenticated()
   async getSetting(@Param('key') rawKey: string) {
     return this.current(editableKey(rawKey));
+  }
+
+  /**
+   * The people the Settings > Sales "Lead owner" card may pick (SettingsPerson[], by name): whoever a new lead may
+   * fall back to (default-lead-owner.ts). Open to exactly who may edit crm.default_lead_owner, so the card works
+   * for a role without lead access (R4a Q10). Two path segments after `settings`, so `settings/:key` never takes it.
+   */
+  @Get('settings/crm.default_lead_owner/people')
+  @AnyAuthenticated()
+  async defaultLeadOwnerPeople(): Promise<SettingsPerson[]> {
+    editableKey('crm.default_lead_owner');
+    const { scope, actor } = requestTx();
+    return withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => defaultLeadOwnerCandidates(tx, scope, this.roleCache),
+      READ_ONLY,
+    );
   }
 
   /**
@@ -145,6 +174,7 @@ export class SettingsController {
     // The service validates `value` against SETTINGS[key] and answers 400 when it does not fit, and 409
     // `stale_setting` when `expectedVersion` is given and is no longer the saved version.
     return withTx(this.db, scope, actor, async (tx) => {
+      if (key === 'crm.default_lead_owner') await this.checkLeadOwner(tx, scope, value);
       const next =
         key === 'entity.profile'
           ? withStoredLogo(value, (await this.settings.getLocked(tx, 'entity.profile')).value)
@@ -153,6 +183,17 @@ export class SettingsController {
         ? this.settings.set(tx, key, next)
         : this.settings.set(tx, key, next, { expectedVersion });
     });
+  }
+
+  /**
+   * A person saved as the default lead owner must be one a new lead would go to (400 with
+   * `details.assignmentReason` otherwise). Null (the Sales head) and a value the schema refuses pass through: the
+   * service answers the latter with its own 400, before any lookup.
+   */
+  private async checkLeadOwner(tx: DbTransaction, scope: TxScope, value: unknown): Promise<void> {
+    const parsed = SETTINGS['crm.default_lead_owner'].safeParse(value);
+    if (!parsed.success || parsed.data === null) return;
+    await assertDefaultLeadOwner(tx, scope, this.roleCache, parsed.data);
   }
 
   @Get('number-series')
