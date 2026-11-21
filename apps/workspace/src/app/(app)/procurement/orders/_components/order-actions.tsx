@@ -1,10 +1,12 @@
 'use client';
 
+import type { Currency } from '@bos/contracts';
 import { useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Combobox } from '@/components/ui/combobox';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { Field, Textarea } from '@/components/ui/field';
+import { DecimalInput, MoneyInput, QuantityInput } from '@/components/ui/number-input';
 
 import {
   amendAction,
@@ -247,26 +249,23 @@ function AmendFields({
           <div className={styles.lineFields}>
             <Field label="Quantity" error={errors[`${l.id}.quantity`]}>
               {(control) => (
-                <Input
+                <QuantityInput
                   name={`qty:${l.id}`}
                   value={values[l.id]?.quantity ?? ''}
-                  onChange={(e) => set(l.id, 'quantity', e.target.value)}
-                  inputMode="decimal"
-                  autoComplete="off"
-                  className={styles.numeric}
+                  onValueChange={(plain) => set(l.id, 'quantity', plain)}
+                  uom={l.uom}
+                  currency={currency as Currency}
                   {...control}
                 />
               )}
             </Field>
             <Field label={`Unit price (${currency})`} error={errors[`${l.id}.unitPrice`]}>
               {(control) => (
-                <Input
+                <MoneyInput
                   name={`price:${l.id}`}
                   value={values[l.id]?.unitPrice ?? ''}
-                  onChange={(e) => set(l.id, 'unitPrice', e.target.value)}
-                  inputMode="decimal"
-                  autoComplete="off"
-                  className={styles.numeric}
+                  onValueChange={(plain) => set(l.id, 'unitPrice', plain)}
+                  currency={currency as Currency}
                   {...control}
                 />
               )}
@@ -280,13 +279,14 @@ function AmendFields({
         error={errors['paymentTermsDays']}
       >
         {(control) => (
-          <Input
+          <DecimalInput
             name="paymentTerms"
             value={terms}
-            onChange={(e) => setTerms(e.target.value)}
-            inputMode="numeric"
-            autoComplete="off"
-            className={styles.numeric}
+            onValueChange={setTerms}
+            intDigits={3}
+            scale={0}
+            min="0"
+            max="365"
             {...control}
           />
         )}

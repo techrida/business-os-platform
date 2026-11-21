@@ -9,6 +9,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog, Dialog, DialogClose } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
+import { PercentInput } from '@/components/ui/number-input';
 import { Table, Td, Th } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 
@@ -246,16 +247,12 @@ function AddTaxCodeDialog({ today, onClose }: { today: string; onClose: () => vo
           }
         >
           {(c) => (
-            <Input
+            <PercentInput
               {...c}
-              type="number"
-              min={0}
-              max={100}
-              step="0.01"
-              inputMode="decimal"
+              scale={2}
               value={zero ? '0' : rate}
               disabled={zero}
-              onChange={(e) => setRate(e.target.value)}
+              onValueChange={setRate}
             />
           )}
         </Field>
@@ -360,16 +357,12 @@ function ChangeTaxCodeDialog({
           }
         >
           {(c) => (
-            <Input
+            <PercentInput
               {...c}
-              type="number"
-              min={0}
-              max={100}
-              step="0.01"
-              inputMode="decimal"
+              scale={2}
               value={zero ? '0' : rate}
               disabled={zero}
-              onChange={(e) => setRate(e.target.value)}
+              onValueChange={setRate}
             />
           )}
         </Field>

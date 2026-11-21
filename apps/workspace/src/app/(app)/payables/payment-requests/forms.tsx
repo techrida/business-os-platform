@@ -12,10 +12,11 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
+import { MoneyInput } from '@/components/ui/number-input';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
 import { bankAccountOptions } from '@/lib/company-account-options';
 import { money } from '@/lib/kernel-format';
@@ -315,18 +316,18 @@ export function PaymentRequestEntry({
                   </Field>
                   <Field label={`Amount ${i + 1}`} error={errors[`allocations.${i}.amount`]}>
                     {(control) => (
-                      <Input
+                      <MoneyInput
+                        {...control}
                         name={`allocation:${i}:amount`}
+                        currency={(header.currency || 'NPR') as Currency}
                         value={row.amount}
-                        inputMode="decimal"
-                        onChange={(e) =>
+                        onValueChange={(amount) =>
                           setRows((current) =>
                             current.map((line, index) =>
-                              index === i ? { ...line, amount: e.target.value } : line,
+                              index === i ? { ...line, amount } : line,
                             ),
                           )
                         }
-                        {...control}
                       />
                     )}
                   </Field>

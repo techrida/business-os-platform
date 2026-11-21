@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/field';
+import { DecimalInput } from '@/components/ui/number-input';
 import { toast } from '@/components/ui/toast';
 
 import styles from '../_components/settings.module.css';
@@ -193,15 +194,14 @@ function AddPaymentTermDialog({ onClose }: { onClose: () => void }) {
         </Field>
         <Field label="Days to pay" hint="0 means due on receipt. Up to 365.">
           {(c) => (
-            <Input
+            <DecimalInput
               {...c}
-              type="number"
-              min={0}
-              max={365}
-              step={1}
-              inputMode="numeric"
+              intDigits={3}
+              scale={0}
+              min="0"
+              max="365"
               value={netDays}
-              onChange={(e) => setNetDays(e.target.value)}
+              onValueChange={setNetDays}
             />
           )}
         </Field>
