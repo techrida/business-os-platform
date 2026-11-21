@@ -547,7 +547,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       'signatoryTitle',
     ]);
     expect(view.file?.documentId).toBe(documentId);
-    expect(view.renderFailed).toBe(false);
+    expect(view.renderFailed).toBeUndefined();
     // The credit note was never printed: no stored format.
     const noteView = CustomerInvoiceViewSchema.parse(
       (await get(`/v1/portal/invoices/${creditNote}`)).body,
@@ -586,7 +586,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       const view = CustomerInvoiceViewSchema.parse((await get(`/v1/portal/invoices/${id}`)).body);
       // No file data for a quarantined PDF, and not failed: the portal shows it as being prepared.
       expect(view.file).toBeNull();
-      expect(view.renderFailed).toBe(false);
+      expect(view.renderFailed).toBeUndefined();
       const link = await get(`/v1/portal/invoices/${id}/document`);
       expect(link.status, link.text).toBe(409);
       expect(JSON.parse(link.text)).toEqual({
@@ -670,7 +670,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       (await get(`/v1/portal/invoices/${invoiceId}`)).body,
     );
     expect(view.file?.documentId).toBe(original.documentId);
-    expect(view.renderFailed).toBe(false);
+    expect(view.renderFailed).toBeUndefined();
     const link = await get(`/v1/portal/invoices/${invoiceId}/document`);
     expect(link.status, link.text).toBe(200);
     expect(SignedLinkDtoSchema.parse(link.body).url).toMatch(SIGNED_PATH);

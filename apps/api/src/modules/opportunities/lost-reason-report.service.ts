@@ -40,7 +40,8 @@ export function kathmanduMonth(now: Date): string {
 /** Every month from `from` to `to`, both inclusive. */
 function monthsBetween(from: string, to: string): string[] {
   const out: string[] = [];
-  for (let m = from; m <= to; m = addMonths(m, 1)) out.push(m);
+  for (let m = from; m <= to && out.length <= LOST_REASON_REPORT_MAX_MONTHS; m = addMonths(m, 1))
+    out.push(m);
   return out;
 }
 

@@ -415,6 +415,7 @@ describe('GET /v1/opportunities/reports/lost-reasons', () => {
     ['a day instead of a month', '?from=2025-01-01'],
     ['from after to', '?from=2025-06&to=2025-01'],
     ['more than 60 months', '?from=2020-01&to=2025-01'],
+    ['a year far in the future', '?from=9999-12&to=9999-12'],
     ['an unknown parameter', '?period=month'],
   ])('rejects %s with 400', async (_name, query) => {
     const res = await get(query);
