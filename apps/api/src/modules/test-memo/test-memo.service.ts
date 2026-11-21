@@ -156,6 +156,17 @@ interface ListCursor {
 }
 const CURSOR_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * A cursor time in the stored shape (microseconds, UTC) that is also a real moment. The pattern alone lets
+ * `2026-13-45T10:00:00.000000Z` through, which Postgres then refuses as a 500; JavaScript's own parse drops the
+ * microseconds and must give the same text back, so an out-of-range month, day or hour is a 400.
+ */
+function isRealMoment(text: string): boolean {
+  if (!CURSOR_TIME.test(text)) return false;
+  const millis = `${text.slice(0, 23)}Z`;
+  const parsed = new Date(millis);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === millis;
+}
 const encodeCursor = (c: ListCursor): string =>
   Buffer.from(JSON.stringify([c.createdAt, c.id])).toString('base64url');
 /** An unreadable or forged cursor is the caller's mistake: 400, never a database error. */
@@ -167,7 +178,7 @@ function decodeCursor(raw: string): ListCursor {
       parsed.length === 2 &&
       typeof parsed[0] === 'string' &&
       typeof parsed[1] === 'string' &&
-      CURSOR_TIME.test(parsed[0]) &&
+      isRealMoment(parsed[0]) &&
       CURSOR_ID.test(parsed[1])
     ) {
       return { createdAt: parsed[0], id: parsed[1] };
