@@ -10,6 +10,7 @@ import type { DocumentLogoResolver } from '../../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
+  PurchaseOrderRenderProcessor,
   PurchaseOrderRenderSweeper,
   RenderSourceMissingError,
   type RenderCandidate,
@@ -69,6 +70,8 @@ function fixture(
     src?: RenderSource | undefined;
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
+    /** The order's due versions, as the store answers renderNow; omitted, none. */
+    candidatesOf?: RenderCandidate[];
     pan?: unknown;
     /** The raw `format.number_systems` value; an omitted key reads as the stored default. */
     numberSystems?: unknown;
@@ -84,6 +87,7 @@ function fixture(
   const live: { profile: unknown } = { profile: over.profile };
   const store = {
     candidates: vi.fn().mockResolvedValue(over.candidates ?? []),
+    candidatesOf: vi.fn().mockResolvedValue(over.candidatesOf ?? []),
     load: vi.fn().mockResolvedValue('src' in over ? over.src : source()),
     lockAndHasDocument: vi.fn().mockResolvedValue(over.hasDocument ?? false),
     orphans: vi.fn().mockResolvedValue([]),
@@ -377,9 +381,27 @@ describe('PurchaseOrderRenderSweeper.sweep', () => {
     f.store.orphans.mockResolvedValue([
       { tenantId: 'tenant-1', organizationId: 'org-1', documentId: 'doc-9' },
     ]);
+    f.store.removeOrphan.mockResolvedValue({
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+      versionId: 'ver-9',
+      purchaseOrderId: 'po-9',
+    });
     const result = await f.sweeper.sweep();
     expect(result.orphansRemoved).toBe(1);
     expect(f.store.removeOrphan).toHaveBeenCalledOnce();
+    // The crashed render's try is counted once, as `abandoned`.
+    expect(f.store.recordFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        tenantId: 'tenant-1',
+        organizationId: 'org-1',
+        versionId: 'ver-9',
+        purchaseOrderId: 'po-9',
+      },
+      'abandoned',
+      NOW,
+    );
     const cutoff = f.store.orphans.mock.calls[0]?.[0] as Date;
     expect(NOW.getTime() - cutoff.getTime()).toBe(10 * 60_000);
   });
@@ -462,5 +484,48 @@ describe('PurchaseOrderRenderSweeper: the company logo', () => {
     expect(htmlOf(f, 0)).toContain(`src="${LOGO_A}"`);
     expect(htmlOf(f, 1)).toContain(`src="${LOGO_B}"`);
     expect(htmlOf(f, 1)).not.toContain(LOGO_A);
+  });
+});
+
+describe('PurchaseOrderRenderSweeper.renderNow and the purchase-order.render.one job (render on commit)', () => {
+  const SCOPE = { tenantId: 'tenant-1', organizationId: 'org-1' };
+
+  it("renders each of the order's due versions, asking the store by the candidate rule", async () => {
+    const f = fixture({ candidatesOf: [candidate(2)] });
+    await expect(f.sweeper.renderNow(SCOPE, candidate(2).purchaseOrderId)).resolves.toEqual([
+      'rendered',
+    ]);
+    expect(f.store.candidatesOf).toHaveBeenCalledWith(SCOPE, candidate(2).purchaseOrderId, NOW);
+    expect(f.pdf.htmlToPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders nothing, and counts no failure, when no version of the order is due', async () => {
+    const f = fixture({ candidatesOf: [] });
+    await expect(f.sweeper.renderNow(SCOPE, candidate(1).purchaseOrderId)).resolves.toEqual([]);
+    expect(f.store.load).not.toHaveBeenCalled();
+    expect(f.pdf.htmlToPdf).not.toHaveBeenCalled();
+    expect(f.store.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('routes purchase-order.render.one to renderNow with the job data, refuses bad data and unknown jobs', async () => {
+    const renderNow = vi.fn(() => Promise.resolve([]));
+    const processor = new PurchaseOrderRenderProcessor({ renderNow } as never);
+    const data = {
+      tenantId: '00000000-0000-4000-8000-0000000000a1',
+      organizationId: '00000000-0000-4000-8000-0000000000b1',
+      id: '00000000-0000-4000-8000-0000000000c1',
+    };
+    await processor.process({ name: 'purchase-order.render.one', data } as never);
+    expect(renderNow).toHaveBeenCalledWith(
+      { tenantId: data.tenantId, organizationId: data.organizationId },
+      data.id,
+    );
+    await expect(
+      processor.process({ name: 'purchase-order.render.one', data: { id: 'x' } } as never),
+    ).rejects.toThrow();
+    expect(renderNow).toHaveBeenCalledTimes(1);
+    await expect(processor.process({ name: 'other' } as never)).rejects.toThrow(
+      'Unknown purchase order render job',
+    );
   });
 });

@@ -28,6 +28,7 @@ import {
 
 import { approvalRequests } from './approvals.js';
 import { customers } from './crm.js';
+import { documents } from './documents.js';
 import { users } from './identity.js';
 import { appSchema, organizations, parties, tenants } from './platform.js';
 import { taxCodes } from './quotations.js';
@@ -425,5 +426,47 @@ export const invoicePrintLog = appSchema.table(
       foreignColumns: [users.tenantId, users.id],
     }),
     check('invoice_print_log_print_no_check', sql`${t.printNo} >= 1`),
+  ],
+);
+
+/**
+ * The print a stored invoice PDF is, kept until its print row is written (0157). The render sweeper inserts it with
+ * the generated document and deletes it with the print row's insert; a row whose document is live and clean is a
+ * print row still owed, which the next sweep writes from here.
+ */
+export const invoicePendingPrints = appSchema.table(
+  'invoice_pending_prints',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    organizationId: uuid('organization_id').notNull(),
+    invoiceId: uuid('invoice_id').notNull(),
+    documentId: uuid('document_id').notNull(),
+    printNo: integer('print_no').notNull(),
+    /** The DocumentFormatSnapshot the PDF printed with. */
+    renderFormat: jsonb('render_format').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('invoice_pending_prints_tenant_id_unique').on(t.tenantId, t.id),
+    unique('invoice_pending_prints_document_unique').on(t.tenantId, t.organizationId, t.documentId),
+    foreignKey({
+      name: 'invoice_pending_prints_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'invoice_pending_prints_invoice_fk',
+      columns: [t.tenantId, t.organizationId, t.invoiceId],
+      foreignColumns: [invoices.tenantId, invoices.organizationId, invoices.id],
+    }),
+    foreignKey({
+      name: 'invoice_pending_prints_document_fk',
+      columns: [t.tenantId, t.organizationId, t.documentId],
+      foreignColumns: [documents.tenantId, documents.organizationId, documents.id],
+    }),
+    check('invoice_pending_prints_print_no_check', sql`${t.printNo} >= 1`),
   ],
 );

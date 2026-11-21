@@ -38,6 +38,7 @@ import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 
 import { ApiError, apiFetch } from './api';
 import { failureOf } from './api-kernel';
+import { evidenceRefusalMessage } from './evidence';
 import { infectedFileMessage } from './infected-file';
 import { readMoneyTotals } from './money-totals';
 import { currencyNotEnabledText } from './kernel-ui';
@@ -488,7 +489,7 @@ export type BillingFailureKind =
   | 'not_approved' // NOT_APPROVED
   | 'period_mismatch' // PERIOD_FY_MISMATCH
   | 'stale_fx' // fx_rate_stale
-  | 'evidence' // evidence_policy_unmet
+  | 'evidence' // evidence_policy_unmet, invalid_evidence_document, evidence_required
   | 'credit_hold' // credit_hold: the customer is over its credit limit (F1-Q20/F1-Q26)
   | 'infected' // document_infected: an evidence file the scan found infected (TR-Q12e)
   | 'in_progress' // the first request with this key has not settled
@@ -596,6 +597,8 @@ export function describeBillingFailure(err: unknown): BillingFailure {
         return { ...base, kind: 'stale', definite: true };
     }
   }
+  const evidenceRefusal = evidenceRefusalMessage(err);
+  if (evidenceRefusal !== undefined) return final('evidence', evidenceRefusal);
   if (status === 422 && code === 'evidence_policy_unmet') {
     return final(
       'evidence',

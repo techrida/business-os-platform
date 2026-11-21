@@ -80,6 +80,7 @@ import {
   assertNotInfected,
   newestDocumentVersion,
 } from '../../../platform/documents/documents.service';
+import { assertEvidenceDocument } from '../../../platform/documents/evidence-document';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
@@ -968,7 +969,8 @@ export class VendorBillsService {
 
   /**
    * Asks Finance to accept a bill outside tolerance (AD5: route `match_exception`, the requester in
-   * sod_user_ids). 201. 409 unless the bill is in variance; 422 when nobody may decide.
+   * sod_user_ids). 201. 409 unless the bill is in variance; 422 when nobody may decide. The evidence, when given,
+   * must be a file uploaded as this bill's evidence: 422 `invalid_evidence_document`, 409 `document_infected`.
    */
   async requestException(
     id: string,
@@ -991,20 +993,9 @@ export class VendorBillsService {
               );
             }
             if (body.evidenceDocumentId !== undefined) {
-              // A foreign id would otherwise be a composite-FK 500, and a removed file evidence nobody can open.
-              const [doc] = await tx
-                .select({ id: documents.id })
-                .from(documents)
-                .where(
-                  scoped(scope).where(
-                    documents,
-                    and(eq(documents.id, body.evidenceDocumentId), isNull(documents.removedAt)),
-                  ),
-                );
-              if (doc === undefined) {
-                throw unprocessable('DOCUMENT_NOT_FOUND', 'The evidence file was not found');
-              }
-              await assertNotInfected(tx, scope, [body.evidenceDocumentId]);
+              // Round 5 P2: only evidence uploaded to this bill (owner type `evidence`), live, of this entity; never
+              // the invoice file, a picture or a file of another record (422 invalid_evidence_document).
+              await assertEvidenceDocument(tx, scope, body.evidenceDocumentId, bill.id);
             }
             const exceptionId = randomUUID();
             await tx.insert(matchExceptions).values({

@@ -6,6 +6,7 @@ import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CompanyAccountsModule } from './modules/company-accounts/company-accounts.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DepartmentsAdminModule } from './modules/departments/departments.module';
+import { EvidenceModule } from './modules/evidence/evidence.module';
 import { ImagesModule } from './modules/images/images.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { InvoiceRenderModule } from './modules/invoices/render/invoice-render.module';
@@ -115,6 +116,8 @@ import { UsersModule } from './platform/users/users.module';
     CompanyAccountsModule,
     // U12: logos and profile pictures as documents.
     ImagesModule,
+    // Round 5 P2: evidence uploaded in place on a sales order, vendor bill or RFQ.
+    EvidenceModule,
   ],
 })
 export class AppModule {}
