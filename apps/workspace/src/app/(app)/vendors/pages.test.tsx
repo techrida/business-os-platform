@@ -1,4 +1,4 @@
-import { avatarColour, imagePath } from '@bos/contracts';
+import { avatarColour, DEFAULT_ROLE_PERMISSIONS, imagePath } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -100,10 +100,22 @@ const detail = async () =>
     }),
   );
 
+/**
+ * GET /v1/me as the saved role rows answer it: here, each role's built-in grants (what Settings > Access starts
+ * from). A test that wants another answer sets `me.getMe` itself; one that wants the read to fail rejects it.
+ */
+const meOfRoles = (roles: readonly string[]) => ({
+  permissions: roles.flatMap((role) =>
+    Object.entries(
+      (DEFAULT_ROLE_PERMISSIONS as Record<string, Record<string, string> | undefined>)[role] ?? {},
+    ).map(([permission, scope]) => ({ permission, scope })),
+  ),
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
-  me.getMe.mockRejectedValue(new Error('offline'));
+  me.getMe.mockImplementation(() => Promise.resolve(meOfRoles(session.roles)));
   api.listVendorContacts.mockResolvedValue([]);
   api.listVendorAccounts.mockResolvedValue([]);
   api.listBankAccounts.mockResolvedValue([]);
@@ -652,11 +664,16 @@ describe('live saved grants decide Add vendor', () => {
     expect(out).not.toContain('<form');
   });
 
-  it('falls back to the role defaults when the live grants cannot be read', async () => {
-    session.roles = ['procurement'];
-    expect(html(await NewVendorPage())).not.toContain(DENIED);
-    session.roles = ['finance'];
-    expect(html(await NewVendorPage())).toContain(DENIED);
+  it('hides Add vendor and shuts the form when the live grants cannot be read, whatever the role', async () => {
+    me.getMe.mockRejectedValue(new Error('offline'));
+    api.listVendors.mockResolvedValue({ items: [vendor()], total: 1 });
+    for (const roles of [['procurement'], ['finance']]) {
+      session.roles = roles;
+      expect(await list()).not.toContain('Add vendor');
+      const out = html(await NewVendorPage());
+      expect(out).toContain(DENIED);
+      expect(out).not.toContain('<form');
+    }
   });
 });
 

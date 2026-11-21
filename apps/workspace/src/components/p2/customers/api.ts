@@ -9,6 +9,7 @@ import {
   CustomerDtoSchema,
   CustomerVerificationPresenceSchema,
   PartyAccountDtoSchema,
+  PaymentTermSchema,
   type CustomerActingEntity,
   type CustomerCan,
   type CustomerOwnerOption,
@@ -22,6 +23,7 @@ import {
   type CreateCustomerBody,
   type CustomerDto,
   type PartyAccountDto,
+  type PaymentTerm,
   type ReviewVerificationBody,
   type UpdateCustomerBody,
   type UpdateCustomerTermsBody,
@@ -261,6 +263,15 @@ export function updateCustomer(
  */
 export function listCustomerOwners(session: Session): Promise<CustomerOwnerOption[]> {
   return call(session, '/v1/customers/owners', z.array(CustomerOwnerOptionSchema));
+}
+
+/**
+ * `GET /v1/customers/payment-terms`: the tenant's active payment terms, for the customer card's terms control and
+ * labels. A customers route (`customer.read`), not the quotation one, so an editor without `quotation.read` keeps
+ * the control.
+ */
+export function listCustomerPaymentTerms(session: Session): Promise<PaymentTerm[]> {
+  return call(session, '/v1/customers/payment-terms', z.array(PaymentTermSchema));
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   getCustomerDetail,
   listContacts,
   listCustomerOwners,
+  listCustomerPaymentTerms,
   listVerificationCases,
   type CustomerDetail,
   type Listing,
@@ -41,7 +42,6 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { userNames } from '@/lib/business-labels';
-import { listPaymentTerms } from '@/components/p2/quote-builder/api';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
 import { CompanyLogoUpload } from '../_components/company-logo-upload';
@@ -195,7 +195,6 @@ function Accounts({
   numberSystems: NumberSystems;
 }) {
   const accounts: PartyAccountDto[] | undefined = customer.accounts;
-  const currency = customer.defaultCurrency;
   return (
     <Panel
       title="Terms by legal entity"
@@ -235,12 +234,10 @@ function Accounts({
                   <Td align="end" nowrap>
                     {a.creditLimit === null ? (
                       <span className={styles.quiet}>Not set</span>
-                    ) : currency !== null ? (
-                      <span className={styles.numeric}>
-                        {money(a.creditLimit, currency, numberSystems)}
-                      </span>
                     ) : (
-                      <span className={styles.numeric}>{a.creditLimit}</span>
+                      <span className={styles.numeric}>
+                        {money(a.creditLimit, 'NPR', numberSystems)}
+                      </span>
                     )}
                   </Td>
                 </tr>
@@ -248,9 +245,7 @@ function Accounts({
             </tbody>
           </Table>
           <p className={styles.note}>
-            {currency !== null
-              ? `Credit limits are shown in the customer's default currency, ${currency}.`
-              : 'Credit limit currency is unavailable. Confirm the currency before relying on these limits.'}
+            Credit limits are held in NPR, whatever the customer&apos;s default currency is.
           </p>
         </>
       )}
@@ -412,7 +407,7 @@ export default async function CustomerPage({
       ? listVerificationCases(session, { partyId: id })
       : Promise.resolve<Listing<VerificationCaseDto>>({ items: [], total: 0 }),
     userNames(session),
-    listPaymentTerms(session),
+    listCustomerPaymentTerms(session),
     mayChangeOwner ? listCustomerOwners(session) : Promise.resolve([]),
   ]);
 

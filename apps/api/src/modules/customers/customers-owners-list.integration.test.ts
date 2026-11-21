@@ -1,6 +1,7 @@
 // Integration tests of GET /v1/customers/owners: the people the customer card's owner picker offers. Open to
 // `customers.owner.write` (Management changes owners without any people directory); active staff users of the
-// caller's tenant only, by name, with no address. Real: every migration, queries as bos_app, the controller behind
+// caller's tenant who hold customer.write (the first portal invite must come from the owner), by name, with no
+// address. Also GET /v1/customers/payment-terms, the terms list behind customer.read. Real: every migration, queries as bos_app, the controller behind
 // the production body parser and error filter, CustomersService and withTx. Faked: the request context and
 // authz.assert, which run the real pure can() on a fake principal holding a role's DEFAULT grants. The route's @Can
 // is metadata here (no guard), so the 403s below are the service's own check.
@@ -14,6 +15,7 @@ import {
   CustomerOwnerOptionSchema,
   DEFAULT_ROLE_PERMISSIONS,
   ErrorBodySchema,
+  PaymentTermSchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -23,12 +25,14 @@ import {
   createPortalUser,
   createStaffUser,
   createTenantWithEntity,
+  paymentTerms,
+  rolePermissions,
   users,
 } from '@bos/db';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -38,7 +42,8 @@ import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import { can } from '../../platform/authz/can';
 import { CAN_KEY } from '../../platform/authz/decorators';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { RoleCache } from '../../platform/authz/role-cache';
+import { AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
@@ -101,7 +106,10 @@ const caller = {
     principal: principalNow(),
   }),
 };
+// The real role cache over the test database, for the grant lookup behind the owner list.
+let realAuthz: AuthzService;
 const authz = {
+  rolesHold: (...args: Parameters<AuthzService['rolesHold']>) => realAuthz.rolesHold(...args),
   assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
     const d = can(principalNow(), action, ref);
     if (!d.allowed) {
@@ -114,6 +122,7 @@ beforeAll(async () => {
   testDb = await createTestDatabase();
   appPool = new Pool({ connectionString: testDb.appUrl, max: 6 });
   db = drizzle({ client: appPool });
+  realAuthz = new AuthzService(db, new RoleCache(db));
 
   const tenant = async (code: string): Promise<Tenant> => {
     const t = await createTenantWithEntity(appPool, { code });
@@ -175,26 +184,48 @@ const parse = (body: unknown) => CustomerOwnerOptionSchema.array().parse(body);
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
 
 describe('GET /v1/customers/owners', () => {
-  it('gives Management the active staff of its tenant, by name, with names only', async () => {
+  it('gives Management the active staff of its tenant who hold customer.write, by name, with names only', async () => {
     const res = await list();
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     // Strict: an email, role or any other key added on the server fails here.
     const people = parse(res.body);
     const ids = people.map((p) => p.userId);
-    expect(new Set(ids)).toEqual(
-      new Set([
-        a.userId,
-        usersA.founder,
-        usersA.management,
-        usersA.finance,
-        usersA.sales,
-        usersA.accountant,
-      ]),
-    );
-    expect(people.find((p) => p.userId === usersA.accountant)?.displayName).toBe('Unnamed user');
+    // The first portal invite must come from the owner, so only people who can send it are offered: the Founders
+    // and Sales hold customer.write by default; Management, Finance and the Accountant do not.
+    expect(new Set(ids)).toEqual(new Set([a.userId, usersA.founder, usersA.sales]));
+    for (const left of [usersA.management, usersA.finance, usersA.accountant]) {
+      expect(ids).not.toContain(left);
+    }
     const names = people.map((p) => p.displayName);
     expect(names).toEqual([...names].sort((x, y) => x.localeCompare(y)));
-    expect(names.indexOf('Anil Manager')).toBeLessThan(names.indexOf('Zara Founder'));
+    expect(people.find((p) => p.userId === usersA.founder)?.displayName).toBe('Zara Founder');
+  });
+
+  it('follows the live role rows: a role granted customer.write in Settings > Access is offered at once', async () => {
+    const grant = { tenantId: a.tenantId, roleKey: 'finance', permission: 'customer.write' };
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.insert(rolePermissions).values({ ...grant, scope: 'all' }),
+    );
+    await realAuthz.invalidate(a.tenantId, a.organizationId);
+    try {
+      const withGrant = parse((await list()).body).map((p) => p.userId);
+      expect(withGrant).toContain(usersA.finance);
+      expect(withGrant).not.toContain(usersA.accountant);
+    } finally {
+      await withTx(db, a, systemActor('test'), (tx) =>
+        tx
+          .delete(rolePermissions)
+          .where(
+            and(
+              eq(rolePermissions.tenantId, grant.tenantId),
+              eq(rolePermissions.roleKey, grant.roleKey),
+              eq(rolePermissions.permission, grant.permission),
+            ),
+          ),
+      );
+      await realAuthz.invalidate(a.tenantId, a.organizationId);
+    }
+    expect(parse((await list()).body).map((p) => p.userId)).not.toContain(usersA.finance);
   });
 
   it('never offers a disabled, invited or portal user, or anyone of another tenant', async () => {
@@ -230,5 +261,85 @@ describe('GET /v1/customers/owners', () => {
   it('lets the Founder read it too', async () => {
     as('founder');
     expect((await list()).status).toBe(200);
+  });
+});
+
+describe('GET /v1/customers/payment-terms', () => {
+  const terms = () => request(baseUrl).get('/v1/customers/payment-terms');
+  const asGrants = (...permissions: Permission[]) => {
+    current.grants = new Map(permissions.map((p) => [p, 'all']));
+  };
+
+  beforeAll(async () => {
+    const term = (
+      tenantId: string,
+      code: string,
+      name: string,
+      netDays: number,
+      isActive = true,
+    ) => ({
+      tenantId,
+      code,
+      name,
+      netDays,
+      isActive,
+    });
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx
+        .insert(paymentTerms)
+        .values([
+          term(a.tenantId, 'NET30', 'Net 30 days', 30),
+          term(a.tenantId, 'NET15', 'Net 15 days', 15),
+          term(a.tenantId, 'NET90', 'Net 90 days (retired)', 90, false),
+        ]),
+    );
+    await withTx(db, b, systemActor('test'), (tx) =>
+      tx.insert(paymentTerms).values(term(b.tenantId, 'NET45', 'Net 45 days', 45)),
+    );
+  });
+
+  it("lists the tenant's active terms, shortest first, as id and label only", async () => {
+    as('sales');
+    const res = await terms();
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const body = PaymentTermSchema.array().parse(res.body);
+    expect(body.map((t) => t.label)).toEqual(['Net 15 days', 'Net 30 days']);
+  });
+
+  it('serves an editor whose customer.read is limited to their own customers', async () => {
+    current.grants = new Map([
+      ['customer.read', 'own'],
+      ['customer.write', 'own'],
+    ]);
+    const res = await terms();
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  });
+
+  it('serves an editor of customer terms who does not hold quotation.read', async () => {
+    asGrants('customer.read', 'customer.write');
+    const res = await terms();
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(PaymentTermSchema.array().parse(res.body)).toHaveLength(2);
+  });
+
+  it("never lists another tenant's terms", async () => {
+    as('founder', b);
+    const labels = PaymentTermSchema.array()
+      .parse((await terms()).body)
+      .map((t) => t.label);
+    expect(labels).toEqual(['Net 45 days']);
+  });
+
+  it('refuses a caller without customer.read with 403', async () => {
+    asGrants('quotation.read');
+    const res = await terms();
+    expect(res.status).toBe(403);
+    expect(errorOf(res.body)).toMatchObject({ code: 'forbidden', reason: 'no_permission' });
+  });
+
+  it('names customer.read on the route, for the production guard', () => {
+    expect(Reflect.getMetadata(CAN_KEY, CustomersController.prototype.paymentTerms)).toBe(
+      'customer.read',
+    );
   });
 });

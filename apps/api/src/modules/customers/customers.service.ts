@@ -21,7 +21,10 @@ import {
   type CustomerDto,
   type CustomerFields,
   type PartyAccountDto,
+  type PaymentTerm,
   type Permission,
+  ROLE_KEYS,
+  type RoleKey,
   type UpdateCustomerBody,
   type UpdateCustomerTermsBody,
 } from '@bos/contracts';
@@ -351,7 +354,8 @@ export class CustomersService {
   /**
    * GET /v1/customers/owners: the people the customer card's owner picker offers, for whoever may change owners
    * (`customers.owner.write`; Management holds it without any people directory). Active staff users of the caller's
-   * tenant, by name then id: never a portal user, a disabled or invited one, or another tenant's. A subset of what an
+   * tenant who hold customer.write in the acting entity, by name then id: never a portal user, a disabled or invited
+   * one, or another tenant's, and nobody who could not send the first portal invite. A subset of what an
    * owner change accepts (assertUser also takes an invited user), so a pick from this list is never refused for who
    * it names. Names only (D54-2): no address.
    */
@@ -363,32 +367,91 @@ export class CustomersService {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
+    // Only people who hold customer.write in this entity: the first portal invite must come from the customer's
+    // owner (firstAdminRule), and an owner without customer.write could never send it. The candidates are active
+    // staff with their roles in this entity (the membership's role_keys narrowing them, as the tenancy interceptor
+    // does); the grant is then read through the RoleCache, so a tenant still on the built-in defaults and a
+    // level-based grant count as they do on a request.
+    const rows = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) =>
+        (
+          await tx.execute<{
+            userId: string;
+            displayName: string | null;
+            roleKey: string;
+            allowed: string[] | null;
+          }>(sql`
+            SELECT u.id AS "userId", u.display_name AS "displayName", r.role_key AS "roleKey",
+                   e.role_keys AS "allowed"
+            FROM app.users u
+            JOIN app.idp_orgs o ON o.tenant_id = u.tenant_id AND o.id = u.idp_org_id
+            JOIN app.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id
+            JOIN app.user_entities e ON e.tenant_id = u.tenant_id AND e.user_id = u.id
+              AND e.organization_id = ${scope.organizationId}
+            WHERE u.tenant_id = ${scope.tenantId} AND o.kind = 'staff' AND u.status = 'active'`)
+        ).rows,
+      READ_ONLY,
+    );
+    const people = new Map<string, { displayName: string | null; roles: RoleKey[] }>();
+    for (const r of rows) {
+      if (r.allowed !== null && !r.allowed.includes(r.roleKey)) continue;
+      if (!(ROLE_KEYS as readonly string[]).includes(r.roleKey)) continue;
+      const person = people.get(r.userId) ?? { displayName: r.displayName, roles: [] };
+      person.roles.push(r.roleKey as RoleKey);
+      people.set(r.userId, person);
+    }
+    const out: CustomerOwnerOption[] = [];
+    for (const [userId, person] of people) {
+      if (
+        await this.authz.rolesHold(
+          scope.tenantId,
+          scope.organizationId,
+          person.roles,
+          'customer.write',
+        )
+      ) {
+        out.push({ userId, displayName: personLabel(person.displayName) });
+      }
+    }
+    return out.sort(
+      (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
+    );
+  }
+
+  /**
+   * GET /v1/customers/payment-terms: the tenant's active payment terms, shortest first, for the customer card's
+   * terms control and its labels. It is a customers route (`customer.read`, which the card needs anyway) so that
+   * someone who edits terms without `quotation.read` still gets the list; the quotation form has its own copy
+   * behind quotation.read. Terms are tenant company policy, not customer data.
+   */
+  async paymentTerms(): Promise<PaymentTerm[]> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    // The list is tenant policy, not a customer: any scope of customer.read (own included) may read it, so the
+    // check is on the grant itself and not on a customer record.
+    if (!principal.grants.has('customer.read')) {
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: 'no_permission',
+      });
+    }
     const rows = await withTx(
       this.db,
       scope,
       actor,
       (tx) =>
         tx
-          .select({ userId: users.id, displayName: users.displayName })
-          .from(users)
-          .innerJoin(
-            idpOrgs,
-            and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-          )
-          .where(
-            and(
-              eq(users.tenantId, scope.tenantId),
-              eq(idpOrgs.kind, 'staff'),
-              eq(users.status, 'active'),
-            ),
-          ),
+          .select({ id: paymentTerms.id, name: paymentTerms.name })
+          .from(paymentTerms)
+          .where(and(eq(paymentTerms.tenantId, scope.tenantId), eq(paymentTerms.isActive, true)))
+          .orderBy(asc(paymentTerms.netDays), asc(paymentTerms.code)),
       READ_ONLY,
     );
-    return rows
-      .map((r) => ({ userId: r.userId, displayName: personLabel(r.displayName) }))
-      .sort(
-        (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
-      );
+    return rows.map((r) => ({ id: r.id, label: r.name }));
   }
 
   // --------------------------------------------------------------------------------------------------- read
