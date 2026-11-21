@@ -21,13 +21,25 @@ export function logServerErrors(
   sink: ServerErrorSink = stderrSink,
 ): LoggerService {
   return {
-    log: (message, ...rest) => inner.log(message, ...rest),
-    warn: (message, ...rest) => inner.warn(message, ...rest),
-    debug: (message, ...rest) => inner.debug?.(message, ...rest),
-    verbose: (message, ...rest) => inner.verbose?.(message, ...rest),
-    fatal: (message, ...rest) => inner.fatal?.(message, ...rest),
-    setLogLevels: (levels) => inner.setLogLevels?.(levels),
-    error: (message, ...rest) => {
+    log: (message: unknown, ...rest: unknown[]) => {
+      inner.log(message, ...rest);
+    },
+    warn: (message: unknown, ...rest: unknown[]) => {
+      inner.warn(message, ...rest);
+    },
+    debug: (message: unknown, ...rest: unknown[]) => {
+      inner.debug?.(message, ...rest);
+    },
+    verbose: (message: unknown, ...rest: unknown[]) => {
+      inner.verbose?.(message, ...rest);
+    },
+    fatal: (message: unknown, ...rest: unknown[]) => {
+      inner.fatal?.(message, ...rest);
+    },
+    setLogLevels: (levels) => {
+      inner.setLogLevels?.(levels);
+    },
+    error: (message: unknown, ...rest: unknown[]) => {
       if (
         typeof message === 'string' &&
         SERVER_ERROR_LINE.test(message) &&
