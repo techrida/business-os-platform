@@ -21,6 +21,7 @@ import {
   type CustomerDto,
   type CustomerFields,
   type PartyAccountDto,
+  type PaymentTerm,
   type Permission,
   type UpdateCustomerBody,
   type UpdateCustomerTermsBody,
@@ -351,7 +352,8 @@ export class CustomersService {
   /**
    * GET /v1/customers/owners: the people the customer card's owner picker offers, for whoever may change owners
    * (`customers.owner.write`; Management holds it without any people directory). Active staff users of the caller's
-   * tenant, by name then id: never a portal user, a disabled or invited one, or another tenant's. A subset of what an
+   * tenant who hold customer.write in the acting entity, by name then id: never a portal user, a disabled or invited
+   * one, or another tenant's, and nobody who could not send the first portal invite. A subset of what an
    * owner change accepts (assertUser also takes an invited user), so a pick from this list is never refused for who
    * it names. Names only (D54-2): no address.
    */
@@ -363,25 +365,30 @@ export class CustomersService {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
+    // Only people who hold customer.write in this entity: the first portal invite must come from the customer's
+    // owner (firstAdminRule), and an owner without customer.write could never send it. The grant is read from the
+    // live role rows through the user's roles in this entity, as the other role-holder lookups do.
     const rows = await withTx(
       this.db,
       scope,
       actor,
-      (tx) =>
-        tx
-          .select({ userId: users.id, displayName: users.displayName })
-          .from(users)
-          .innerJoin(
-            idpOrgs,
-            and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
-          )
-          .where(
-            and(
-              eq(users.tenantId, scope.tenantId),
-              eq(idpOrgs.kind, 'staff'),
-              eq(users.status, 'active'),
-            ),
-          ),
+      async (tx) =>
+        (
+          await tx.execute<{ userId: string; displayName: string | null }>(sql`
+            SELECT u.id AS "userId", u.display_name AS "displayName"
+            FROM app.users u
+            JOIN app.idp_orgs o ON o.tenant_id = u.tenant_id AND o.id = u.idp_org_id
+            WHERE u.tenant_id = ${scope.tenantId} AND o.kind = 'staff' AND u.status = 'active'
+              AND EXISTS (
+                SELECT 1
+                FROM app.user_roles r
+                JOIN app.user_entities e ON e.tenant_id = r.tenant_id AND e.user_id = r.user_id
+                  AND e.organization_id = ${scope.organizationId}
+                JOIN app.role_permissions p ON p.tenant_id = r.tenant_id AND p.role_key = r.role_key
+                  AND p.permission = 'customer.write'
+                WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id
+                  AND (e.role_keys IS NULL OR r.role_key = ANY (e.role_keys)))`)
+        ).rows,
       READ_ONLY,
     );
     return rows
@@ -389,6 +396,34 @@ export class CustomersService {
       .sort(
         (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
       );
+  }
+
+  /**
+   * GET /v1/customers/payment-terms: the tenant's active payment terms, shortest first, for the customer card's
+   * terms control and its labels. It is a customers route (`customer.read`, which the card needs anyway) so that
+   * someone who edits terms without `quotation.read` still gets the list; the quotation form has its own copy
+   * behind quotation.read. Terms are tenant company policy, not customer data.
+   */
+  async paymentTerms(): Promise<PaymentTerm[]> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    this.authz.assert('customer.read', {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    });
+    const rows = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) =>
+        tx
+          .select({ id: paymentTerms.id, name: paymentTerms.name })
+          .from(paymentTerms)
+          .where(and(eq(paymentTerms.tenantId, scope.tenantId), eq(paymentTerms.isActive, true)))
+          .orderBy(asc(paymentTerms.netDays), asc(paymentTerms.code)),
+      READ_ONLY,
+    );
+    return rows.map((r) => ({ id: r.id, label: r.name }));
   }
 
   // --------------------------------------------------------------------------------------------------- read
