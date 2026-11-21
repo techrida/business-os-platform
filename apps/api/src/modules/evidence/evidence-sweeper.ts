@@ -3,7 +3,7 @@
 // that is shut, or a request that failed leaves the file behind, and nothing removed it. Every hour this takes away
 // the evidence files that no record uses and that were uploaded more than 24 hours ago.
 //
-// "Used" means named by a record: a billable schedule line, a match exception, a recorded vendor quotation, or the
+// "Used" means named by a record: a billable schedule line, a match exception, a confirmed order's evidence, a recorded vendor quotation, or the
 // evidence list of a quotation outcome. A used file is a frozen one (evidence-owner.policy.ts) and is never touched.
 // A file is only judged by its age when none of its versions changed within the last 24 hours either.
 //
@@ -20,6 +20,7 @@ import {
   matchExceptions,
   quotationAcceptances,
   quotationEvidenceConfirmations,
+  salesOrderEvidence,
   scoped,
   vendorQuotations,
 } from '@bos/db';
@@ -58,6 +59,17 @@ function usedByARecord(db: Db): SQL[] {
           and(
             eq(billingScheduleLines.tenantId, documents.tenantId),
             eq(billingScheduleLines.billableEvidenceDocumentId, documents.id),
+          ),
+        ),
+    ),
+    notExists(
+      db
+        .select({ one: sql`1` })
+        .from(salesOrderEvidence)
+        .where(
+          and(
+            eq(salesOrderEvidence.tenantId, documents.tenantId),
+            eq(salesOrderEvidence.documentId, documents.id),
           ),
         ),
     ),
