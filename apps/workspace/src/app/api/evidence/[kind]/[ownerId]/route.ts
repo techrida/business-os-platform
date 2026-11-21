@@ -1,0 +1,114 @@
+import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
+
+import { getDocument } from '@/components/p2/crm/verification-api';
+import { projectVersion } from '@/components/p2/crm/verification-file';
+import { createDocument, uploadDocumentContent } from '@/lib/api-kernel';
+import {
+  errorResponse,
+  forbiddenOrigin,
+  isSameOrigin,
+  jsonResponse,
+  routeSession,
+} from '@/lib/bff';
+import { EVIDENCE_KINDS, EVIDENCE_OWNER_TYPE, type EvidenceKind } from '@/lib/evidence';
+import { baseMime, decodeFileName } from '@/lib/kernel-ui';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+/**
+ * Evidence for one record (a sales order's billable step, a vendor bill's match exception, an RFQ
+ * quotation): the file is uploaded in the dialog that needs it, owned by `evidence` + the record's
+ * id, and the form then posts the new document id. The API checks the caller may upload for that
+ * record, and on save that the document is evidence of that record in the caller's entity.
+ * `kind` only names the record in the path; every kind uses the same owner type.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type Params = { params: Promise<{ kind: string; ownerId: string }> };
+
+const bad = (message: string, status = 400): Response =>
+  jsonResponse({ error: { message } }, status);
+
+function isKind(value: string): value is EvidenceKind {
+  return (EVIDENCE_KINDS as readonly string[]).includes(value);
+}
+
+/** Fresh scan metadata for one version of an evidence file of this record, including one awaiting Save. */
+export async function GET(req: Request, { params }: Params): Promise<Response> {
+  const session = await routeSession();
+  if (session instanceof Response) return session;
+  const { kind, ownerId } = await params;
+  const query = new URL(req.url).searchParams;
+  const documentId = query.get('documentId') ?? '';
+  const versionId = query.get('versionId') ?? '';
+  if (!isKind(kind) || ![ownerId, documentId, versionId].every((value) => UUID.test(value))) {
+    return bad('That is not a record, document or file version id.');
+  }
+
+  try {
+    const document = await getDocument(session, documentId);
+    if (
+      document.ownerType !== EVIDENCE_OWNER_TYPE ||
+      document.ownerId !== ownerId ||
+      document.id !== documentId
+    ) {
+      return bad('File not found.', 404);
+    }
+    const version = document.versions.find(
+      (v) => v.id === versionId && v.documentId === documentId,
+    );
+    return version === undefined
+      ? bad('File not found.', 404)
+      : jsonResponse(projectVersion(version));
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/**
+ * Upload one evidence file. Same wire format as the verification case upload: the raw file is the
+ * request body, with its own Content-Type and its name in `x-file-name` (no multipart, so a 25 MB
+ * file is never buffered here). Reserves the document, streams the bytes, and answers 201 with the
+ * new version's `FileView` (status `quarantined` until the scan finishes).
+ */
+export async function POST(req: Request, { params }: Params): Promise<Response> {
+  if (!isSameOrigin(req)) return forbiddenOrigin();
+  const session = await routeSession();
+  if (session instanceof Response) return session;
+  const { kind, ownerId } = await params;
+  if (!isKind(kind) || !UUID.test(ownerId)) return bad('That is not a record id.');
+
+  const lengthHeader = req.headers.get('content-length');
+  if (lengthHeader === null || !/^\d{1,12}$/.test(lengthHeader)) {
+    return bad('The upload must announce its size.', 411);
+  }
+  const length = Number(lengthHeader);
+  if (length === 0) return bad('That file is empty.');
+  // Refuse before any API call: a 25 MB+ upload costs the API a reserved row for nothing.
+  if (length > MAX_UPLOAD_BYTES) return bad('That file is larger than 25 MB.', 413);
+  if (req.body === null) return bad('The upload had no content.');
+
+  const filename = decodeFileName(req.headers.get('x-file-name'));
+  const contentType = baseMime(req.headers.get('content-type'));
+  const parsed = CreateDocumentBodySchema.safeParse({
+    ownerType: EVIDENCE_OWNER_TYPE,
+    ownerId,
+    filename,
+    declaredMime: contentType,
+    sizeBytes: length,
+  });
+  if (!parsed.success) return bad('That file name or type is not allowed.');
+
+  try {
+    const created = await createDocument(session, parsed.data);
+    const version = await uploadDocumentContent(session, created, {
+      body: req.body,
+      contentLength: length,
+      contentType,
+    });
+    return jsonResponse(projectVersion(version), 201);
+  } catch (err) {
+    return errorResponse(err, 'upload');
+  }
+}
