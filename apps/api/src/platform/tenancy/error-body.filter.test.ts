@@ -923,6 +923,7 @@ describe('database busy errors on the HTTP boundary', () => {
         const parsed = ErrorBodySchema.parse(out.body);
         expect(parsed.error.code).toBe('db_busy');
         expect(parsed.error.message).toBe('Busy, please try again');
+        expect(parsed.error.details).toEqual({ retryAfterSeconds: Number(retryAfter) });
         expect(JSON.stringify(out.body)).not.toContain('app.x');
       }
     },

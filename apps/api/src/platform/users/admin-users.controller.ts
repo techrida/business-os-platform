@@ -14,7 +14,6 @@ import {
   ForbiddenException,
   Get,
   HttpCode,
-  Inject,
   Param,
   ParseUUIDPipe,
   Post,
@@ -25,14 +24,12 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 
-import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { AuthzService } from '../authz/authz.service';
 import { Can } from '../authz/decorators';
 import { type LiveGrantDeps, assertLiveGrant } from '../authz/live-grants';
 import { principal } from '../authz/principal';
 import { RoleCache } from '../authz/role-cache';
-import { DB, type Db } from '../db/db.module';
-import { type TxOptions, requestTx, withTx } from '../db/tx';
+import { requestTx } from '../db/tx';
 import { type HeaderTarget, setTotalCount } from '../list';
 import { type UserStatusAction, UserStatusService } from './user-status';
 import { UsersService } from './users.service';
@@ -90,23 +87,17 @@ async function zitadelCall<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// These transactions call ZITADEL inside the transaction, so they take the tenant audit lock lazily (at the first
-// audited write) rather than holding it across the HTTP call. A status plan with identityLast writes first and so
-// still holds it across the call.
-const CALLS_ZITADEL: TxOptions = { audit: 'lazy' };
-
 @Controller('v1/admin/users')
 export class AdminUsersController {
   /**
-   * Role writes re-read the caller's CURRENT roles inside their own transaction (U20b-Q3): the principal comes
-   * from the sign-in token, so a person whose Founder role was taken away would otherwise keep granting roles,
+   * Role and status writes re-read the caller's CURRENT roles inside their own transactions (U20b-Q3): the principal
+   * comes from the sign-in token, so a person whose Founder role was taken away would otherwise keep granting roles,
    * Founder included, until the token expires. The roles are read from the mirror; the role -> permission table comes
    * from the role cache, which re-checks the authz version every 5 s.
    */
   private readonly liveGrants: LiveGrantDeps;
 
   constructor(
-    @Inject(DB) private readonly db: Db,
     private readonly users: UsersService,
     private readonly authz: AuthzService,
     store: UsersStore,
@@ -151,8 +142,8 @@ export class AdminUsersController {
 
   /**
    * POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F1-Q5, F1-Q4). 204 on success; 409 for the
-   * caller's own account, the last Founder of an entity, a status or lock the action does not fit, or a change ZITADEL
-   * refused; 404 for anyone who is not a staff user of the tenant.
+   * caller's own account, the last Founder of an entity, a status or lock the action does not fit, a concurrent
+   * change, or a change ZITADEL refused; 404 for anyone who is not a staff user of the tenant.
    */
   @Post(':id/deactivate')
   @HttpCode(204)
@@ -186,19 +177,9 @@ export class AdminUsersController {
     if (!canChangeStatus()) throw new ForbiddenException('Forbidden');
     const { scope, actor } = requestTx();
     await zitadelCall(() =>
-      withTx(
-        this.db,
-        scope,
-        actor,
-        async (tx) => {
-          // As for role writes: the lock first, then the caller's CURRENT grant, so a Founder demoted a moment ago
-          // cannot still shut people out on an old token, and two last-Founder checks cannot interleave.
-          await lockAccessRevision(tx, scope.tenantId);
-          await assertLiveGrant(tx, this.liveGrants, scope, actor, STATUS_PERMISSION);
-          await this.status.apply(tx, actor, id, action);
-        },
-        CALLS_ZITADEL,
-      ),
+      this.status.apply(scope, actor, id, action, async (tx) => {
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, STATUS_PERMISSION);
+      }),
     );
     await this.authz.invalidate(scope.tenantId, scope.organizationId);
   }
@@ -226,30 +207,21 @@ export class AdminUsersController {
     const assignsAccess = invite.roles.length > 0 || placement !== null;
     if (assignsAccess) this.authz.assert('admin.roles.write');
     const { scope, actor } = requestTx();
-    const result = await zitadelCall(() =>
-      withTx(
-        this.db,
+    const invited = await zitadelCall(() =>
+      this.users.invite(
         scope,
         actor,
-        async (tx) => {
-          if (assignsAccess) {
-            // The access-revision lock first, as an access save takes it: a Founder removed by a concurrent
-            // write cannot finish this one on a check made before it.
-            await lockAccessRevision(tx, scope.tenantId);
-            await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
-          }
-          // Checked before ZITADEL is written, under the access-revision lock every department write takes, so a
-          // department retired or given a head meanwhile cannot leave a ZITADEL invite with roles behind.
-          if (placement !== null) await this.users.assertPlacement(tx, placement);
-          const invited = await this.users.invite(tx, invite);
-          if (placement !== null) await this.users.placeInvitee(tx, invited, placement);
-          return { userId: invited.userId };
-        },
-        CALLS_ZITADEL,
+        invite,
+        placement,
+        assignsAccess
+          ? async (tx) => {
+              await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
+            }
+          : undefined,
       ),
     );
     if (assignsAccess) await this.authz.invalidate(scope.tenantId, scope.organizationId);
-    return result;
+    return { userId: invited.userId };
   }
 
   @Put(':id/roles')
@@ -259,17 +231,9 @@ export class AdminUsersController {
     const { roles } = parse(RolesBody, body, 'roles');
     const { scope, actor } = requestTx();
     await zitadelCall(() =>
-      withTx(
-        this.db,
-        scope,
-        actor,
-        async (tx) => {
-          await lockAccessRevision(tx, scope.tenantId);
-          await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
-          await this.users.setRoles(tx, id, roles);
-        },
-        CALLS_ZITADEL,
-      ),
+      this.users.setRoles(scope, actor, id, roles, async (tx) => {
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, 'admin.roles.write');
+      }),
     );
     // After commit: a cache refilled before commit would read the old roles.
     await this.authz.invalidate(scope.tenantId, scope.organizationId);

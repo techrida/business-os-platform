@@ -462,6 +462,9 @@ services:
       METRICS_PORT: '9464'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
+      # Database timeouts (platform/config): a lock wait gives up with 503 db_busy, and a transaction left idle is cut.
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-5000}
+      DB_IDLE_IN_TX_TIMEOUT_MS: ${DB_IDLE_IN_TX_TIMEOUT_MS:-30000}
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
       # P1 seams. Container-side values are written out here, not read from .env, because the root .env holds
@@ -517,6 +520,9 @@ services:
       METRICS_PORT: '9465'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
+      # Database timeouts (platform/config): a lock wait gives up with 503 db_busy, and a transaction left idle is cut.
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-5000}
+      DB_IDLE_IN_TX_TIMEOUT_MS: ${DB_IDLE_IN_TX_TIMEOUT_MS:-30000}
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
       # Same P1 seams as api (see there): the worker scans files and sends mail.
