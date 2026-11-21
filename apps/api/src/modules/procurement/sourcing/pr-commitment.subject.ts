@@ -26,6 +26,7 @@ import { actorUuid, readTxContext } from '../../../platform/documents/tx-context
 import type { NumberingService } from '../../../platform/settings/numbering.service';
 import { fact, hrefFor, readableDocuments } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { evidenceOwnerPolicyFor } from '../../evidence/evidence-owner.policy';
 import { vendorIntakeOwnerPolicy } from '../../portal-vendor/inbox/vendor-intake.policy';
 import { idAt, procurementReferenceNames } from '../reference-names';
 import { PO_SERIES, PR_COMMITMENT_DOCUMENT_TYPE, poBandOf } from './sourcing.rules';
@@ -110,8 +111,9 @@ export class PrCommitmentSubject implements ApprovalSubject {
 
   /**
    * The RFQ as it stands now, with its request and the recommended quotation's vendor and total, and that quotation's
-   * own file. A file the vendor sent from the portal is listed when the reader may read it; a file of any other owner
-   * type is left out (deny by default). The RFQ page is linked only for a holder of `procurement.sourcing`.
+   * own file. A file the vendor sent from the portal, or evidence staff uploaded to this RFQ when recording it, is
+   * listed when the reader may read it; a file of any other owner type is left out (deny by default). The RFQ page
+   * is linked only for a holder of `procurement.sourcing`.
    */
   async context(
     q: Db,
@@ -172,7 +174,7 @@ export class PrCommitmentSubject implements ApprovalSubject {
         scope,
         viewer,
         [quote?.documentId],
-        [vendorIntakeOwnerPolicy(q)],
+        [vendorIntakeOwnerPolicy(q), evidenceOwnerPolicyFor(q, rfq.id)],
       ),
       href: hrefFor(viewer, `/procurement/rfqs/${rfq.id}`, 'procurement.sourcing'),
     };
