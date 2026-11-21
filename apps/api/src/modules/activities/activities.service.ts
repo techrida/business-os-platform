@@ -64,7 +64,6 @@ import { ActivitiesCaller } from './activities.caller';
 import {
   dueRangeBounds,
   activityNames,
-  isPlannedRow,
   isPlannedSql,
   SUBJECT_PERMISSION,
   toActivityDto,
@@ -72,12 +71,19 @@ import {
   type ListActivitiesQuery,
   type SubjectKey,
 } from './activities.types';
+import {
+  activityCan,
+  loadSubjectRefs,
+  mayHaveActions,
+  needsSubjectRef,
+  plannedChangeDecision,
+  refKey,
+  subjectKeyOf,
+  type PlannedChange,
+} from './activity-can';
 import { notifyFollowUpAssigned } from './follow-ups';
 
 type Q = Db | DbTransaction;
-
-/** The changes to a planned activity. Only `complete` is open to an assignee who can merely read the subject. */
-type PlannedChange = 'complete' | 'reschedule' | 'cancel';
 
 /**
  * Whose assignment rule a subject follows (D50: activities follow their parent, quotations their opportunity).
@@ -110,14 +116,8 @@ const AUDIT_ENTITY = 'activities';
 
 const subjectNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Subject not found' });
-/** The subjects without assigned reach: customers are tenant master data, read `all` or `own` (D55-6). */
-const CUSTOMER_KEYS: ReadonlySet<SubjectKey> = new Set<SubjectKey>(['customerId', 'contactId']);
-
 const activityNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Activity not found' });
-
-/** Kinds only the server writes: they record what happened and are never planned, done or called off by hand. */
-const SYSTEM_KINDS: ReadonlySet<ActivityRow['kind']> = new Set(['system', 'stage_change']);
 
 @Injectable()
 export class ActivitiesService {
@@ -175,7 +175,16 @@ export class ActivitiesService {
       count: (tx, where) => tx.$count(activities, where),
     });
     const names = await activityNames(this.db, scope.tenantId, rows);
-    return { items: rows.map((r) => toActivityDto(r, names)), total };
+    // Each row's actions for the caller, by the rule the write routes enforce (activity-can.ts).
+    const subjects = rows.filter(mayHaveActions).flatMap((r) => {
+      const key = subjectKeyOf(r);
+      return key === undefined ? [] : [{ key, id: r[key]! }];
+    });
+    const refs = await loadSubjectRefs(this.db, scope, principal, subjects, true);
+    return {
+      items: rows.map((r) => toActivityDto(r, names, activityCan(principal, r, refs))),
+      total,
+    };
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -364,8 +373,9 @@ export class ActivitiesService {
 
   /**
    * The shared frame of the three planned-activity changes: staff only; the row is locked in this entity (404
-   * otherwise); the caller must hold the write permission of its subject (404 out of scope, before anything
-   * that would reveal the row's state); then 409 for a server-written kind or a row that is no longer planned.
+   * otherwise); then `plannedChangeDecision` (activity-can.ts): the caller must hold the write permission of its
+   * subject (404 out of scope, before anything that would reveal the row's state); then 409 for a server-written
+   * kind or a row that is no longer planned.
    * `change` writes through updateVersioned, so a stale `expectedVersion` is a 409 too.
    *
    * The assignee is the exception (K5): their follow-up is theirs to do, so they may complete it on a subject they
@@ -392,35 +402,44 @@ export class ActivitiesService {
         .where(scoped(scope).where(activities, eq(activities.id, id)))
         .for('update');
       if (row === undefined) throw activityNotFound();
-      const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
+      const key = subjectKeyOf(row);
       if (key === undefined) throw activityNotFound();
-      // Out of scope answers exactly like an unknown id, so a guessed activity id learns nothing.
-      if (
-        row.assigneeUserId === principal.userId &&
-        what === 'complete' &&
-        CUSTOMER_KEYS.has(key)
-      ) {
-        // U20a2-Q7: customers have no assigned reach, so an `own` reader who is handed a follow-up on someone
-        // else's customer could list it (readableSubjects) but never finish it. Completing their own follow-up
-        // needs only the customer read grant at some scope; the customer record itself stays out of reach.
-        this.authz.assert(SUBJECT_PERMISSION[key].read);
-      } else if (row.assigneeUserId === principal.userId) {
-        const ref = await this.assertSubject(tx, key, row[key]!, 'read', activityNotFound);
-        if (what !== 'complete') this.authz.assert(SUBJECT_PERMISSION[key].write, ref);
-      } else {
-        await this.assertSubject(tx, key, row[key]!, 'write', activityNotFound);
-      }
-      if (SYSTEM_KINDS.has(row.kind)) {
-        throw new ConflictException({
-          code: 'conflict',
-          message: 'This activity was written by the system and cannot be changed',
-        });
-      }
-      if (!isPlannedRow(row)) {
-        throw new ConflictException({
-          code: 'conflict',
-          message: 'Only a planned activity can be changed; this one is already done or cancelled',
-        });
+      // The same rule the list reports as the row's `can` flags. Out of scope answers exactly like an unknown id,
+      // so a guessed activity id learns nothing.
+      const ref = needsSubjectRef(principal, row, key, what)
+        ? (
+            await loadSubjectRefs(
+              tx,
+              scope,
+              principal,
+              [{ key, id: row[key]! }],
+              row.assigneeUserId === principal.userId,
+            )
+          ).get(refKey(key, row[key]!))
+        : undefined;
+      const decision = plannedChangeDecision(principal, row, key, ref, what);
+      if (!decision.ok) {
+        switch (decision.refusal) {
+          case 'not_found':
+            throw activityNotFound();
+          case 'forbidden':
+            throw new ForbiddenException({
+              code: 'forbidden',
+              message: 'Forbidden',
+              reason: decision.reason,
+            });
+          case 'system':
+            throw new ConflictException({
+              code: 'conflict',
+              message: 'This activity was written by the system and cannot be changed',
+            });
+          case 'not_planned':
+            throw new ConflictException({
+              code: 'conflict',
+              message:
+                'Only a planned activity can be changed; this one is already done or cancelled',
+            });
+        }
       }
       const changed = await change(tx, row, scope, key);
       return toActivityDto(changed, await activityNames(tx, scope.tenantId, [changed]));
