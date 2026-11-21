@@ -262,6 +262,14 @@ describe('shortCloseAction and cancelAction', () => {
     expect(out.error).toMatch(/already been received/i);
     expect(out.key).not.toBe(KEY);
   });
+
+  it('shows PO_HAS_BILLS in plain words on cancel without asking for a reload, and rotates the key', async () => {
+    api.cancelPurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_BILLS'));
+    const out = await cancelAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.error).toMatch(/vendor bills.*not voided/i);
+    expect(out.reload).toBeUndefined();
+    expect(out.key).not.toBe(KEY);
+  });
 });
 
 describe('changeVendorAction', () => {
@@ -346,6 +354,14 @@ describe('cancelAndRecreateAction', () => {
     api.cancelAndRecreatePurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_RECEIPTS'));
     const out = await cancelAndRecreateAction(prev, form({ ...base, reason: 'x' }));
     expect(out.error).toMatch(/cannot be cancelled and raised again/i);
+    expect(out.key).not.toBe(KEY);
+  });
+
+  it('shows PO_HAS_BILLS in plain words on recreate, stays on the page and rotates the key', async () => {
+    api.cancelAndRecreatePurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_BILLS'));
+    const out = await cancelAndRecreateAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.error).toMatch(/vendor bills.*not voided/i);
+    expect(out.reload).toBeUndefined();
     expect(out.key).not.toBe(KEY);
   });
 

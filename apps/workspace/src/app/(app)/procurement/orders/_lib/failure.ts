@@ -79,6 +79,50 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
                 reload: false,
               }
             : undefined;
+        case 'VENDOR_NOT_VAT_REGISTERED':
+          return moving
+            ? {
+                message:
+                  'This order carries VAT and the new vendor is not VAT registered, so the VAT cannot be claimed back. Tick the box to go on anyway.',
+                reload: false,
+              }
+            : undefined;
+        case 'PO_VENDOR_CHANGE_NO_RFQ':
+          return moving
+            ? {
+                message:
+                  'This draft is not linked to an RFQ, so the new vendor has no quotation to take. Create a new purchase order for this vendor instead.',
+                reload: false,
+              }
+            : undefined;
+        case 'PO_VENDOR_NO_QUOTATION':
+          return moving
+            ? {
+                message:
+                  "This vendor has no quotation on this order's RFQ. Record its quotation on the RFQ first, or create a new purchase order.",
+                reload: false,
+              }
+            : undefined;
+        case 'VENDOR_CURRENCY_NOT_SUPPORTED':
+          return moving
+            ? {
+                message:
+                  "This vendor cannot trade in this order's currency: its quotation or its verified bank account is in another currency. Choose another vendor.",
+                reload: false,
+              }
+            : undefined;
+        case 'PO_VENDOR_CHANGE_PENDING':
+          return {
+            message:
+              'A change of vendor on this order is waiting for approval. It can be issued, or changed again, once that is decided.',
+            reload: true,
+          };
+        case 'PO_HAS_BILLS':
+          return {
+            message:
+              'Vendor bills that are not voided still refer to this order. Void them from their pages, then cancel the order again.',
+            reload: false,
+          };
         case 'PO_HAS_NO_LINES':
           return {
             message:

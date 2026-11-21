@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { ErrorBodySchema } from '@bos/contracts';
+
 import { keyOf } from '@/components/p2/crm/idempotency';
 import { isGuid } from '@/components/p2/customers/format';
 import {
@@ -16,6 +18,7 @@ import {
   issuePurchaseOrder,
   shortClosePurchaseOrder,
 } from '@/lib/api-purchase-orders';
+import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
 import { getGrants } from '@/lib/grants';
 import type { Session } from '@/lib/session';
@@ -72,6 +75,16 @@ function refused(o: Opened, err: unknown, op: PoOp): ActionState {
     key: f.definite ? randomUUID() : o.key,
     error: f.message,
     ...(f.reload ? { reload: true } : {}),
+  };
+}
+
+/** The soft VAT warning of a vendor change (K3 Q2): the dialog shows it and asks for a tick before it goes on. */
+const vatWarningOf = (err: unknown): boolean =>
+  err instanceof ApiError && err.status === 409 && ErrorBodySchema.safeParse(err.body).data?.error.code === 'VENDOR_NOT_VAT_REGISTERED';
+function vatWarned(o: Opened, err: unknown): ActionState {
+  return {
+    key: randomUUID(),
+    errors: { acknowledgeVatWarning: poFailure(err, 'changeVendor').message },
   };
 }
 
@@ -180,14 +193,23 @@ export async function changeVendorAction(prev: ActionState, form: FormData): Pro
   if (!r.ok) return r.state;
   const vendorId = text(form, 'vendorId');
   if (!isGuid(vendorId)) return { key: r.o.key, errors: { vendorId: 'Choose a vendor.' } };
+  let changed;
   try {
-    await changePurchaseOrderVendor(r.o.session, r.o.id, vendorId, r.o.key);
+    changed = await changePurchaseOrderVendor(
+      r.o.session,
+      r.o.id,
+      vendorId,
+      r.o.key,
+      text(form, 'acknowledgeVatWarning') === 'on',
+    );
   } catch (err) {
-    return refused(r.o, err, 'changeVendor');
+    return vatWarningOf(err) ? vatWarned(r.o, err) : refused(r.o, err, 'changeVendor');
   }
   return settled(
     r.o,
-    "The vendor was changed. The lines, prices and total stay as approved, and the payment terms are now the new vendor's.",
+    changed.pendingVendorChange
+      ? "The new vendor's quotation has a different total, so the change was sent for approval. The order stays as it is, and cannot be issued, until it is decided."
+      : "The vendor was changed. The lines, prices and total are the new vendor's quotation, and the payment terms are now the new vendor's.",
   );
 }
 
