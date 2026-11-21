@@ -159,6 +159,8 @@ it('shows what the hold is made of, and why an earlier override no longer applie
 
   // The override is given for the order value on screen, so a changed order is refused by the API (409).
   mocks.overrideCreditHold.mockResolvedValue(overridden);
+  await click(footerButton('Override hold'));
+  await settle();
   await typeReason('Advance received.');
   await click(footerButton('Override hold'));
   await settle();
