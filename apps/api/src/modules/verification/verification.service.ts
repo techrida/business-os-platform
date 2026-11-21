@@ -21,8 +21,11 @@ import {
   type ReviewVerificationItemBody,
   type VerificationReviewHistory,
   type AttachVerificationDocumentBody,
+  type AccessLevel,
   type ChecklistItem,
   type Permission,
+  type RoleKey,
+  ROLE_KEYS,
   type RemoveVerificationDocumentBody,
   type VerificationCaseCan,
   type VerificationCaseDto,
@@ -408,24 +411,56 @@ export class VerificationService implements OnModuleInit {
    * Name active staff who can open the files and review any case in this entity: verification.review and
    * verification.read at scope all. The review grant also opens the case files (the owner policy's
    * readPermission), so documents.read is not required (audit #19: pmo was missing from this list).
+   * The grant is read through the role cache, as a request is, so a tenant still on the built-in defaults (no
+   * `role_permissions` rows) and a level-based grant count (R5 FU6; FU3 fixed the same picker for customers).
    */
   private async reviewerNames(scope: TxScope, submittedBy: string | null): Promise<string[]> {
-    const result = await this.db.execute<{ name: string }>(sql`
-      SELECT DISTINCT u.display_name AS name
+    const result = await this.db.execute<{
+      id: string;
+      name: string;
+      level: AccessLevel;
+      role: string;
+    }>(sql`
+      SELECT u.id, u.display_name AS name, e.level, r.role_key AS role
       FROM app.users u
       JOIN app.idp_orgs o ON o.tenant_id = u.tenant_id AND o.id = u.idp_org_id AND o.kind = 'staff'
       JOIN app.user_entities e ON e.tenant_id = u.tenant_id AND e.user_id = u.id
       JOIN app.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id
         AND (e.role_keys IS NULL OR r.role_key = ANY(e.role_keys))
-      JOIN app.role_permissions p ON p.tenant_id = r.tenant_id AND p.role_key = r.role_key
       WHERE u.tenant_id = ${scope.tenantId} AND e.organization_id = ${scope.organizationId}
         AND u.status = 'active' AND NULLIF(btrim(u.display_name), '') IS NOT NULL
-        AND u.id IS DISTINCT FROM ${submittedBy}::uuid AND p.scope = 'all'
-        AND p.permission IN ('verification.review', 'verification.read')
-      GROUP BY u.id, u.display_name HAVING COUNT(DISTINCT p.permission) = 2
-      ORDER BY name
+        AND u.id IS DISTINCT FROM ${submittedBy}::uuid
     `);
-    return result.rows.map((row) => row.name);
+    const people = new Map<string, { name: string; level: AccessLevel; roles: RoleKey[] }>();
+    for (const row of result.rows) {
+      if (!(ROLE_KEYS as readonly string[]).includes(row.role)) continue;
+      const person = people.get(row.id) ?? { name: row.name, level: row.level, roles: [] };
+      person.roles.push(row.role as RoleKey);
+      people.set(row.id, person);
+    }
+    const names = new Set<string>();
+    for (const person of people.values()) {
+      const options = { scope: 'all', level: person.level } as const;
+      if (
+        (await this.authz.rolesHold(
+          scope.tenantId,
+          scope.organizationId,
+          person.roles,
+          'verification.review',
+          options,
+        )) &&
+        (await this.authz.rolesHold(
+          scope.tenantId,
+          scope.organizationId,
+          person.roles,
+          'verification.read',
+          options,
+        ))
+      ) {
+        names.add(person.name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
   }
 
   // ------------------------------------------------------------------------------------------------ create
