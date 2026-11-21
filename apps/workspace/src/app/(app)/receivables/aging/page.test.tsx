@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
-import { agingReport, agingRow, CUSTOMER_ID, OTHER_CUSTOMER_ID } from '../_lib/fixtures';
+import {
+  agingReport,
+  agingRow,
+  CUSTOMER_ID,
+  INVOICE_ID,
+  OTHER_CUSTOMER_ID,
+} from '../_lib/fixtures';
+
+const OTHER_INVOICE_ID = '66666666-6666-4666-8666-666666666667';
 import ReceivablesAgingPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -169,6 +177,84 @@ describe('receivables aging', () => {
     expect(html.match(/Missed promise to pay/g)).toHaveLength(1);
     expect(html).toMatch(/Himalayan Traders Pvt\. Ltd\.[\s\S]*Missed promise to pay: 18 Nov 2026/);
     expect(html.indexOf('Missed promise to pay')).toBeLessThan(html.indexOf('Alpha Traders'));
+  });
+
+  it('links a missed promise to the invoice it was made on', async () => {
+    mocks.getAging.mockResolvedValue(
+      agingReport({
+        rows: [
+          agingRow({
+            promiseMissed: true,
+            promiseMissedOn: '2026-11-18',
+            promiseMissedInvoice: { id: INVOICE_ID, number: 'INV-2083/84-00007' },
+          }),
+        ],
+        totals: [],
+      }),
+    );
+    const html = await render();
+    expect(html).toMatch(
+      new RegExp(
+        `Missed promise to pay: 18 Nov 2026 on <a href="/invoices/${INVOICE_ID}">INV-2083/84-00007</a>`,
+      ),
+    );
+    expect(html).not.toContain('Promised to pay by');
+  });
+
+  it('shows the open promise date with a link to its invoice, and no missed flag', async () => {
+    mocks.getAging.mockResolvedValue(
+      agingReport({
+        rows: [
+          agingRow({
+            openPromiseDate: '2026-11-25',
+            openPromiseInvoice: { id: OTHER_INVOICE_ID, number: 'INV-2083/84-00009' },
+          }),
+          agingRow({ customerId: OTHER_CUSTOMER_ID, customerName: 'Alpha Traders' }),
+        ],
+        totals: [],
+      }),
+    );
+    const html = await render();
+    expect(html).toMatch(
+      new RegExp(
+        `Promised to pay by 25 Nov 2026 on <a href="/invoices/${OTHER_INVOICE_ID}">INV-2083/84-00009</a>`,
+      ),
+    );
+    expect(html.match(/Promised to pay by/g)).toHaveLength(1);
+    expect(html.indexOf('Promised to pay by')).toBeLessThan(html.indexOf('Alpha Traders'));
+    expect(html).not.toContain('Missed promise to pay');
+  });
+
+  it('shows a missed and an open promise on one row, each linked to its own invoice', async () => {
+    mocks.getAging.mockResolvedValue(
+      agingReport({
+        rows: [
+          agingRow({
+            promiseMissed: true,
+            promiseMissedOn: '2026-11-15',
+            promiseMissedInvoice: { id: INVOICE_ID, number: 'INV-2083/84-00007' },
+            openPromiseDate: '2026-11-20',
+            openPromiseInvoice: { id: OTHER_INVOICE_ID, number: 'INV-2083/84-00009' },
+          }),
+        ],
+        totals: [],
+      }),
+    );
+    const html = await render();
+    expect(html).toContain(
+      `Missed promise to pay: 15 Nov 2026 on <a href="/invoices/${INVOICE_ID}">INV-2083/84-00007</a>`,
+    );
+    expect(html).toContain(
+      `Promised to pay by 20 Nov 2026 on <a href="/invoices/${OTHER_INVOICE_ID}">INV-2083/84-00009</a>`,
+    );
+  });
+
+  it('adds no promise line and no invoice link to a row without a promise', async () => {
+    mocks.getAging.mockResolvedValue(agingReport());
+    const html = await render();
+    expect(html).not.toContain('promise to pay');
+    expect(html).not.toContain('Promised to pay');
+    expect(html).not.toContain('href="/invoices/');
   });
 
   it('shows the asOf date from the response and never today', async () => {
