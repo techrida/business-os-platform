@@ -233,9 +233,22 @@ it('skips the owners list when the saved grants removed crm.lead.write from sale
 });
 
 it('shows one empty state when there is nothing at all', async () => {
+  mocks.getMe.mockResolvedValue(liveGrants('crm.lead.read', 'crm.lead.write'));
   const html = await render();
-  expect(html).toContain('No activity yet');
+  expect(html).toContain('No calls, meetings, emails or notes yet');
+  expect(html).not.toContain('No activity yet');
+  expect(html).toContain(
+    'Open a lead or an opportunity, then log an activity or schedule a follow-up.',
+  );
   expect(html).not.toContain('No follow-ups planned');
+});
+
+it('tells a viewer who may not log activities only what shows here', async () => {
+  mocks.getMe.mockResolvedValue(liveGrants('crm.lead.read'));
+  const html = await render();
+  expect(html).toContain('No calls, meetings, emails or notes yet');
+  expect(html).toContain('Activities logged on the leads and opportunities you can see show here.');
+  expect(html).not.toContain('log an activity');
 });
 
 it('sends the due-day range to both lists, in order, and clears it with the other filters', async () => {

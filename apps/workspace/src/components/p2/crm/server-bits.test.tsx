@@ -125,6 +125,7 @@ describe('ActivityList', () => {
     const html = renderToStaticMarkup(
       <ActivityList
         items={[activity(), { ...planned('2026-11-20T04:00:00.000Z'), subject: 'Call back' }]}
+        record="lead"
         empty="Nothing yet"
       />,
     );
@@ -134,11 +135,23 @@ describe('ActivityList', () => {
     expect(html).not.toContain('Due');
   });
 
-  it('shows the empty state when only planned rows arrive', () => {
+  it('shows the empty state, naming the record, when only planned rows arrive', () => {
     const html = renderToStaticMarkup(
-      <ActivityList items={[planned('2026-11-20T04:00:00.000Z')]} empty="Nothing yet" />,
+      <ActivityList
+        items={[planned('2026-11-20T04:00:00.000Z')]}
+        record="lead"
+        empty="Nothing yet"
+      />,
     );
-    expect(html).toContain('No activity yet');
+    expect(html).toContain('No activities on this lead yet');
+    expect(html).not.toContain('No activity yet');
     expect(html).toContain('Nothing yet');
+  });
+
+  it('names an opportunity in its empty state', () => {
+    const html = renderToStaticMarkup(
+      <ActivityList items={[]} record="opportunity" empty="Nothing yet" />,
+    );
+    expect(html).toContain('No activities on this opportunity yet');
   });
 });
