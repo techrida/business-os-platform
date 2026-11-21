@@ -5,6 +5,8 @@ import { money } from '@/lib/kernel-format';
 
 /** What the Override credit hold dialog shows of the customer's position: display text, built on the server. */
 export interface CreditPositionView {
+  /** The pending order's value the position was read with; the override is given for exactly this (R5 FU4). */
+  orderValue: string;
   rows: { label: string; value: string }[];
   /** Why an override is needed again, when an earlier one no longer covers the order. */
   note?: string;
@@ -35,6 +37,7 @@ export function creditPositionView(
   rows.push({ label: 'Total against the limit', value: amount(hold.exposureWithOrder) });
   const earlier = hold.override;
   return {
+    orderValue: hold.orderValue,
     rows,
     ...(earlier !== null && !hold.overrideCovers
       ? {

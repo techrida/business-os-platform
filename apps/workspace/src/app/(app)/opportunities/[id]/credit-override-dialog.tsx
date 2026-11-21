@@ -137,6 +137,7 @@ export function CreditOverrideDialog({
         className={styles.overrideForm}
       >
         <input type="hidden" name="opportunityId" value={opportunityId} />
+        {position ? <input type="hidden" name="orderValue" value={position.orderValue} /> : null}
         {position ? (
           <div>
             <dl className={styles.overridePosition}>
