@@ -1204,7 +1204,7 @@ describe('render on commit (S3): the issue enqueues the render, the worker rende
       db,
       authz as unknown as AuthzService,
       renderAudit,
-      caller as never,
+      caller,
       new LedgerService(),
       new NumberingService(),
       money,
