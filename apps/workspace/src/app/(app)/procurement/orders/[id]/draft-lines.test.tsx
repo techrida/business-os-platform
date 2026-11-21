@@ -21,6 +21,8 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('../actions', () => ({
   amendAction: vi.fn(),
   cancelAction: vi.fn(),
+  cancelAndRecreateAction: vi.fn(),
+  changeVendorAction: vi.fn(),
   issueAction: vi.fn(),
   shortCloseAction: vi.fn(),
 }));

@@ -6,7 +6,11 @@ import { failureWith, type ProcFailure } from './failure-core';
  * `PO_HAS_RECEIPTS`, `PO_AMENDMENT_INVALID`), `invalid_transition` for a status that moved on.
  */
 
-export type PoOp = 'load' | 'issue' | 'amend' | 'shortClose' | 'cancel' | 'document';
+export type PoOp =
+  'load' | 'issue' | 'amend' | 'shortClose' | 'cancel' | 'document' | 'changeVendor' | 'recreate';
+
+/** The API's own refusal of a vendor change on an order that is no longer a draft, word for word. */
+export const VENDOR_CHANGE_NOT_DRAFT = 'Cancel this order and create a new one';
 
 const MOVED = "This purchase order's status does not allow that. Reload to see where it stands.";
 
@@ -20,6 +24,8 @@ const CONFLICT_FALLBACK: Record<PoOp, string> = {
   document: 'This purchase order changed since you opened it. Reload and try again.',
   shortClose: DRAFT_RECEIPT_HINT,
   cancel: DRAFT_RECEIPT_HINT,
+  changeVendor: 'This purchase order changed since you opened it. Reload and try again.',
+  recreate: DRAFT_RECEIPT_HINT,
 };
 
 export function poFailure(err: unknown, op: PoOp): ProcFailure {
@@ -31,19 +37,40 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
     noPermission: 'Your roles do not allow this. Ask an administrator if you need it.',
     conflictFallback: CONFLICT_FALLBACK[op],
     conflict: (code) => {
+      const moving = op === 'changeVendor';
       switch (code) {
         case 'VENDOR_NOT_APPROVED':
           return {
-            message:
-              "This vendor is not approved, so no purchase order can be issued to it. Finish the vendor's KYB review and approval first.",
+            message: moving
+              ? "This vendor is not approved, so the order cannot move to it. Choose an approved vendor, or finish the vendor's KYB review and approval first."
+              : "This vendor is not approved, so no purchase order can be issued to it. Finish the vendor's KYB review and approval first.",
             reload: false,
           };
         case 'VENDOR_NOT_IN_ENTITY':
           return {
-            message:
-              'This vendor has no active account with your legal entity. Add or reactivate its terms on the vendor page, then try again.',
+            message: moving
+              ? 'This vendor has no active account with your legal entity. Choose another vendor, or add or reactivate its terms on the vendor page.'
+              : 'This vendor has no active account with your legal entity. Add or reactivate its terms on the vendor page, then try again.',
             reload: false,
           };
+        // The vendor-change codes are worded only for a vendor change; any other op keeps its fallback.
+        case 'VENDOR_NO_VERIFIED_BANK_ACCOUNT':
+          return moving
+            ? {
+                message:
+                  'This vendor has no verified bank account. Choose another vendor, or verify a bank account on the vendor page first.',
+                reload: false,
+              }
+            : undefined;
+        case 'PO_VENDOR_UNCHANGED':
+          return moving
+            ? {
+                message: 'The purchase order already has this vendor. Choose a different one.',
+                reload: false,
+              }
+            : undefined;
+        case 'PO_VENDOR_CHANGE_NOT_DRAFT':
+          return moving ? { message: VENDOR_CHANGE_NOT_DRAFT, reload: true } : undefined;
         case 'PO_HAS_NO_LINES':
           return {
             message:
@@ -53,7 +80,9 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
         case 'PO_HAS_RECEIPTS':
           return {
             message:
-              'A draft receipt may still be open, or goods or services have already been received on this order. Discard draft receipts from their detail pages and try cancelling again. If a receipt was confirmed and the rest will not arrive, short-close the order instead.',
+              op === 'recreate'
+                ? 'A draft receipt may still be open, or goods or services have already been received on this order, so it cannot be cancelled and raised again. Discard draft receipts from their detail pages and try again. If a receipt was confirmed, amend or short-close the order instead.'
+                : 'A draft receipt may still be open, or goods or services have already been received on this order. Discard draft receipts from their detail pages and try cancelling again. If a receipt was confirmed and the rest will not arrive, short-close the order instead.',
             reload: false,
           };
         case 'invalid_transition':

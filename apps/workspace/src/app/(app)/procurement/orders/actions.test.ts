@@ -26,6 +26,11 @@ vi.mock('@/lib/grants', async () => {
   };
 });
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  redirect: (to: string) => {
+    throw new Error(`redirect ${to}`);
+  },
+}));
 
 const api = vi.hoisted(() => ({
   getPurchaseOrder: vi.fn(),
@@ -33,10 +38,19 @@ const api = vi.hoisted(() => ({
   amendPurchaseOrder: vi.fn(),
   shortClosePurchaseOrder: vi.fn(),
   cancelPurchaseOrder: vi.fn(),
+  changePurchaseOrderVendor: vi.fn(),
+  cancelAndRecreatePurchaseOrder: vi.fn(),
 }));
 vi.mock('@/lib/api-purchase-orders', () => api);
 
-const { amendAction, cancelAction, issueAction, shortCloseAction } = await import('./actions');
+const {
+  amendAction,
+  cancelAction,
+  cancelAndRecreateAction,
+  changeVendorAction,
+  issueAction,
+  shortCloseAction,
+} = await import('./actions');
 
 const PO = '11111111-1111-4111-8111-111111111111';
 const LINE = '22222222-2222-4222-8222-222222222222';
@@ -219,5 +233,95 @@ describe('shortCloseAction and cancelAction', () => {
     const out = await cancelAction(prev, form({ ...base, reason: 'x' }));
     expect(out.error).toMatch(/already been received/i);
     expect(out.key).not.toBe(KEY);
+  });
+});
+
+describe('changeVendorAction', () => {
+  const NEW_VENDOR = '33333333-3333-4333-8333-333333333333';
+
+  it('sends the chosen vendor with the form key and says what stays', async () => {
+    api.changePurchaseOrderVendor.mockResolvedValue({ ...currentOrder, vendorId: NEW_VENDOR });
+    const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(api.changePurchaseOrderVendor).toHaveBeenCalledWith(
+      expect.anything(),
+      PO,
+      NEW_VENDOR,
+      KEY,
+    );
+    expect(out.done).toMatch(/vendor was changed/i);
+    expect(out.done).toMatch(/payment terms/i);
+    expect(out.error).toBeUndefined();
+  });
+
+  it('asks for a vendor before any API call', async () => {
+    const out = await changeVendorAction(prev, form({ ...base, vendorId: '' }));
+    expect(out.errors?.['vendorId']).toMatch(/choose a vendor/i);
+    expect(out.key).toBe(KEY);
+    expect(api.changePurchaseOrderVendor).not.toHaveBeenCalled();
+  });
+
+  it('shows the API message for an order that is no longer a draft, and rotates the key', async () => {
+    api.changePurchaseOrderVendor.mockRejectedValue(apiError(409, 'PO_VENDOR_CHANGE_NOT_DRAFT'));
+    const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(out.error).toBe('Cancel this order and create a new one');
+    expect(out.key).not.toBe(KEY);
+    expect(out.done).toBeUndefined();
+  });
+
+  it('words each vendor refusal for a vendor change, not for an issue', async () => {
+    const cases: [string, RegExp][] = [
+      ['PO_VENDOR_UNCHANGED', /already has this vendor/i],
+      ['VENDOR_NOT_APPROVED', /cannot move to it/i],
+      ['VENDOR_NOT_IN_ENTITY', /choose another vendor/i],
+      ['VENDOR_NO_VERIFIED_BANK_ACCOUNT', /no verified bank account/i],
+    ];
+    for (const [code, words] of cases) {
+      api.changePurchaseOrderVendor.mockRejectedValue(apiError(409, code));
+      const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+      expect(out.error).toMatch(words);
+      expect(out.error).not.toMatch(/issued to it/i);
+    }
+  });
+
+  it('refuses a person without procurement.po.issue before any API call', async () => {
+    session.roles = ['warehouse'];
+    const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(out.error).toMatch(/roles do not include/i);
+    expect(api.changePurchaseOrderVendor).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelAndRecreateAction', () => {
+  const DRAFT = '44444444-4444-4444-8444-444444444444';
+
+  it('needs a reason, then sends it with the key and opens the new draft', async () => {
+    const none = await cancelAndRecreateAction(prev, form({ ...base, reason: ' ' }));
+    expect(none.errors?.['reason']).toBeDefined();
+    expect(api.cancelAndRecreatePurchaseOrder).not.toHaveBeenCalled();
+
+    api.cancelAndRecreatePurchaseOrder.mockResolvedValue({ ...currentOrder, id: DRAFT });
+    await expect(
+      cancelAndRecreateAction(prev, form({ ...base, reason: 'Vendor failed' })),
+    ).rejects.toThrow(`redirect /procurement/orders/${DRAFT}`);
+    expect(api.cancelAndRecreatePurchaseOrder).toHaveBeenCalledWith(
+      expect.anything(),
+      PO,
+      'Vendor failed',
+      KEY,
+    );
+  });
+
+  it('shows PO_HAS_RECEIPTS in words for recreate, stays on the page and rotates the key', async () => {
+    api.cancelAndRecreatePurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_RECEIPTS'));
+    const out = await cancelAndRecreateAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.error).toMatch(/cannot be cancelled and raised again/i);
+    expect(out.key).not.toBe(KEY);
+  });
+
+  it('keeps the key after a timeout, so a retry replays the first request', async () => {
+    api.cancelAndRecreatePurchaseOrder.mockRejectedValue(new Error('socket hang up'));
+    const out = await cancelAndRecreateAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.key).toBe(KEY);
+    expect(out.error).toMatch(/did not respond/i);
   });
 });

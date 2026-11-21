@@ -40,6 +40,8 @@ vi.mock('next/navigation', () => ({
 vi.mock('./actions', () => ({
   amendAction: vi.fn(),
   cancelAction: vi.fn(),
+  cancelAndRecreateAction: vi.fn(),
+  changeVendorAction: vi.fn(),
   issueAction: vi.fn(),
   shortCloseAction: vi.fn(),
 }));
@@ -50,7 +52,7 @@ const api = vi.hoisted(() => ({
   getPoProgress: vi.fn(),
 }));
 vi.mock('@/lib/api-purchase-orders', () => api);
-const vendors = vi.hoisted(() => ({ getVendor: vi.fn() }));
+const vendors = vi.hoisted(() => ({ getVendor: vi.fn(), listVendors: vi.fn() }));
 vi.mock('@/lib/api-vendors', () => vendors);
 
 const { default: OrdersPage } = await import('./page');
@@ -165,6 +167,7 @@ beforeEach(() => {
   api.listPoVersions.mockResolvedValue([version(1)]);
   api.getPoProgress.mockResolvedValue(progress);
   vendors.getVendor.mockResolvedValue({ id: VENDOR, legalName: 'Himal Traders Pvt. Ltd.' });
+  vendors.listVendors.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe('the purchase order list', () => {
@@ -341,6 +344,62 @@ describe('the purchase order page', () => {
     expect(out).toContain('Amend order');
     expect(out).toContain('Short-close');
     expect(out).not.toContain('Cancel order');
+  });
+
+  // F1-Q40 a: only a draft changes vendor; an issued order with nothing received is cancelled and recreated.
+  it('offers Change vendor on a draft, without Cancel and recreate, and asks for the approved vendors', async () => {
+    const OTHER = '44444444-4444-4444-8444-444444444444';
+    vendors.listVendors.mockResolvedValue({
+      items: [
+        { id: VENDOR, legalName: 'Himal Traders Pvt. Ltd.', tradeName: null },
+        { id: OTHER, legalName: 'Everest Supplies Pvt. Ltd.', tradeName: 'Everest' },
+      ],
+      total: 2,
+    });
+    api.getPurchaseOrder.mockResolvedValue(
+      order({ status: 'draft', issuedAt: null, currentVersion: 0 }),
+    );
+    api.listPoVersions.mockResolvedValue([]);
+    const out = await detail();
+    expect(out).toContain('Change vendor');
+    expect(out).not.toContain('Cancel and recreate');
+    expect(out).not.toContain('Cancel this order and create a new one');
+    expect(vendors.listVendors).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 'approved' }),
+    );
+  });
+
+  it('offers Cancel and recreate on an issued order, with the reason a vendor cannot change, and no Change vendor', async () => {
+    api.getPurchaseOrder.mockResolvedValue(order());
+    const out = await detail();
+    expect(out).toContain('Cancel and recreate');
+    expect(out).toContain('Cancel this order and create a new one');
+    expect(out).not.toContain('Change vendor');
+    expect(vendors.listVendors).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'partially_received',
+    'fully_received',
+    'short_closed',
+    'cancelled',
+    'closed',
+    'amendment_pending',
+  ])('offers neither Change vendor nor Cancel and recreate on a %s order', async (status) => {
+    api.getPurchaseOrder.mockResolvedValue(order({ status }));
+    const out = await detail();
+    expect(out).not.toContain('Change vendor');
+    expect(out).not.toContain('Cancel and recreate');
+    expect(out).not.toContain('Cancel this order and create a new one');
+  });
+
+  it('offers neither to Procurement whose procurement.po.issue an admin removed', async () => {
+    grants.live = new Map([['procurement.pr.read', 'all']]);
+    api.getPurchaseOrder.mockResolvedValue(order({ status: 'draft', issuedAt: null }));
+    expect(await detail()).not.toContain('Change vendor');
+    api.getPurchaseOrder.mockResolvedValue(order());
+    expect(await detail()).not.toContain('Cancel and recreate');
   });
 
   it('shows the amendment-pending banner and no action buttons', async () => {

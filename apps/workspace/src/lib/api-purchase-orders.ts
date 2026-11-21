@@ -342,6 +342,40 @@ export function cancelPurchaseOrder(
 }
 
 /**
+ * Moves a draft to another vendor (F1-Q40 a): lines, prices and total stay, the payment terms come from the new
+ * vendor. 409 `PO_VENDOR_CHANGE_NOT_DRAFT` unless a draft, `PO_VENDOR_UNCHANGED`, `VENDOR_NOT_APPROVED`,
+ * `VENDOR_NOT_IN_ENTITY` or `VENDOR_NO_VERIFIED_BANK_ACCOUNT`.
+ */
+export function changePurchaseOrderVendor(
+  session: Session,
+  id: string,
+  vendorId: string,
+  idempotencyKey: string,
+): Promise<PurchaseOrder> {
+  return call(
+    session,
+    `${PO}/${seg(id)}/change-vendor`,
+    PurchaseOrderSchema,
+    post(idempotencyKey, { vendorId }),
+  );
+}
+
+/** Cancels an issued order and answers the NEW draft raised from it. 409 unless issued, `PO_HAS_RECEIPTS`. */
+export function cancelAndRecreatePurchaseOrder(
+  session: Session,
+  id: string,
+  reason: string,
+  idempotencyKey: string,
+): Promise<PurchaseOrder> {
+  return call(
+    session,
+    `${PO}/${seg(id)}/cancel-and-recreate`,
+    PurchaseOrderSchema,
+    post(idempotencyKey, { reason }),
+  );
+}
+
+/**
  * `GET .../:id/versions/:version/document`: a short-lived, single-use signed link to that version's
  * PDF. 409 while the file is being prepared, 424 once its render was given up, 404 when there is none
  * to hand out. A refusal issues no link; every successful call issues a new one.
