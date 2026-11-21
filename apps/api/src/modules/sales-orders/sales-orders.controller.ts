@@ -6,6 +6,7 @@ import {
   MarkBillableBodySchema,
   MAX_ROWS,
   multi,
+  ReleaseDeliveryBodySchema,
   searchParam,
   SalesOrderStatusSchema,
   type SalesOrderDetail,
@@ -111,5 +112,21 @@ export class SalesOrdersController {
   ): Promise<SalesOrderDetail> {
     const key = requireIdempotencyKey(idempotencyKey);
     return this.orders.markBillable(id, lineId, parseOr400(MarkBillableBodySchema, body), key);
+  }
+
+  /**
+   * 201 with the SalesOrderDetail, its delivery now released. 400 without a key or without a reason; 404 for an
+   * order outside the entity; 403 without the permission, for the order's creator or above the caller's release
+   * limit; 409 for an order that is not confirmed or whose delivery is already released.
+   */
+  @Post(':id/delivery-release')
+  @Can('sales_order.delivery_release')
+  releaseDelivery(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: unknown,
+  ): Promise<SalesOrderDetail> {
+    const key = requireIdempotencyKey(idempotencyKey);
+    return this.orders.releaseDelivery(id, parseOr400(ReleaseDeliveryBodySchema, body), key);
   }
 }

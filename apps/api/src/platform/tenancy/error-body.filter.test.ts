@@ -675,6 +675,7 @@ describe('ErrorBodyFilter', () => {
   it.each([
     'quotation_not_accepted',
     'sales_order_not_open',
+    'delivery_already_released',
     'schedule_line_not_planned',
     'SCHEDULE_LINE_TAKEN',
     'NOT_APPROVED',

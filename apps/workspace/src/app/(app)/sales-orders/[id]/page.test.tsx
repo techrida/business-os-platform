@@ -151,6 +151,72 @@ describe('sales order detail', () => {
     expect(await render()).toContain('Released');
   });
 
+  it('offers Release delivery on a held, confirmed order, off with its reason when the caller may not', async () => {
+    mocks.getSalesOrder.mockResolvedValue(
+      salesOrderDetail({
+        can: {
+          markBillable: true,
+          draftInvoice: true,
+          releaseDelivery: true,
+          releaseDeliveryBlockedBy: null,
+          releaseDeliveryAllowedRoles: ['finance', 'founder'],
+        },
+      }),
+    );
+    const open = await render();
+    expect(open).toMatch(/<button[^>]*>Release delivery<\/button>/);
+    expect(open).not.toMatch(/<button[^>]*disabled[^>]*>Release delivery/);
+    expect(open).toContain('Finance or the Founder can release its delivery.');
+    expect(open).toContain('name="reason"');
+
+    mocks.getSalesOrder.mockResolvedValue(
+      salesOrderDetail({
+        can: {
+          markBillable: true,
+          draftInvoice: true,
+          releaseDelivery: false,
+          releaseDeliveryBlockedBy: 'requester',
+          releaseDeliveryAllowedRoles: ['finance', 'founder'],
+        },
+      }),
+    );
+    const off = await render();
+    expect(off).toMatch(/<button[^>]*disabled[^>]*>Release delivery<\/button>/);
+    expect(off).toContain('You created this order, so someone else must release it.');
+    expect(off).not.toContain('name="reason"');
+  });
+
+  it('says who released the delivery, when and why, or that the advance was paid, and offers no release', async () => {
+    mocks.getSalesOrder.mockResolvedValue({
+      ...salesOrderDetail({ deliveryReleased: true }),
+      deliveryRelease: {
+        kind: 'override',
+        releasedAt: '2026-11-20T06:15:00.000Z',
+        releasedByName: 'Sita Sharma',
+        reason: 'Customer collects on site today',
+      },
+    });
+    const byHand = await render();
+    expect(byHand).toMatch(
+      /Released by Sita Sharma on [^<]*2026[^<]*: Customer collects on site today/,
+    );
+    expect(byHand).not.toContain('Release delivery');
+    expect(byHand).not.toContain('Released once the advance invoice');
+
+    mocks.getSalesOrder.mockResolvedValue({
+      ...salesOrderDetail({ deliveryReleased: true }),
+      deliveryRelease: {
+        kind: 'advance_paid',
+        releasedAt: null,
+        releasedByName: null,
+        reason: null,
+      },
+    });
+    const paid = await render();
+    expect(paid).toContain('Released: advance paid');
+    expect(paid).not.toContain('Release delivery');
+  });
+
   it('shows no action buttons to a role that may only read', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
     mocks.getSalesOrder.mockResolvedValue(
@@ -172,6 +238,7 @@ describe('sales order detail', () => {
     expect(html).toContain('Draft sales order');
     expect(html).not.toContain('Mark billable');
     expect(html).not.toContain('Draft invoice');
+    expect(html).not.toContain('Release delivery');
   });
 
   describe('a draft order waiting for confirmation (F1-Q25, F1-Q28)', () => {

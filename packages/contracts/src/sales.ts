@@ -205,24 +205,62 @@ export const SalesOrderDraftStateSchema = z.object({
 });
 export type SalesOrderDraftState = z.infer<typeof SalesOrderDraftStateSchema>;
 
+export const DELIVERY_RELEASE_KINDS = ['advance_paid', 'override'] as const;
+
+/**
+ * Why the order's delivery is released (F1-Q32). `advance_paid`: the advance invoice has an open amount of 0 (plan
+ * A14); the other fields are null. `override`: someone released the hold before the advance was paid, with a reason
+ * (`POST /v1/sales-orders/:id/delivery-release`). A release recorded before the advance was paid stays `override`.
+ */
+export const SalesOrderDeliveryReleaseSchema = z.object({
+  kind: z.enum(DELIVERY_RELEASE_KINDS),
+  releasedAt: isoDateTime.nullable(),
+  /** The releaser's display name; null for `advance_paid` or a user without one. */
+  releasedByName: z.string().nullable(),
+  reason: z.string().nullable(),
+});
+export type SalesOrderDeliveryRelease = z.infer<typeof SalesOrderDeliveryReleaseSchema>;
+
+/**
+ * Why `can.releaseDelivery` is false on a confirmed, held order. `permission`: the caller lacks
+ * `sales_order.delivery_release` on it. `requester`: they created the order. `amount`: none of their roles may
+ * release an order of this amount under the live threshold.
+ */
+export const DELIVERY_RELEASE_BLOCKERS = ['requester', 'amount', 'permission'] as const;
+/** The role keys that may release a delivery hold (money-rules `deliveryHoldReleaser`). */
+export const DELIVERY_RELEASER_ROLES = ['finance', 'management', 'founder'] as const;
+
 export const SalesOrderDetailSchema = z.object({
   order: SalesOrderDtoSchema,
   lines: z.array(SalesOrderLineDtoSchema),
   schedule: z.array(ScheduleLineDtoSchema),
   evidence: z.array(SalesOrderEvidenceDtoSchema),
-  /** Plan A14: true when the advance invoice has an open amount of 0. P4's delivery module reads it. */
+  /**
+   * True when the advance invoice has an open amount of 0 (plan A14) or the hold was released by hand (F1-Q32).
+   * P4's delivery module reads it.
+   */
   deliveryReleased: z.boolean(),
+  /** How the delivery was released, or null while it is held. The API always sends it. */
+  deliveryRelease: SalesOrderDeliveryReleaseSchema.nullable().optional(),
   /** Set on a draft order (F1-Q25), null once confirmed. */
   draft: SalesOrderDraftStateSchema.nullable().optional(),
   /**
    * What the caller may do on this order, from its live grants. `confirm`: a draft with nothing blocking it, and
-   * `sales_order.confirm` (`POST /v1/sales-orders` with the order's `quotationVersionId`).
+   * `sales_order.confirm` (`POST /v1/sales-orders` with the order's `quotationVersionId`). `releaseDelivery`: a
+   * confirmed, held order the caller would release under the delivery-hold rule (their role against the live
+   * threshold, and not the order's creator). `releaseDeliveryBlockedBy`: why not, on a confirmed, held order for
+   * staff; null when they may, or when there is nothing to release. `releaseDeliveryAllowedRoles`: the roles that
+   * may release this order at its amount under the live threshold, sent to a caller with the permission on a
+   * confirmed, held order; empty otherwise.
    */
   can: z
     .object({
       markBillable: z.boolean(),
       draftInvoice: z.boolean(),
       confirm: z.boolean().optional(),
+      releaseDelivery: z.boolean().optional(),
+      releaseDeliveryBlockedBy: z.enum(DELIVERY_RELEASE_BLOCKERS).nullable().optional(),
+      releaseDeliveryAllowedRoles: z.array(z.enum(DELIVERY_RELEASER_ROLES)).optional(),
     })
     .optional(),
 });
@@ -245,6 +283,12 @@ export const MarkBillableBodySchema = z.strictObject({
   expectedVersion: z.number().int().min(1),
 });
 export type MarkBillableBody = z.infer<typeof MarkBillableBodySchema>;
+
+/** Release a confirmed order's delivery before its advance is paid (F1-Q32). The reason is required and kept. */
+export const ReleaseDeliveryBodySchema = z.strictObject({
+  reason: text(1000),
+});
+export type ReleaseDeliveryBody = z.infer<typeof ReleaseDeliveryBodySchema>;
 
 /** Re-split the live lines. Approved through the approval engine; the new lines must keep the 100% total. */
 export const ReviseScheduleBodySchema = z.strictObject({
