@@ -32,6 +32,8 @@ describe('plainAmount', () => {
     '0,500',
     '0,50,000',
     '0,000',
+    '10,50 0',
+    '1, 250',
   ])('keeps the comma in %s so it fails the digit check', (typed) => {
     expect(plainAmount(typed)).toContain(',');
     expect(hasStrayComma(typed)).toBe(true);
