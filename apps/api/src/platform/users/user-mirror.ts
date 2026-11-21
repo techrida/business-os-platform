@@ -55,6 +55,16 @@ const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
 const MAX_PAGES = 200;
 const MAX_DEACTIVATIONS_PER_PASS = 20;
 
+/** Tries of one apply when the row keeps changing between the read and the write. */
+const APPLY_ATTEMPTS = 3;
+
+/** What apply writes for one ZITADEL user: the user as read, the status to store and the lock (undefined keeps it). */
+interface NextState {
+  user: ZitadelUser;
+  status: MirroredStatus;
+  lock: UserLock | null | undefined;
+}
+
 export interface ReconcileLimits {
   maxPages?: number;
   maxDeactivations?: number;
@@ -371,82 +381,118 @@ export class UserMirror {
       );
       return false;
     }
-    let user = read;
-    let status: MirroredStatus = read.status;
     const scope = await this.entityScope(org.tenantId);
-    return withTx(this.db, scope, zitadelActor(), async (tx) => {
-      let changed = false;
-      let lockConfirmed = true;
-      const existing = await this.store.findByZitadelId(tx, user.id, true);
-      if (
-        existing &&
-        (existing.status !== status || Boolean(existing.lockReason) !== Boolean(user.locked))
-      ) {
-        // `user` was read before this row lock. An admin status action (which holds the same lock while it changes
-        // ZITADEL) may have finished in between, and writing the older state back would undo it: a deactivated
-        // leaver active again until the next pass. So a status or lock change is re-read now, behind that lock.
-        const fresh = await this.zitadel.getUser(user.id).catch(() => null);
-        if (fresh?.status) {
-          user = fresh;
-          status = fresh.status;
-        } else {
-          // Unconfirmed: the stored lock stays as it is.
-          lockConfirmed = false;
-          if (status === 'active' || status === 'invited') {
-            // Unconfirmed, and it would let someone in: leave the row for the next pass.
-            this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
-            status = existing.status;
-          }
+    for (let attempt = 1; ; attempt += 1) {
+      const seen = await this.store.findByZitadelId(this.db, read.id);
+      const next = await this.nextState(org, seen, read, read.status);
+      // ZITADEL was read with no transaction open. The write goes ahead only while the row is still the version read
+      // before that, so an admin action or another sync that committed in between is never overwritten.
+      const changed = await withTx(this.db, scope, zitadelActor(), async (tx) => {
+        const existing = await this.store.findByZitadelId(tx, read.id, true);
+        if ((existing?.version ?? null) !== (seen?.version ?? null)) return null;
+        return this.write(tx, org, scope, existing, next, roles);
+      });
+      if (changed !== null) return changed;
+      if (attempt >= APPLY_ATTEMPTS) {
+        this.logger.warn(
+          `users.apply: ${read.id} kept changing while it was synced; left for the next pass`,
+        );
+        return false;
+      }
+    }
+  }
+
+  /** What to write for `read`, worked out with no transaction open. */
+  private async nextState(
+    org: IdpOrgRow,
+    existing: UserRow | null,
+    read: ZitadelUser,
+    readStatus: MirroredStatus,
+  ): Promise<NextState> {
+    let user = read;
+    let status = readStatus;
+    let lockConfirmed = true;
+    if (
+      existing &&
+      (existing.status !== status || Boolean(existing.lockReason) !== Boolean(user.locked))
+    ) {
+      // `user` may have been read before `existing`. An admin status action may have finished in between, and
+      // writing the older state back would undo it: a deactivated leaver active again until the next pass. So a
+      // status or lock change is re-read now, after `existing`; apply writes only if the row is still that version.
+      const fresh = await this.zitadel.getUser(user.id).catch(() => null);
+      if (fresh?.status) {
+        user = fresh;
+        status = fresh.status;
+      } else {
+        // Unconfirmed: the stored lock stays as it is.
+        lockConfirmed = false;
+        if (status === 'active' || status === 'invited') {
+          // Unconfirmed, and it would let someone in: leave the row for the next pass.
+          this.logger.warn(`users.apply: could not confirm ${user.id}; status left unchanged`);
+          status = existing.status;
         }
       }
-      const lock = lockConfirmed ? await this.lockChange(org, existing, user) : undefined;
-      let userId: string;
-      if (!existing) {
-        userId = await this.store.insertUser(tx, scope, {
-          zitadelUserId: user.id,
-          idpOrgId: org.idpOrgId,
+    }
+    const lock = lockConfirmed ? await this.lockChange(org, existing, user) : undefined;
+    return { user, status, lock };
+  }
+
+  private async write(
+    tx: DbTransaction,
+    org: IdpOrgRow,
+    scope: TxScope,
+    existing: UserRow | null,
+    next: NextState,
+    roles: readonly RoleKey[],
+  ): Promise<boolean> {
+    const { user, status, lock } = next;
+    let changed = false;
+    let userId: string;
+    if (!existing) {
+      userId = await this.store.insertUser(tx, scope, {
+        zitadelUserId: user.id,
+        idpOrgId: org.idpOrgId,
+        email: user.email,
+        displayName: user.displayName,
+        status,
+      });
+      if (lock) {
+        await this.store.updateUser(tx, userId, {
           email: user.email,
           displayName: user.displayName,
           status,
+          lock,
         });
-        if (lock) {
-          await this.store.updateUser(tx, userId, {
-            email: user.email,
-            displayName: user.displayName,
-            status,
-            lock,
-          });
-        }
-        await this.bootstrap(tx, org, scope, userId);
-        changed = true;
-      } else {
-        userId = existing.id;
-        const statusChanged = existing.status !== status;
-        if (
-          existing.email !== user.email ||
-          existing.displayName !== user.displayName ||
-          existing.status !== status ||
-          lock !== undefined
-        ) {
-          await this.store.updateUser(tx, userId, {
-            email: user.email,
-            displayName: user.displayName,
-            status,
-            ...(lock === undefined ? {} : { lock }),
-          });
-          // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
-          // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
-          if (statusChanged) await this.store.bumpAuthzVersion(tx, scope);
-          changed = true;
-        }
       }
-      if (!sameRoles(await this.store.rolesOf(tx, scope.tenantId, userId), roles)) {
-        await this.store.replaceRoles(tx, scope, userId, roles);
-        await this.store.bumpAuthzVersion(tx, scope);
+      await this.bootstrap(tx, org, scope, userId);
+      changed = true;
+    } else {
+      userId = existing.id;
+      const statusChanged = existing.status !== status;
+      if (
+        existing.email !== user.email ||
+        existing.displayName !== user.displayName ||
+        existing.status !== status ||
+        lock !== undefined
+      ) {
+        await this.store.updateUser(tx, userId, {
+          email: user.email,
+          displayName: user.displayName,
+          status,
+          ...(lock === undefined ? {} : { lock }),
+        });
+        // A status change (disabled, re-enabled) reaches every request at once: the per-request user cache
+        // is keyed on the authz version, so without a bump a disabled user stays active for up to 60 s.
+        if (statusChanged) await this.store.bumpAuthzVersion(tx, scope);
         changed = true;
       }
-      return changed;
-    });
+    }
+    if (!sameRoles(await this.store.rolesOf(tx, scope.tenantId, userId), roles)) {
+      await this.store.replaceRoles(tx, scope, userId, roles);
+      await this.store.bumpAuthzVersion(tx, scope);
+      changed = true;
+    }
+    return changed;
   }
 
   /**

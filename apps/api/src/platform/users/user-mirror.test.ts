@@ -679,3 +679,76 @@ describe('UserMirror mirrors ZITADEL locks as a timed lock (F1-Q4)', () => {
     });
   });
 });
+
+describe('UserMirror reads ZITADEL with no transaction open and writes only a row nobody changed meanwhile', () => {
+  const adminLock = () => ({ reason: 'admin' as const, lockedAt: new Date(), until: null });
+
+  beforeEach(async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    await mirror.syncUser('z1');
+    store.users[0]!.status = 'invited';
+  });
+
+  it('re-reads a status change outside any transaction', async () => {
+    const openAt: number[] = [];
+    const real = zitadel.getUser.bind(zitadel);
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      openAt.push(db.open);
+      return real(id);
+    });
+
+    expect(await mirror.syncUser('z1')).toBe(true);
+
+    expect(openAt).toEqual([0, 0]);
+    expect(store.users[0]?.status).toBe('active');
+  });
+
+  it('does not write an accepted invite over an admin lock that committed during the re-read (old code: active, lock gone)', async () => {
+    const real = zitadel.getUser.bind(zitadel);
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(async (id: string) => {
+      calls += 1;
+      if (calls !== 2) return real(id);
+      // ZITADEL answered "active", then the admin's lock landed: the row first, ZITADEL just before commit.
+      const answer = { ...(await real(id))! };
+      const row = store.users[0]!;
+      await store.updateUser(tx, row.id, {
+        email: row.email,
+        displayName: row.displayName,
+        status: 'inactive',
+        lock: adminLock(),
+      });
+      zitadel.users.set('z1', zUser('z1', { status: 'inactive', locked: true }));
+      return answer;
+    });
+
+    await mirror.syncUser('z1');
+
+    expect(store.users[0]).toMatchObject({ status: 'inactive', lockReason: 'admin' });
+    expect(calls).toBe(3);
+  });
+
+  it('gives up after three changed reads and leaves the row for the next pass', async () => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const real = zitadel.getUser.bind(zitadel);
+    let calls = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation(async (id: string) => {
+      calls += 1;
+      const answer = await real(id);
+      if (calls > 1) {
+        const row = store.users[0]!;
+        await store.updateUser(tx, row.id, {
+          email: row.email,
+          displayName: `Renamed ${calls}`,
+          status: row.status,
+        });
+      }
+      return answer;
+    });
+
+    expect(await mirror.syncUser('z1')).toBe(false);
+
+    expect(calls).toBe(4);
+    expect(store.users[0]).toMatchObject({ status: 'invited', displayName: 'Renamed 4' });
+  });
+});
