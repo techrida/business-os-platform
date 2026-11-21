@@ -4,6 +4,8 @@
 // left in the fields.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { Currency } from '@bos/contracts';
+
 import { click, fill, mountForm, submit } from '@/test/form-interactions';
 
 import { CUSTOMER_ID } from '../_lib/fixtures';
@@ -43,7 +45,10 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-const mount = () =>
+const mount = (
+  prefill: PaymentPrefill | null = PREFILL,
+  enabled: Currency[] = ['NPR', 'INR', 'USD'],
+) =>
   mountForm(
     <PaymentForm
       idempotencyKey={KEY}
@@ -52,15 +57,23 @@ const mount = () =>
         { id: CUSTOMER_ID, name: 'Everest Foods', number: 'CUST-0001', defaultCurrency: 'NPR' },
         { id: OTHER_ID, name: 'Rupee Co', number: 'CUST-0002', defaultCurrency: 'INR' },
       ]}
-      enabledCurrencies={['NPR', 'INR', 'USD']}
+      enabledCurrencies={enabled}
       initialCustomerId={CUSTOMER_ID}
-      prefill={PREFILL}
+      prefill={prefill}
       reloadHref={`/payments/new?customerId=${CUSTOMER_ID}`}
     />,
   );
 
 const value = (box: HTMLElement, name: string) =>
   box.querySelector<HTMLInputElement>(`input[name="${name}"]`)?.value;
+
+/** The visible box of the field labelled `label`; the posted value is on a hidden input named after the field. */
+function boxFor(box: HTMLElement, label: string) {
+  const forId = Array.from(box.querySelectorAll('label[for]'))
+    .find((l) => l.textContent?.trim().startsWith(label))
+    ?.getAttribute('for');
+  return box.querySelector<HTMLInputElement>(`input#${CSS.escape(forId ?? 'missing')}`);
+}
 
 /** Open the React Aria picker labelled `label` and choose the option whose text is `option`. */
 async function pick(box: HTMLElement, label: string, option: string) {
@@ -86,7 +99,7 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       expect(value(box, 'amount')).toBe('750.00');
       expect(value(box, 'currency')).toBe('USD');
       expect(box.textContent).toContain('The open amount of INV-2083/84-00001.');
-      await fill(box.querySelector('input[name="amount"]'), '300.00');
+      await fill(boxFor(box, 'Amount received'), '300.00');
       expect(value(box, 'amount')).toBe('300.00');
       // The hint no longer claims a typed amount is the open amount.
       expect(box.textContent).not.toContain('The open amount of');
@@ -137,7 +150,7 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       expect(box.textContent).not.toContain('The open amount of');
       expect(box.textContent).toContain('The cash that arrived');
       // A typed amount survives a currency change, even one equal to the open amount.
-      await fill(box.querySelector('input[name="amount"]'), '750.00');
+      await fill(boxFor(box, 'Amount received'), '750.00');
       await pick(box, 'Currency', 'NPR (Nepalese rupee)');
       expect(value(box, 'currency')).toBe('NPR');
       expect(value(box, 'amount')).toBe('750.00');
@@ -145,4 +158,73 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       await mounted.unmount();
     }
   }, 20_000);
+
+  it('shows an NPR open amount grouped in lakhs and posts it plain', async () => {
+    mocks.action.mockResolvedValueOnce({ key: KEY });
+    const mounted = await mount({ ...PREFILL, currency: 'NPR', amount: '1250000.00' });
+    try {
+      const box = mounted.container;
+      // Old code showed the API string as it came: 1250000.00.
+      expect(boxFor(box, 'Amount received')?.value).toBe('12,50,000.00');
+      expect(value(box, 'amount')).toBe('1250000.00');
+      expect(box.textContent).toContain('The open amount of INV-2083/84-00001.');
+      await submit(box);
+      expect(mocks.action.mock.calls[0]?.[1].get('amount')).toBe('1250000.00');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('groups typed amounts in the currency and posts the plain digits', async () => {
+    mocks.action.mockResolvedValueOnce({ key: KEY });
+    const mounted = await mount({ ...PREFILL, currency: 'NPR', amount: '1250000.00' });
+    try {
+      const box = mounted.container;
+      await fill(boxFor(box, 'Amount received'), '1250000');
+      await fill(boxFor(box, 'Tax withheld'), '2018180');
+      // Old code left the text as typed: 1250000 and 2018180.
+      expect(boxFor(box, 'Amount received')?.value).toBe('12,50,000');
+      expect(boxFor(box, 'Tax withheld')?.value).toBe('20,18,180');
+      await submit(box);
+      const sent = mocks.action.mock.calls[0]?.[1];
+      expect(sent?.get('amount')).toBe('1250000');
+      expect(sent?.get('tdsWithheld')).toBe('2018180');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('regroups a typed amount when the currency changes, and posts the same digits', async () => {
+    mocks.action.mockResolvedValueOnce({ key: KEY });
+    const mounted = await mount();
+    try {
+      const box = mounted.container;
+      await fill(boxFor(box, 'Amount received'), '1250000');
+      expect(boxFor(box, 'Amount received')?.value).toBe('1,250,000');
+      // Leaving the box pads it to 2 decimals; the new currency's grouping follows.
+      await pick(box, 'Currency', 'NPR (Nepalese rupee)');
+      expect(boxFor(box, 'Amount received')?.value).toBe('12,50,000.00');
+      await submit(box);
+      expect(mocks.action.mock.calls[0]?.[1].get('amount')).toBe('1250000.00');
+    } finally {
+      await mounted.unmount();
+    }
+  }, 15_000);
+
+  it('takes digits before a currency is chosen and groups them once one is', async () => {
+    // The customer's usual NPR is switched off, so the form starts with no currency.
+    const mounted = await mount(null, ['INR', 'USD']);
+    try {
+      const box = mounted.container;
+      expect(value(box, 'currency')).toBe('');
+      await fill(boxFor(box, 'Amount received'), '1250000');
+      expect(boxFor(box, 'Amount received')?.value).toBe('1250000');
+      expect(value(box, 'amount')).toBe('1250000');
+      await pick(box, 'Currency', 'USD (US dollar)');
+      expect(boxFor(box, 'Amount received')?.value).toBe('1,250,000.00');
+      expect(value(box, 'amount')).toBe('1250000.00');
+    } finally {
+      await mounted.unmount();
+    }
+  }, 15_000);
 });

@@ -108,6 +108,13 @@ describe('allocateAction', () => {
     },
   );
 
+  it('names the space in "10 50" instead of the generic amount message', async () => {
+    const state = await allocateAction(prev, form({ ...base, [`amount:${INVOICE_ID}`]: '10 50' }));
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    // Old code said "Enter a positive number with up to 2 decimals", which the digits seem to satisfy.
+    expect(state.errors?.lines?.[INVOICE_ID]).toBe('Remove the space inside the number.');
+  });
+
   it('asks for a reload on a broken form (bad payment id or an invoice id that is not one)', async () => {
     const badPayment = await allocateAction(prev, form({ ...one, paymentId: 'nope' }));
     expect(badPayment.reload).toBe(true);

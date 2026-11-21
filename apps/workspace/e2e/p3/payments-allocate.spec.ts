@@ -54,12 +54,10 @@ test('a verified payment offers the allocate panel and refuses a bad amount in p
     const amounts = panel.getByRole('textbox', { name: /^Amount to allocate to / });
     test.skip((await amounts.count()) === 0, 'needs an open invoice for this customer');
 
-    await test.step('a malformed amount is refused before it reaches the platform', async () => {
-      await amounts.first().fill('12.345');
-      await panel.getByRole('button', { name: 'Allocate payment' }).click();
-      await expect(panel.getByText(/positive number with up to 2 decimals/)).toBeVisible();
-      await expect(amounts.first()).toHaveAttribute('aria-invalid', 'true');
-      await expect(amounts.first()).toHaveValue('12.345');
+    await test.step('a third decimal is not accepted in the box', async () => {
+      await amounts.first().fill('');
+      await amounts.first().pressSequentially('12.345');
+      await expect(amounts.first()).toHaveValue('12.34');
     });
 
     await test.step('nothing typed asks for at least one amount', async () => {
@@ -82,8 +80,11 @@ test('the server refuses more than an invoice has open, in words', async ({ brow
   try {
     await openFirstVerifiedPayment(finance);
     const panel = finance.page.getByRole('region', { name: 'Allocate this payment', exact: true });
+    // The named input is hidden; the visible box is the text input just before it.
     const amount = panel.locator(
-      'input[name="amount:' + process.env['BOS_E2E_INVOICE_ISSUED'] + '"]',
+      'xpath=//input[@name="amount:' +
+        process.env['BOS_E2E_INVOICE_ISSUED'] +
+        '"]/preceding::input[@type="text" or not(@type)][1]',
     );
     const allocations = finance.page.getByRole('region', { name: 'Allocations', exact: true });
     const before = await allocations.innerText();
@@ -91,7 +92,7 @@ test('the server refuses more than an invoice has open, in words', async ({ brow
     await panel.getByRole('button', { name: 'Allocate payment', exact: true }).click();
     await expect(panel.getByRole('alert')).toContainText('Nothing was allocated');
     await expect(panel.getByRole('alert')).toContainText('more than');
-    await expect(amount).toHaveValue('999999.00');
+    await expect(amount).toHaveValue('9,99,999.00');
     await expect(allocations).toHaveText(before, { useInnerText: true });
   } finally {
     await finance.context.close();
@@ -111,8 +112,11 @@ test('allocating then deallocating with a reason adds a reversal row', async ({
   try {
     await openFirstVerifiedPayment(finance);
     const panel = finance.page.getByRole('region', { name: 'Allocate this payment', exact: true });
+    // The named input is hidden; the visible box is the text input just before it.
     const amount = panel.locator(
-      'input[name="amount:' + process.env['BOS_E2E_INVOICE_ISSUED'] + '"]',
+      'xpath=//input[@name="amount:' +
+        process.env['BOS_E2E_INVOICE_ISSUED'] +
+        '"]/preceding::input[@type="text" or not(@type)][1]',
     );
     const invoice = await amount.getAttribute('aria-label');
     const number = invoice?.replace('Amount to allocate to ', '') ?? '';
