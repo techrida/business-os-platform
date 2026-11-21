@@ -707,22 +707,20 @@ describe('cancelAndRecreate', () => {
     expect(again.getStatus()).toBe(409);
   });
 
-  it('lets the clone change vendor while it is a draft', async () => {
-    const { po } = await issuedCommitmentPo(await vendor());
+  it('keeps the RFQ link on the clone, so changing its vendor needs the new vendor own quotation (K3 Q1 b)', async () => {
+    const original = await vendor();
+    const { po } = await issuedCommitmentPo(original);
     const draft = await service.cancelAndRecreate(po.id, { reason: 'Vendor failed' }, randomUUID());
+    expect(draft.rfqId).toBe(po.rfqId);
     const other = await vendor();
-    const moved = await service.changeVendor(draft.id, { vendorId: other }, randomUUID());
-    expect(moved).toMatchObject({
-      status: 'draft',
-      vendorId: other,
-      rfqId: null,
-      vendorQuotationId: null,
-      approvedTotal: draft.approvedTotal,
-      number: draft.number,
-    });
-    expect(moved.lines).toEqual(draft.lines);
+    const refused = await httpErrorOf(
+      service.changeVendor(draft.id, { vendorId: other }, randomUUID()),
+    );
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_VENDOR_NO_QUOTATION');
+    expect(await poRow(draft.id)).toMatchObject({ vendorId: original, status: 'draft' });
     const issued = await service.issue(draft.id, randomUUID());
-    expect(issued).toMatchObject({ status: 'issued', vendorId: other });
+    expect(issued).toMatchObject({ status: 'issued', vendorId: original });
   });
 });
 

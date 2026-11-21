@@ -283,10 +283,44 @@ describe('changeVendorAction', () => {
       PO,
       NEW_VENDOR,
       KEY,
+      false,
     );
     expect(out.done).toMatch(/vendor was changed/i);
     expect(out.done).toMatch(/payment terms/i);
     expect(out.error).toBeUndefined();
+  });
+
+  it('shows the VAT warning as a field to tick, then sends the acknowledgement (K3 Q2)', async () => {
+    api.changePurchaseOrderVendor.mockRejectedValueOnce(apiError(409, 'VENDOR_NOT_VAT_REGISTERED'));
+    const warned = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(warned.errors?.['acknowledgeVatWarning']).toMatch(/not VAT registered/i);
+    expect(warned.error).toBeUndefined();
+    api.changePurchaseOrderVendor.mockResolvedValue({ ...currentOrder, vendorId: NEW_VENDOR });
+    const out = await changeVendorAction(
+      prev,
+      form({ ...base, vendorId: NEW_VENDOR, acknowledgeVatWarning: 'on' }),
+    );
+    expect(api.changePurchaseOrderVendor).toHaveBeenLastCalledWith(
+      expect.anything(),
+      PO,
+      NEW_VENDOR,
+      KEY,
+      true,
+    );
+    expect(out.error).toBeUndefined();
+  });
+
+  it('says the change went for approval when the API answers with a pending change', async () => {
+    api.changePurchaseOrderVendor.mockResolvedValue({
+      ...currentOrder,
+      pendingVendorChange: {
+        approvalRequestId: NEW_VENDOR,
+        vendorId: NEW_VENDOR,
+        total: '94920.00',
+      },
+    });
+    const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(out.done).toMatch(/sent for approval/i);
   });
 
   it('asks for a vendor before any API call', async () => {
