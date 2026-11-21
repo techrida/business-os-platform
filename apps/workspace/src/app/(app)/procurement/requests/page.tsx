@@ -10,7 +10,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
-import { grantsFrom } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -23,7 +22,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listPurchaseRequestsPage, type PurchaseRequestListItem } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
-import { getMeOrNull } from '@/lib/live-permissions';
+import { getGrants } from '@/lib/grants';
 import { money, when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
@@ -131,7 +130,7 @@ export default async function PurchaseRequestsPage({
   const params = await searchParams;
   const list = readList(params, LIST);
   const status = PrStatusSchema.array().parse(list.multi.status);
-  const grants = prGrants(grantsFrom(await getMeOrNull(session.accessToken), session.roles));
+  const grants = prGrants(await getGrants(session));
 
   let requests: PurchaseRequestListItem[] | null = null;
   let total = 0;

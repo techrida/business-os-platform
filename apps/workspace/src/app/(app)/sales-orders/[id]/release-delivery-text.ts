@@ -66,6 +66,7 @@ export function releaseBlockedText(
 export function releasedText(release: SalesOrderDetail['deliveryRelease']): string | null {
   if (release === null || release === undefined) return null;
   if (release.kind === 'advance_paid') return 'Released: advance paid';
+  if (release.kind === 'no_advance') return 'Released: no advance on this order';
   const by = release.releasedByName !== null ? ` by ${release.releasedByName}` : '';
   const on = release.releasedAt !== null ? ` on ${when(release.releasedAt, 'date')}` : '';
   const why = release.reason !== null ? `: ${release.reason}` : '';

@@ -45,6 +45,21 @@ const ITEMS = [
 /** The server's unread count, and the items marked read so far. */
 let unread: number | 'signed-out' = 0;
 const readIds = new Set<string>();
+/** While set, a mark-as-read answers only when `releaseMarks()` runs: the server records it late. */
+let lateMarks: Array<() => void> | null = null;
+const releaseMarks = async () => {
+  const waiting = lateMarks ?? [];
+  lateMarks = null;
+  await act(async () => {
+    for (const record of waiting) record();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+};
+function recordRead(id: string) {
+  if (readIds.has(id)) return;
+  readIds.add(id);
+  if (typeof unread === 'number') unread = Math.max(0, unread - 1);
+}
 function server(): Fetch {
   return (input, init) => {
     if (input === '/api/shell/counts') {
@@ -58,7 +73,14 @@ function server(): Fetch {
       });
     }
     const read = /^\/api\/notifications\/(.+)\/read$/.exec(input);
-    if (read?.[1] && init?.method === 'POST') readIds.add(read[1]);
+    if (read?.[1] && init?.method === 'POST') {
+      const id = read[1];
+      if (lateMarks === null) recordRead(id);
+      else
+        return new Promise((resolve) =>
+          lateMarks?.push(() => (recordRead(id), resolve(new Response('{}')))),
+        );
+    }
     return json({});
   };
 }
@@ -105,6 +127,7 @@ beforeEach(() => {
   nav.pathname = '/';
   unread = 0;
   readIds.clear();
+  lateMarks = null;
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
   motion.kick.mockReset();
   motion.popDot.mockReset();
@@ -209,6 +232,32 @@ describe('NotificationsBell in the shell', () => {
     expect(readPosts()).toEqual(['/api/notifications/n1/read', '/api/notifications/n2/read']);
     expect(label()).toBe('Notifications');
     expect(motion.kick).not.toHaveBeenCalled();
+  });
+});
+
+describe('NotificationsBell after Mark all read', () => {
+  it('does not ring again when a poll would have counted marks the server has not recorded yet', async () => {
+    unread = 2;
+    await mount(inShell());
+    await openPanel();
+    lateMarks = [];
+    await press(button('Mark all read'));
+    expect(label()).toBe('Notifications');
+
+    // The marks are still on the wire. A poll now would read 2 unread and look like a rise: none is made.
+    const readsBefore = fetchMock.mock.calls.filter(([url]) => url === '/api/shell/counts').length;
+    await tick(15_000);
+    await tick(15_000);
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/shell/counts')).toHaveLength(
+      readsBefore,
+    );
+    expect(label()).toBe('Notifications');
+
+    // They land: one read confirms zero, and the bell never rang or announced.
+    await releaseMarks();
+    expect(label()).toBe('Notifications');
+    expect(motion.kick).not.toHaveBeenCalled();
+    expect(announced()).toBe('');
   });
 });
 

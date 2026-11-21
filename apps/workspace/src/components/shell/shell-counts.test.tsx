@@ -267,6 +267,53 @@ describe('ShellCountsProvider', () => {
     expect(probe()).toBe('inbox=1 unread=0 signedOut=false');
   });
 
+  it('starts no read while mark-as-read requests are out, then reads once so a late poll cannot ring the bell', async () => {
+    let finish: () => void = () => undefined;
+    const marks = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    function Marker() {
+      const counts = useShellCounts();
+      return (
+        <button type="button" onClick={() => counts?.lowerNotifications(3, marks)}>
+          mark3
+        </button>
+      );
+    }
+    fetchMock.mockImplementation(answer(1, 3));
+    await act(() =>
+      Promise.resolve(
+        root?.render(
+          <ShellCountsProvider initialInbox={1} initialNotifications={3}>
+            <Probe />
+            <Marker />
+          </ShellCountsProvider>,
+        ),
+      ),
+    );
+    await act(async () => {
+      container.querySelector('button')?.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(shown()).toContain('unread=0');
+
+    // The server has not recorded every mark yet, so a read now would answer 3 again: none starts.
+    fetchMock.mockImplementation(answer(1, 3));
+    await tick(15_000);
+    await tick(15_000);
+    expect(reads()).toBe(0);
+    expect(shown()).toContain('unread=0');
+
+    // The marks landed: one read gives the server's number.
+    fetchMock.mockImplementation(answer(1, 0));
+    await act(async () => {
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(reads()).toBe(1);
+    expect(shown()).toContain('unread=0');
+  });
+
   it('is absent outside the provider, so consumers keep their own numbers', async () => {
     await act(() => Promise.resolve(root?.render(<Probe />)));
     expect(shown()).toBe('no provider');

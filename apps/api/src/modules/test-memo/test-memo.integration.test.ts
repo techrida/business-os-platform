@@ -1977,12 +1977,14 @@ describe('GET /v1/test-memos (the Memos list)', () => {
       idpOrgId: foreign.idpOrgId,
     });
     const foreignId = randomUUID();
+    // An approved memo: it is the kind an entity-wide reader would see if the tenant wall failed, so a leak shows.
+    const token = `Foreignwall${randomUUID().replaceAll('-', '').slice(0, 12)}`;
     await withTx(db, foreignScope, systemActor('test'), (tx) =>
       tx.insert(testMemos).values({
         ...foreignScope,
         id: foreignId,
         number: `FOREIGN-${randomUUID()}`,
-        title: 'Foreign tenant memo',
+        title: `Foreign tenant memo ${token}`,
         body: '',
         amount: '1.00',
         currency: 'NPR',
@@ -1990,7 +1992,7 @@ describe('GET /v1/test-memos (the Memos list)', () => {
         fxRate: '1',
         fxSource: 'identity',
         fxDate: '2026-11-08',
-        status: 'draft',
+        status: 'approved',
         ownerUserId: foreignOwner.userId,
         version: 1,
       }),
@@ -1998,6 +2000,10 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     as(U.boss, 'founder');
     const ids = (await parsed('?limit=50')).items.map((m) => m.id);
     expect(ids).not.toContain(foreignId);
+    // Searching for its own title token finds nothing here, and the count says so.
+    const searched = await parsed(`?q=${token}&limit=50`);
+    expect(searched.items).toEqual([]);
+    expect(searched.total).toBe(0);
     // And its id does not open either: the list and the record check give the same answer.
     expect((await request(baseUrl).get(`/v1/test-memos/${foreignId}`)).status).toBe(404);
   });
@@ -2174,38 +2180,43 @@ describe('GET /v1/test-memos (the Memos list)', () => {
   });
 
   it('never lets a status or a search reach another user’s draft or returned memo', async () => {
+    // Tokens no other memo or user in this database carries, so every search below can only match this memo and
+    // its owner: a count of 0 then means the memo was hidden, not that nothing matched.
+    const unique = () => randomUUID().replaceAll('-', '').slice(0, 12);
+    const titleToken = `Staffing${unique()}`;
+    const nameToken = `Hiddenhall${unique()}`;
     const owner = await freshStaff();
-    await rename(owner, 'Ottoline Hiddenhall');
+    await rename(owner, `Ottoline ${nameToken}`);
     as(owner, 'sales');
-    const memo = await createMemo({ title: 'Confidential staffing plan' });
+    const memo = await createMemo({ title: `Confidential plan ${titleToken}` });
     for (const status of ['draft', 'returned'] as const) {
       await setStatus(memo.id, status);
       as(U.boss, 'founder');
       for (const query of [
-        `?status=${status}`,
-        '?q=confidential',
-        '?q=hiddenhall',
-        `?status=${status}&q=Ottoline`,
-        '?status=draft&status=returned&status=approved&q=staffing',
+        `?status=${status}&q=${titleToken}`,
+        `?q=${titleToken}`,
+        `?q=${titleToken.toLowerCase()}`,
+        `?q=${nameToken}`,
+        `?status=${status}&q=${nameToken}`,
+        `?status=draft&status=returned&status=approved&q=${titleToken}`,
       ]) {
-        const page = await parsed(`${query}${query.includes('?') ? '&' : '?'}limit=50`);
+        const page = await parsed(`${query}&limit=50`);
         expect(
           page.items.map((m) => m.id),
           query,
         ).not.toContain(memo.id);
         // The count must not leak that a hidden memo matched.
-        if (query.includes('q=')) expect(page.total, query).toBe(0);
+        expect(page.total, query).toBe(0);
       }
-      expect((await parsed('?q=confidential')).total).toBe(0);
       as(owner, 'sales');
-      expect((await parsed(`?status=${status}&q=hiddenhall`)).items.map((m) => m.id)).toEqual([
-        memo.id,
-      ]);
+      const mine = await parsed(`?status=${status}&q=${nameToken}`);
+      expect(mine.items.map((m) => m.id)).toEqual([memo.id]);
+      expect(mine.total).toBe(1);
     }
     // Once approved the same query finds it for a reader with entity-wide scope.
     await setStatus(memo.id, 'approved');
     as(U.boss, 'founder');
-    expect((await parsed('?q=hiddenhall&status=approved')).items.map((m) => m.id)).toEqual([
+    expect((await parsed(`?q=${nameToken}&status=approved`)).items.map((m) => m.id)).toEqual([
       memo.id,
     ]);
   });
@@ -2216,6 +2227,16 @@ describe('GET /v1/test-memos (the Memos list)', () => {
       'base64url',
     );
     expect((await list(`?cursor=${forged}`)).status).toBe(400);
+    // Well-formed but not a real moment (month 13, day 45, hour 25, 30 February): 400, not a database error.
+    for (const createdAt of [
+      '2026-13-05T10:00:00.000000Z',
+      '2026-11-45T10:00:00.000000Z',
+      '2026-11-05T25:00:00.000000Z',
+      '2026-02-30T10:00:00.000000Z',
+    ]) {
+      const unreal = Buffer.from(JSON.stringify([createdAt, randomUUID()])).toString('base64url');
+      expect((await list(`?cursor=${unreal}`)).status, createdAt).toBe(400);
+    }
     expect((await list('?limit=0')).status).toBe(400);
     expect((await list('?limit=51')).status).toBe(400);
     expect((await list('?limit=abc')).status).toBe(400);

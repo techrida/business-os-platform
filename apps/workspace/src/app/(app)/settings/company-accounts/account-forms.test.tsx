@@ -30,6 +30,7 @@ const { AddExpenseAccountForm, ReactivateButton, RenameableName, RetireButton } 
 
 const BANK = '11111111-1111-4111-8111-111111111111';
 const EXPENSE = '22222222-2222-4222-8222-222222222222';
+const KEY = '33333333-3333-4333-8333-333333333333';
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -159,7 +160,7 @@ describe('rename', () => {
 describe('add expense account', () => {
   it('shows a duplicate code under Code and keeps what was typed', async () => {
     mocks.createExpenseAccount.mockRejectedValue(new ApiError(409, 'conflict'));
-    const view = await mountForm(<AddExpenseAccountForm />);
+    const view = await mountForm(<AddExpenseAccountForm idempotencyKey={KEY} />);
     await fill(view.container.querySelector('input[name="code"]'), '5100');
     await fill(view.container.querySelector('input[name="name"]'), 'Office supplies');
     await submit(view.container);
@@ -182,7 +183,7 @@ describe('add expense account', () => {
 
   it('adds and confirms with a toast', async () => {
     mocks.createExpenseAccount.mockResolvedValue({ id: EXPENSE, code: '5100', name: 'Office' });
-    const view = await mountForm(<AddExpenseAccountForm />);
+    const view = await mountForm(<AddExpenseAccountForm idempotencyKey={KEY} />);
     await fill(view.container.querySelector('input[name="code"]'), '5100');
     await fill(view.container.querySelector('input[name="name"]'), 'Office');
     await submit(view.container);
@@ -191,9 +192,57 @@ describe('add expense account', () => {
     expect(mocks.createExpenseAccount).toHaveBeenCalledWith(
       session,
       { code: '5100', name: 'Office' },
-      expect.any(String),
+      KEY,
     );
     expect(mocks.success).toHaveBeenCalledWith('Added 5100 Office.');
+    await view.unmount();
+  });
+});
+
+describe('one Idempotency-Key per opening of a form', () => {
+  it('sends the same key again after a refused add, then a new one after an add that saved', async () => {
+    mocks.createExpenseAccount
+      .mockRejectedValueOnce(new ApiError(502, 'down'))
+      .mockResolvedValue({ id: EXPENSE, code: '5100', name: 'Office' });
+    const view = await mountForm(<AddExpenseAccountForm idempotencyKey={KEY} />);
+    await fill(view.container.querySelector('input[name="code"]'), '5100');
+    await fill(view.container.querySelector('input[name="name"]'), 'Office');
+    await submit(view.container);
+    await settle();
+    await fill(view.container.querySelector('input[name="code"]'), '5100');
+    await fill(view.container.querySelector('input[name="name"]'), 'Office');
+    await submit(view.container);
+    await settle();
+
+    // A retry after a lost answer reaches the API under the key of the first try, so it writes once.
+    expect(mocks.createExpenseAccount.mock.calls.map((call: unknown[]) => call[2])).toEqual([
+      KEY,
+      KEY,
+    ]);
+
+    // The add saved: the next account is a different request and gets its own key.
+    await fill(view.container.querySelector('input[name="code"]'), '5200');
+    await fill(view.container.querySelector('input[name="name"]'), 'Travel');
+    await submit(view.container);
+    await settle();
+    const third = mocks.createExpenseAccount.mock.calls[2]?.[2] as string;
+    expect(third).not.toBe(KEY);
+    expect(third).toMatch(/^[0-9a-f-]{36}$/);
+    await view.unmount();
+  });
+
+  it('keeps the key of a retire across a refused try', async () => {
+    mocks.retireCompanyBankAccount.mockRejectedValue(new ApiError(502, 'down'));
+    const view = await mountForm(<RetireButton kind="bank" id={BANK} label="Operating account" />);
+    await click(button('Retire Operating account'));
+    // A refused retire leaves the dialog open: pressing the button again is the retry.
+    for (let i = 0; i < 2; i += 1) {
+      await click(dialogButton('Retire bank account'));
+      await settle();
+    }
+    const keys = mocks.retireCompanyBankAccount.mock.calls.map((call) => call[2] as string);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
     await view.unmount();
   });
 });
