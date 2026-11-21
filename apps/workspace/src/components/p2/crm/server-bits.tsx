@@ -61,6 +61,7 @@ const KIND_LABEL: Record<string, string> = {
   task: 'Task',
   stage_change: 'Stage change',
   system: 'System',
+  collection_call: 'Collection call',
 };
 
 /** The four kinds a person logs (D39: `task` is gone; a follow-up is a planned call, meeting or email). */

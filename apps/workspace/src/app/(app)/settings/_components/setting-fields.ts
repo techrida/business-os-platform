@@ -142,7 +142,7 @@ export const SETTING_COPY: Partial<Record<SettingKey, SettingCopyEntry>> = {
   },
   'sales.delivery_hold.management_npr': {
     label: 'Management releases holds above (NPR)',
-    help: 'Finance releases a held delivery worth up to and including this amount. Above it, only Management can.',
+    help: 'Finance releases a held delivery worth up to and including this amount. Above it, only Management or the Founder can.',
     kind: 'money',
     numberBounds: { min: 0, step: '0.01' },
   },

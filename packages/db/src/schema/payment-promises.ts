@@ -1,5 +1,5 @@
 // Drizzle table for migration 0113_payment_promises: a customer's promise to pay an issued invoice by a date
-// (F1-Q33). The SQL in migrations/0113_payment_promises.sql is the source of truth; this file only types the
+// (F1-Q33); 0153 adds the `replaced` status. The SQL migrations are the source of truth; this file only types the
 // queries, so keep the two in step (payment-promises-schema.test.ts compares them). Entity-owned.
 // Not modelled here: the partial indexes' WHERE clauses are, but drizzle does not check them against the SQL.
 import { sql } from 'drizzle-orm';
@@ -20,8 +20,11 @@ import { users } from './identity.js';
 import { invoices } from './invoicing.js';
 import { appSchema, organizations, tenants } from './platform.js';
 
-/** open until the payment-promise job settles it: `missed` (date passed, invoice still open) or `kept`. */
-export const PAYMENT_PROMISE_STATUSES = ['open', 'missed', 'kept'] as const;
+/**
+ * open until the payment-promise job settles it: `missed` (date passed, invoice still open) or `kept`; or `replaced`
+ * when a newer promise on the same invoice was recorded while it was open (0153).
+ */
+export const PAYMENT_PROMISE_STATUSES = ['open', 'missed', 'kept', 'replaced'] as const;
 
 export const paymentPromises = appSchema.table(
   'payment_promises',
@@ -62,7 +65,10 @@ export const paymentPromises = appSchema.table(
       columns: [t.tenantId, t.recordedByUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
-    check('payment_promises_status_check', sql`${t.status} in ('open', 'missed', 'kept')`),
+    check(
+      'payment_promises_status_check',
+      sql`${t.status} in ('open', 'missed', 'kept', 'replaced')`,
+    ),
     check('payment_promises_note_check', sql`${t.note} IS NULL OR length(${t.note}) <= 1000`),
     check(
       'payment_promises_missed_check',

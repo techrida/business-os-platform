@@ -1,5 +1,12 @@
-import { AGING_BUCKETS, type ArAgingReport, type Currency } from '@bos/contracts';
+import {
+  AGING_BUCKETS,
+  type AgingInvoiceRef,
+  type ArAgingReport,
+  type ArAgingRow,
+  type Currency,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
@@ -113,6 +120,46 @@ function BalanceCards({
   );
 }
 
+function InvoiceLink({ invoice }: { invoice: AgingInvoiceRef }) {
+  return <Link href={`/invoices/${encodeURIComponent(invoice.id)}`}>{invoice.number}</Link>;
+}
+
+/**
+ * The promises to pay on this row's open invoices: the latest missed one (F1-Q33) and the next open one, each with
+ * the invoice it was made on. Nothing when the customer has neither.
+ */
+function promiseNotes(row: ArAgingRow): ReactNode {
+  const missed = row.promiseMissed && row.promiseMissedOn !== null;
+  const open = row.openPromiseDate !== null;
+  if (!missed && !open) return undefined;
+  return (
+    <span className={styles.promiseNotes}>
+      {missed ? (
+        <span className={styles.promiseMissed}>
+          Missed promise to pay: {when(row.promiseMissedOn ?? '', 'date')}
+          {row.promiseMissedInvoice !== null ? (
+            <>
+              {' on '}
+              <InvoiceLink invoice={row.promiseMissedInvoice} />
+            </>
+          ) : null}
+        </span>
+      ) : null}
+      {open ? (
+        <span>
+          Promised to pay by {when(row.openPromiseDate ?? '', 'date')}
+          {row.openPromiseInvoice !== null ? (
+            <>
+              {' on '}
+              <InvoiceLink invoice={row.openPromiseInvoice} />
+            </>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function AsOf({ date }: { date: string }) {
   return <time dateTime={date}>{when(date, 'date')}</time>;
 }
@@ -153,13 +200,7 @@ function AgingTable({
                     </Link>
                   }
                   meta={row.currency}
-                  note={
-                    row.promiseMissed && row.promiseMissedOn !== null ? (
-                      <span className={styles.promiseMissed}>
-                        Missed promise to pay: {when(row.promiseMissedOn, 'date')}
-                      </span>
-                    ) : undefined
-                  }
+                  note={promiseNotes(row)}
                 />
               </div>
             </Td>

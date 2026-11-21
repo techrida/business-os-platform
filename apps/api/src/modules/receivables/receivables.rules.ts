@@ -134,23 +134,77 @@ export function agingRowKey(customerId: string, currency: Currency): string {
   return `${customerId}|${currency}`;
 }
 
+/** An open or missed promise to pay on an invoice that still has an open amount, as the aging read returns it. */
+export interface AgingPromise {
+  customerId: string;
+  currency: Currency;
+  status: 'open' | 'missed';
+  promisedDate: string;
+  invoiceId: string;
+  invoiceNumber: string;
+}
+
+interface RowPromises {
+  missed: AgingPromise | null;
+  open: AgingPromise | null;
+}
+
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Same day: the lower invoice number, then id, so the pick never depends on row order. */
+const byInvoice = (x: AgingPromise, y: AgingPromise) =>
+  cmp(x.invoiceNumber, y.invoiceNumber) || cmp(x.invoiceId, y.invoiceId);
+
+/** Per row key: the missed promise with the latest day and the open promise with the earliest day. */
+function promisesByRow(promises: readonly AgingPromise[]): Map<string, RowPromises> {
+  const out = new Map<string, RowPromises>();
+  for (const p of promises) {
+    const key = agingRowKey(p.customerId, p.currency);
+    const row = out.get(key) ?? { missed: null, open: null };
+    if (p.status === 'missed') {
+      const m = row.missed;
+      if (
+        m === null ||
+        cmp(p.promisedDate, m.promisedDate) > 0 ||
+        (p.promisedDate === m.promisedDate && byInvoice(p, m) < 0)
+      ) {
+        row.missed = p;
+      }
+    } else {
+      const o = row.open;
+      if (
+        o === null ||
+        cmp(p.promisedDate, o.promisedDate) < 0 ||
+        (p.promisedDate === o.promisedDate && byInvoice(p, o) < 0)
+      ) {
+        row.open = p;
+      }
+    }
+    out.set(key, row);
+  }
+  return out;
+}
+
+const invoiceRef = (p: AgingPromise | null) =>
+  p === null ? null : { id: p.invoiceId, number: p.invoiceNumber };
+
 /**
  * The aging report as of `today`: one row per customer and currency (sorted by customer name, then id, then
  * currency) and one total per currency. Currencies are never added together.
  *
- * `missedPromises` (F1-Q33) maps an aging row key to the latest promised day of a missed promise to pay on an invoice
- * of that customer and currency that is still open. A row in it is flagged `promiseMissed`; a key without an open
- * item makes no row of its own.
+ * `promises` are the open and missed promises to pay on invoices that are still open. F1-Q33: a row with a missed one
+ * is flagged `promiseMissed` with the latest missed day and its invoice; a row with an open one shows the earliest
+ * open day (the next one due) and its invoice. A promise whose row has no open item makes no row of its own.
  */
 export function agingReport(
   items: readonly AgingItem[],
   today: string,
-  missedPromises: ReadonlyMap<string, string> = new Map(),
+  promises: readonly AgingPromise[] = [],
 ): ArAgingReport {
   const rows = new Map<
     string,
     {
-      head: Omit<ArAgingRow, 'buckets' | 'totalOpen' | 'promiseMissed' | 'promiseMissedOn'>;
+      head: Pick<ArAgingRow, 'customerId' | 'customerName' | 'currency'>;
       b: ReturnType<typeof emptyBuckets>;
     }
   >();
@@ -178,7 +232,7 @@ export function agingReport(
     row.b[bucket] = row.b[bucket].plus(item.openAmount);
     total[bucket] = total[bucket].plus(item.openAmount);
   }
-  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const flags = promisesByRow(promises);
   return {
     asOf: today,
     rows: [...rows.values()]
@@ -189,13 +243,19 @@ export function agingReport(
           cmp(x.head.currency, y.head.currency),
       )
       .map(({ head, b }) => {
-        const missedOn = missedPromises.get(agingRowKey(head.customerId, head.currency)) ?? null;
+        const { missed, open } = flags.get(agingRowKey(head.customerId, head.currency)) ?? {
+          missed: null,
+          open: null,
+        };
         return {
           ...head,
           buckets: fixed(b),
           totalOpen: sumOf(b),
-          promiseMissed: missedOn !== null,
-          promiseMissedOn: missedOn,
+          promiseMissed: missed !== null,
+          promiseMissedOn: missed?.promisedDate ?? null,
+          promiseMissedInvoice: invoiceRef(missed),
+          openPromiseDate: open?.promisedDate ?? null,
+          openPromiseInvoice: invoiceRef(open),
         };
       }),
     totals: [...totals.entries()]

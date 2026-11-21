@@ -1,0 +1,76 @@
+.body {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.current {
+  display: grid;
+  gap: 4px;
+}
+
+.date {
+  margin: 0;
+  font-weight: 600;
+}
+
+.note {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.heading {
+  margin: 0 0 8px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  font-weight: 600;
+}
+
+.history {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  gap: 4px;
+}
+
+.itemHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+/* Record promise shown but off, with the reason under it. */
+.blocked {
+  display: grid;
+  gap: 4px;
+  max-width: 36ch;
+  justify-items: start;
+}
+
+.blockedReason {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}

@@ -1723,7 +1723,15 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     expect(held.can).toEqual({ openInvoice: false });
     expect(asSales.schedule[1]!.invoice).toBeNull();
     expect(asSales.schedule[1]!.can).toEqual({ openInvoice: false });
-    expect(asSales.can).toEqual({ markBillable: false, draftInvoice: false, confirm: false });
+    expect(asSales.can).toEqual({
+      markBillable: false,
+      draftInvoice: false,
+      confirm: false,
+      releaseDelivery: false,
+      // Confirmed and held, but none of these roles holds sales_order.delivery_release.
+      releaseDeliveryBlockedBy: 'permission',
+      releaseDeliveryAllowedRoles: [],
+    });
   });
 
   it('lets a role that reads invoices open it, and follows a live grant given to Sales', async () => {
@@ -1733,7 +1741,15 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     current.grants = grantsOf('accountant');
     const asAccountant = parsed(await service.detail(detail.order.id));
     expect(asAccountant.schedule[0]!.can).toEqual({ openInvoice: true });
-    expect(asAccountant.can).toEqual({ markBillable: true, draftInvoice: true, confirm: false });
+    expect(asAccountant.can).toEqual({
+      markBillable: true,
+      draftInvoice: true,
+      confirm: false,
+      releaseDelivery: false,
+      // Confirmed and held, but none of these roles holds sales_order.delivery_release.
+      releaseDeliveryBlockedBy: 'permission',
+      releaseDeliveryAllowedRoles: [],
+    });
 
     current.grants = new Map([...grantsOf('sales'), ['invoice.read', 'all']]);
     const asEditedSales = parsed(await service.detail(detail.order.id));
@@ -1742,6 +1758,10 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
       markBillable: false,
       draftInvoice: false,
       confirm: false,
+      releaseDelivery: false,
+      // Confirmed and held, but none of these roles holds sales_order.delivery_release.
+      releaseDeliveryBlockedBy: 'permission',
+      releaseDeliveryAllowedRoles: [],
     });
   });
 });

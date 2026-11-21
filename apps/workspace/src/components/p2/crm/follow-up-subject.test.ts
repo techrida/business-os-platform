@@ -43,6 +43,21 @@ describe('followUpActionsFor (the /activities actions, U20a2-Q7)', () => {
     );
   });
 
+  it('follows receivables permissions for a collection call, assignee or not', () => {
+    const call = { ...on('customerId', ME), kind: 'collection_call' };
+    // Finance covering for the assignee gets every action; the customer grants do not matter.
+    expect(
+      followUpActionsFor(
+        { ...call, assigneeUserId: OTHER },
+        holding('ar.read', 'payment.record'),
+        ME,
+      ),
+    ).toBe('all');
+    // The customer's write and the assignee role are not enough without both receivables grants.
+    expect(followUpActionsFor(call, holding('customer.write'), ME)).toBe('none');
+    expect(followUpActionsFor(call, holding('ar.read'), ME)).toBe('none');
+  });
+
   it('gives nothing to a reader who is not the assignee, or when the caller is unknown', () => {
     expect(followUpActionsFor(on('customerId', OTHER), holding('customer.read'), ME)).toBe('none');
     expect(followUpActionsFor(on('leadId', null), holding('crm.lead.read'), ME)).toBe('none');

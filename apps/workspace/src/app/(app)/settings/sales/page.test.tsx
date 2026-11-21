@@ -94,6 +94,10 @@ describe('the delivery hold card', () => {
     const html = await render();
     expect(admin.getSetting).toHaveBeenCalledWith(expect.anything(), KEY);
     expect(html).toContain('Delivery holds');
+    // The sales order release reads this threshold now, so the card says who the rule leaves out of it.
+    expect(html).toContain(
+      'The Founder may release any amount; the person who created the order never can.',
+    );
     expect(html).toContain('Management releases holds above (NPR)');
     const input = html.match(/<input[^>]*name="v:sales\.delivery_hold\.management_npr"[^>]*>/)?.[0];
     expect(input).toBeDefined();

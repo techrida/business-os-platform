@@ -4,8 +4,9 @@
 //
 // Real: every migration as bos_owner, every query as bos_app (the invoice guards, the ledger triggers and the
 // open_item_balances view), withTx, withIdempotency, LedgerService, AuditService, and PaymentsService (U7) to submit
-// and verify payments. Stubbed: the request principal (authz.assert passes; route permissions are the controllers'
-// @Can) and the fx.max_rate_age_days setting. Issued invoices are seeded the way U6 will issue them: a draft row
+// and verify payments, PaymentPromisesService and the promise sweeper for the aging promise fields. Stubbed: the
+// request principal (authz.assert passes; route permissions are the controllers' @Can) and the
+// fx.max_rate_age_days setting. Issued invoices are seeded the way U6 will issue them: a draft row
 // moved to issued in one UPDATE, plus its debit open item through LedgerService.
 import { randomUUID } from 'node:crypto';
 
@@ -47,6 +48,8 @@ import { LedgerService } from '../ledger/ledger.service';
 import { PAYMENT_INTAKE_OWNER_TYPE } from '../payments/payment-owner.policy';
 import { PaymentsService } from '../payments/payments.service';
 import { AllocationsService } from './allocations.service';
+import { drizzlePromiseStore, PaymentPromiseSweeper } from './promises/payment-promise.sweeper';
+import { PaymentPromisesService } from './promises/payment-promises.service';
 import { ReceivablesService } from './receivables.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -61,6 +64,8 @@ let db: Db;
 let payments: PaymentsService;
 let allocations: AllocationsService;
 let receivables: ReceivablesService;
+let promises: PaymentPromisesService;
+let audit: AuditService;
 const ledger = new LedgerService();
 const system = systemActor('receivables-test');
 let nextSeq = 1;
@@ -255,7 +260,7 @@ beforeAll(async () => {
   db = drizzle({ client: appPool });
   const settings = { get: () => Promise.resolve(7) } as unknown as SettingsService;
   const authz = { assert: () => undefined } as unknown as AuthzService;
-  const audit = new AuditService(db);
+  audit = new AuditService(db);
   payments = new PaymentsService(
     db,
     authz,
@@ -267,6 +272,7 @@ beforeAll(async () => {
   );
   allocations = new AllocationsService(db, authz, audit, ledger);
   receivables = new ReceivablesService(db, authz, () => NOW);
+  promises = new PaymentPromisesService(db, authz, audit, () => NOW);
 }, 180_000);
 
 afterAll(async () => {
@@ -494,6 +500,75 @@ describe('aging', () => {
         [w.otherCustomer, '250.00'],
       ].sort(),
     );
+  });
+});
+
+describe('aging shows the promises to pay on open invoices', () => {
+  const numberOf = (w: World, invoiceId: string) =>
+    withTx(db, w.scope, system, async (tx) => {
+      const r = await tx.execute<{ number: string }>(
+        sql`SELECT number FROM app.invoices WHERE id = ${invoiceId}`,
+      );
+      return r.rows[0]?.number;
+    });
+  const promise = (w: World, invoiceId: string, promisedDate: string) =>
+    promises.record(w.scope, w.recorder, invoiceId, { promisedDate }, randomUUID());
+
+  it('carries the next open promise and the latest missed one, each with its invoice, in one read', async () => {
+    const w = await newWorld();
+    const other = await otherEntity(w);
+    const later = await issuedInvoice(w.scope, w.customer, '1000.00');
+    const sooner = await issuedInvoice(w.scope, w.customer, '500.00');
+    const paid = await issuedInvoice(w.scope, w.customer, '300.00');
+    await issuedInvoice(w.scope, w.otherCustomer, '250.00');
+    // The same customer in another entity: none of this entity's promises may reach that row.
+    await issuedInvoice(other, w.customer, '700.00');
+    await promise(w, later, '2026-11-20');
+    await promise(w, sooner, '2026-11-15');
+    await promise(w, paid, '2026-11-10');
+    // The earliest promise is on an invoice paid in full, so it no longer counts.
+    const p = await verified(w, '300.00');
+    await allocate(w, p, [{ invoiceId: paid, amount: '300.00' }]);
+
+    const rowOf = async (scope: TxScope, customerId: string) => {
+      const report = ArAgingReportSchema.parse(await receivables.aging(scope));
+      return report.rows.find((r) => r.customerId === customerId);
+    };
+    const none = {
+      promiseMissed: false,
+      promiseMissedOn: null,
+      promiseMissedInvoice: null,
+      openPromiseDate: null,
+      openPromiseInvoice: null,
+    };
+    expect(await rowOf(w.scope, w.customer)).toMatchObject({
+      totalOpen: '1500.00',
+      promiseMissed: false,
+      promiseMissedOn: null,
+      promiseMissedInvoice: null,
+      openPromiseDate: '2026-11-15',
+      openPromiseInvoice: { id: sooner, number: await numberOf(w, sooner) },
+    });
+    expect(await rowOf(w.scope, w.otherCustomer)).toMatchObject(none);
+    expect(await rowOf(other, w.customer)).toMatchObject({ totalOpen: '700.00', ...none });
+
+    // The job marks the 15 Nov promise missed (the invoice is still open); the 20 Nov one stays open.
+    const sweeper = new PaymentPromiseSweeper(
+      drizzlePromiseStore(db),
+      (scope, actor, fn) => withTx(db, scope, actor, fn),
+      audit,
+      () => new Date('2026-11-16T06:00:00Z'),
+    );
+    // The paid invoice's promise is kept; only the 15 Nov one is missed.
+    await expect(sweeper.sweep()).resolves.toMatchObject({ missed: 1, kept: 1, failed: 0 });
+    expect(await rowOf(w.scope, w.customer)).toMatchObject({
+      promiseMissed: true,
+      promiseMissedOn: '2026-11-15',
+      promiseMissedInvoice: { id: sooner, number: await numberOf(w, sooner) },
+      openPromiseDate: '2026-11-20',
+      openPromiseInvoice: { id: later, number: await numberOf(w, later) },
+    });
+    expect(await rowOf(other, w.customer)).toMatchObject(none);
   });
 });
 
