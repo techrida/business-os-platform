@@ -1394,6 +1394,18 @@ describe('SalesOrdersService.markBillable', () => {
     });
   });
 
+  it("refuses a confirm file as a line's evidence once its scan failed after it was filed", async () => {
+    const q = await acceptedQuotation();
+    const filed = await uploadToVersion(q.currentVersionId);
+    const detail = await confirm(q, [filed]);
+    await addVersionRow(filed, 2, 'scan_failed');
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(mark(detail, 1, { evidenceDocumentId: filed }))).toEqual({
+      status: 422,
+      code: 'invalid_evidence_document',
+    });
+  });
+
   it("still refuses another quotation version's evidence as a line's evidence", async () => {
     const other = await acceptedQuotation();
     const foreign = await uploadToVersion(other.currentVersionId);

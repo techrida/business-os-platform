@@ -105,7 +105,12 @@ export async function assertEvidenceDocument(
     .limit(1);
   if (found === undefined) throw invalidEvidenceDocument();
   await assertNotInfected(reader, scope, [documentId]);
-  if (found.ownerType !== EVIDENCE_OWNER_TYPE || found.ownerId !== ownerId) return;
+  // A file uploaded as evidence (of this record or of an upstream one it filed) must still hold its bytes: a scan
+  // that failed after it was filed leaves a file nobody can open.
+  const isEvidence =
+    found.ownerType === EVIDENCE_OWNER_TYPE &&
+    (found.ownerId === ownerId || extraOwners.includes(found.ownerId));
+  if (!isEvidence) return;
   await assertHoldsBytes(reader, scope, documentId);
 }
 
