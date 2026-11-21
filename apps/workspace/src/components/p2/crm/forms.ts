@@ -24,7 +24,7 @@ import {
   type SchedulableActivityKind,
   type UpdateLeadBody,
 } from '@bos/contracts';
-import { plainAmount } from '@bos/locale';
+import { NO_SPACES, hasInnerSpace, plainAmount } from '@bos/locale';
 import type { ZodType } from 'zod';
 
 /**
@@ -228,10 +228,12 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
   });
   const r = CreateLeadBodySchema.safeParse(input);
   if (r.success) return { ok: true, data: r.data };
-  return {
-    ok: false,
-    fieldErrors: collect(r.error.issues, leadKey, LEAD_MESSAGES, 'Check this field.'),
-  };
+  const fieldErrors = collect(r.error.issues, leadKey, LEAD_MESSAGES, 'Check this field.');
+  // "10 50" is not 1050: say what to fix rather than the generic sentence.
+  if (fieldErrors['expectedValue'] && hasInnerSpace(field(form, 'expectedValue') ?? '')) {
+    fieldErrors['expectedValue'] = NO_SPACES;
+  }
+  return { ok: false, fieldErrors };
 }
 
 /**

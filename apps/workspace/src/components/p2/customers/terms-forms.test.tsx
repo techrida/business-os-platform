@@ -3,6 +3,7 @@
 // save), a refusal stays in the dialog under the field or at the top, a stale save says someone else changed it and
 // keeps the dialog open, a save for a legal entity switched in another tab says so and keeps the dialog usable, and a
 // save closes it with a toast. The terms dialogs send the legal entity the page was rendered for.
+import { NO_SPACES } from '@bos/locale';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { choose, click, fill, mountForm } from '@/test/form-interactions';
@@ -51,6 +52,14 @@ const open = async (name: string) => {
   await click(trigger ?? null);
 };
 const save = () => click(dialog()?.querySelector('footer button[type="submit"]') ?? null);
+/** The visible credit limit box, named by its label; the posted value is on a hidden input. */
+const limitBox = (): HTMLInputElement | null => {
+  const label = Array.from(dialog()?.querySelectorAll('label') ?? []).find(
+    (l) => l.textContent?.trim() === 'Credit limit (NPR)',
+  );
+  const box = label ? document.getElementById(label.htmlFor) : null;
+  return box instanceof HTMLInputElement ? box : null;
+};
 
 describe('CreditLimitForm', () => {
   it('sends the typed amount and no version before the first save, then closes with a toast', async () => {
@@ -68,7 +77,7 @@ describe('CreditLimitForm', () => {
     await open('credit limit');
     expect(dialog()?.textContent).toContain('Credit limit with Techrida Nepal');
     expect(dialog()?.textContent).toContain('Credit limit (NPR)');
-    await fill(dialog()!.querySelector('input[name="creditLimit"]'), '1,00,000.00');
+    await fill(limitBox(), '1,00,000.00');
     await save();
 
     const sent = action.mock.calls[0]![1];
@@ -76,10 +85,48 @@ describe('CreditLimitForm', () => {
     expect(sent.get('organizationId')).toBe(ENTITY);
     expect(sent.get('expectedVersion')).toBe('');
     expect(sent.get('limitMode')).toBe('limit');
-    expect(sent.get('creditLimit')).toBe('1,00,000.00');
+    expect(sent.get('creditLimit')).toBe('100000.00');
     expect(sent.get('currentCreditLimit')).toBe('');
     expect(toast.success).toHaveBeenCalledWith('Credit limit saved.');
     expect(dialog()).toBeNull();
+  });
+
+  it('groups a typed limit in the box, reads it in words and posts plain digits', async () => {
+    const action = saves('Credit limit saved.');
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={action}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={3}
+        current={null}
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    await fill(limitBox(), '1250000');
+    expect(limitBox()?.value).toBe('12,50,000');
+    expect(dialog()?.textContent?.toLowerCase()).toContain('twelve lakh fifty thousand');
+    await save();
+    expect(action.mock.calls[0]![1].get('creditLimit')).toBe('1250000');
+  });
+
+  it('says to remove the space when 10 50 is typed, and keeps it out of the box', async () => {
+    const action = saves('Credit limit saved.');
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={action}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={3}
+        current={null}
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    await fill(limitBox(), '10 50');
+    expect(dialog()?.textContent).toContain(NO_SPACES);
+    expect(limitBox()?.value).toBe('');
   });
 
   it('sends No limit without an amount, with the rendered version', async () => {
@@ -121,12 +168,10 @@ describe('CreditLimitForm', () => {
       />,
     );
     await open('credit limit');
-    await fill(dialog()!.querySelector('input[name="creditLimit"]'), '12.345');
+    await fill(limitBox(), '12.345');
     await save();
     expect(dialog()?.textContent).toContain(LIMIT_INVALID);
-    expect(dialog()!.querySelector('input[name="creditLimit"]')?.getAttribute('aria-invalid')).toBe(
-      'true',
-    );
+    expect(limitBox()?.getAttribute('aria-invalid')).toBe('true');
     expect(toast.success).not.toHaveBeenCalled();
   });
 
@@ -160,15 +205,14 @@ describe('CreditLimitForm', () => {
       />,
     );
     await open('credit limit');
-    await fill(dialog()!.querySelector('input[name="creditLimit"]'), '900');
+    await fill(limitBox(), '900');
     await save();
     expect(action.mock.calls[0]![1].get('organizationId')).toBe(ENTITY);
     expect(dialog()?.textContent).toContain('Legal entity changed');
     expect(dialog()?.textContent).toContain(ENTITY_CHANGED);
     expect(dialog()?.textContent).not.toContain('Changed by someone else');
-    expect(dialog()!.querySelector<HTMLInputElement>('input[name="creditLimit"]')?.value).toBe(
-      '900',
-    );
+    // The box pads on blur; the typed amount is kept.
+    expect(limitBox()?.value).toBe('900.00');
     const buttons = Array.from(dialog()!.querySelectorAll<HTMLButtonElement>('footer button'));
     expect(buttons.map((b) => [b.textContent, b.disabled])).toEqual([
       ['Cancel', false],
