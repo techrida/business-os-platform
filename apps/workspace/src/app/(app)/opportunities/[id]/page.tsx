@@ -661,7 +661,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         ) : (
           <ActivityList
             items={activityResult.status === 'fulfilled' ? activityResult.value : []}
-            empty="Add a call, meeting, email or note for this opportunity."
+            record="opportunity"
+            empty={
+              canEdit
+                ? 'Use Log activity to record a call, meeting, email or note.'
+                : 'Calls, meetings, emails and notes logged on this opportunity show here.'
+            }
           />
         )}
       </OpportunityActivities>

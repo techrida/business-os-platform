@@ -331,6 +331,19 @@ describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
     expect(section(doc, 'History')?.textContent).not.toContain('Chase the signed scope');
   });
 
+  it.each([
+    [true, 'Use Log activity to record a call, meeting, email or note.'],
+    [false, 'Calls, meetings, emails and notes logged on this opportunity show here.'],
+  ])('names the opportunity in an empty History (canEdit %s)', async (canEdit, hint) => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('negotiation', canEdit ? {} : { canEdit: false, allowedMoves: [] }),
+    );
+    const history = section(parse(await render()), 'History')?.textContent ?? '';
+    expect(history).toContain('No activities on this opportunity yet');
+    expect(history).toContain(hint);
+    expect(history).not.toContain('No activity yet');
+  });
+
   it('offers Schedule follow-up and Log activity to an editor in the Activities header', async () => {
     const SITA = '66666666-6666-4666-8666-666666666661';
     mocks.getOpportunity.mockResolvedValue(

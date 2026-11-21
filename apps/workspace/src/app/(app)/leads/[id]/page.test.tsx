@@ -248,6 +248,20 @@ describe('lead detail page composition (U14 D39, D41, D48)', () => {
   });
 
   it.each([
+    [true, 'Use Log activity to record a call, meeting, email or note.'],
+    [false, 'Calls, meetings, emails and notes logged on this lead show here.'],
+  ])('names the lead in an empty History (canEdit %s)', async (canEdit, hint) => {
+    mocks.getLead.mockResolvedValue(lead({ canEdit }));
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(opts.status === 'planned' ? [PLANNED] : []),
+    );
+    const history = card(await render(), 'History').textContent ?? '';
+    expect(history).toContain('No activities on this lead yet');
+    expect(history).toContain(hint);
+    expect(history).not.toContain('No activity yet');
+  });
+
+  it.each([
     [
       'new',
       ['contacted', 'on_hold', 'lost'] as LeadDto['stage'][],

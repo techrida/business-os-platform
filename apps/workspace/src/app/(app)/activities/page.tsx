@@ -252,6 +252,8 @@ export default async function ActivitiesPage({
     getMeOrNull(session.accessToken),
   ]);
   const actionsOf: ActionsOf = (activity) => followUpActionsFor(activity, can, me?.id ?? null);
+  // The empty state tells only someone who may log one where to do it.
+  const mayLog = can('crm.lead.write') || can('crm.opportunity.write');
   const now = new Date();
   const problem = planned.problem ?? logged.problem;
   const shown = planned.items.length + logged.items.length;
@@ -299,8 +301,10 @@ export default async function ActivitiesPage({
             Nothing matches {hiding.join(', ')}.
           </EmptyState>
         ) : (
-          <EmptyState title="No activity yet" headingLevel={2} icon="inbox">
-            Log an activity from a lead or an opportunity to see it here.
+          <EmptyState title="No calls, meetings, emails or notes yet" headingLevel={2} icon="inbox">
+            {mayLog
+              ? 'Open a lead or an opportunity, then log an activity or schedule a follow-up. It shows here.'
+              : 'Activities logged on the leads and opportunities you can see show here.'}
           </EmptyState>
         )
       ) : (
