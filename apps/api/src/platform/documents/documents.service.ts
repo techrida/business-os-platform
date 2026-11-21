@@ -883,7 +883,7 @@ export class DocumentsService {
    * reason `generated_unfinished` and its bytes are deleted, then the original error is thrown. A rejected upload
    * holds no PDF, so the render job's own failure path counts the try, removes the document and renders again after
    * its pause. Left quarantined, the document would hold its owner on "Preparing PDF" until a scan finished it, and
-   * a PDF that turned clean that way would bypass the render's bookkeeping (an invoice's print row). Only when that
+   * a PDF that turned clean that way would skip the render's bookkeeping (an invoice's print row). Only when that
    * refusal cannot be written either (the database is away) does the version stay quarantined, with the scan queued
    * as the fallback (the sweeper re-queues it if that fails too), so it still ends `clean` through an ordinary scan.
    */
