@@ -963,6 +963,49 @@ describe('a render that keeps failing (R4c2: TR-Q4, F1-Q13)', () => {
     await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
   });
 
+  it('does not leave the owner on "Preparing PDF" when the stored PDF cannot be marked clean', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    asStaff(scope);
+    // The bytes passed the type check, then moving them to clean storage failed (a disk or database blip).
+    const failingDisk = Object.create(storage) as DiskStorageAdapter;
+    failingDisk.promote = () => Promise.reject(new Error('disk is away'));
+    const flakyDocuments = new DocumentsService(
+      db,
+      failingDisk,
+      new SignedLinks(SECRET, new MemoryStore(), () => Date.now()),
+      queue as unknown as Queue,
+      authz,
+      audit,
+    );
+    flakyDocuments.registerOwner(new InvoiceOwnerPolicy(drizzleInvoiceHeadLoader(db)));
+    let clock = new Date();
+    const worker = new InvoiceRenderSweeper(
+      store,
+      runTx,
+      flakyDocuments,
+      settings,
+      { htmlToPdf: vi.fn().mockResolvedValue(PDF) },
+      () => clock,
+      NO_LOGOS,
+      renderAudit,
+    );
+    expect(await worker.renderOne(inv)).toBe('failed');
+
+    // The try is counted and its document is out of the way: the next try comes after the pause, not after a scan
+    // or the orphan cleanup, and the screen keeps saying "being prepared" until then.
+    const row = await failureRow(inv.invoiceId);
+    expect(row).toMatchObject({ attempts: 1 });
+    const [doc] = await documentRows(inv.invoiceId);
+    expect(doc?.status).toBe('rejected');
+    expect(doc?.removed_at).not.toBeNull();
+    await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ConflictException);
+    clock = new Date((row?.next_attempt_at ?? new Date()).getTime() + 1);
+    expect(ids(await store.candidates(clock, 1_000))).toContain(inv.invoiceId);
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    await expect(service.link(inv.invoiceId)).resolves.toBeDefined();
+  });
+
   it('counts a document left by a worker that crashed as a failed try, and gives up at the limit', async () => {
     const scope = await newScope();
     const inv = await seedInvoice(scope);
