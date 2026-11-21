@@ -450,14 +450,21 @@ describe('paste', () => {
 });
 
 describe('blur', () => {
-  it('pads money to two decimals in the box but posts the unpadded value', async () => {
+  it('pads money to two decimals in the box and posts what the box shows', async () => {
+    const changes: string[] = [];
     const { box, hidden } = await mount(
-      <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,
+      <MoneyInput
+        aria-label="Amount"
+        name="amount"
+        currency="NPR"
+        onValueChange={(plain) => changes.push(plain)}
+      />,
     );
     await typeKeys(box, '1250');
     await blur(box);
     expect(box.value).toBe('1,250.00');
-    expect(hidden()).toBe('1250');
+    expect(hidden()).toBe('1250.00');
+    expect(changes.at(-1)).toBe('1250.00');
   });
 
   it('drops leading zeros and completes a bare point', async () => {
@@ -519,13 +526,14 @@ describe('form reset', () => {
       <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="100" />,
     );
     expect(box.value).toBe('100.00');
-    expect(hidden()).toBe('100');
+    expect(hidden()).toBe('100.00');
     box.setSelectionRange(0, 0);
     await typeKeys(box, '9');
-    expect(hidden()).toBe('9100');
+    expect(box.value).toBe('9,100.00');
+    expect(hidden()).toBe('9100.00');
     await act(() => Promise.resolve(container.querySelector('form')!.reset()));
     expect(box.value).toBe('100.00');
-    expect(hidden()).toBe('100');
+    expect(hidden()).toBe('100.00');
   });
 
   it('does not report the reset to a controlled parent', async () => {
@@ -550,7 +558,8 @@ describe('form reset', () => {
     expect(changes).toEqual(['4', '42']);
     await act(() => Promise.resolve(container.querySelector('form')!.reset()));
     expect(changes).toEqual(['4', '42']);
-    expect(hidden()).toBe('42');
+    expect(box.value).toBe('42.00');
+    expect(hidden()).toBe('42.00');
   });
 });
 
@@ -571,7 +580,7 @@ describe('untouched server values', () => {
     const { hidden, box } = await mount(
       <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="1250000.5" />,
     );
-    expect(hidden()).toBe('1250000.5');
+    expect(hidden()).toBe('1250000.50');
     expect(box.value).toBe('12,50,000.50');
   });
 });
@@ -676,43 +685,75 @@ describe('PercentInput', () => {
   });
 });
 
-describe('emitted values parse with the contract schemas', () => {
+describe('emitted values equal the expected string and parse with the contract schemas', () => {
   const posted = async (node: ReactNode, keys: string) => {
     const { box, hidden } = await mount(node);
     await typeKeys(box, keys);
     await blur(box);
     const value = hidden();
+    const invalid = box.getAttribute('aria-invalid') === 'true';
+    expect(value).toBe(box.value.replaceAll(',', ''));
     await mounted.unmount();
-    return value;
+    return { value, invalid };
   };
 
-  it.each(['1250000', '0.5', '.5', '007', '1.2', '12.', '99999999999999999.999'])(
-    'money %s',
-    async (keys) => {
-      const value = await posted(<MoneyInput aria-label="A" name="v" currency="NPR" />, keys);
-      expect(DecimalString.safeParse(value).success).toBe(true);
-      expect(NonNegativeDecimalString.safeParse(value).success).toBe(true);
-    },
-  );
+  it.each([
+    ['1250000', '1250000.00'],
+    ['0.5', '0.50'],
+    ['.5', '0.50'],
+    ['007', '7.00'],
+    ['1.2', '1.20'],
+    ['12.', '12.00'],
+    ['99999999999999999.999', '9999999999999999.99'],
+  ])('money %s posts %s', async (keys, expected) => {
+    const { value } = await posted(<MoneyInput aria-label="A" name="v" currency="NPR" />, keys);
+    expect(value).toBe(expected);
+    expect(DecimalString.safeParse(value).success).toBe(true);
+    expect(NonNegativeDecimalString.safeParse(value).success).toBe(true);
+  });
 
-  it.each(['1', '0.0001', '12345678901234.5678', '3.', '999999999999999.99999'])(
-    'quantity %s',
-    async (keys) => {
-      const value = await posted(<QuantityInput aria-label="Q" name="v" />, keys);
-      expect(QuantityString.safeParse(value).success).toBe(true);
-    },
-  );
+  it.each([
+    ['1', '1'],
+    ['0.0001', '0.0001'],
+    ['12345678901234.5678', '12345678901234.5678'],
+    ['3.', '3'],
+    ['999999999999999.99999', '99999999999999.9999'],
+  ])('quantity %s posts %s', async (keys, expected) => {
+    const { value } = await posted(<QuantityInput aria-label="Q" name="v" />, keys);
+    expect(value).toBe(expected);
+    expect(QuantityString.safeParse(value).success).toBe(true);
+  });
 
-  it.each(['100', '99.9999', '0', '100.0001', '1000', '12.34567'])('percent %s', async (keys) => {
-    const value = await posted(<PercentInput aria-label="P" name="v" />, keys);
+  it('quantity 0 posts 0 and is marked invalid, because QuantityString needs more than zero', async () => {
+    const { value, invalid } = await posted(<QuantityInput aria-label="Q" name="v" />, '0');
+    expect(value).toBe('0');
+    expect(invalid).toBe(true);
+    expect(QuantityString.safeParse(value).success).toBe(false);
+  });
+
+  it.each([
+    ['100', '100'],
+    ['99.9999', '99.9999'],
+    ['0', '0'],
+    ['100.0001', '100.000'],
+    ['1000', '100'],
+    ['12.34567', '12.3456'],
+  ])('percent %s posts %s', async (keys, expected) => {
+    const { value } = await posted(<PercentInput aria-label="P" name="v" />, keys);
+    expect(value).toBe(expected);
     expect(PercentFourDecimals.safeParse(value).success).toBe(true);
   });
 
-  it.each(['133.123456', '1.1234567', '1234567890123.5'])('rate %s', async (keys) => {
-    const value = await posted(
+  it.each([
+    ['133.123456', '133.123456'],
+    ['1.1234567', '1.123456'],
+    ['1234567890123.5', '123456789012.5'],
+  ])('rate %s posts %s', async (keys, expected) => {
+    const { value } = await posted(
       <DecimalInput aria-label="R" name="v" intDigits={12} scale={6} />,
       keys,
     );
+    expect(value).toBe(expected);
     expect(RateString.safeParse(value).success).toBe(true);
   });
 });
@@ -855,9 +896,12 @@ describe('review fixes', () => {
     await paste(box, '9');
     expect(hidden()).toBe('19500');
     expect(box.value).toBe('19,500');
+    // The caret follows the pasted text, so the next key lands after it.
+    await typeKeys(box, '7');
+    expect(hidden()).toBe('197500');
     box.setSelectionRange(box.value.length, box.value.length);
     await paste(box, '.255');
-    expect(hidden()).toBe('19500');
+    expect(hidden()).toBe('197500');
     expect(status()).toBe('At most 2 decimals.');
   });
 
@@ -900,12 +944,18 @@ describe('review fixes', () => {
     await act(() => Promise.resolve(box.focus()));
     await blur(box);
     expect(status()).toBe('Enter a number.');
+    // "Enter a number." no longer describes 5, and a min error is not shown mid-typing.
     await typeKeys(box, '5');
-    expect(status()).toBe('Enter a number.');
+    expect(status()).toBe('');
+    await blur(box);
+    expect(status()).toBe('At least NPR 10.00');
     await typeKeys(box, ',');
     expect(status()).toBe(USE_A_POINT);
     expect(container.querySelector('[role="status"]')!.getAttribute('data-tone')).toBeNull();
+    // Blur padded the box to 5.00; the 0 goes before the point.
+    box.setSelectionRange(1, 1);
     await typeKeys(box, '0');
+    expect(box.value).toBe('50.00');
     expect(status()).toBe('');
     expect(box.getAttribute('aria-invalid')).toBeNull();
   });
@@ -926,7 +976,7 @@ describe('review fixes', () => {
     expect(box.getAttribute('aria-valuetext')).toBe('1,23,45,67,89,01,234.5678 kg');
   });
 
-  it('does not post padding after a paste into a padded display', async () => {
+  it('posts what the box shows after a paste into a padded display', async () => {
     const { box, hidden } = await mount(
       <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="100" />,
     );
@@ -934,7 +984,8 @@ describe('review fixes', () => {
     await act(() => Promise.resolve(box.focus()));
     box.setSelectionRange(0, 0);
     await paste(box, '9');
-    expect(hidden()).toBe('9100');
+    expect(box.value).toBe('9,100.00');
+    expect(hidden()).toBe('9100.00');
   });
 
   it('still replaces the value when everything is selected', async () => {
@@ -975,5 +1026,209 @@ describe('review fixes', () => {
       Promise.resolve(prefix.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))),
     );
     expect(document.activeElement).toBe(box);
+  });
+});
+
+describe('the box and the hidden input hold one value', () => {
+  const ungrouped = (box: HTMLInputElement) => box.value.replaceAll(',', '');
+
+  it('keeps both on the parent value when a controlled parent refuses an edit, and after a reset', async () => {
+    function Parent() {
+      const [days] = useState('10');
+      return <DecimalInput aria-label="Days" name="days" intDigits={5} scale={0} value={days} />;
+    }
+    const { box, hidden, container } = await mount(<Parent />);
+    await typeKeys(box, '9');
+    expect(box.value).toBe('10');
+    expect(hidden()).toBe('10');
+    await act(() => Promise.resolve(container.querySelector('form')!.reset()));
+    expect(box.value).toBe('10');
+    expect(hidden()).toBe('10');
+  });
+
+  it('refuses 1,5 delivered by an input event over a selected value', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="1234" />,
+    );
+    expect(box.value).toBe('1,234.00');
+    await act(() => Promise.resolve(box.focus()));
+    box.setSelectionRange(0, box.value.length);
+    await fill(box, '1,5');
+    expect(box.value).toBe('1,234.00');
+    expect(hidden()).toBe('1234.00');
+    expect(status()).toBe(USE_A_POINT);
+  });
+
+  it('refuses Rs. 12 delivered by an input event into an empty box', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,
+    );
+    await fill(box, 'Rs. 12');
+    expect(box.value).toBe('');
+    expect(hidden()).toBe('');
+    expect(status()).not.toBe('');
+  });
+
+  it('shows a value the field cannot hold as sent, marks it invalid and posts exactly that', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="-1250.50" />,
+    );
+    expect(box.value).toBe('-1250.50');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(status()).not.toBe('');
+    expect(hidden()).toBe('-1250.50');
+  });
+
+  it('posts what is shown after typing in front of a padded default', async () => {
+    const half = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue=".5" />,
+    );
+    expect(half.box.value).toBe('0.50');
+    await act(() => Promise.resolve(half.box.focus()));
+    half.box.setSelectionRange(0, 0);
+    await typeKeys(half.box, '9');
+    expect(half.box.value).toBe('90.50');
+    expect(half.hidden()).toBe('90.50');
+    await mounted.unmount();
+
+    const zeros = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="012.3" />,
+    );
+    expect(zeros.box.value).toBe('12.30');
+    await act(() => Promise.resolve(zeros.box.focus()));
+    zeros.box.setSelectionRange(0, 0);
+    await typeKeys(zeros.box, '9');
+    expect(zeros.box.value).toBe('912.30');
+    expect(zeros.hidden()).toBe(ungrouped(zeros.box));
+  });
+
+  it('posts what is shown after the point of a padded value is deleted', async () => {
+    const { box, hidden } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" defaultValue="100" />,
+    );
+    await act(() => Promise.resolve(box.focus()));
+    box.setSelectionRange(4, 4);
+    await typeKeys(box, '{Backspace}');
+    expect(box.value).toBe('10,000');
+    expect(hidden()).toBe(ungrouped(box));
+  });
+});
+
+describe('paste, validity, stepping and stale errors', () => {
+  it('ignores an empty clipboard and keeps the selected digits', async () => {
+    const { box, hidden } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,
+    );
+    await typeKeys(box, '1500');
+    box.setSelectionRange(1, 3);
+    await paste(box, '');
+    expect(box.value).toBe('1,500');
+    expect(hidden()).toBe('1500');
+  });
+
+  it('puts the caret after a pasted digit so the next key follows it', async () => {
+    const { box, hidden } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,
+    );
+    await typeKeys(box, '1234');
+    await paste(box, '9');
+    await typeKeys(box, '8');
+    expect(hidden()).toBe('123498');
+    expect(box.value).toBe('1,23,498');
+  });
+
+  it('marks a required box holding only a point invalid, natively too', async () => {
+    const { box } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" required />,
+    );
+    await typeKeys(box, '.');
+    expect(box.value).toBe('.');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(box.validity.valid).toBe(false);
+    await typeKeys(box, '5');
+    expect(box.validity.valid).toBe(true);
+  });
+
+  it.each(['0', '0.0000'])('says a quantity of %s must be above zero', async (keys) => {
+    const { box, status } = await mount(<QuantityInput aria-label="Quantity" name="qty" />);
+    await typeKeys(box, keys);
+    await blur(box);
+    expect(status()).toBe('Must be above zero.');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('rounds a step to the scale before comparing it with max', async () => {
+    const { box, hidden, status } = await mount(
+      <PercentInput aria-label="Rate" name="rate" defaultValue="99.9999" max="99.99995" />,
+    );
+    await typeKeys(box, '{ArrowUp}');
+    expect(hidden()).toBe('99.9999');
+    expect(status()).toBe('At most 99.99995%');
+  });
+
+  it('replaces an error that no longer describes the value and clears it once valid', async () => {
+    const { box, status } = await mount(
+      <PercentInput aria-label="Rate" name="rate" scale={2} defaultValue="12.5555" />,
+    );
+    expect(status()).toBe('At most 2 decimals.');
+    await act(() => Promise.resolve(box.focus()));
+    box.setSelectionRange(box.value.length, box.value.length);
+    await typeKeys(box, '{Backspace}');
+    expect(status()).toBe('At most 2 decimals.');
+    await typeKeys(box, '{Backspace}');
+    expect(box.value).toBe('12.55');
+    expect(status()).toBe('');
+    expect(box.getAttribute('aria-invalid')).toBeNull();
+  });
+});
+
+describe('edges of the one-value rule', () => {
+  it('refuses a comma from a composition insert that cannot be cancelled', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,
+    );
+    await typeKeys(box, '1');
+    const before = new Event('beforeinput', { bubbles: true, cancelable: false });
+    Object.defineProperties(before, {
+      inputType: { value: 'insertCompositionText' },
+      data: { value: ',5' },
+    });
+    await act(() => Promise.resolve(box.dispatchEvent(before)));
+    await fill(box, '1,5');
+    expect(box.value).toBe('1');
+    expect(hidden()).toBe('1');
+    expect(status()).toBe(USE_A_POINT);
+  });
+
+  it('works from the parent value after a controlled parent refuses an edit', async () => {
+    const changes: string[] = [];
+    const { box, hidden } = await mount(
+      <QuantityInput
+        aria-label="Quantity"
+        name="qty"
+        value="10"
+        onValueChange={(plain) => changes.push(plain)}
+      />,
+    );
+    await typeKeys(box, '9');
+    await typeKeys(box, '9');
+    expect(changes).toEqual(['109', '109']);
+    expect(box.value).toBe('10');
+    await typeKeys(box, '{ArrowUp}');
+    expect(changes.at(-1)).toBe('11');
+    expect(hidden()).toBe('10');
+  });
+
+  it.each([
+    ['-5', '-5'],
+    ['.', '.'],
+    ['12.', '12.00'],
+    ['1,000', '1,000'],
+  ])('settles on controlled value %s and shows %s', async (given, shown) => {
+    const { box, hidden } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" value={given} />,
+    );
+    expect(box.value).toBe(shown);
+    expect(hidden()).toBe(shown.replaceAll(',', '').replace(/\.$/, ''));
   });
 });
