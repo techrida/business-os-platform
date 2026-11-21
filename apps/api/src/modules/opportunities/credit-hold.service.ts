@@ -84,6 +84,15 @@ export class CreditHoldService {
           message: 'This deal is not on credit hold; there is nothing to override',
         });
       }
+      // The person gave the override for the order value they saw; if the deal's order is worth something else now
+      // (a quotation was accepted or changed meanwhile), they have not reviewed it.
+      if (body.orderValue !== undefined && body.orderValue !== position.orderValue) {
+        throw new ConflictException({
+          code: 'conflict',
+          message:
+            'The order on this deal changed since you opened the override; reload to see its value',
+        });
+      }
       const now = new Date();
       const [updated] = await tx
         .update(opportunities)
