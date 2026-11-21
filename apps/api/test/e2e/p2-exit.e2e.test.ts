@@ -163,17 +163,26 @@ const show = (res: { status: number; body: unknown }): string =>
 
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
 
-/** Every word of every key in a JSON value (camelCase and snake_case split), as portal.service.test does. */
+// The portal's `display.numberSystems` block is keyed by currency code (D30, per-currency number grouping, migration
+// 0050), so the key `NPR` is a code, not an NPR equivalent. Same exemption as packages/contracts portal.test.ts.
+const CURRENCY_CODE_KEYS = new Set(['NPR', 'INR', 'USD']);
+
+/**
+ * Every word of every key in a JSON value (camelCase and snake_case split), as portal.service.test does. A key that
+ * is exactly a currency code is skipped; the value-level FX-rate check in expectNoInternalFields still covers rates.
+ */
 function keyWords(value: unknown, out: string[] = []): string[] {
   if (Array.isArray(value)) value.forEach((v) => keyWords(v, out));
   else if (value !== null && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) {
-      out.push(
-        ...k
-          .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-          .toLowerCase()
-          .split('_'),
-      );
+      if (!CURRENCY_CODE_KEYS.has(k)) {
+        out.push(
+          ...k
+            .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+            .toLowerCase()
+            .split('_'),
+        );
+      }
       keyWords(v, out);
     }
   }
@@ -527,7 +536,9 @@ describe('P2 exit: lead to won over HTTP', () => {
     expect(emails).toHaveLength(1);
     const email = emails[0]!;
     expect(email).toMatchObject({ template: 'quotation.sent', to_email: BUYER_EMAIL });
-    expect(email.body_text).toContain(`${PORTAL}/quotations/${s.quotationId}`);
+    // The portal's `/quotations/:id` is a version id (PortalService.get), so the link names the version just sent
+    // (commit 934a216a; quotation-send.service.ts `linkPath`). Stale before: it expected the parent quotation id.
+    expect(email.body_text).toContain(`${PORTAL}/quotations/${s.versionId}`);
     // A link, never the file: no document id, no PDF name, no download URL.
     expect(email.body_text).not.toContain(approved.renderedDocumentId!);
     expect(email.body_text.toLowerCase()).not.toContain('.pdf');
@@ -583,6 +594,8 @@ describe('P2 exit: lead to won over HTTP', () => {
     expect(view.status, show(view)).toBe(200);
     const customerView = CustomerQuotationViewSchema.parse(view.body);
     expectNoInternalFields(view.body);
+    // The only `npr` key in the body is the currency code that keys the number-grouping block: no NPR amount, no rate.
+    expect(Object.keys(customerView.display.numberSystems).sort()).toEqual(['INR', 'NPR', 'USD']);
     // The file the customer would download carries the hash the render stored (the download route is PA-doc).
     expect(customerView.file?.sha256).toBe(s.renderedSha256);
 
