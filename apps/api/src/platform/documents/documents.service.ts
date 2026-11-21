@@ -30,6 +30,8 @@
 // owner policy's `readPermission`, on the owner ref. An owning module's route may also name the action the upload
 // belongs to (`UploadAction`, U20a2-Q3); when the policy lists it in `uploadActions`, that action on the uploader's
 // own file is enough (an `own` bill enterer uploads their own invoice), and the usual check still runs otherwise.
+// An owner type that spans several record kinds names the grant per record instead (`uploadGrants`, round 5 P2:
+// evidence on a sales order, a bill or an RFQ), so one kind's grant never reaches another kind's record.
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -1200,10 +1202,38 @@ export class DocumentsService {
     }
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
-    this.assertAnyOf(
-      action === 'documents.upload' ? uploadPermissionsOf(policy) : readPermissionsOf(policy),
-      ref,
-    );
+    if (action === 'documents.upload') await this.assertUploadGrant(policy, scope, ownerId, ref);
+    else this.assertAnyOf(readPermissionsOf(policy), ref);
+  }
+
+  /**
+   * The staff upload check on an owner that exists: the policy's per-record `uploadGrants` when it has them (any one
+   * action allowed on its ref), else `uploadPermission` (or `documents.upload`) on `ref`. Every upload path (create,
+   * receive, new version, remove, the image pointer routes) ends here.
+   */
+  private async assertUploadGrant(
+    policy: DocumentOwnerPolicy,
+    scope: TxScope,
+    ownerId: string,
+    ref: ResourceRef,
+  ): Promise<void> {
+    if (policy.uploadGrants === undefined) {
+      this.assertAnyOf(uploadPermissionsOf(policy), ref);
+      return;
+    }
+    const grants = await policy.uploadGrants(scope, ownerId);
+    if (grants === null) throw new NotFoundException('Owner record not found');
+    let first: ForbiddenException | undefined;
+    for (const grant of grants) {
+      try {
+        this.authz.assert(grant.action, grant.ref);
+        return;
+      } catch (error) {
+        if (!(error instanceof ForbiddenException)) throw error;
+        first ??= error;
+      }
+    }
+    throw first ?? new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
   }
 
   /**
@@ -1272,7 +1302,7 @@ export class DocumentsService {
     if (ref === null) throw new NotFoundException('Owner record not found');
     // Called as a method, not detached: a policy class may use `this`.
     if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
-    this.assertAnyOf(uploadPermissionsOf(policy), ref);
+    await this.assertUploadGrant(policy, scope, ownerId, ref);
   }
 
   /**

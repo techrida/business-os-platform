@@ -39,6 +39,12 @@ export interface CounterpartyPrincipal {
   organizationId: string;
 }
 
+/** One way to authorise a staff upload to an owner record: `action` allowed on `ref` (see `uploadGrants`). */
+export interface UploadGrant {
+  action: Permission;
+  ref: ResourceRef;
+}
+
 /**
  * An owner record type (for example a test memo) tells documents who may touch its attachments.
  * Registered by the module that owns the record; U8 registers 'test_memo'.
@@ -63,6 +69,15 @@ export interface DocumentOwnerPolicy {
    * type, size and scan rules still apply. P4: `payables.bill.enter` for staff invoice files.
    */
   uploadActions?: readonly Permission[];
+  /**
+   * The upload grants of one owner record, for an owner type that spans several kinds of record whose permissions
+   * differ (round 5 P2: `evidence` belongs to a sales order, a vendor bill or an RFQ). When present it replaces
+   * `uploadPermission` for every staff upload check of this owner (create, receive, new version, remove): the caller
+   * passes when any one returned `action` is allowed on its `ref`, so a sales-order grant never reaches a bill. An
+   * empty list refuses (403); null means the owner does not exist in this scope (404). `uploadActions`, the
+   * counterparty hook, reads and the system path are unchanged. Absent means `uploadPermission` as before.
+   */
+  uploadGrants?(scope: TxScope, ownerId: string): Promise<readonly UploadGrant[] | null>;
   /**
    * A permission that also authorises a staff read of this owner's files (get, download link), checked on the
    * owner ref. It is in addition to `documents.read`, never instead: a caller passes with either. Lets the owning

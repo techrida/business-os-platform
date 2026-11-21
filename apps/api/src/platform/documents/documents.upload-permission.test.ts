@@ -171,6 +171,47 @@ describe('DocumentsService.create and the owner policy uploadPermission', () => 
   });
 });
 
+// Round 5 P2: `uploadGrants` names the grant per owner record, for an owner type that spans record kinds (evidence
+// on a sales order, a bill or an RFQ). It replaces `uploadPermission`: only a grant it returns, on its own ref, passes.
+describe('DocumentsService.create and the owner policy uploadGrants (round 5 P2)', () => {
+  const OTHER_USER = randomUUID();
+  const scoped = { tenantId: TENANT, organizationId: ORG };
+
+  it("authorises with a returned action on its ref, and refuses documents.upload or another kind's grant", async () => {
+    const service = serviceWith({
+      uploadPermission: 'documents.upload',
+      uploadGrants: () =>
+        Promise.resolve([{ action: 'payables.bill.enter', ref: { ...scoped, ownerUserId: USER } }]),
+    });
+    expect(await tryCreate(service, staff([['payables.bill.enter', 'own']]))).toBe('created 2');
+    expect(await tryCreate(service, staff([['documents.upload', 'all']]))).toBe('403 0');
+    expect(await tryCreate(service, staff([['sales_order.mark_billable', 'all']]))).toBe('403 0');
+  });
+
+  it('passes on any one grant, each checked on its own ref (two owners of one record)', async () => {
+    const service = serviceWith({
+      uploadGrants: () =>
+        Promise.resolve([
+          { action: 'sales_order.mark_billable', ref: { ...scoped, ownerUserId: OTHER_USER } },
+          { action: 'sales_order.mark_billable', ref: { ...scoped, ownerUserId: USER } },
+        ]),
+    });
+    expect(await tryCreate(service, staff([['sales_order.mark_billable', 'own']]))).toBe(
+      'created 2',
+    );
+  });
+
+  it('refuses on an empty list (403) and answers 404 when the record is gone (null)', async () => {
+    const all = staff([['documents.upload', 'all']]);
+    expect(await tryCreate(serviceWith({ uploadGrants: () => Promise.resolve([]) }), all)).toBe(
+      '403 0',
+    );
+    expect(await tryCreate(serviceWith({ uploadGrants: () => Promise.resolve(null) }), all)).toBe(
+      '404 0',
+    );
+  });
+});
+
 describe('DocumentsService.create and the upload action the owning module names (U20a2-Q3)', () => {
   // The record belongs to someone else, so an `own` grant on the owner ref never reaches it.
   const someoneElses = (scope: { tenantId: string; organizationId: string }) =>
