@@ -6,13 +6,13 @@ import { currencyNotEnabledText } from '@/lib/kernel-ui';
 import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/failure-core';
 
 /**
- * The words for the API's 422 about the chosen paying bank account. The form shows them under its
- * "Pay from bank account" field; the submit and cancel dialogs, which have no such field, show them as
- * the refusal.
+ * The words for the API's 422 about the chosen paying bank account. The entry form shows them under its
+ * "Pay from bank account" field. Submit refuses a draft whose account was retired after it was made
+ * (BANK_ACCOUNT_INVALID); the submit dialog has no such field and shows the same words as its refusal.
+ * Cancel never checks the account.
  */
 const BANK_ACCOUNT_MESSAGES: Record<string, string> = {
-  BANK_ACCOUNT_INVALID:
-    'This bank account is not an active account of your company. Choose another one.',
+  BANK_ACCOUNT_INVALID: 'This bank account is not an active account of your company.',
   BANK_ACCOUNT_CURRENCY_MISMATCH:
     'This bank account holds a different currency. Choose an account in the request currency.',
 };

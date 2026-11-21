@@ -17,7 +17,13 @@ import { expenseAccountOptions } from '@/lib/company-account-options';
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import { convertSubmissionAction, createBillAction } from '../actions';
 import { BillHeaderInputs, type BillEntryHeader } from './bill-header-inputs';
-import { EMPTY_ROW, MAX_LINES, NEW_BILL_HEADING, type LineRow } from '../_lib/forms';
+import {
+  ACTIVE_ACCOUNT_IDS_FIELD,
+  EMPTY_ROW,
+  MAX_LINES,
+  NEW_BILL_HEADING,
+  type LineRow,
+} from '../_lib/forms';
 import styles from '../payables.module.css';
 
 /**
@@ -141,6 +147,15 @@ export function BillEntryForm({
           ) : null}
           <input type="hidden" name="idempotencyKey" value={state.key} />
           <input type="hidden" name="lineCount" value={rows.length} />
+          {/* So a refused account marks only the lines whose account is not active on this page. */}
+          <input
+            type="hidden"
+            name={ACTIVE_ACCOUNT_IDS_FIELD}
+            value={expenseAccounts
+              .filter((a) => a.status === 'active')
+              .map((a) => a.id)
+              .join(',')}
+          />
 
           {state.error ? (
             <Alert

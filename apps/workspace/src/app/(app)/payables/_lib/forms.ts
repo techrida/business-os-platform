@@ -107,14 +107,37 @@ export const EXPENSE_ACCOUNT_INVALID = 'EXPENSE_ACCOUNT_INVALID';
 export const EXPENSE_ACCOUNT_REFUSED =
   "This account was retired or is not one of this company's expense accounts. Choose an active account.";
 
+/** The hidden field the bill entry form posts: the ids of the active expense accounts its page loaded. */
+export const ACTIVE_ACCOUNT_IDS_FIELD = 'activeAccountIds';
+
+/** The ids `ACTIVE_ACCOUNT_IDS_FIELD` carries (comma separated, lowercase); undefined when the field was not sent. */
+export function parseActiveAccountIds(value: FormDataEntryValue | null): Set<string> | undefined {
+  if (typeof value !== 'string') return undefined;
+  return new Set(
+    value
+      .split(',')
+      .map((id) => id.trim().toLowerCase())
+      .filter((id) => id !== ''),
+  );
+}
+
 /**
- * Field errors for an `EXPENSE_ACCOUNT_INVALID` refusal. The refusal does not say which line it means, so the
- * account field of every row that was sent is marked (a blank row was not sent), keyed like `parseBillLines`.
+ * Field errors for an `EXPENSE_ACCOUNT_INVALID` refusal, keyed like `parseBillLines`. The refusal does not say which
+ * line it means, so the account field of each sent row (a blank row was not sent) whose account is not in `active`
+ * (the active accounts the page loaded) is marked. Every sent row is marked when no list is given, or when each
+ * sent account is in it (one was retired after the page loaded), so the refusal never shows on no field.
  */
-export function expenseAccountErrors(rows: readonly LineRow[]): Errors {
+export function expenseAccountErrors(
+  rows: readonly LineRow[],
+  active?: ReadonlySet<string>,
+): Errors {
+  const sent = rows.flatMap((row, i) => (isBlank(row) ? [] : [{ row, i }]));
+  const outside =
+    active === undefined
+      ? []
+      : sent.filter(({ row }) => !active.has(row.accountId.trim().toLowerCase()));
   const errors: Errors = {};
-  rows.forEach((row, i) => {
-    if (!isBlank(row)) errors[`${i}.accountId`] = EXPENSE_ACCOUNT_REFUSED;
-  });
+  for (const { i } of outside.length > 0 ? outside : sent)
+    errors[`${i}.accountId`] = EXPENSE_ACCOUNT_REFUSED;
   return errors;
 }

@@ -904,6 +904,23 @@ describe('expense accounts on bills', () => {
     expect(out).not.toContain('No expense accounts yet');
   });
 
+  it('posts the ids of the active accounts only, so a refusal marks just the lines outside them', async () => {
+    const RETIRED = '99999999-9999-4999-8999-999999999999';
+    api.listExpenseAccounts.mockResolvedValue([
+      OFFICE,
+      {
+        ...OFFICE,
+        id: RETIRED,
+        code: '5200',
+        status: 'retired',
+        retiredAt: '2026-11-01T00:00:00Z',
+      },
+    ]);
+    const out = await newBill();
+    expect(out).toContain(`<input type="hidden" name="activeAccountIds" value="${VENDOR}"/>`);
+    expect(out).not.toContain(`value="${VENDOR},${RETIRED}"`);
+  });
+
   it('shows a retry when the accounts fail to load, and a no-access note for a 403', async () => {
     api.listExpenseAccounts.mockRejectedValue(apiError(500));
     let out = await newBill();
