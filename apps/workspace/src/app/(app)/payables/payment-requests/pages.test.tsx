@@ -28,6 +28,17 @@ vi.mock('@/lib/grants', async () => {
   };
 });
 vi.mock('@/lib/api-payables', () => api);
+const banks = vi.hoisted(() => ({ listCompanyBankAccounts: vi.fn() }));
+vi.mock('@/lib/api-company-accounts', () => banks);
+const bankAccount = {
+  id: '55555555-5555-4555-8555-555555555555',
+  name: 'Operating account',
+  bankName: 'Nabil Bank',
+  last4: '1234',
+  currency: 'NPR',
+  status: 'active',
+  retiredAt: null,
+};
 const reads = vi.hoisted(() => ({ getVendor: vi.fn(), getApprovalRequest: vi.fn() }));
 vi.mock('@/lib/api-vendors', () => ({ getVendor: reads.getVendor }));
 vi.mock('@/lib/api-kernel', async (original) => ({
@@ -85,6 +96,7 @@ beforeEach(() => {
   reads.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
   api.getPaymentRequest.mockResolvedValue(record);
   api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([]);
+  banks.listCompanyBankAccounts.mockResolvedValue([bankAccount]);
   api.listPaymentRequestItems.mockResolvedValue([
     {
       openItemId: id,
@@ -128,6 +140,10 @@ it('shows controlled entry fields for the vendor, source account and bill items'
   const html = renderToStaticMarkup(await NewPage());
   expect(html).toContain('name="vendorPartyId"');
   expect(html).toContain('name="fromBankAccountId"');
+  expect(html).toContain('Pay from bank account');
+  expect(html).not.toContain('bank account ID');
+  // Active rows only: the form offers no retired account.
+  expect(banks.listCompanyBankAccounts).toHaveBeenCalledWith(session);
   expect(html).toContain('name="allocation:0:openItemId"');
   expect(html).toContain('name="allocation:0:amount"');
   expect(html).toContain('Himal Supplies');
@@ -484,4 +500,42 @@ it('reads the rows-per-page choice from the URL into the page window', async () 
     offset: 0,
   });
   expect(html).toMatch(/<a[^>]*aria-current="true"[^>]*>100<\/a>/);
+});
+
+const payer = (extra: [string, string][] = []) =>
+  new Map<string, string>([['payables.payment.request', 'all'], ...extra]);
+
+it('says the bank accounts did not load instead of a form without them', async () => {
+  banks.listCompanyBankAccounts.mockRejectedValue(new Error('offline'));
+  const html = renderToStaticMarkup(await NewPage());
+  const text = html.replace(/<[^>]*>/g, '').replaceAll('&#x27;', "'");
+  expect(text).toContain("The company's bank accounts did not load. Reload the page to try again.");
+  expect(html).toContain('role="alert"');
+  expect(html).toContain('href="/payables/payment-requests/new"');
+  // The page keeps its heading; the form is not drawn.
+  expect(text).toContain('New payment request');
+  expect(html).not.toContain('name="fromBankAccountId"');
+});
+
+it('names a refused bank account read in words about bank accounts', async () => {
+  const { ApiError } = await import('@/lib/api');
+  banks.listCompanyBankAccounts.mockRejectedValue(new ApiError(403, 'forbidden'));
+  const text = renderToStaticMarkup(await NewPage())
+    .replace(/<[^>]*>/g, '')
+    .replaceAll('&#x27;', "'");
+  expect(text).toContain("Your roles do not allow reading the company's bank accounts.");
+});
+
+it('links the no-account message to Settings only for someone who may open it', async () => {
+  banks.listCompanyBankAccounts.mockResolvedValue([]);
+  grants.live = payer([['settings.finance.write', 'all']]);
+  const linked = renderToStaticMarkup(await NewPage());
+  expect(linked).toContain('No active NPR bank account.');
+  expect(linked).toContain('href="/settings/company-accounts"');
+
+  grants.live = payer();
+  const plain = renderToStaticMarkup(await NewPage());
+  expect(plain).toContain('No active NPR bank account.');
+  expect(plain).toContain('Ask an administrator to add one');
+  expect(plain).not.toContain('href="/settings/company-accounts"');
 });

@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AccessSettingsModule } from './modules/access-settings/access-settings.module';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
+import { CompanyAccountsModule } from './modules/company-accounts/company-accounts.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DepartmentsAdminModule } from './modules/departments/departments.module';
 import { ImagesModule } from './modules/images/images.module';
@@ -110,6 +111,8 @@ import { UsersModule } from './platform/users/users.module';
     VendorBillsModule,
     BillSubmissionsModule,
     PaymentRequestsModule,
+    // Round 5: the entity's bank and expense accounts (Settings > Finance) and their lookup.
+    CompanyAccountsModule,
     // U12: logos and profile pictures as documents.
     ImagesModule,
   ],

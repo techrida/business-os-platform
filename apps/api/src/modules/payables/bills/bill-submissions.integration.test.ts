@@ -23,6 +23,7 @@ import {
 import {
   createCostCenter,
   createDepartment,
+  createExpenseAccount,
   createParty,
   createPortalUser,
   createStaffUser,
@@ -82,6 +83,10 @@ let orders: PurchaseOrdersService;
 let receiptsService: ReceiptsService;
 let deptA = '';
 let vatCode = '';
+/** An active expense account of entity A: bill lines must book to one (round 5, unit P1). */
+let expenseAccountId = '';
+/** The same for entity B, for the bills these tests key in there. */
+let expenseAccountB = '';
 
 const U = {
   req: '',
@@ -108,6 +113,8 @@ const as = (userId: string, role: RoleKey) => {
   current.role = role;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
+/** The active expense account of the acting entity. */
+const accountHere = () => (scopeNow() === scopeB ? expenseAccountB : expenseAccountId);
 const principalNow = (): Principal => ({
   userId: current.userId,
   zitadelUserId: `z-${current.userId}`,
@@ -196,6 +203,8 @@ beforeAll(async () => {
         VALUES (${scopeA.tenantId}, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01') RETURNING id`,
   );
   vatCode = (rows[0] as { id: string }).id;
+  expenseAccountId = (await createExpenseAccount(appPool, scopeA)).id;
+  expenseAccountB = (await createExpenseAccount(appPool, scopeB)).id;
 
   const audit = new AuditService(db);
   as(U.founder, 'founder');
@@ -405,10 +414,10 @@ const billsOf = (vendorId: string) =>
   );
 /** Lines of a PO bill: one line of the PO's line. */
 const poLines = (po: Po, quantity = '1', unitPrice = '10000.00') => [
-  { poLineId: po.lineId, accountId: randomUUID(), quantity, unitPrice, taxCodeId: vatCode },
+  { poLineId: po.lineId, accountId: accountHere(), quantity, unitPrice, taxCodeId: vatCode },
 ];
 const plainLines = () => [
-  { accountId: randomUUID(), quantity: '2', unitPrice: '500.00', taxCodeId: vatCode },
+  { accountId: accountHere(), quantity: '2', unitPrice: '500.00', taxCodeId: vatCode },
 ];
 
 // ---------------------------------------------------------------------------------------- list
@@ -653,6 +662,33 @@ describe('convert a bill submission', () => {
     expect(noNumber.getStatus()).toBe(422);
     expect(codeOf(noNumber)).toBe('SUBMISSION_INCOMPLETE');
     expect(await billsOf(vendorId)).toHaveLength(1);
+  });
+
+  it('refuses a line booked to an expense account that is not usable here with 422 and writes nothing', async () => {
+    const vendorId = await vendor();
+    const sub = await submission({ vendorId });
+    const retired = (await createExpenseAccount(appPool, { ...scopeA, status: 'retired' })).id;
+    const foreign = (await createExpenseAccount(appPool, scopeB)).id;
+    for (const accountId of [randomUUID(), retired, foreign]) {
+      const e = await httpErrorOf(
+        controller.convert(sub.id, randomUUID(), {
+          lines: [{ ...plainLines()[0]!, accountId }],
+        }),
+      );
+      expect(e.getStatus()).toBe(422);
+      expect(codeOf(e)).toBe('EXPENSE_ACCOUNT_INVALID');
+    }
+    expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
+    expect(await billsOf(vendorId)).toHaveLength(0);
+    const audit = await ownerPool.query<{ count: string }>(
+      "SELECT count(*) FROM audit.audit_events WHERE entity_id = $1 AND action = 'payables.bill_submission.converted'",
+      [sub.id],
+    );
+    expect(Number(audit.rows[0]?.count)).toBe(0);
+
+    // The same submission converts once its lines name an active account of this entity.
+    const bill = await controller.convert(sub.id, randomUUID(), { lines: plainLines() });
+    expect((await rowOf(sub.id)).convertedBillId).toBe(bill.id);
   });
 
   it('answers 404 for a submission of another entity and leaves it untouched', async () => {

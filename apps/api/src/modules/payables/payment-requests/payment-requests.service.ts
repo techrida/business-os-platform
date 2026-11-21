@@ -61,6 +61,7 @@ import { CurrencyEnabledService } from '../../../platform/settings/currency-enab
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { searchPage, sumByCurrency } from '../../../platform/list';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CompanyAccountsLookup } from '../../company-accounts/company-accounts.lookup';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
 import { VENDOR_BILL_DOCUMENT_TYPE } from '../bills/vendor-bill.rules';
 import { VendorBankService } from '../../vendors/bank/bank.service';
@@ -219,6 +220,10 @@ export class PaymentRequestsService {
     private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(
       new SettingsService(db),
     ),
+    // The paying bank account check (round 5, P1); CompanyAccountsModule provides it. It holds no state, so the
+    // fallback is the same check for a test that builds the service by hand.
+    @Optional()
+    private readonly accounts: CompanyAccountsLookup = new CompanyAccountsLookup(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -450,7 +455,9 @@ export class PaymentRequestsService {
    * open item outside the acting entity; 409 `no_verified_bank_account` (check 14) or OVER_ALLOCATION (a line above
    * what is still open); 422 for an advance (no payout in Stage 1), an item named twice, an item that is not this
    * vendor's approved bill, another currency or a PO that is not the vendor's; 422 CURRENCY_NOT_ENABLED (D44) for a
-   * currency the company has not switched on in Settings, checked before the vendor or the lines are read.
+   * currency the company has not switched on in Settings, checked before the vendor or the lines are read; then 422
+   * BANK_ACCOUNT_INVALID unless fromBankAccountId is an active bank account of the acting entity, or
+   * BANK_ACCOUNT_CURRENCY_MISMATCH when it holds another currency (round 5, P1), so a refusal writes nothing.
    */
   async create(input: RequestPaymentBody, idempotencyKey: string): Promise<PaymentRequestDto> {
     // Ids are compared with the stored (lowercase) uuids as text below, so an uppercase id is folded first.
@@ -470,7 +477,12 @@ export class PaymentRequestsService {
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
-        { command: 'payables.payment_request.create', key: idempotencyKey, body },
+        {
+          command: 'payables.payment_request.create',
+          key: idempotencyKey,
+          // The entity is part of the request, so a retry made while acting in another entity is refused, not replayed.
+          body: { ...body, organizationId: scope.organizationId },
+        },
         async () => {
           if (body.paymentType !== 'settlement') {
             throw unprocessable(
@@ -483,6 +495,12 @@ export class PaymentRequestsService {
             throw unprocessable('DUPLICATE_OPEN_ITEM', `Open item ${repeated} is named twice`);
           }
           await this.currencies.assertEnabled(scope, body.currency);
+          await this.accounts.assertBankAccountUsable(
+            tx,
+            scope,
+            body.fromBankAccountId,
+            body.currency,
+          );
           const vendorId = body.vendorPartyId;
           const [account] = await tx
             .select({ vendorId: vendorAccounts.vendorId })
@@ -575,7 +593,8 @@ export class PaymentRequestsService {
    * Sends a draft to the `payment_request` route. 200 with the request in pending_approval. 404 outside the acting
    * entity; 409 invalid_transition unless it is a draft, `no_verified_bank_account`, OVER_ALLOCATION when another
    * request claimed the balance first; 422 NO_ELIGIBLE_APPROVER (nothing written) when nobody outside the SoD set
-   * can take a step.
+   * can take a step; 422 BANK_ACCOUNT_INVALID (nothing written) when the paying bank account was retired after the
+   * draft was made. A draft whose paying account id matches no row (made before the account list) still submits.
    */
   async submit(id: string, idempotencyKey: string): Promise<PaymentRequestDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -593,6 +612,9 @@ export class PaymentRequestsService {
                 `A ${request.status} payment request cannot be submitted`,
               );
             }
+            // Before the vendor lock, the same order create uses: a paying account retired since the draft
+            // was made is refused here, before anything is written (round 5, P1).
+            await this.accounts.assertBankAccountNotRetired(tx, scope, request.fromBankAccountId);
             const vendorName = await this.lockVendor(tx, scope, request.vendorId);
             const snapshot = await this.bank.activeVerifiedAccount(scope, request.vendorId, tx);
             const lines = await this.linesOf(tx, scope, request.id);

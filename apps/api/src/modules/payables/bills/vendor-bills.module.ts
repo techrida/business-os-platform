@@ -1,7 +1,8 @@
 // Vendor bills module (P4 units A1 and A1b): the REST routes of bills (enter, match, exceptions, submit) and the
 // registration of the vendor_bill and match_exception approval subjects. The vendor_bill subject posts an approved
 // bill through LedgerService (the payable open item and vendor_bill_posted), so LedgerModule is imported. onDecided
-// runs only from ApprovalsService.act (an API route), so the worker never needs the subjects.
+// runs only from ApprovalsService.act (an API route), so the worker never needs the subjects. CompanyAccountsModule
+// gives the lookup that checks each line's expense account (round 5, unit P1).
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { AuditModule } from '../../../platform/audit/audit.module';
@@ -12,6 +13,7 @@ import { DocumentsService } from '../../../platform/documents/documents.service'
 import { SettingsModule } from '../../../platform/settings/settings.module';
 import { ApprovalsModule } from '../../approvals/approvals.module';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CompanyAccountsModule } from '../../company-accounts/company-accounts.module';
 import { LedgerModule } from '../../ledger/ledger.module';
 import { LedgerService } from '../../ledger/ledger.service';
 import { BillDocumentsController } from './bill-documents.controller';
@@ -24,7 +26,14 @@ import { VendorOrdersController } from './vendor-orders.controller';
 import { VendorOrdersService } from './vendor-orders.service';
 
 @Module({
-  imports: [ApprovalsModule, AuditModule, DocumentsModule, LedgerModule, SettingsModule],
+  imports: [
+    ApprovalsModule,
+    AuditModule,
+    CompanyAccountsModule,
+    DocumentsModule,
+    LedgerModule,
+    SettingsModule,
+  ],
   controllers: [VendorBillsController, BillDocumentsController, VendorOrdersController],
   providers: [VendorBillsService, VendorBillsCaller, BillDocumentsService, VendorOrdersService],
   exports: [VendorBillsService],

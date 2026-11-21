@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import type { ExpenseAccount } from '@bos/contracts';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { isGuid } from '@/components/p2/customers/format';
+import { listExpenseAccounts } from '@/lib/api-company-accounts';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 import { Alert } from '@/components/ui/alert';
@@ -21,6 +23,7 @@ import { listBillableOrders, ORDER_PICKER_LIMIT } from '@/lib/api-payables-order
 import { getPoProgress, type PoProgress } from '@/lib/api-purchase-orders';
 import { listVendors } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
+import type { Session } from '@/lib/session';
 import { getGrants, hasGrant } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
@@ -67,6 +70,42 @@ function Shell({
   );
 }
 
+type AccountsLoad =
+  { ok: true; accounts: ExpenseAccount[] } | { ok: false; forbidden: boolean; message: string };
+
+/**
+ * The expense accounts the line pickers offer. Retired ones come too, so a value already on a row keeps its
+ * label; the picker offers active ones only. A refusal is worded for the accounts, not for bills.
+ */
+async function loadExpenseAccounts(session: Session): Promise<AccountsLoad> {
+  try {
+    return { ok: true, accounts: await listExpenseAccounts(session, { includeRetired: true }) };
+  } catch (err) {
+    const f = billFailure(err, 'load');
+    return f.status === 403
+      ? {
+          ok: false,
+          forbidden: true,
+          message:
+            "Your roles cannot read this company's expense accounts, and every bill line is booked to one. Ask an administrator for access.",
+        }
+      : { ok: false, forbidden: false, message: f.message };
+  }
+}
+
+function AccountsProblem({ load, here }: { load: AccountsLoad & { ok: false }; here: string }) {
+  return (
+    <Alert
+      tone={load.forbidden ? 'info' : 'error'}
+      role="alert"
+      title="The expense accounts did not load"
+      actions={load.forbidden ? null : <a href={here}>Try again</a>}
+    >
+      {load.message}
+    </Alert>
+  );
+}
+
 export default async function NewBillPage({
   searchParams,
 }: {
@@ -93,7 +132,8 @@ export default async function NewBillPage({
   const session = await requireStaffSession(here);
 
   // The caller's live grants, as the "Enter bill" links that lead here are decided (not the role defaults).
-  if (!hasGrant(await getGrants(session), 'payables.bill.enter')) {
+  const live = await getGrants(session);
+  if (!hasGrant(live, 'payables.bill.enter')) {
     return (
       <Shell>
         <Alert tone="info" role="status" title="You cannot key in bills">
@@ -102,6 +142,9 @@ export default async function NewBillPage({
       </Shell>
     );
   }
+  // The same grants the Settings menu shows Bank and expense accounts for.
+  const canManageAccounts =
+    hasGrant(live, 'settings.finance.write') || hasGrant(live, 'admin.settings.write');
 
   if (submissionId === '') {
     if (params.po !== undefined && !isGuid(poId))
@@ -170,6 +213,13 @@ export default async function NewBillPage({
         </Shell>
       );
     }
+    const accounts = await loadExpenseAccounts(session);
+    if (!accounts.ok)
+      return (
+        <Shell>
+          <AccountsProblem load={accounts} here={here} />
+        </Shell>
+      );
     if (
       standaloneOrder &&
       !['issued', 'partially_received', 'fully_received'].includes(standaloneOrder.status)
@@ -248,6 +298,8 @@ export default async function NewBillPage({
           }
           taxCodes={standaloneTax}
           withholdingCodes={standaloneWithholding}
+          expenseAccounts={accounts.accounts}
+          canManageAccounts={canManageAccounts}
           cancelHref="/payables/bills"
           reloadHref={here}
           entry={{
@@ -336,6 +388,8 @@ export default async function NewBillPage({
     taxProblem = billFailure(err, 'load').message;
   }
 
+  const accounts = await loadExpenseAccounts(session);
+
   const facts: Fact[] = [
     {
       key: 'vendor',
@@ -393,7 +447,7 @@ export default async function NewBillPage({
         ? 'The vendor did not name a vendor account. Reject this submission and ask for it again.'
         : submission.vendorInvoiceNo === null || submission.invoiceDate === null
           ? 'The invoice number or date is missing. Reject this submission and ask for it again.'
-          : (orderProblem ?? taxProblem);
+          : (orderProblem ?? taxProblem ?? (accounts.ok ? undefined : accounts.message));
 
   const fromSubmission = (
     <>
@@ -437,6 +491,8 @@ export default async function NewBillPage({
         orderLines={orderLines}
         taxCodes={taxCodes}
         withholdingCodes={withholdingCodes}
+        expenseAccounts={accounts.ok ? accounts.accounts : []}
+        canManageAccounts={canManageAccounts}
         cancelHref={INBOX}
         reloadHref={here}
       >
