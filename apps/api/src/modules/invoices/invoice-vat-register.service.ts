@@ -5,12 +5,16 @@
 //   * the amounts come from the frozen header of the issued document (taxable, VAT, exempt, zero-rated, total), not
 //     from a recomputation of its lines, so the register always agrees with the document the customer holds.
 // A credit note is stored positive (invoices_amounts_check) and listed negative; a debit note stays positive.
+// Each row also carries its NPR equivalents (round 5, FU11; Kuu decision K1 Q3 b): every amount times the rate frozen at
+// issue, rounded half-up to two decimals, and the document's own frozen NPR total. The register adds one NPR filing total
+// across currencies, the sum of those row values, next to the per-currency totals.
 // Proformas, drafts, returned, submitted, approved and discarded documents are not tax documents and never appear.
 import {
   CURRENCIES,
   SALES_VAT_REGISTER_KINDS,
   type Currency,
   type SalesVatRegister,
+  type SalesVatRegisterNprTotal,
   type SalesVatRegisterRow,
   type SalesVatRegisterTotal,
 } from '@bos/contracts';
@@ -63,6 +67,8 @@ export class InvoiceVatRegisterService {
             exempt: invoices.exemptAmount,
             zeroRated: invoices.zeroRatedAmount,
             total: invoices.total,
+            fxRate: invoices.fxRate,
+            amountNpr: invoices.amountNpr,
           })
           .from(invoices)
           .where(
@@ -88,6 +94,14 @@ export class InvoiceVatRegisterService {
             total: Decimal;
           }
         >();
+        const npr = {
+          n: 0,
+          taxable: zero(),
+          vat: zero(),
+          exempt: zero(),
+          zeroRated: zero(),
+          total: zero(),
+        };
         const rows = documents.map((d): SalesVatRegisterRow => {
           const sign = d.kind === 'credit_note' ? -1 : 1;
           const taxable = new Decimal(d.taxable).times(sign);
@@ -111,6 +125,19 @@ export class InvoiceVatRegisterService {
             zeroRated: acc.zeroRated.plus(zeroRated),
             total: acc.total.plus(total),
           });
+          // Issued implies a frozen rate and NPR total (invoices_issued_snapshot_check).
+          const rate = new Decimal(d.fxRate!);
+          const nprTaxable = taxable.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          const nprVat = vat.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          const nprExempt = exempt.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          const nprZeroRated = zeroRated.times(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          const nprTotal = new Decimal(d.amountNpr!).times(sign);
+          npr.n += 1;
+          npr.taxable = npr.taxable.plus(nprTaxable);
+          npr.vat = npr.vat.plus(nprVat);
+          npr.exempt = npr.exempt.plus(nprExempt);
+          npr.zeroRated = npr.zeroRated.plus(nprZeroRated);
+          npr.total = npr.total.plus(nprTotal);
           const buyer = buyerOf(d.buyerSnapshot);
           return {
             invoiceId: d.id,
@@ -127,6 +154,12 @@ export class InvoiceVatRegisterService {
             exemptAmount: exempt.toFixed(2),
             zeroRatedAmount: zeroRated.toFixed(2),
             totalAmount: total.toFixed(2),
+            fxRate: d.fxRate!,
+            nprTaxableAmount: nprTaxable.toFixed(2),
+            nprVatAmount: nprVat.toFixed(2),
+            nprExemptAmount: nprExempt.toFixed(2),
+            nprZeroRatedAmount: nprZeroRated.toFixed(2),
+            nprTotalAmount: nprTotal.toFixed(2),
           };
         });
         const totals = CURRENCIES.filter((c) => sums.has(c)).map(
@@ -143,7 +176,15 @@ export class InvoiceVatRegisterService {
             };
           },
         );
-        return { from, to, rows, totals };
+        const nprTotal: SalesVatRegisterNprTotal = {
+          documents: npr.n,
+          taxableAmount: npr.taxable.toFixed(2),
+          vatAmount: npr.vat.toFixed(2),
+          exemptAmount: npr.exempt.toFixed(2),
+          zeroRatedAmount: npr.zeroRated.toFixed(2),
+          totalAmount: npr.total.toFixed(2),
+        };
+        return { from, to, rows, totals, nprTotal };
       },
       READ_ONLY,
     );

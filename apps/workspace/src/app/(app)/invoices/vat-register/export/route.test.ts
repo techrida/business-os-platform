@@ -61,6 +61,12 @@ const register: SalesVatRegister = {
       exemptAmount: '5.00',
       zeroRatedAmount: '0.00',
       totalAmount: '118.00',
+      fxRate: '1.000000',
+      nprTaxableAmount: '100.00',
+      nprVatAmount: '13.00',
+      nprExemptAmount: '5.00',
+      nprZeroRatedAmount: '0.00',
+      nprTotalAmount: '118.00',
     },
     {
       invoiceId: '22222222-2222-4222-8222-222222222222',
@@ -76,6 +82,12 @@ const register: SalesVatRegister = {
       exemptAmount: '0.00',
       zeroRatedAmount: '0.00',
       totalAmount: '-11.30',
+      fxRate: '133.500000',
+      nprTaxableAmount: '-1335.00',
+      nprVatAmount: '-173.55',
+      nprExemptAmount: '0.00',
+      nprZeroRatedAmount: '0.00',
+      nprTotalAmount: '-1508.55',
     },
   ],
   // Deliberately different from the visible rows: totals must come from the API.
@@ -99,6 +111,14 @@ const register: SalesVatRegister = {
       totalAmount: '-11.30',
     },
   ],
+  nprTotal: {
+    documents: 2,
+    taxableAmount: '1234.56',
+    vatAmount: '160.55',
+    exemptAmount: '5.00',
+    zeroRatedAmount: '0.00',
+    totalAmount: '1390.55',
+  },
 };
 const request = (query = new URLSearchParams(period).toString()) =>
   new Request(`https://workspace.example/invoices/vat-register/export?${query}`);
@@ -151,19 +171,25 @@ it('downloads UTF-8 CSV with the exact server values, per-currency totals and a 
   expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
   const lines = new TextDecoder().decode(bytes.slice(3)).split('\r\n');
   expect(lines[0]).toBe(
-    '"Date (BS)","Date (AD)","Document","Invoice number","Buyer","Buyer PAN","Currency","Taxable amount","VAT","Exempt amount","Zero-rated amount","Total"',
+    '"Date (BS)","Date (AD)","Document","Invoice number","Buyer","Buyer PAN","Currency","Taxable amount","VAT","Exempt amount","Zero-rated amount","Total","Rate to NPR","NPR taxable amount","NPR VAT","NPR exempt amount","NPR zero-rated amount","NPR total"',
   );
   expect(lines[1]).toBe(
-    '"2083-07-23","2026-11-09","Tax invoice","INV-1","Himal Traders","123456789","NPR","100.00","13.00","5.00","0.00","118.00"',
+    '"2083-07-23","2026-11-09","Tax invoice","INV-1","Himal Traders","123456789","NPR","100.00","13.00","5.00","0.00","118.00","1.000000","100.00","13.00","5.00","0.00","118.00"',
   );
   // A credit note is negative, and a buyer name that starts like a formula is quoted with a leading apostrophe.
   expect(lines[2]).toBe(
-    '"2083-07-24","2026-11-10","Credit note","CN-1","\'=HYPERLINK(""http://evil.example"")","","USD","-10.00","-1.30","0.00","0.00","-11.30"',
+    '"2083-07-24","2026-11-10","Credit note","CN-1","\'=HYPERLINK(""http://evil.example"")","","USD","-10.00","-1.30","0.00","0.00","-11.30","133.500000","-1335.00","-173.55","0.00","0.00","-1508.55"',
   );
   expect(lines[3]).toBe(
-    '"Total NPR","","","","","","NPR","9999.99","888.88","5.00","0.00","10893.87"',
+    '"Total NPR","","","","","","NPR","9999.99","888.88","5.00","0.00","10893.87","","","","","",""',
   );
-  expect(lines[4]).toBe('"Total USD","","","","","","USD","-10.00","-1.30","0.00","0.00","-11.30"');
+  expect(lines[4]).toBe(
+    '"Total USD","","","","","","USD","-10.00","-1.30","0.00","0.00","-11.30","","","","","",""',
+  );
+  // One NPR filing total across the currencies, in the NPR columns only (the API's figures, not re-added here).
+  expect(lines[5]).toBe(
+    '"Total NPR (all currencies)","","","","","","","","","","","","","1234.56","160.55","5.00","0.00","1390.55"',
+  );
 });
 
 it.each([401, 403, 404, 422, 429])(
