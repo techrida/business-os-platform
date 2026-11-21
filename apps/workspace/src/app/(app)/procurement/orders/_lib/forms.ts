@@ -16,6 +16,10 @@ export function toScaled(value: string, scale: number): bigint | null {
   return BigInt(`${m[1] ?? '0'}${(m[2] ?? '').padEnd(scale, '0')}`);
 }
 
+/** A number typed with a space inside (`10 50`), which toScaled refuses: the fix is to remove the space. */
+const SPACED = /\S\s+\S/;
+const REMOVE_SPACE = 'Remove the space inside the number.';
+
 export function parseReason(raw: string, max = 500): Parsed<string> {
   const reason = raw.trim();
   if (reason === '') return { ok: false, error: 'Say why. The audit trail keeps the answer.' };
@@ -59,15 +63,18 @@ export function parseAmend(
     const p = toScaled(unitPrice, 2);
     let bad = false;
     if (q === null) {
-      errors[`${line.id}.quantity`] = 'Use a number with up to 4 decimal places.';
+      errors[`${line.id}.quantity`] = SPACED.test(quantity)
+        ? REMOVE_SPACE
+        : 'Use a number with up to 4 decimal places.';
       bad = true;
     } else if (q === 0n) {
       errors[`${line.id}.quantity`] = 'The quantity must be above zero.';
       bad = true;
     }
     if (p === null) {
-      errors[`${line.id}.unitPrice`] =
-        'Use an amount such as 1250.50, with up to 2 decimal places.';
+      errors[`${line.id}.unitPrice`] = SPACED.test(unitPrice)
+        ? REMOVE_SPACE
+        : 'Use an amount such as 1250.50, with up to 2 decimal places.';
       bad = true;
     }
     if (bad || q === null || p === null) continue;
@@ -86,7 +93,9 @@ export function parseAmend(
   const termsText = values.paymentTermsDays.trim();
   if (termsText !== '') {
     if (!/^\d{1,3}$/.test(termsText) || Number(termsText) > 365) {
-      errors['paymentTermsDays'] = 'Use a whole number of days from 0 to 365.';
+      errors['paymentTermsDays'] = SPACED.test(termsText)
+        ? REMOVE_SPACE
+        : 'Use a whole number of days from 0 to 365.';
     } else if (Number(termsText) !== currentTerms) {
       terms = Number(termsText);
     }

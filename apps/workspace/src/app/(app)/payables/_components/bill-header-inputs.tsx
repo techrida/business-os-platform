@@ -186,6 +186,8 @@ export function BillHeaderInputs({
               name="invoiceDate"
               value={invoiceDate}
               onChange={setInvoiceDate}
+              // A vendor invoice cannot be dated after today in the tenant's calendar.
+              max={entry.today}
               required
               {...control}
             />

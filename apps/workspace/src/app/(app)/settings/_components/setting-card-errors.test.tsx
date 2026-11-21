@@ -74,6 +74,17 @@ const mount = (fields: FieldSpec[], section: 'sales' | 'workflows' = 'sales') =>
     </SettingsForm>,
   );
 
+/** The visible number boxes the fields' `<label>`s name (each hidden input beside one posts the value). */
+const boxesLabelled = (root: HTMLElement, ...labels: string[]): HTMLInputElement[] =>
+  Array.from(root.querySelectorAll('label'))
+    .filter((tag) => labels.includes(tag.textContent ?? ''))
+    .map((tag) => root.ownerDocument.getElementById(tag.htmlFor))
+    .filter(
+      (box): box is HTMLInputElement => box instanceof HTMLInputElement && box.type === 'text',
+    );
+
+const HOURS = ['Remind after (hours)', 'Escalate after (hours)'];
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   window.history.replaceState(null, '', '/settings/sales');
@@ -88,9 +99,8 @@ describe('grouped errors are announced', () => {
     expect(region).not.toBeNull();
     expect(region?.textContent).toBe('');
 
-    const inputs = Array.from(
-      mounted.container.querySelectorAll<HTMLInputElement>('input[type="number"]'),
-    );
+    const inputs = boxesLabelled(mounted.container, ...HOURS);
+    expect(inputs).toHaveLength(2);
     await fill(inputs[0] ?? null, '');
     await submit(mounted.container);
 
@@ -113,9 +123,8 @@ describe('grouped errors are announced', () => {
     expect(region).not.toBeNull();
     expect(region?.textContent).toBe('');
 
-    const percents = Array.from(
-      mounted.container.querySelectorAll<HTMLInputElement>('input[type="number"]'),
-    );
+    const percents = boxesLabelled(mounted.container, 'Percent');
+    expect(percents).toHaveLength(2);
     await fill(percents[1] ?? null, '20');
     await submit(mounted.container);
 
@@ -130,9 +139,8 @@ describe('grouped errors are announced', () => {
 
   it('clears the invalid marks once the field is edited', async () => {
     const mounted = await mount([sla], 'workflows');
-    const inputs = Array.from(
-      mounted.container.querySelectorAll<HTMLInputElement>('input[type="number"]'),
-    );
+    const inputs = boxesLabelled(mounted.container, ...HOURS);
+    expect(inputs).toHaveLength(2);
     await fill(inputs[0] ?? null, '');
     await submit(mounted.container);
     await fill(inputs[0] ?? null, '12');
