@@ -135,8 +135,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
   });
 
   await test.step('refresh server pricing, save, cancel submission, then confirm', async () => {
-    await chooseOption(selectByLabel(page, 'Discount type'), 'pct');
-    await page.getByLabel('Discount (%)').fill('15');
+    await page.getByLabel('Discount %').fill('15');
     await expect(page.getByText('Amount unavailable until pricing is ready.')).toBeVisible();
     await expect(page.getByText('This discount needs approval')).toBeVisible();
     await expect(amount).not.toHaveValue('');
