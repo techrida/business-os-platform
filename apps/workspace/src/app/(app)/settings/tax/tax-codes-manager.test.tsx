@@ -3,7 +3,7 @@ import type { AdminTaxCode, TaxCodePeriod } from '@bos/contracts';
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm, typeKeys } from '@/test/form-interactions';
 
 // F1-Q49: the VAT codes table sends a change with the version of the last period it showed, so a stale screen is
 // refused rather than overwriting someone else's change, and offers no day before today.
@@ -84,8 +84,11 @@ describe('TaxCodesManager', () => {
     await click(buttonByText('Change VAT13'));
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('Documents already issued keep the rate');
-    const rate = dialog?.querySelector<HTMLInputElement>('input[type="number"]') ?? null;
-    await fill(rate, '15');
+    expect(dialog?.querySelector('input[type="number"]')).toBeNull();
+    const rate = dialog?.querySelector<HTMLInputElement>('input[role="spinbutton"]') ?? null;
+    expect(rate?.value).toBe('13');
+    await typeKeys(rate, '{Backspace}{Backspace}15');
+    expect(rate?.value).toBe('15');
     await act(() => {
       dialog?.querySelector('form')?.requestSubmit();
       return Promise.resolve();
@@ -97,6 +100,44 @@ describe('TaxCodesManager', () => {
       effectiveFrom: TODAY,
       expectedPeriodId: open.id,
       expectedVersion: 3,
+    });
+    await mounted.unmount();
+  });
+
+  it('adds a code with a percent box that refuses a third decimal and more than 100', async () => {
+    actions.addTaxCodeAction.mockResolvedValue({ status: 'ok', message: 'VAT5 added.' });
+    const mounted = await mountForm(<TaxCodesManager codes={[VAT13]} today={TODAY} />);
+    await click(buttonByText('Add tax code'));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.querySelector('input[type="number"]')).toBeNull();
+    const rate = dialog.querySelector<HTMLInputElement>('input[role="spinbutton"]');
+    expect(rate?.type).toBe('text');
+    expect(rate?.getAttribute('aria-valuemax')).toBe('100');
+
+    await typeKeys(rate, '1001');
+    expect(rate?.value).toBe('100');
+    await typeKeys(rate, '{Backspace}{Backspace}{Backspace}5.255');
+    expect(rate?.value).toBe('5.25');
+
+    const named = (text: string) => {
+      const label = Array.from(dialog.querySelectorAll('label')).find(
+        (l) => l.textContent?.trim() === text,
+      );
+      return label ? document.getElementById(label.htmlFor) : null;
+    };
+    await fill(named('Code'), 'vat5');
+    await fill(named('Name'), 'VAT 5%');
+    await act(() => {
+      dialog.querySelector('form')?.requestSubmit();
+      return Promise.resolve();
+    });
+    expect(actions.addTaxCodeAction).toHaveBeenCalledWith({
+      code: 'VAT5',
+      name: 'VAT 5%',
+      kind: 'vat',
+      rate: '5.25',
+      creditable: true,
+      effectiveFrom: TODAY,
     });
     await mounted.unmount();
   });

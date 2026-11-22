@@ -109,6 +109,24 @@ describe('parseAmend', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors['paymentTermsDays']).toBeDefined();
   });
+
+  it('says to remove the space in a quantity, price or terms typed as "10 50"', () => {
+    const r = parseAmend(
+      {
+        ...same,
+        paymentTermsDays: '3 0',
+        lines: { ...same.lines, [A]: { quantity: '10 50', unitPrice: '1 000' } },
+      },
+      current,
+      30,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors[`${A}.quantity`]).toBe('Remove the space inside the number.');
+      expect(r.errors[`${A}.unitPrice`]).toBe('Remove the space inside the number.');
+      expect(r.errors['paymentTermsDays']).toBe('Remove the space inside the number.');
+    }
+  });
 });
 
 describe('parseReason', () => {

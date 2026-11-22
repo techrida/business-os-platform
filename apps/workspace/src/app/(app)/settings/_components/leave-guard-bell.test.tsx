@@ -54,6 +54,13 @@ const validity: FieldSpec = {
   numberBounds: { min: 1, max: 365, step: '1' },
 };
 
+/** The visible box a field's `<label>` names; the hidden input beside it posts the value. */
+const boxLabelled = (label: string): HTMLInputElement | null => {
+  const tag = Array.from(document.querySelectorAll('label')).find((l) => l.textContent === label);
+  const box = tag ? document.getElementById(tag.htmlFor) : null;
+  return box instanceof HTMLInputElement ? box : null;
+};
+
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>();
 const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body)));
 const readCalls = () =>
@@ -76,7 +83,7 @@ async function dirtyFormWithOpenBell() {
       </SettingsForm>
     </div>,
   );
-  await fill(mounted.container.querySelector('input[name="v:quotation.validity_days"]'), '90');
+  await fill(boxLabelled('Quotation validity (days)'), '90');
   await click(mounted.container.querySelector('button[aria-label^="Notifications"]'));
   await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   const link = mounted.container.querySelector<HTMLAnchorElement>('a[href="/leads/1"]');

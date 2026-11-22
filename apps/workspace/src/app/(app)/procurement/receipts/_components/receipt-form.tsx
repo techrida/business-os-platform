@@ -5,7 +5,9 @@ import { useActionState, useRef, useState } from 'react';
 
 import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Textarea } from '@/components/ui/field';
+import { QuantityInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
@@ -170,11 +172,11 @@ export function ReceiptForm({
               error={errors['receivedAt']}
             >
               {(c) => (
-                <Input
-                  type="date"
+                <DatePicker
                   name="receivedAt"
                   value={receivedAt}
-                  onChange={(e) => setReceivedAt(e.target.value)}
+                  onChange={setReceivedAt}
+                  max={today}
                   required
                   {...c}
                 />
@@ -248,12 +250,11 @@ export function ReceiptForm({
                             error={errors[`${l.poLineId}.quantity`]}
                           >
                             {(c) => (
-                              <Input
+                              <QuantityInput
                                 name={`qty:${l.poLineId}`}
                                 value={v.quantity}
-                                onChange={(e) => set(l.poLineId, 'quantity', e.target.value)}
-                                inputMode="decimal"
-                                autoComplete="off"
+                                onValueChange={(plain) => set(l.poLineId, 'quantity', plain)}
+                                uom={l.uom}
                                 className={styles.numeric}
                                 {...c}
                               />
