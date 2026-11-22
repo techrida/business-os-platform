@@ -24,7 +24,7 @@ import {
   MEMO_APPROVER_DOCUMENT_TYPE,
   type MemoApproverRule,
   SETTINGS,
-  StoredCompanyProfileSchema,
+  CompanyProfileSchema,
   type CreateMemoBody,
   type Letterhead,
   type MemoDirectory,
@@ -352,7 +352,7 @@ export async function buildMemoLetterhead(
     settings.get(scope, 'document.style'),
   ]);
   const style = SETTINGS['document.style'].safeParse(rawStyle);
-  const profile = StoredCompanyProfileSchema.safeParse(rawProfile);
+  const profile = CompanyProfileSchema.safeParse(rawProfile);
   let logoDataUrl: string | null = null;
   if (!profile.success) {
     if (mode === 'freeze') throw new LetterheadInvalidError();

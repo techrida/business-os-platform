@@ -10,9 +10,11 @@ import {
   parseStoredDocumentStyle,
   type IssuerSettings,
 } from './issuer';
+import { renderQuotationHtml } from './quotation-html';
+import { sampleQuotationView } from './sample-view';
 
 const scope = { tenantId: 't-1', organizationId: 'o-1' };
-const address = { line1: 'Kupondole', city: 'Lalitpur', country: 'NP' };
+const address = { line: 'Kupondole', city: 'Lalitpur', country: 'NP' };
 
 function fakeSettings(values: Record<string, unknown>) {
   const asked: { scope: unknown; key: string }[] = [];
@@ -47,15 +49,18 @@ describe('buildIssuer', () => {
     });
   });
 
-  it.each([null, undefined, {}, { line1: 'x', city: 'y', country: 'Nepal' }])(
-    'refuses with a typed error when the address is %j',
-    async (bad) => {
-      const { settings } = fakeSettings({ 'entity.pan_vat_no': null, 'entity.address': bad });
-      const error = await buildIssuer(settings, scope, 'Techrida').catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(IssuerIncompleteError);
-      expect(error).toMatchObject({ kind: 'issuer_incomplete', missing: 'address' });
-    },
-  );
+  it.each([
+    null,
+    undefined,
+    {},
+    { line: 'x', city: 'y', country: 'Nepal' },
+    { line1: 'x', city: 'y', country: 'NP' },
+  ])('refuses with a typed error when the address is %j', async (bad) => {
+    const { settings } = fakeSettings({ 'entity.pan_vat_no': null, 'entity.address': bad });
+    const error = await buildIssuer(settings, scope, 'Techrida').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IssuerIncompleteError);
+    expect(error).toMatchObject({ kind: 'issuer_incomplete', missing: 'address' });
+  });
 });
 
 describe('buildDocumentStyleSnapshot', () => {
@@ -101,26 +106,43 @@ describe('buildDocumentStyleSnapshot', () => {
     });
   });
 
-  it('still freezes a profile saved before phones were E.164 and the PAN was nine digits (FX8)', async () => {
+  it('refuses a profile saved before phones carried their country (FX9: no tolerant read)', async () => {
     const { settings } = settingsOf({
-      'entity.pan_vat_no': '12-34567',
       'entity.profile': {
         ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
         phones: ['01-4123456', 'main office'],
-        panVatNo: 'ab-123456',
+      },
+    });
+    const error = await buildDocumentStyleSnapshot(settings, scope, at).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DocumentStyleInvalidError);
+  });
+
+  it('prints no number for an entity PAN that is not nine digits, rather than freezing it', async () => {
+    const { settings } = settingsOf({ 'entity.pan_vat_no': '12-34567' });
+    const snapshot = await buildDocumentStyleSnapshot(settings, scope, at);
+    expect(snapshot.profile.panVatNo).toBeNull();
+  });
+
+  it('freezes each phone as its E.164 number, and the issuer block prints it for its country (FX9)', async () => {
+    const { settings } = settingsOf({
+      'entity.profile': {
+        ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+        phones: [
+          { country: 'US', e164: '+14155552671', label: 'work' },
+          { country: 'NP', e164: '+97714123456', label: 'landline' },
+          { country: 'NP', e164: '+9779812345678' },
+        ],
       },
     });
     const snapshot = await buildDocumentStyleSnapshot(settings, scope, at);
-    expect(snapshot.profile).toMatchObject({
-      phones: ['01-4123456', 'main office'],
-      panVatNo: 'ab-123456',
-    });
-    const entityOnly = await buildDocumentStyleSnapshot(
-      settingsOf({ 'entity.pan_vat_no': '12-34567' }).settings,
-      scope,
-      at,
-    );
-    expect(entityOnly.profile.panVatNo).toBe('12-34567');
+    expect(snapshot.profile.phones).toEqual(['+14155552671', '+97714123456', '+9779812345678']);
+    const html = renderQuotationHtml(sampleQuotationView(), { snapshot });
+    const tel = /<div class="foot-col foot-col--tel">[\s\S]*?<\/div><\/div>/.exec(html)?.[0] ?? '';
+    // A foreign number prints in international format; Nepal keeps FX8's mobile and area-code forms.
+    expect(tel).toContain('<div>+1 415 555 2671</div>');
+    expect(tel).toContain('<div>+977 1-4123456</div>');
+    expect(tel).toContain('<div>+977 9812345678</div>');
+    expect(tel).not.toContain('+14155552671');
   });
 
   it('leaves the number empty when neither the profile nor the entity has one', async () => {

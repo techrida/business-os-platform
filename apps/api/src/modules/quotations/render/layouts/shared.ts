@@ -7,10 +7,12 @@
 // footer itself is `position: fixed`, so Chromium paints it at the bottom of every page, the last one included,
 // without ever covering a row. The items table repeats its own header; rows and blocks do not split.
 import {
+  formatAddressLines,
   formatPhoneForPrint,
   richTextToHtml,
   trimPercent,
   type BrandPalette,
+  type CountryCode,
   type SnapshotCompanyProfile,
   type CustomerQuotationView,
 } from '@bos/contracts';
@@ -101,27 +103,39 @@ export function dateCell(
   return bs === null ? gregorian : `${gregorian} <span class="bs">(${escapeHtml(bs)})</span>`;
 }
 
-const COUNTRY_NAMES: Record<string, string> = { NP: 'Nepal', IN: 'India', US: 'United States' };
+/** An address with its country, as a document prints it (the `entity.address` setting has this shape). */
+type PrintableAddress = { line: string; city: string; country: CountryCode };
 
-type Address = CustomerQuotationView['issuer']['address'];
+/**
+ * The printed parts of an address, unescaped: street, city, then the country's name, left out when it is
+ * `ownCountry` (see formatAddressLines). The footer joins them inline, the memo letterhead stacks them.
+ */
+export const addressParts = (a: PrintableAddress, ownCountry?: CountryCode): string[] =>
+  formatAddressLines(a, a.country, ownCountry);
 
-/** The printed parts of an address, unescaped: the footer joins them inline, the memo letterhead stacks them. */
-export function addressParts(a: Address): string[] {
-  return [
-    a.line1,
-    a.line2,
-    [a.city, a.district].filter(Boolean).join(', '),
-    [a.province, a.postalCode].filter(Boolean).join(' '),
-    COUNTRY_NAMES[a.country] ?? a.country,
-  ].filter((l): l is string => Boolean(l));
-}
-
-export const addressLines = (a: Address): string =>
-  addressParts(a)
+export const addressLines = (a: PrintableAddress, ownCountry?: CountryCode): string =>
+  addressParts(a, ownCountry)
     .map((l) => `<div>${escapeHtml(l)}</div>`)
     .join('');
 
-export const addressInline = (a: Address): string => escapeHtml(addressParts(a).join(', '));
+export const addressInline = (a: PrintableAddress, ownCountry?: CountryCode): string =>
+  escapeHtml(addressParts(a, ownCountry).join(', '));
+
+type Party = CustomerQuotationView['issuer'];
+
+const printable = (party: Party): PrintableAddress => ({
+  line: party.address.line,
+  city: party.address.city,
+  country: party.country,
+});
+
+/** The issuing entity's own address, its country always printed: the entity is where "own country" is measured from. */
+export const issuerAddressLines = (ctx: RenderContext): string =>
+  addressLines(printable(ctx.view.issuer));
+
+/** The customer's address; the country is left out when it is the issuing entity's own. */
+export const customerAddressLines = (ctx: RenderContext): string =>
+  addressLines(printable(ctx.view.customer), ctx.view.issuer.country);
 
 export const docRef = (view: CustomerQuotationView): string =>
   `${esc(view.number)} Rev ${view.revisionNo}`;
@@ -154,7 +168,7 @@ export const title = (): string => '<h1 class="title">Quotation</h1>';
 
 /** The issuing entity. Its PAN/VAT number prints once, in the footer. */
 export const issuerParty = (ctx: RenderContext): string =>
-  `<div class="party"><p class="legal">${esc(ctx.view.issuer.legalName)}</p><div class="addr">${addressLines(ctx.view.issuer.address)}</div></div>`;
+  `<div class="party"><p class="legal">${esc(ctx.view.issuer.legalName)}</p><div class="addr">${issuerAddressLines(ctx)}</div></div>`;
 
 export function customerParty(ctx: RenderContext): string {
   const { customer, contact } = ctx.view;
@@ -166,7 +180,7 @@ export function customerParty(ctx: RenderContext): string {
         contact.email ? `<p class="muted email">${breakableAddress(contact.email)}</p>` : ''
       }</div>`
     : '';
-  return `<div class="party"><p class="legal">${esc(customer.legalName)}</p><div class="addr">${addressLines(customer.address)}</div>${pan}${attention}</div>`;
+  return `<div class="party"><p class="legal">${esc(customer.legalName)}</p><div class="addr">${customerAddressLines(ctx)}</div>${pan}${attention}</div>`;
 }
 
 /** Label and value pairs of the quotation's own details. Values are already escaped HTML. */
@@ -341,7 +355,7 @@ export function footer(ctx: RenderContext): string {
       ICON_PHONE,
       p.phones.map((phone) => esc(formatPhoneForPrint(phone))),
     )}
-    ${col('addr', ICON_PIN, [addressInline(ctx.view.issuer.address)])}
+    ${col('addr', ICON_PIN, [addressInline(printable(ctx.view.issuer))])}
     ${col('mail', ICON_MAIL, contact)}
     ${col('pan', ICON_ID, pan ? [`PAN/VAT No. ${esc(pan)}`] : [])}
     <div class="foot-bar"></div>

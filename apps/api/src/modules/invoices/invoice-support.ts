@@ -1,6 +1,6 @@
 // Small shared pieces of the invoice services (P3 unit U10): who is calling, the coded errors, the Kathmandu day and
 // the postgres error reader. Kept apart so the issue service (U6 extends it) and the drafting service share one copy.
-import { type Address } from '@bos/contracts';
+import { type CountryCode, formatAddressLines, type PrintAddress } from '@bos/contracts';
 import { kathmanduDate } from '@bos/locale';
 import {
   BadRequestException,
@@ -114,11 +114,12 @@ export function pgError(error: unknown): { code: string; constraint?: string } |
   return undefined;
 }
 
-/** An address on one line, as the invoice snapshots hold it. */
-export function formatAddress(a: Address): string {
-  return [a.line1, a.line2, a.city, a.district, a.province, a.postalCode, a.country]
-    .filter((part): part is string => part !== undefined && part !== '')
-    .join(', ');
+/**
+ * An address on one line, as the invoice snapshots hold it: `line, city[, Country name]`. The country is left out
+ * when it is `ownCountry` (the issuing entity's own), exactly as the PDF prints it.
+ */
+export function formatAddress(a: PrintAddress, ownCountry?: CountryCode): string {
+  return formatAddressLines(a, a.country, ownCountry).join(', ');
 }
 
 /** Staff only: the workspace invoice routes carry internal figures; a portal caller reads through the portal API. */

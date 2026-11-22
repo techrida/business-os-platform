@@ -3,9 +3,9 @@
 // meant to show" holds even if a caller passes whole rows: the input types pick named columns, and the view is
 // built field by field (nothing is spread) and then parsed by the strict schema.
 import {
-  AddressSchema,
   CustomerQuotationViewSchema,
   PaymentMilestoneSchema,
+  PrintAddressSchema,
   isCustomerVisibleStatus,
   type CustomerQuotationView,
   type CustomerVisibleStatus,
@@ -62,7 +62,8 @@ export type CustomerViewVersion = Pick<
 
 /**
  * The selling legal entity as the document shows it. The organizations table holds only the legal name today
- * (PAN and address come with a later unit), so the caller supplies the printable block.
+ * (PAN and address come with a later unit), so the caller supplies the printable block. `address` is the
+ * `entity.address` setting, `{ line, city, country }`: its country is the entity's own (FX9).
  */
 export interface CustomerViewIssuer {
   legalName: string;
@@ -73,7 +74,10 @@ export interface CustomerViewIssuer {
 export interface CustomerViewInput {
   version: CustomerViewVersion;
   quotation: Pick<Row<typeof quotations>, 'number'>;
-  customer: Pick<Row<typeof customers>, 'legalName' | 'panVatNo' | 'address'>;
+  customer: Pick<
+    Row<typeof customers>,
+    'legalName' | 'panVatNo' | 'country' | 'addressLine' | 'addressCity'
+  >;
   contact: Pick<Row<typeof customerContacts>, 'fullName' | 'emailNorm'> | null;
   paymentTerm: Pick<Row<typeof paymentTerms>, 'name'> | null;
   lines: readonly Pick<
@@ -112,7 +116,11 @@ export class QuotationNotCustomerVisibleError extends Error {
 const trimZeros = (value: string): string =>
   value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 
-const addressOf = (raw: unknown) => AddressSchema.parse(raw);
+/** The issuer's `{ line, city, country }` split into the view's party country and its street lines. */
+function issuerAddressOf(raw: unknown) {
+  const { line, city, country } = PrintAddressSchema.parse(raw);
+  return { country, address: { line, city } };
+}
 
 /**
  * Who the view is for. `portal` (the default, so nothing loosens by accident) shows only the states a customer
@@ -163,6 +171,7 @@ export function toCustomerQuotationView(
           sha256: version.renderedSha256.toString('hex'),
         }
       : null;
+  const issuerAddress = issuerAddressOf(issuer.address);
 
   return CustomerQuotationViewSchema.parse({
     id: version.id,
@@ -175,12 +184,14 @@ export function toCustomerQuotationView(
     issuer: {
       legalName: issuer.legalName,
       panVatNo: issuer.panVatNo,
-      address: addressOf(issuer.address),
+      country: issuerAddress.country,
+      address: issuerAddress.address,
     },
     customer: {
       legalName: customer.legalName,
       panVatNo: customer.panVatNo,
-      address: addressOf(customer.address),
+      country: customer.country,
+      address: { line: customer.addressLine, city: customer.addressCity },
     },
     contact: contact ? { fullName: contact.fullName, email: contact.emailNorm } : null,
     scope: version.scope,

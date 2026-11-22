@@ -4,10 +4,9 @@
 // address is not ready to issue a quotation: that is a typed error, so the render job logs a fixed kind and the
 // admin sees a clear reason, instead of a schema error that carries data.
 import {
+  CompanyProfileSchema,
   DocumentStyleSnapshotSchema,
   SETTINGS,
-  StoredCompanyProfileSchema,
-  StoredEntityPanVatNoSchema,
   snapshotProfileFrom,
   type CompanyProfile,
   type DocumentStyleSnapshot,
@@ -43,7 +42,7 @@ export async function buildIssuer(
   // Rows are validated when written; this guards a row that was edited by hand. Invalid counts as not set.
   const address = SETTINGS['entity.address'].safeParse(rawAddress);
   if (!address.success || address.data === null) throw new IssuerIncompleteError('address');
-  const pan = StoredEntityPanVatNoSchema.safeParse(rawPan);
+  const pan = SETTINGS['entity.pan_vat_no'].safeParse(rawPan);
   return {
     legalName,
     // A missing PAN prints nothing; it is not an error (a new entity may be pre-registration).
@@ -123,8 +122,8 @@ export async function buildDocumentStyleSnapshot(
     settings.get(scope, 'format.date'),
     settings.get(scope, 'entity.pan_vat_no'),
   ]);
-  const pan = StoredEntityPanVatNoSchema.safeParse(entityPan);
-  const rawProfile = StoredCompanyProfileSchema.safeParse(profile);
+  const pan = SETTINGS['entity.pan_vat_no'].safeParse(entityPan);
+  const rawProfile = CompanyProfileSchema.safeParse(profile);
   if (!rawProfile.success) throw new DocumentStyleInvalidError();
   const logo = await resolveSnapshotLogo(rawProfile.data, resolveLogo);
   const parsed = DocumentStyleSnapshotSchema.safeParse({

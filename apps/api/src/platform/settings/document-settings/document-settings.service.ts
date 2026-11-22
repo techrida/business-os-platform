@@ -10,7 +10,9 @@ import { randomUUID } from 'node:crypto';
 import {
   DocumentLayoutSchema,
   HexColourSchema,
+  documentSellerContact,
   type DateFormatSetting,
+  type DocumentSellerContact,
   type NumberSystemsSetting,
   type Permission,
   type TermPreset,
@@ -64,13 +66,15 @@ export interface DisplaySettings {
   /** Currencies a document may use (D44): the pickers on every staff screen offer only these. */
   enabledCurrencies: string[];
   /** The four contact keys of the company profile that a printed document shows (phones, email, signatory); no tax ids or addresses beyond what screens need. */
-  sellerContact: {
-    phones: string[];
-    email: string | null;
-    signatoryName: string | null;
-    signatoryTitle: string | null;
-  };
+  sellerContact: DocumentSellerContact;
 }
+
+const EMPTY_SELLER_CONTACT: DocumentSellerContact = {
+  phones: [],
+  email: null,
+  signatoryName: null,
+  signatoryTitle: null,
+};
 
 function parse<S extends z.ZodType>(schema: S, value: unknown, what: string): z.infer<S> {
   const parsed = schema.safeParse(value);
@@ -141,14 +145,10 @@ export class DocumentSettingsService {
       numberSystems,
       dateFormat,
       enabledCurrencies,
-      sellerContact: {
-        // A hand-edited row may miss a key: the contact block is then empty rather than failing the whole read,
-        // which every staff screen needs for its number, date and currency settings.
-        phones: Array.isArray(profile.phones) ? [...profile.phones] : [],
-        email: profile.email ?? null,
-        signatoryName: profile.signatoryName ?? null,
-        signatoryTitle: profile.signatoryTitle ?? null,
-      },
+      // The same contact an invoice freezes at its first print, so the fallback for an unfrozen copy matches: phones in
+      // print form. A profile that does not validate (a hand-edited row) gives an empty contact block rather than
+      // failing the whole read, which every staff screen needs for its number, date and currency settings.
+      sellerContact: documentSellerContact(profile) ?? EMPTY_SELLER_CONTACT,
     };
   }
 
