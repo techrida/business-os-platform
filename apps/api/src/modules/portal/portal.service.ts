@@ -201,6 +201,13 @@ export class PortalService {
     assertCustomerCaller(p);
     const source = await this.store.loadView(p, versionId);
     // Decide visibility before any further read, so a hidden version costs no document or settings lookup.
+    if (source !== undefined && source.version.status === 'cancelled' && source.sentAt !== null) {
+      // The customer was sent this version (the mail link names it), so its existence is no secret: say it is closed.
+      throw new ConflictException({
+        code: 'quotation_closed',
+        message: 'This quotation is no longer open',
+      });
+    }
     if (source === undefined || !isPortalVisible(source.version)) throw notFound();
     const scope = scopeOf(p);
 
@@ -226,6 +233,7 @@ export class PortalService {
       issuerLegalName: _legalName,
       documentStyle: _documentStyle,
       renderAttempts,
+      sentAt: _sentAt,
       ...input
     } = source;
     const afterAcceptance =

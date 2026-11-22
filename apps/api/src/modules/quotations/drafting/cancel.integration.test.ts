@@ -20,11 +20,13 @@ import {
 import {
   approvalRequests,
   opportunities,
+  outbox,
   quotations,
   quotationStatusHistory,
   quotationVersions,
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
+import type { Queue } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -35,7 +37,9 @@ import type { AuthzService } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import type { UserDirectory } from '../../../platform/authz/user-directory';
+import type { CoreConfig } from '../../../platform/config/config';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { NotifyService } from '../../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
@@ -548,6 +552,76 @@ describe('the Lost cascade (QuotationLostHandler)', () => {
       }),
     ).rejects.toThrow('the loss could not be recorded');
     expect((await versionRow(q.currentVersionId)).status).toBe('draft');
+  });
+
+  it("drops a cancelled Sent version's still-pending \"ready to review\" mail, and leaves claimed, sent and unrelated mail alone", async () => {
+    // The real producer: QuotationSendService queues this mail through notifyEmail with these fields.
+    const notify = new NotifyService(
+      db,
+      {
+        WORKSPACE_PUBLIC_URL: 'https://workspace.example.com',
+        PORTAL_PUBLIC_URL: 'https://portal.example.com',
+      } as CoreConfig,
+      {} as unknown as UserDirectory,
+      {} as Queue,
+    );
+    const queueSentMail = (q: QuotationDto) =>
+      withTx(db, scopeA, systemActor('test'), (tx) =>
+        notify.notifyEmail(tx, {
+          toEmail: 'buyer@example.test',
+          template: 'quotation.sent',
+          data: {
+            quotationNumber: q.number,
+            customerName: 'Himal Traders',
+            validUntil: '2026-12-09',
+            linkPath: `/quotations/${q.currentVersionId}`,
+          },
+          dedupeKey: `quotation.sent:${q.currentVersionId}`,
+        }),
+      );
+    const setMailStatus = (q: QuotationDto, status: 'sending' | 'sent') =>
+      withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx.execute(
+          status === 'sending'
+            ? sql`UPDATE app.outbox SET status = 'sending', claimed_at = now()
+                   WHERE dedupe_key = ${`quotation.sent:${q.currentVersionId}`}`
+            : sql`UPDATE app.outbox SET status = 'sent', sent_at = now()
+                   WHERE dedupe_key = ${`quotation.sent:${q.currentVersionId}`}`,
+        ),
+      );
+    const mailOf = async (q: QuotationDto) =>
+      (
+        await withTx(db, scopeA, systemActor('test'), (tx) =>
+          tx
+            .select({ status: outbox.status })
+            .from(outbox)
+            .where(eq(outbox.dedupeKey, `quotation.sent:${q.currentVersionId}`)),
+        )
+      ).map((r) => r.status);
+
+    const opportunityId = await opportunityInA();
+    const mk = () => drafting.create(goldenCreateBody(f, { opportunityId }), `c-${randomUUID()}`);
+    const pending = await mk();
+    const claimed = await mk();
+    const delivered = await mk();
+    const otherDeal = await createQuotation();
+    for (const q of [pending, claimed, delivered, otherDeal]) {
+      await advance(q.currentVersionId, 'sent');
+      await queueSentMail(q);
+    }
+    await setMailStatus(claimed, 'sending');
+    await setMailStatus(delivered, 'sent');
+    expect(await mailOf(pending)).toEqual(['pending']);
+
+    await lose(opportunityId);
+
+    for (const q of [pending, claimed, delivered]) {
+      expect((await versionRow(q.currentVersionId)).status, q.number).toBe('cancelled');
+    }
+    expect(await mailOf(pending)).toEqual([]);
+    expect(await mailOf(claimed)).toEqual(['sending']);
+    expect(await mailOf(delivered)).toEqual(['sent']);
+    expect(await mailOf(otherDeal)).toEqual(['pending']);
   });
 
   it('through the real changeStage route: the manager who marks the deal lost is the actor, a failing cascade keeps it open, and the quotation is cancelled with the lost reason', async () => {

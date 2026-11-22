@@ -41,6 +41,7 @@ export type ErrorCode =
   | 'contact_email_required'
   | 'quotation_not_sent'
   | 'quotation_expired'
+  | 'quotation_closed'
   | 'quotation_pdf_not_ready'
   // The staff PDF downloads and their Retry (PDF_STATE_CODES): each code has one status.
   | 'quotation_pdf_failed'
@@ -216,6 +217,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   contact_email_required: 'This customer needs a contact with an email',
   quotation_not_sent: 'This quotation is not open for an answer',
   quotation_expired: 'This quotation has expired',
+  quotation_closed: 'This quotation is no longer open',
   quotation_pdf_not_ready: 'The PDF of this quotation version is not ready to download',
   quotation_pdf_failed: 'The PDF could not be prepared',
   quotation_pdf_unavailable: 'This PDF is not available',
@@ -404,6 +406,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // validity ended before the decision day (`quotation_expired`). The portal shows "already answered".
   'quotation_not_sent',
   'quotation_expired',
+  // R5 EF2: the portal link of a sent version that was cancelled (a Lost deal); the page says it is no longer open.
+  'quotation_closed',
   // The staff PDF download: the version has no rendered file yet, or it has not scanned clean.
   'quotation_pdf_not_ready',
   // K8 portal access grant: the customer's KYB case is not approved, the customer was merged away, or the
