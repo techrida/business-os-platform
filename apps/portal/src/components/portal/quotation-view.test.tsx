@@ -38,6 +38,27 @@ vi.mock('@/components/ui/document-viewer', async (importOriginal) => {
 const TODAY = '2026-11-10';
 
 describe('QuotationView markup', () => {
+  it("prints each party's address as street, city and country name, a foreign customer's included", () => {
+    const view = sampleView({
+      issuer: {
+        legalName: 'Techrida Pvt. Ltd.',
+        panVatNo: '601234567',
+        country: 'NP',
+        address: { line: 'Jhamsikhel Road\nWard 3', city: 'Lalitpur' },
+      },
+      customer: {
+        legalName: 'Acme Inc.',
+        panVatNo: null,
+        country: 'US',
+        address: { line: '1 Market St', city: 'San Francisco' },
+      },
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('Jhamsikhel Road<br/>Ward 3<br/>Lalitpur<br/>Nepal</address>');
+    expect(html).toContain('1 Market St<br/>San Francisco<br/>United States</address>');
+    expect(html).not.toContain('undefined');
+  });
+
   it('shows a USD quotation with every field filled and no internal word anywhere', () => {
     const html = renderToStaticMarkup(<QuotationView view={sampleView()} today={TODAY} />);
     expect(forbiddenIn(html)).toEqual([]);

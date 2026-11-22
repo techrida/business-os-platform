@@ -36,7 +36,7 @@ const stored: CompanyProfile = {
   ...EMPTY_COMPANY_PROFILE,
   displayName: 'Acme',
   legacyLogoDataUrl: PNG,
-  phones: ['01-4000000'],
+  phones: [{ country: 'NP', e164: '+97714000000', label: null }],
   email: 'a@acme.test',
   signatoryName: 'Sita',
 };
@@ -103,7 +103,16 @@ describe('saveCompanyCardAction', () => {
       IDLE,
       form({
         card: 'contact',
-        phone: ['+9779800000000', ''],
+        'phones.0.number': '+9779800000000',
+        'phones.0.country': 'NP',
+        'phones.0.label': '',
+        'phones.0.isPrimary': 'true',
+        'phones.1.number': '+14155552671',
+        'phones.1.country': 'US',
+        'phones.1.label': 'work',
+        'phones.1.isPrimary': 'false',
+        'phones.2.number': '',
+        'phones.2.country': 'NP',
         email: 'b@acme.test',
         website: 'acme.test',
       }),
@@ -111,19 +120,62 @@ describe('saveCompanyCardAction', () => {
     expect(written()).toEqual([
       [
         'entity.profile',
-        { ...stored, phones: ['+9779800000000'], email: 'b@acme.test', website: 'acme.test' },
+        {
+          ...stored,
+          phones: [
+            { country: 'NP', e164: '+9779800000000', label: null },
+            { country: 'US', e164: '+14155552671', label: 'work' },
+          ],
+          email: 'b@acme.test',
+          website: 'acme.test',
+        },
       ],
     ]);
   });
 
-  it('Address writes entity.address only, with blank optional parts left out', async () => {
+  it('Address writes entity.address only: line, city and country', async () => {
     await saveCompanyCardAction(
       IDLE,
-      form({ card: 'address', line1: 'Durbar Marg', line2: '', city: 'Kathmandu', country: 'NP' }),
+      form({
+        card: 'address',
+        'address.line': ' Durbar Marg ',
+        'address.city': 'Kathmandu',
+        'address.country': 'NP',
+      }),
     );
     expect(written()).toEqual([
-      ['entity.address', { line1: 'Durbar Marg', city: 'Kathmandu', country: 'NP' }],
+      ['entity.address', { line: 'Durbar Marg', city: 'Kathmandu', country: 'NP' }],
     ]);
+  });
+
+  it('refuses an address without a country and writes nothing', async () => {
+    const result = await saveCompanyCardAction(
+      IDLE,
+      form({ card: 'address', 'address.line': 'Durbar Marg', 'address.city': 'Kathmandu' }),
+    );
+    expect(result).toMatchObject({
+      status: 'error',
+      fieldErrors: { country: 'Choose a country.' },
+    });
+    expect(putSetting).not.toHaveBeenCalled();
+  });
+
+  it('refuses a number posted under the wrong country, at its row', async () => {
+    const result = await saveCompanyCardAction(
+      IDLE,
+      form({
+        card: 'contact',
+        'phones.0.number': '+14155552671',
+        'phones.0.country': 'NP',
+        email: '',
+        website: '',
+      }),
+    );
+    expect(result).toMatchObject({
+      status: 'error',
+      fieldErrors: { 'phones.0': 'A Nepal number starts with +977.' },
+    });
+    expect(putSetting).not.toHaveBeenCalled();
   });
 
   it('has no logo card: the logo is moved by its upload, so a form cannot set or clear it', async () => {
@@ -142,10 +194,16 @@ describe('saveCompanyCardAction', () => {
     const withLogo: CompanyProfile = { ...stored, logoDocumentId: DOC_ID, legacyLogoDataUrl: PNG };
     const saves: Record<string, string | string[]>[] = [
       { card: 'identity', displayName: 'Acme Pvt', panVatNo: '' },
-      { card: 'contact', phone: ['+9779800000000'], email: '', website: '' },
+      {
+        card: 'contact',
+        'phones.0.number': '+9779800000000',
+        'phones.0.country': 'NP',
+        email: '',
+        website: '',
+      },
       { card: 'signatory', name: 'Ram', title: 'Director' },
       // A smuggled logo field is ignored: only the card's own fields are read.
-      { card: 'contact', phone: [], email: '', website: '', logoDocumentId: '', logo: '' },
+      { card: 'contact', email: '', website: '', logoDocumentId: '', logo: '' },
     ];
     for (const entries of saves) {
       values['entity.profile'] = withLogo;
@@ -225,7 +283,12 @@ describe('saveCompanyCardAction: the loaded version', () => {
   it('sends null when the page loaded the default (an empty field)', async () => {
     await saveCompanyCardAction(
       IDLE,
-      form({ card: 'address', line1: 'Durbar Marg', city: 'Kathmandu', country: 'NP' }),
+      form({
+        card: 'address',
+        'address.line': 'Durbar Marg',
+        'address.city': 'Kathmandu',
+        'address.country': 'NP',
+      }),
     );
     expect(putSetting).toHaveBeenCalledTimes(1);
     expect(putSetting.mock.calls[0]?.[3]).toBeNull();

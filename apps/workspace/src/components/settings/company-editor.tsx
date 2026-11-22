@@ -1,28 +1,33 @@
 'use client';
 
-import { useActionState, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useActionState,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import shell from '@/app/(app)/settings/_components/settings.module.css';
 import { IDLE, type ActionState } from '@/app/(app)/settings/action-state';
 import { FormStatus } from '@/app/(app)/settings/form-status';
+import { AddressFields } from '@/components/ui/address-fields';
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/field';
-import { Icon } from '@/components/ui/icon';
+import { Field, Input } from '@/components/ui/field';
 import { PanInput } from '@/components/ui/pan-input';
-import { PhoneInput } from '@/components/ui/phone-input';
 import { Panel } from '@/components/ui/panel';
+import { PhoneListInput } from '@/components/ui/phone-list-input';
 
 import {
-  addPhone,
-  canAddPhone,
   companyLogo,
-  countryOptions,
   draftsFromSettings,
   isCardEmpty,
   logoSource,
-  removePhone,
+  phoneListDefault,
+  profilePhones,
   sameDraft,
-  setPhone,
   versionFieldName,
   versionFieldValue,
   CARD_WRITES,
@@ -73,6 +78,10 @@ const UNDO: Record<ResettableCard, { label: string; confirm: ResetConfirm }> = {
 };
 
 const ADDRESS_HELP = 'Quotations and invoices cannot be made into PDFs until an address is saved.';
+
+/** The server's error for each phone row (`phones.<row>`), by row position, for the phone list. */
+const phoneRowErrors = (errors: FieldErrors): (string | undefined)[] =>
+  Array.from({ length: 20 }, (_, row) => errors[`phones.${row}`]);
 
 /** One string for the loaded versions of every setting a card writes (`useStaleVersion` compares it). */
 const loadedKey = (card: CompanyCard, version: (key: CompanyKey) => string): string =>
@@ -203,9 +212,12 @@ export function CompanyEditor({
       }),
     [],
   );
-  // Each phone row keeps its own key, so removing one row leaves the others' boxes (and their edit state) alone.
-  const [phoneIds, setPhoneIds] = useState<(number | string)[]>([]);
-  const nextPhoneId = useRef(0);
+  // How many rows the phone list would not save (typed but not a valid number, or listed twice). It belongs to the
+  // list of one profile version: a list remounted for a newer version starts with none.
+  const phonesLegendId = useId();
+  const phoneListKey = `phones-${versionFieldValue(versions['entity.profile'])}`;
+  const [phoneCheck, setPhoneCheck] = useState({ list: phoneListKey, problems: 0 });
+  const phoneProblems = phoneCheck.list === phoneListKey ? phoneCheck.problems : 0;
   const dirty = (card: keyof CompanyDrafts) =>
     edits[card] !== undefined && !sameDraft(edits[card], base[card]);
 
@@ -214,10 +226,7 @@ export function CompanyEditor({
   const address = draft.address;
   const contact = draft.contact;
   const signatory = draft.signatory;
-  const phoneRows = contact.phones.length === 0 ? [''] : contact.phones;
-  // A stored row has no key yet (`stored-n`, stable while the list is only edited); every row added or left after a
-  // removal gets a fresh counter key, never an index, so a new field mounts in the Nepal mode.
-  const rowKeys = phoneRows.map((_, i) => phoneIds[i] ?? `stored-${i}`);
+  const tooManyPhones = contact.phones.length > MAX_PHONES;
   const setContact = (patch: Partial<typeof contact>) => edit('contact', { ...contact, ...patch });
 
   // The undo icon is drawn only while what is SAVED for the card differs from empty. A reset that
@@ -295,93 +304,13 @@ export function CompanyEditor({
           onSaved={() => clear('address')}
         >
           {(errors) => (
-            <div className={shell.fields}>
-              <div className={shell.wide}>
-                <Field label="Address line 1" error={errors['line1']}>
-                  {(control) => (
-                    <Input
-                      name="line1"
-                      autoComplete="address-line1"
-                      value={address.line1}
-                      onChange={(e) => edit('address', { ...address, line1: e.target.value })}
-                      {...control}
-                    />
-                  )}
-                </Field>
-              </div>
-              <div className={shell.wide}>
-                <Field label="Address line 2 (optional)" error={errors['line2']}>
-                  {(control) => (
-                    <Input
-                      name="line2"
-                      autoComplete="address-line2"
-                      value={address.line2}
-                      onChange={(e) => edit('address', { ...address, line2: e.target.value })}
-                      {...control}
-                    />
-                  )}
-                </Field>
-              </div>
-              <Field label="City" error={errors['city']}>
-                {(control) => (
-                  <Input
-                    name="city"
-                    autoComplete="address-level2"
-                    value={address.city}
-                    onChange={(e) => edit('address', { ...address, city: e.target.value })}
-                    {...control}
-                  />
-                )}
-              </Field>
-              <Field label="District (optional)" error={errors['district']}>
-                {(control) => (
-                  <Input
-                    name="district"
-                    value={address.district}
-                    onChange={(e) => edit('address', { ...address, district: e.target.value })}
-                    {...control}
-                  />
-                )}
-              </Field>
-              <Field label="Province (optional)" error={errors['province']}>
-                {(control) => (
-                  <Input
-                    name="province"
-                    autoComplete="address-level1"
-                    value={address.province}
-                    onChange={(e) => edit('address', { ...address, province: e.target.value })}
-                    {...control}
-                  />
-                )}
-              </Field>
-              <Field label="Postal code (optional)" error={errors['postalCode']}>
-                {(control) => (
-                  <Input
-                    name="postalCode"
-                    autoComplete="postal-code"
-                    value={address.postalCode}
-                    onChange={(e) => edit('address', { ...address, postalCode: e.target.value })}
-                    {...control}
-                  />
-                )}
-              </Field>
-              <Field label="Country" error={errors['country']}>
-                {(control) => (
-                  <Select
-                    name="country"
-                    value={address.country}
-                    onChange={(e) => edit('address', { ...address, country: e.target.value })}
-                    {...control}
-                  >
-                    {countryOptions(address.country).map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-            </div>
+            <AddressFields
+              name="address"
+              required
+              value={address}
+              onChange={(next) => edit('address', next)}
+              errors={{ line: errors['line'], city: errors['city'], country: errors['country'] }}
+            />
           )}
         </CardForm>
 
@@ -392,54 +321,33 @@ export function CompanyEditor({
           actions={undo('contact')}
           action={action}
           versions={versions}
-          dirty={dirty('contact')}
+          dirty={dirty('contact') && phoneProblems === 0 && !tooManyPhones}
           onSaved={() => clear('contact')}
         >
           {(errors) => (
             <>
               <fieldset className={styles.phones}>
-                <legend className={styles.legend}>Phone numbers</legend>
-                {phoneRows.map((phone, index) => (
-                  <div key={rowKeys[index]} className={styles.phoneRow}>
-                    <PhoneInput
-                      name="phone"
-                      aria-label={`Phone number ${index + 1}`}
-                      value={phone}
-                      onValueChange={(posted) =>
-                        setContact({ phones: setPhone(phoneRows, index, posted) })
-                      }
-                    />
-                    <Button
-                      variant="ghost"
-                      size="small"
-                      aria-label={`Remove phone number ${index + 1}`}
-                      onClick={() => {
-                        const left = rowKeys.filter((_, i) => i !== index);
-                        setPhoneIds(left.length === 0 ? [nextPhoneId.current++] : left);
-                        setContact({ phones: removePhone(phoneRows, index) });
-                      }}
-                    >
-                      <Icon name="x" size={16} />
-                    </Button>
-                  </div>
-                ))}
-                {errors['phones'] ? (
-                  <span className={styles.error} role="alert">
-                    {errors['phones']}
-                  </span>
-                ) : null}
-                <Button
-                  variant="secondary"
-                  size="small"
-                  className={styles.addPhone}
-                  disabled={!canAddPhone(phoneRows)}
-                  onClick={() => {
-                    setPhoneIds([...rowKeys, nextPhoneId.current++]);
-                    setContact({ phones: addPhone(phoneRows) });
-                  }}
-                >
-                  Add phone number
-                </Button>
+                <legend id={phonesLegendId} className={styles.legend}>
+                  Phone numbers
+                </legend>
+                {/* Not fully controlled: it opens with the draft (which a form reset after a refused save restores)
+                    and starts over when a save or reset brings a new profile version. */}
+                <PhoneListInput
+                  key={phoneListKey}
+                  name="phones"
+                  aria-labelledby={phonesLegendId}
+                  defaultValue={phoneListDefault(contact.phones)}
+                  onChange={(phones) => setContact({ phones: profilePhones(phones) })}
+                  onValidityChange={(problems) =>
+                    setPhoneCheck({ list: phoneListKey, problems: problems.length })
+                  }
+                  rowErrors={phoneRowErrors(errors)}
+                  error={
+                    tooManyPhones
+                      ? `The documents print up to ${MAX_PHONES} numbers. Remove one to save.`
+                      : errors['phones']
+                  }
+                />
                 <span className={styles.help}>Up to {MAX_PHONES} numbers.</span>
               </fieldset>
               <div className={shell.fields}>
@@ -522,7 +430,7 @@ export function CompanyEditor({
           logo: logoSource(logo),
           displayName: identity.displayName,
           address,
-          phones: contact.phones,
+          phones: contact.phones.map((phone) => phone.e164),
           email: contact.email,
           website: contact.website,
           panVatNo: identity.panVatNo,

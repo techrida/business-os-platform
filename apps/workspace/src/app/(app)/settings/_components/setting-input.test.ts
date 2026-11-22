@@ -293,7 +293,7 @@ describe('parseSettingInput: the selling entity', () => {
   });
 
   it('parses the address from JSON, an empty field is null, a bad one is refused', () => {
-    const address = { line1: 'Kupondole', city: 'Lalitpur', country: 'NP' };
+    const address = { line: 'Kupondole', city: 'Lalitpur', country: 'NP' };
     expect(parseSettingInput('entity.address', [JSON.stringify(address)])).toEqual({
       ok: true,
       value: address,
@@ -301,6 +301,15 @@ describe('parseSettingInput: the selling entity', () => {
     expect(parseSettingInput('entity.address', [''])).toEqual({ ok: true, value: null });
     expect(parseSettingInput('entity.address', ['{']).ok).toBe(false);
     expect(parseSettingInput('entity.address', ['{"city":"Lalitpur","country":"NP"}']).ok).toBe(
+      false,
+    );
+    // The pre-FX9 shape (line1) and an address without its country are refused.
+    expect(
+      parseSettingInput('entity.address', [
+        '{"line1":"Kupondole","city":"Lalitpur","country":"NP"}',
+      ]).ok,
+    ).toBe(false);
+    expect(parseSettingInput('entity.address', ['{"line":"Kupondole","city":"Lalitpur"}']).ok).toBe(
       false,
     );
   });

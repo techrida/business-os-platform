@@ -150,9 +150,13 @@ describe('Company profile and Number format pages', () => {
         version: 4,
         value:
           key === 'entity.profile'
-            ? { ...EMPTY_COMPANY_PROFILE, phones: ['01-4000000'], signatoryName: 'Sita' }
+            ? {
+                ...EMPTY_COMPANY_PROFILE,
+                phones: [{ country: 'NP', e164: '+97714000000', label: null }],
+                signatoryName: 'Sita',
+              }
             : key === 'entity.address'
-              ? { line1: 'Durbar Marg', city: 'Kathmandu', country: 'NP' }
+              ? { line: 'Durbar Marg', city: 'Kathmandu', country: 'NP' }
               : null,
       }),
     );

@@ -6,15 +6,22 @@
 // everything else is the single value `entity.profile`. `entity.profile.panVatNo` is never written: it
 // stays null and the document snapshot falls back to `entity.pan_vat_no`.
 import {
-  AddressSchema,
+  CompanyPhoneSchema,
+  CompanyProfileSchema,
+  DEFAULT_COUNTRY,
   EMPTY_COMPANY_PROFILE,
+  MAX_COMPANY_PHONES,
   NepalPanSchema,
   PanVatNoSchema,
-  PhoneSchema,
-  StoredCompanyProfileSchema,
+  PrintAddressSchema,
+  formatAddressLines,
   imagePath,
-  type Address,
+  isCountryCode,
+  type CompanyPhone,
   type CompanyProfile,
+  type CountryCode,
+  type PartyPhoneInput,
+  type PrintAddress,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -47,54 +54,25 @@ export const logoSource = (logo: CompanyLogo): string | null =>
 // Phones
 // ---------------------------------------------------------------------------------------------
 
-export const MAX_PHONES = 4;
+/** The most numbers the profile prints (`MAX_COMPANY_PHONES`); the phone list itself would take one more. */
+export const MAX_PHONES = MAX_COMPANY_PHONES;
 
-/** The list with one more empty row, or the same list at the limit. */
-export function addPhone(phones: readonly string[]): string[] {
-  return phones.length >= MAX_PHONES ? [...phones] : [...phones, ''];
+/**
+ * The saved numbers as the phone list opens with them. The profile has no primary number (the order is the print
+ * order), but the list always marks one, so the first row carries it; the save ignores it.
+ */
+export function phoneListDefault(phones: readonly CompanyPhone[]): PartyPhoneInput[] {
+  return phones.map((phone, index) => ({
+    country: phone.country,
+    e164: phone.e164,
+    label: phone.label ?? null,
+    isPrimary: index === 0,
+  }));
 }
 
-export function removePhone(phones: readonly string[], index: number): string[] {
-  return phones.filter((_, i) => i !== index);
-}
-
-export function setPhone(phones: readonly string[], index: number, value: string): string[] {
-  return phones.map((phone, i) => (i === index ? value : phone));
-}
-
-export const canAddPhone = (phones: readonly string[]): boolean => phones.length < MAX_PHONES;
-
-// ---------------------------------------------------------------------------------------------
-// Countries
-// ---------------------------------------------------------------------------------------------
-
-export const COUNTRIES: readonly { code: string; name: string }[] = [
-  { code: 'NP', name: 'Nepal' },
-  { code: 'IN', name: 'India' },
-  { code: 'BD', name: 'Bangladesh' },
-  { code: 'BT', name: 'Bhutan' },
-  { code: 'LK', name: 'Sri Lanka' },
-  { code: 'CN', name: 'China' },
-  { code: 'SG', name: 'Singapore' },
-  { code: 'AE', name: 'United Arab Emirates' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'US', name: 'United States' },
-  { code: 'CA', name: 'Canada' },
-  { code: 'AU', name: 'Australia' },
-  { code: 'DE', name: 'Germany' },
-];
-
-export const DEFAULT_COUNTRY = 'NP';
-
-export const countryName = (code: string): string =>
-  COUNTRIES.find((c) => c.code === code)?.name ?? code;
-
-/** The select's options; a saved country outside the short list still shows. */
-export function countryOptions(current: string): readonly { code: string; name: string }[] {
-  return COUNTRIES.some((c) => c.code === current) || current === ''
-    ? COUNTRIES
-    : [...COUNTRIES, { code: current, name: current }];
-}
+/** The list's complete numbers as the profile stores them: country, number and label, in order, no primary flag. */
+export const profilePhones = (phones: readonly PartyPhoneInput[]): CompanyPhone[] =>
+  phones.map(({ country, e164, label }) => ({ country, e164, label: label ?? null }));
 
 // ---------------------------------------------------------------------------------------------
 // Drafts: what each card's inputs hold (always strings)
@@ -104,17 +82,15 @@ export interface IdentityDraft {
   displayName: string;
   panVatNo: string;
 }
+/** The company address as its three fields hold it (`AddressFields`): street lines, city and country. */
 export interface AddressDraft {
-  line1: string;
-  line2: string;
+  line: string;
   city: string;
-  district: string;
-  province: string;
-  postalCode: string;
-  country: string;
+  country: CountryCode;
 }
 export interface ContactDraft {
-  phones: string[];
+  /** The complete, valid numbers of the phone list, in print order. */
+  phones: CompanyPhone[];
   email: string;
   website: string;
 }
@@ -138,7 +114,7 @@ export const isCompanyCard = (value: string): value is CompanyCard =>
 /** Everything the page reads: the three stored values. */
 export interface CompanySettings {
   profile: CompanyProfile;
-  address: Address | null;
+  address: PrintAddress | null;
   panVatNo: string | null;
 }
 
@@ -146,16 +122,13 @@ export function draftsFromSettings({ profile, address, panVatNo }: CompanySettin
   return {
     identity: { displayName: profile.displayName ?? '', panVatNo: panVatNo ?? '' },
     address: {
-      line1: address?.line1 ?? '',
-      line2: address?.line2 ?? '',
+      line: address?.line ?? '',
       city: address?.city ?? '',
-      district: address?.district ?? '',
-      province: address?.province ?? '',
-      postalCode: address?.postalCode ?? '',
       country: address?.country ?? DEFAULT_COUNTRY,
     },
     contact: {
-      phones: [...profile.phones],
+      // `label: null` as the phone list reports it, so a stored row without a label is not a change.
+      phones: profilePhones(phoneListDefault(profile.phones)),
       email: profile.email ?? '',
       website: profile.website ?? '',
     },
@@ -179,28 +152,17 @@ function normalise(value: unknown): unknown {
 export const sameDraft = (a: unknown, b: unknown): boolean =>
   JSON.stringify(normalise(a)) === JSON.stringify(normalise(b));
 
-/** The lines of the address as it prints, for the letterhead preview. Empty parts are skipped. */
-export function addressLines(draft: AddressDraft): string[] {
-  const join = (...parts: string[]) =>
-    parts
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .join(', ');
-  const hasAny = [
-    draft.line1,
-    draft.line2,
-    draft.city,
-    draft.district,
-    draft.province,
-    draft.postalCode,
-  ].some((p) => p.trim() !== '');
-  return [
-    draft.line1.trim(),
-    draft.line2.trim(),
-    join(draft.city, draft.district),
-    join(draft.province, draft.postalCode),
-    hasAny ? countryName(draft.country) : '',
-  ].filter(Boolean);
+/**
+ * The lines of an address as a document prints it (line, city, country), for the letterhead preview. The country is
+ * left out when it is `ownCountry`, as the PDFs leave out the issuing company's own. Nothing typed: no lines.
+ */
+export function addressLines(draft: AddressDraft, ownCountry?: CountryCode): string[] {
+  const line = draft.line.trim();
+  const city = draft.city.trim();
+  if (line === '' && city === '') return [];
+  return formatAddressLines({ line, city }, draft.country, ownCountry).filter(
+    (part) => part !== '',
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -241,57 +203,99 @@ export function parseIdentity(
 }
 
 const ADDRESS_LABEL: Record<keyof AddressDraft, string> = {
-  line1: 'address line 1',
-  line2: 'address line 2',
+  line: 'address',
   city: 'city',
-  district: 'district',
-  province: 'province',
-  postalCode: 'postal code',
   country: 'country',
 };
 
-/** An address with nothing typed is "no address" (null). Otherwise line 1, city and country are required. */
-export function parseAddress(draft: AddressDraft): Parsed<Address | null> {
-  const typed = (['line1', 'line2', 'city', 'district', 'province', 'postalCode'] as const).some(
-    (k) => draft[k].trim() !== '',
-  );
-  if (!typed) return { ok: true, value: null };
-  const errors: FieldErrors = {};
-  for (const key of ['line1', 'city'] as const) {
-    if (draft[key].trim() === '') errors[key] = `Enter the ${ADDRESS_LABEL[key]}.`;
-  }
+/**
+ * An address with no street lines and no city is "no address" (null): the country select always holds a value, so
+ * it alone is not an address. Otherwise all three are required. Errors are keyed `line`, `city` and `country`.
+ */
+export function parseAddress(draft: {
+  line: string;
+  city: string;
+  country: string;
+}): Parsed<PrintAddress | null> {
+  const line = draft.line.trim();
+  const city = draft.city.trim();
   const country = draft.country.trim();
-  if (!/^[A-Z]{2}$/.test(country)) errors['country'] = 'Choose a country.';
-  const candidate: Record<string, string> = { country };
-  for (const key of ['line1', 'line2', 'city', 'district', 'province', 'postalCode'] as const) {
-    const value = blank(draft[key]);
-    if (value !== null) candidate[key] = value;
-  }
-  const parsed = AddressSchema.safeParse(candidate);
+  if (line === '' && city === '') return { ok: true, value: null };
+  const errors: FieldErrors = {};
+  if (line === '') errors['line'] = 'Enter the address.';
+  if (city === '') errors['city'] = 'Enter the city.';
+  if (!isCountryCode(country)) errors['country'] = 'Choose a country.';
+  const parsed = PrintAddressSchema.safeParse({ line, city, country });
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       const key = String(issue.path[0] ?? '');
       if (key in ADDRESS_LABEL && errors[key] === undefined) {
         errors[key] =
           issue.code === 'too_big'
-            ? tooLong(Number((issue as { maximum?: number }).maximum ?? 200))
+            ? tooLong(Number((issue as { maximum?: number }).maximum ?? 300))
             : `Check the ${ADDRESS_LABEL[key as keyof AddressDraft]}.`;
       }
     }
   }
-  if (Object.keys(errors).length > 0) return { ok: false, errors };
-  return { ok: true, value: parsed.success ? parsed.data : null };
+  if (Object.keys(errors).length > 0 || !parsed.success) return { ok: false, errors };
+  return { ok: true, value: parsed.data };
 }
 
-export function parseContact(draft: ContactDraft): Parsed<ProfilePatch> {
+/** A contract phone problem ("not a valid United States number") as a sentence. */
+const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+
+/**
+ * The phone rows as posted: country, number and label, blank rows left out. `row` is the list row each came from, so
+ * an error lands under it (`phones.<row>`). The list's primary flag is not read: the profile prints in row order.
+ */
+export interface PostedPhone {
+  row: number;
+  country: string;
+  e164: string;
+  label: string | null;
+}
+
+/**
+ * Checks the posted numbers: at most four, each a valid number of its own country, none listed twice. An error on one
+ * number is keyed `phones.<row>`, one about the list `phones`.
+ */
+export function parsePhones(posted: readonly PostedPhone[]): Parsed<CompanyPhone[]> {
   const errors: FieldErrors = {};
-  const phones = draft.phones.map((p) => p.trim()).filter(Boolean);
-  if (phones.length > MAX_PHONES) errors['phones'] = `Add up to ${MAX_PHONES} phone numbers.`;
-  const badPhone = phones.find((p) => !PhoneSchema.safeParse(p).success);
-  if (badPhone !== undefined) {
-    errors['phones'] =
-      'Enter each phone as +977 and the number (a 10-digit mobile starting with 9, or a landline of 7 to 9 digits), or +, the country code and the number.';
+  if (posted.length > MAX_PHONES) errors['phones'] = `Add up to ${MAX_PHONES} phone numbers.`;
+  const phones: CompanyPhone[] = [];
+  const seen = new Set<string>();
+  for (const phone of posted) {
+    const key = `phones.${phone.row}`;
+    const parsed = CompanyPhoneSchema.safeParse({
+      country: phone.country,
+      e164: phone.e164,
+      label: phone.label,
+    });
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      errors[key] =
+        issue?.path[0] === 'e164' && issue.message ? sentence(issue.message) : 'Check this number.';
+      continue;
+    }
+    if (seen.has(parsed.data.e164)) {
+      errors[key] = 'This number is already listed.';
+      continue;
+    }
+    seen.add(parsed.data.e164);
+    phones.push({ ...parsed.data, label: parsed.data.label ?? null });
   }
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return { ok: true, value: phones };
+}
+
+export function parseContact(draft: {
+  phones: readonly PostedPhone[];
+  email: string;
+  website: string;
+}): Parsed<ProfilePatch> {
+  const checked = parsePhones(draft.phones);
+  const errors: FieldErrors = checked.ok ? {} : { ...checked.errors };
+  const phones = checked.ok ? checked.value : [];
   const email = blank(draft.email);
   if (email !== null && !z.email().max(200).safeParse(email).success) {
     errors['email'] = 'Enter an email address such as accounts@example.com.';
@@ -328,7 +332,7 @@ export const CARD_WRITES = {
 export interface CardPlan {
   profile?: ProfilePatch;
   panVatNo?: string | null;
-  address?: Address | null;
+  address?: PrintAddress | null;
 }
 
 export interface FormLike {
@@ -340,6 +344,28 @@ const str = (form: FormLike, name: string): string => {
   const value = form.get(name);
   return typeof value === 'string' ? value : '';
 };
+
+/** More rows than the list can hold still reach `parsePhones`, which refuses them; this only bounds the loop. */
+const PHONE_ROWS_READ = 20;
+
+/** The rows a `PhoneListInput` named `phones` posted (`phones.<i>.number`, `.country`, `.label`), blank ones left out. */
+export function postedPhones(form: FormLike): PostedPhone[] {
+  const phones: PostedPhone[] = [];
+  for (let row = 0; row < PHONE_ROWS_READ; row += 1) {
+    const number = form.get(`phones.${row}.number`);
+    if (typeof number !== 'string') break;
+    const e164 = number.trim();
+    if (e164 === '') continue;
+    const label = str(form, `phones.${row}.label`).trim();
+    phones.push({
+      row,
+      country: str(form, `phones.${row}.country`).trim(),
+      e164,
+      label: label === '' ? null : label,
+    });
+  }
+  return phones;
+}
 
 /** Reads one card's fields from the submitted form. `fields` echoes what was typed, for an error reply. */
 export function planCard(
@@ -358,19 +384,15 @@ export function planCard(
     }
     case 'address': {
       const r = parseAddress({
-        line1: str(form, 'line1'),
-        line2: str(form, 'line2'),
-        city: str(form, 'city'),
-        district: str(form, 'district'),
-        province: str(form, 'province'),
-        postalCode: str(form, 'postalCode'),
-        country: str(form, 'country'),
+        line: str(form, 'address.line'),
+        city: str(form, 'address.city'),
+        country: str(form, 'address.country'),
       });
       return r.ok ? { ok: true, value: { address: r.value } } : r;
     }
     case 'contact': {
       const r = parseContact({
-        phones: form.getAll('phone').filter((v): v is string => typeof v === 'string'),
+        phones: postedPhones(form),
         email: str(form, 'email'),
         website: str(form, 'website'),
       });
@@ -466,11 +488,11 @@ export function parseCompanySettings(raw: {
   address: unknown;
   panVatNo: unknown;
 }): { ok: true; data: CompanySettings } | { ok: false; message: string } {
-  // Stored rows may still hold free-text phones or a loose PAN from before the strict contracts; they open as stored.
-  const profile = StoredCompanyProfileSchema.safeParse(raw.profile);
+  // Read as strictly as it is written (FX9): phones carry their country, the address is line, city and country.
+  const profile = CompanyProfileSchema.safeParse(raw.profile);
   if (!profile.success)
     return { ok: false, message: 'The saved company profile could not be read.' };
-  const address = AddressSchema.nullable().safeParse(raw.address);
+  const address = PrintAddressSchema.nullable().safeParse(raw.address);
   if (!address.success) return { ok: false, message: 'The saved address could not be read.' };
   const panVatNo = PanVatNoSchema.nullable().safeParse(raw.panVatNo);
   if (!panVatNo.success)
