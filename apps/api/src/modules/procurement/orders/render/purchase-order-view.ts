@@ -5,9 +5,21 @@
 //
 // The lines, the totals and the header terms come from the version's frozen snapshot (purchase_order_versions is
 // immutable), never from the live purchase_order_lines: an amendment moves the live lines, and a reprint of version 1
-// must still say version 1. Only the names that are not in the snapshot (the vendor, the buying entity, the tax code
-// labels, the delivery terms of the request) are read when the version is rendered.
-import { PurchaseOrderAdvancePercentSchema, trimPercent } from '@bos/contracts';
+// must still say version 1. Only the names that are not in the snapshot (the vendor with its address and primary
+// phone, the buying entity and its country, the tax code labels, the delivery terms of the request) are read when the
+// version is rendered.
+//
+// The vendor's address prints as lines (street, city, country name), the country left out when it is the buying
+// entity's own (FX9). The phone is the vendor's primary contact's primary number, in the FX8 print format for a Nepal
+// number and international format for a foreign one.
+import {
+  formatAddressLines,
+  formatPartyPhoneForPrint,
+  isCountryCode,
+  PurchaseOrderAdvancePercentSchema,
+  trimPercent,
+  type CountryCode,
+} from '@bos/contracts';
 import { Dec, formatBs, kathmanduDate } from '@bos/locale';
 import { z } from 'zod';
 
@@ -15,6 +27,14 @@ const money = z.string().regex(/^-?\d+(\.\d+)?$/);
 const party = z.strictObject({
   legalName: z.string().min(1),
   panVatNo: z.string().nullable(),
+});
+const vendorParty = z.strictObject({
+  legalName: z.string().min(1),
+  panVatNo: z.string().nullable(),
+  /** Street, city and (unless it is the buyer's own) the country's name; empty when the vendor has no address. */
+  addressLines: z.array(z.string().min(1)),
+  /** The primary contact's primary number as printed; null when there is none. */
+  phone: z.string().min(1).nullable(),
 });
 
 export const PurchaseOrderRenderViewSchema = z.strictObject({
@@ -29,7 +49,7 @@ export const PurchaseOrderRenderViewSchema = z.strictObject({
     .nullable(),
   currency: z.enum(['NPR', 'INR', 'USD']),
   buyer: party,
-  vendor: party,
+  vendor: vendorParty,
   paymentTermsDays: z.number().int().min(0),
   /** null when no advance is due; "25" for 25 percent. */
   advancePercent: PurchaseOrderAdvancePercentSchema.nullable(),
@@ -87,8 +107,19 @@ export function taxCodeIdsOf(snapshot: unknown): string[] {
 
 export interface PurchaseOrderViewInput {
   version: { version: number; createdAt: Date; total: string; snapshot: unknown };
-  buyer: { legalName: string; panVatNo: string | null };
-  vendor: { legalName: string; pan: string | null };
+  /** `country`: the entity's own (`entity.address`); null when unset, and then a vendor's country always prints. */
+  buyer: { legalName: string; panVatNo: string | null; country: CountryCode | null };
+  vendor: {
+    legalName: string;
+    pan: string | null;
+    /** ISO 3166-1 alpha-2, as stored. */
+    country: string;
+    /** Set together with addressCity or not at all (vendors CHECK). */
+    addressLine: string | null;
+    addressCity: string | null;
+    /** The primary contact's primary phone, E.164; null when the vendor has none. */
+    phoneE164: string | null;
+  };
   delivery: { requiredBy: string | null; deliveryLocation: string | null };
   /** Tax code id -> its code (for example `VAT13`). */
   taxCodes: ReadonlyMap<string, string>;
@@ -159,6 +190,19 @@ export function toPurchaseOrderRenderView(input: PurchaseOrderViewInput): Purcha
     if (!(error instanceof RangeError)) throw error;
   }
 
+  const { vendor } = input;
+  if (!isCountryCode(vendor.country)) {
+    throw new PurchaseOrderNotRenderableError('the vendor country is not known');
+  }
+  const addressLines =
+    vendor.addressLine !== null && vendor.addressCity !== null
+      ? formatAddressLines(
+          { line: vendor.addressLine, city: vendor.addressCity },
+          vendor.country,
+          input.buyer.country ?? undefined,
+        )
+      : [];
+
   const advance = trimPercent(po.advancePercent);
   return PurchaseOrderRenderViewSchema.parse({
     number: po.number,
@@ -167,7 +211,12 @@ export function toPurchaseOrderRenderView(input: PurchaseOrderViewInput): Purcha
     issueDateBs,
     currency: po.currency,
     buyer: { legalName: input.buyer.legalName, panVatNo: input.buyer.panVatNo },
-    vendor: { legalName: input.vendor.legalName, panVatNo: input.vendor.pan },
+    vendor: {
+      legalName: vendor.legalName,
+      panVatNo: vendor.pan,
+      addressLines,
+      phone: vendor.phoneE164 === null ? null : formatPartyPhoneForPrint(vendor.phoneE164),
+    },
     paymentTermsDays: po.paymentTermsDays,
     advancePercent: new Dec(advance).isZero() ? null : advance,
     requiredBy: input.delivery.requiredBy,

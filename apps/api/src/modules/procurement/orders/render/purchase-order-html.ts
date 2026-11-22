@@ -62,6 +62,7 @@ const CSS = `
   .legal { font-weight: 600; font-size: 11pt; }
   .logo { display: block; max-height: 56px; max-width: 60mm; margin-bottom: 6pt; }
   .muted { color: #555; }
+  .addr { white-space: pre-wrap; }
   .parties { display: flex; gap: 24pt; margin-top: 14pt; }
   .parties > div { flex: 1; }
   .meta { width: 100%; border-collapse: collapse; margin-top: 12pt; }
@@ -81,14 +82,20 @@ const CSS = `
   .foot { margin-top: 18pt; font-size: 8.5pt; color: #666; }
 `;
 
-/** One party's block: legal name and PAN. */
+/**
+ * One party's block: legal name, the address lines (one per line; the street keeps its own line breaks), the phone
+ * and the PAN. The buyer has no address or phone here; a vendor without them prints neither.
+ */
 function partyBlock(
   heading: string,
-  p: PurchaseOrderRenderView['vendor'],
+  p: { legalName: string; panVatNo: string | null; addressLines?: string[]; phone?: string | null },
   text: (v: string) => string,
 ) {
+  const address = (p.addressLines ?? []).map((line) => `<div class="addr">${text(line)}</div>`);
   return `<h2>${heading}</h2>
       <div class="legal">${text(p.legalName)}</div>
+      ${address.join('\n      ')}
+      ${p.phone ? `<div>Phone ${text(p.phone)}</div>` : ''}
       ${p.panVatNo ? `<div class="muted">PAN ${text(p.panVatNo)}</div>` : ''}`;
 }
 

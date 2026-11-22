@@ -63,6 +63,23 @@ const snapshot = (over: { currency?: string; lines?: unknown[] } = {}) => ({
   ],
 });
 
+const NP_VENDOR: PurchaseOrderViewInput['vendor'] = {
+  legalName: 'Himal Solar Pvt. Ltd.',
+  pan: '600123456',
+  country: 'NP',
+  addressLine: 'Baneshwor-10',
+  addressCity: 'Kathmandu',
+  phoneE164: '+97714123456',
+};
+const US_VENDOR: PurchaseOrderViewInput['vendor'] = {
+  legalName: 'Pacific Inverters Inc.',
+  pan: null,
+  country: 'US',
+  addressLine: '1 Market St',
+  addressCity: 'San Francisco',
+  phoneE164: '+14155552671',
+};
+
 const input = (over: Partial<PurchaseOrderViewInput> = {}): PurchaseOrderViewInput => ({
   version: {
     version: 1,
@@ -71,8 +88,8 @@ const input = (over: Partial<PurchaseOrderViewInput> = {}): PurchaseOrderViewInp
     total: '2224400.00',
     snapshot: snapshot(),
   },
-  buyer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567' },
-  vendor: { legalName: 'Himal Solar Pvt. Ltd.', pan: '600123456' },
+  buyer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', country: 'NP' },
+  vendor: NP_VENDOR,
   delivery: { requiredBy: '2026-12-01', deliveryLocation: 'Teku warehouse' },
   taxCodes: new Map([
     [VAT, 'VAT13'],
@@ -103,7 +120,12 @@ describe('toPurchaseOrderRenderView', () => {
     expect(view.number).toBe('PO-2083/84-00007');
     expect(view.version).toBe(1);
     expect(view.buyer).toEqual({ legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567' });
-    expect(view.vendor).toEqual({ legalName: 'Himal Solar Pvt. Ltd.', panVatNo: '600123456' });
+    expect(view.vendor).toEqual({
+      legalName: 'Himal Solar Pvt. Ltd.',
+      panVatNo: '600123456',
+      addressLines: ['Baneshwor-10', 'Kathmandu'],
+      phone: '+977 1-4123456',
+    });
     expect(view.paymentTermsDays).toBe(30);
     expect(view.advancePercent).toBe('25');
     expect(view.totals).toEqual({
@@ -200,13 +222,64 @@ describe('toPurchaseOrderRenderView', () => {
       input({
         version: { ...input().version, snapshot: snap },
         delivery: { requiredBy: null, deliveryLocation: null },
-        vendor: { legalName: 'Foreign Supplier Ltd.', pan: null },
+        vendor: { ...US_VENDOR, legalName: 'Foreign Supplier Ltd.' },
       }),
     );
     expect(view.advancePercent).toBeNull();
     expect(view.requiredBy).toBeNull();
     expect(view.deliveryLocation).toBeNull();
     expect(view.vendor.panVatNo).toBeNull();
+  });
+
+  it('prints a Nepal vendor address without the country and the phone in the FX8 format', () => {
+    const view = toPurchaseOrderRenderView(input());
+    expect(view.vendor.addressLines).toEqual(['Baneshwor-10', 'Kathmandu']);
+    expect(view.vendor.phone).toBe('+977 1-4123456');
+  });
+
+  it('prints a foreign vendor with its country name and the phone in international format', () => {
+    const view = toPurchaseOrderRenderView(input({ vendor: US_VENDOR }));
+    expect(view.vendor.addressLines).toEqual(['1 Market St', 'San Francisco', 'United States']);
+    expect(view.vendor.phone).toBe('+1 415 555 2671');
+  });
+
+  it('carries the address and phone to the printed order: no Nepal for an NP entity, a country for a foreign vendor', () => {
+    const domestic = renderPurchaseOrderHtml(toPurchaseOrderRenderView(input()));
+    expect(domestic).toContain('<div class="addr">Kathmandu</div>');
+    expect(domestic).toContain('Phone +977 1-4123456');
+    expect(domestic).not.toContain('Nepal');
+    const foreign = renderPurchaseOrderHtml(
+      toPurchaseOrderRenderView(input({ vendor: US_VENDOR })),
+    );
+    expect(foreign).toContain('<div class="addr">United States</div>');
+    expect(foreign).toContain('Phone +1 415 555 2671');
+  });
+
+  it('prints the country when it differs from the entity own, or when that is unset', () => {
+    const india = toPurchaseOrderRenderView(
+      input({ buyer: { legalName: 'Techrida India', panVatNo: null, country: 'IN' } }),
+    );
+    expect(india.vendor.addressLines).toEqual(['Baneshwor-10', 'Kathmandu', 'Nepal']);
+    const unset = toPurchaseOrderRenderView(
+      input({ buyer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: null, country: null } }),
+    );
+    expect(unset.vendor.addressLines).toEqual(['Baneshwor-10', 'Kathmandu', 'Nepal']);
+  });
+
+  it('prints no address line and no phone when the vendor has neither', () => {
+    const view = toPurchaseOrderRenderView(
+      input({
+        vendor: { ...NP_VENDOR, addressLine: null, addressCity: null, phoneE164: null },
+      }),
+    );
+    expect(view.vendor.addressLines).toEqual([]);
+    expect(view.vendor.phone).toBeNull();
+  });
+
+  it('refuses a vendor whose stored country is not an ISO code', () => {
+    expect(() =>
+      toPurchaseOrderRenderView(input({ vendor: { ...NP_VENDOR, country: 'XX' } })),
+    ).toThrow(PurchaseOrderNotRenderableError);
   });
 
   it('refuses a version whose lines and total disagree', () => {

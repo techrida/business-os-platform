@@ -355,8 +355,25 @@ async function vendor(accountIn: TxScope[]): Promise<{ id: string; name: string;
   const pan = String(200_000_000 + (panSeq += 1));
   await exec(
     scopeA,
-    sql`INSERT INTO app.vendors (id, tenant_id, legal_name, pan, status, created_by, approved_by)
-        VALUES (${partyId}, ${scopeA.tenantId}, ${name}, ${pan}, 'approved', ${U.proc}, ${U.mgmt})`,
+    sql`INSERT INTO app.vendors (id, tenant_id, legal_name, pan, status, created_by, approved_by,
+                                 address_line, address_city)
+        VALUES (${partyId}, ${scopeA.tenantId}, ${name}, ${pan}, 'approved', ${U.proc}, ${U.mgmt},
+                'Baneshwor-10', 'Kathmandu')`,
+  );
+  // The PO prints the primary contact's primary phone; a second, non-primary contact's number must not print.
+  const [primary, other] = [randomUUID(), randomUUID()];
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.vendor_contacts (id, tenant_id, vendor_id, full_name, is_primary)
+        VALUES (${primary}, ${scopeA.tenantId}, ${partyId}, 'Sita Sharma', true),
+               (${other}, ${scopeA.tenantId}, ${partyId}, 'Ram Thapa', false)`,
+  );
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.vendor_contact_phones (tenant_id, contact_id, country, e164, sort_order, is_primary)
+        VALUES (${scopeA.tenantId}, ${primary}, 'NP', '+9779812345678', 1, false),
+               (${scopeA.tenantId}, ${primary}, 'NP', '+97714123456', 0, true),
+               (${scopeA.tenantId}, ${other}, 'NP', '+9779801234567', 0, true)`,
   );
   for (const s of accountIn) {
     await exec(
@@ -604,6 +621,14 @@ describe('purchase order render', () => {
     expect(html).toContain(`PAN/VAT ${ENTITY_PAN}`);
     expect(html).toContain(po.vendor.name);
     expect(html).toContain(`PAN ${po.vendor.pan}`);
+    // FX9: the vendor address as lines and its primary contact's primary phone. The settings fake has no
+    // entity.address, so the entity's country is unknown and the vendor's country prints.
+    expect(html).toContain('<div class="addr">Baneshwor-10</div>');
+    expect(html).toContain('<div class="addr">Kathmandu</div>');
+    expect(html).toContain('<div class="addr">Nepal</div>');
+    expect(html).toContain('<div>Phone +977 1-4123456</div>');
+    expect(html).not.toContain('9812345678');
+    expect(html).not.toContain('9801234567');
     expect(html).toContain('Solar panel array');
     expect(html).toContain('VAT13');
     expect(html).toContain('45 days');

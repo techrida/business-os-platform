@@ -11,7 +11,12 @@ const sample = (over: Partial<PurchaseOrderRenderView> = {}): PurchaseOrderRende
     issueDateBs: '2083-07-24',
     currency: 'NPR',
     buyer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567' },
-    vendor: { legalName: 'Himal Solar Pvt. Ltd.', panVatNo: '600123456' },
+    vendor: {
+      legalName: 'Himal Solar Pvt. Ltd.',
+      panVatNo: '600123456',
+      addressLines: ['Baneshwor-10', 'Kathmandu'],
+      phone: '+977 1-4123456',
+    },
     paymentTermsDays: 30,
     advancePercent: '25',
     requiredBy: '2026-12-01',
@@ -88,6 +93,56 @@ describe('renderPurchaseOrderHtml', () => {
     expect(html).toContain('PAN 600123456');
   });
 
+  it('prints the vendor address one line each and its phone, between the name and the PAN', () => {
+    const html = renderPurchaseOrderHtml(sample());
+    const vendorBlock = html.slice(html.indexOf('<h2>Vendor</h2>'), html.indexOf('<h2>Buyer</h2>'));
+    expect(vendorBlock).toContain('<div class="addr">Baneshwor-10</div>');
+    expect(vendorBlock).toContain('<div class="addr">Kathmandu</div>');
+    expect(vendorBlock).toContain('<div>Phone +977 1-4123456</div>');
+    expect(vendorBlock).not.toContain('Nepal');
+    const order = ['Himal Solar', 'Baneshwor-10', 'Kathmandu', 'Phone', 'PAN 600123456'].map((t) =>
+      vendorBlock.indexOf(t),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // The buyer block prints no address or phone.
+    const buyerBlock = html.slice(
+      html.indexOf('<h2>Buyer</h2>'),
+      html.indexOf('<table class="meta">'),
+    );
+    expect(buyerBlock).not.toContain('class="addr"');
+    expect(buyerBlock).not.toContain('Phone');
+  });
+
+  it('prints a foreign vendor with its country line and an international phone', () => {
+    const html = renderPurchaseOrderHtml(
+      sample({
+        vendor: {
+          legalName: 'Pacific Inverters Inc.',
+          panVatNo: null,
+          addressLines: ['1 Market St', 'San Francisco', 'United States'],
+          phone: '+1 415 555 2671',
+        },
+      }),
+    );
+    expect(html).toContain('<div class="addr">United States</div>');
+    expect(html).toContain('<div>Phone +1 415 555 2671</div>');
+  });
+
+  it('prints no address or phone line for a vendor without them', () => {
+    const html = renderPurchaseOrderHtml(
+      sample({
+        vendor: {
+          legalName: 'Himal Solar Pvt. Ltd.',
+          panVatNo: null,
+          addressLines: [],
+          phone: null,
+        },
+      }),
+    );
+    expect(html).not.toContain('class="addr"');
+    expect(html).not.toContain('Phone');
+  });
+
   it('prints the frozen BS issue date and the converted delivery date in the one long BS form', () => {
     const html = renderPurchaseOrderHtml(sample());
     expect(html).toContain('<span class="bs">(24 Kartik 2083 BS)</span>');
@@ -135,11 +190,19 @@ describe('renderPurchaseOrderHtml', () => {
   it('escapes every text and is self-contained', () => {
     const html = renderPurchaseOrderHtml(
       sample({
-        vendor: { legalName: '<script>alert(1)</script> & Sons', panVatNo: null },
+        vendor: {
+          legalName: '<script>alert(1)</script> & Sons',
+          panVatNo: null,
+          addressLines: ['<b>Lane</b> & Co', 'Kathmandu'],
+          phone: '+977 <i>1</i>',
+        },
       }),
     );
     expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<b>');
+    expect(html).not.toContain('<i>');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; Sons');
+    expect(html).toContain('&lt;b&gt;Lane&lt;/b&gt; &amp; Co');
     expect(html).toContain("default-src 'none'");
     expect(html).not.toMatch(/https?:\/\//);
   });
