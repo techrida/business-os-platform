@@ -186,9 +186,10 @@ export class IdentityReconciler {
   /**
    * Settles a Founder removal the previous lease holder recorded and never cleared (it crashed, or stalled until its
    * lease was taken over): ZITADEL may already have removed that person, so the row is closed and flagged for review
-   * now, as after any ambiguous write, and the record is cleared in the same transaction. A person whose row is no
-   * longer active already counts as removed and only loses the record. No ZITADEL call. Throws when it cannot finish;
-   * the record then stays on the lease.
+   * now, as after any ambiguous write, and the record is cleared in the same transaction. The flag is set whatever the
+   * row shows: a sync may already have mirrored the removal (a fresh admin lock reads as a timed failed-sign-in lock,
+   * which the expiry job would lift), so an inherited lock is pinned as an admin lock. No ZITADEL call. Throws when it
+   * cannot finish; the record then stays on the lease.
    */
   async settleOutstandingRemoval(
     scope: TxScope,
@@ -204,8 +205,9 @@ export class IdentityReconciler {
         await lockAccessRevision(tx, scope.tenantId);
         if (!(await clearRecord(tx))) throw new FounderLeaseLostError();
         const row = await this.store.findById(tx, scope, removal.userId, true);
-        if (!row || row.status !== 'active') return null;
-        const lock = removal.intent === 'lock' ? adminLock() : undefined;
+        if (!row) return null;
+        const lock =
+          removal.intent === 'lock' && row.lockReason !== 'admin' ? adminLock() : undefined;
         await this.store.flagIdentityReview(tx, row.id, lock);
         await this.store.bumpAuthzVersion(tx, scope);
         return {
@@ -213,10 +215,10 @@ export class IdentityReconciler {
           before: {
             status: row.status,
             lockReason: row.lockReason ?? null,
-            reviewRequired: false,
+            reviewRequired: row.identityReviewRequired === true,
           },
           after: {
-            status: 'inactive',
+            status: row.status === 'active' ? 'inactive' : row.status,
             lockReason: lock ? lock.reason : (row.lockReason ?? null),
             reviewRequired: true,
           },
@@ -370,9 +372,18 @@ export async function settleOwnFounderRemoval(
     : 'lost';
 }
 
-/** settleOwnFounderRemoval for a write that must not happen once the lease is lost: throws FounderLeaseLostError. */
-export async function assertFounderLeaseHeld(tx: DbTransaction, userId: string): Promise<void> {
-  if ((await settleOwnFounderRemoval(tx, userId)) === 'lost') throw new FounderLeaseLostError();
+/**
+ * For the final write of every lease-protected change, right after the access-revision lock: checks the lease is still
+ * held and keeps its row locked until the transaction ends, whether or not a removal was recorded (a stalled role set
+ * that grants Founder must not land after a takeover either). Clears this holder's own record with the write. Throws
+ * FounderLeaseLostError (503) when the lease was taken over; then nothing is written.
+ */
+export async function assertFounderLeaseHeld(tx: DbTransaction): Promise<void> {
+  const holder = lease.getStore();
+  if (!holder) return;
+  if (!(await holder.store.settleFounderRemoval(holder.tenantId, holder.leaseId, tx))) {
+    throw new FounderLeaseLostError();
+  }
 }
 
 /**

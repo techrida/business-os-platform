@@ -29,7 +29,7 @@ import { assertWithinOperationDeadline, withFounderRemovalLease } from './identi
 import { UserLocks } from './user-locks';
 import { UserMirror } from './user-mirror';
 import { type UserStatusAction, UserStatusService } from './user-status';
-import type { UsersSyncData } from './users.constants';
+import { lockoutPinnedCursor, type UsersSyncData } from './users.constants';
 import { applyZitadelStatusTransition, FakeZitadel, fakeQueue, zUser } from './users.fakes';
 import { UsersService } from './users.service';
 import { SqlUsersStore, type UserUpdate } from './users.store';
@@ -2131,6 +2131,111 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
         status: 'inactive',
         identityReviewRequired: false,
       });
+    }, 60_000);
+
+    /** A promise H1's ZITADEL call waits on, and one that resolves once H1 reached it. */
+    function stallPoint() {
+      let resume!: () => void;
+      const stalled = new Promise<void>((r) => {
+        resume = r;
+      });
+      let reached!: () => void;
+      const atStall = new Promise<void>((r) => {
+        reached = r;
+      });
+      return { resume, stalled, reached, atStall };
+    }
+    const reach = (atStall: Promise<void>, h1: Promise<unknown>) =>
+      Promise.race([
+        atStall,
+        h1.then((outcome) => {
+          throw new Error(`H1 ended before the stall: ${String(outcome)}`);
+        }),
+      ]);
+
+    it('an inherited lock that a sync already mirrored as a timed lock is flagged and pinned as an admin lock', async () => {
+      const { f, opsId, adminZ, zitadel, ageLease } = await twoFounders();
+      zitadel.grants.set(f.zitadelUserId, ['founder']);
+      // The lockout policy has been in place for an hour, so a fresh lock reads as a failed-sign-in lock.
+      await store.setCursor(
+        lockoutPinnedCursor(f.zitadelOrgId),
+        new Date(Date.now() - 3_600_000).toISOString(),
+      );
+      const stall = stallPoint();
+      zitadel.onCall = async (op, zId) => {
+        if (op === 'lock' && zId === f.zitadelUserId) {
+          zitadel.users.get(zId)!.changedAt = new Date();
+          stall.reached();
+          await stall.stalled;
+        }
+      };
+      const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+      const h1 = status.apply(f.scope, adminActor(opsId), f.userId, 'lock').then(
+        () => 'done' as const,
+        (error: unknown) => error,
+      );
+      await reach(stall.atStall, h1);
+
+      // A sync sees the lock first and mirrors it as a timed lock the expiry job would lift.
+      const mirror = new UserMirror(
+        db,
+        store,
+        zitadel.asClient(),
+        fakeQueue() as unknown as Queue<UsersSyncData>,
+      );
+      await mirror.syncUser(f.zitadelUserId);
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+        status: 'inactive',
+        lockReason: 'failed_sign_ins',
+      });
+
+      await ageLease(301);
+      const refused = await status
+        .apply(f.scope, adminActor(opsId), f.adminId, 'deactivate')
+        .catch((e: unknown) => e);
+      expect((refused as ConflictException).getResponse()).toMatchObject({ code: 'last_founder' });
+      expect(zitadel.calls).not.toContain(`deactivate:${adminZ}`);
+      // The takeover flagged Mina and pinned the lock as an admin lock, which never expires.
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+        status: 'inactive',
+        lockReason: 'admin',
+        identityReviewRequired: true,
+      });
+
+      stall.resume();
+      expect(await h1).toBeInstanceOf(ServiceUnavailableException);
+    }, 60_000);
+
+    it('a stalled role set that granted Founder writes nothing after a takeover, also when the successor is a local no-op', async () => {
+      const { f, opsId, zitadel, ageLease } = await twoFounders();
+      const opsZ = `ops-${f.scope.tenantId}`;
+      const stall = stallPoint();
+      zitadel.onCall = async (op, zId) => {
+        if (op === 'setGrants:founder' && zId === opsZ) {
+          // The double records the call before it applies the grants: apply them now, as ZITADEL already has.
+          zitadel.grants.set(opsZ, ['founder']);
+          stall.reached();
+          await stall.stalled;
+        }
+      };
+      const { mirror } = services(zitadel);
+      // H1 grants Founder to Ops (not a Founder, so no removal is recorded); ZITADEL applies it, then H1 stalls.
+      const h1 = mirror.setRoles(f.scope, adminActor(f.adminId), opsId, ['founder']).then(
+        () => 'done' as const,
+        (error: unknown) => error,
+      );
+      await reach(stall.atStall, h1);
+      expect(zitadel.grants.get(opsZ)).toEqual(['founder']);
+
+      // H2 takes the lease over and restores Ops' roles in ZITADEL; the database already holds them.
+      await ageLease(301);
+      await mirror.setRoles(f.scope, adminActor(f.adminId), opsId, []);
+      expect(zitadel.grants.get(opsZ)).toEqual([]);
+
+      // H1 resumes: its lease is gone, so the stale Founder grant never reaches the database.
+      stall.resume();
+      expect(await h1).toBeInstanceOf(ServiceUnavailableException);
+      expect(await store.rolesOf(db, f.scope.tenantId, opsId)).toEqual([]);
     }, 60_000);
 
     it('the store carries the record across release and takeover, and a taken-over holder can neither record nor clear', async () => {
