@@ -38,7 +38,12 @@ export const hasInnerSpace = (raw: string): boolean => /\s/.test(raw.trim());
  * digits in (see `plainAmount`); anything else comes back unchanged for the caller's digit check to refuse.
  */
 export function canonicalAmount(plain: string): string {
-  return /^\d+\.\d*$/.test(plain) ? plain.replace(/\.?0*$/, '') || '0' : plain;
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(plain)) return plain;
+  // The hydrated box also drops leading zeros (`0500` is `500`) and writes `.5` as `0.5`.
+  const [whole = '', fraction = ''] = plain.split('.');
+  const digits = whole.replace(/^0+(?=\d)/, '') || '0';
+  const kept = fraction.replace(/0+$/, '');
+  return kept === '' ? digits : `${digits}.${kept}`;
 }
 
 /** `plainAmount` then `canonicalAmount`: the text a server action puts in its request body for a typed amount. */

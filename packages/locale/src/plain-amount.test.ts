@@ -72,6 +72,12 @@ describe('canonicalAmount and postedAmount (R5 EF2)', () => {
     expect(canonicalAmount('0.00')).toBe('0');
     expect(canonicalAmount('100')).toBe('100');
     expect(canonicalAmount('abc')).toBe('abc');
+    // Leading zeros and a bare point, as the hydrated box writes them.
+    expect(canonicalAmount('0500.00')).toBe('500');
+    expect(canonicalAmount('007.50')).toBe('7.5');
+    expect(canonicalAmount('000')).toBe('0');
+    expect(canonicalAmount('.5')).toBe('0.5');
+    expect(canonicalAmount('0.5')).toBe('0.5');
   });
 
   it('cleans grouped, padded text typed before the page hydrated', () => {
