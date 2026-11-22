@@ -13,7 +13,15 @@
 // scope, because the audit fallback for tenant-scoped rows reads bos.organization_id.
 import { ACCOUNT_LOCKOUT, type AdminUsersQuery, type RoleKey } from '@bos/contracts';
 import { InjectQueue } from '@nestjs/bullmq';
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Queue } from 'bullmq';
 
 import { lockAccessRevision } from '../../modules/access-settings/access-revision';
@@ -89,7 +97,7 @@ export class UserSyncContendedError extends Error {
 }
 
 /** What apply writes for one ZITADEL user: the user as read, the status to store and the lock (undefined keeps it). */
-interface NextState {
+export interface NextState {
   user: ZitadelUser;
   status: MirroredStatus;
   lock: UserLock | null | undefined;
@@ -286,6 +294,12 @@ export class UserMirror {
     idpOrgId: string;
   }): Promise<ResolvedUser> {
     let row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
+    // An invite whose database write never committed: its grants and mail may exist in ZITADEL, but BOS never made this
+    // person. No row is created and no invited row is activated until the invite commits (or an admin resolves it).
+    const invitePending = row?.status === 'invited' || !row;
+    if (invitePending && (await this.store.isInvitePending(i.zitadelUserId))) {
+      throw new ForbiddenException('This invitation is not complete yet.');
+    }
     if (!row) {
       const org = await this.store.idpOrgById(i.idpOrgId);
       if (!org || org.tenantId !== i.tenantId) throw new Error('JIT user insert: unknown IdP org');
@@ -382,6 +396,7 @@ export class UserMirror {
       status: 'invited',
     });
     await this.bootstrap(tx, org, scope, userId);
+    await this.store.clearInvitePending(tx, zitadelUserId);
     if (b.roles.length > 0) {
       await this.store.replaceRoles(tx, scope, userId, b.roles);
       await this.store.bumpAuthzVersion(tx, scope);
@@ -407,7 +422,8 @@ export class UserMirror {
       zitadelUserId: invited.zitadelUserId,
       createRow: (tx) =>
         this.writeInvitedUser(tx, org, scope, invited.zitadelUserId, { ...b, roles: [] }),
-      close: null,
+      // Even when both database writes fail, the new identity is deactivated in ZITADEL (best effort).
+      close: 'deactivate',
     });
   }
 
@@ -448,7 +464,7 @@ export class UserMirror {
         // Staff roles are granted in the staff org: a portal user is not an admin target (as before 0027).
         if (!user || user.idpOrgId !== org.idpOrgId) throw new NotFoundException('User not found');
         const previousRoles = await this.store.rolesOf(tx, scope.tenantId, userId);
-        await this.assertCanSetRoles(tx, scope.tenantId, user, previousRoles, roles);
+        await this.assertCanSetRoles(tx, scope.tenantId, user, previousRoles);
         return { user, org, previousRoles };
       },
       READ_ONLY,
@@ -488,7 +504,7 @@ export class UserMirror {
             if (!rowChanged && sameRoles(currentRoles, roles)) return;
             throw userChangedConflict();
           }
-          await this.assertCanSetRoles(tx, scope.tenantId, current, currentRoles, roles);
+          await this.assertCanSetRoles(tx, scope.tenantId, current, currentRoles);
           if (!sameRoles(currentRoles, roles)) {
             await this.store.replaceRoles(tx, scope, userId, roles);
             await this.store.bumpAuthzVersion(tx, scope);
@@ -512,23 +528,88 @@ export class UserMirror {
     tenantId: string,
     user: UserRow,
     currentRoles: readonly RoleKey[],
-    nextRoles: readonly RoleKey[],
   ): Promise<void> {
-    if (
-      user.status !== 'active' ||
-      !currentRoles.includes('founder') ||
-      nextRoles.includes('founder')
-    ) {
-      return;
-    }
+    // Any edit of the only active Founder is refused, also one that keeps founder: a failed edit closes and flags the
+    // person, which would leave the company with no Founder.
+    if (user.status !== 'active' || !currentRoles.includes('founder')) return;
     const entities = await soleFounderEntities(tx, this.store, tenantId, user.id);
     if (entities === null) return;
     // Never the email: the address is not a name (U20a2-Q10).
     const name = user.displayName?.trim() || 'This person';
     throw new ConflictException({
       code: 'last_founder',
-      message: `${name} is the only Founder of ${entities}. Make someone else a Founder there first.`,
+      message: `${name} is the only Founder of ${entities}. Add another Founder first.`,
     });
+  }
+
+  /**
+   * Resolving a flagged person, step 1 (no transaction open): reads ZITADEL (the user and the grants) and works out what
+   * the row should become. Any failed or unreadable answer is a 503 and nothing is cleared.
+   */
+  async prepareResolve(
+    org: IdpOrgRow,
+    existing: UserRow,
+  ): Promise<{ read: ZitadelUser; roles: RoleKey[]; next: NextState }> {
+    const unreadable = () =>
+      new ServiceUnavailableException(
+        'The sign-in service does not answer for this person right now. Try again later.',
+      );
+    let read: ZitadelUser | null;
+    let roles: RoleKey[];
+    try {
+      read = await this.zitadel.getUser(existing.zitadelUserId);
+      if (read === null || read.status === null) throw unreadable();
+      roles = await this.zitadel.listGrants(existing.zitadelUserId, org.zitadelOrgId);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      this.logger.warn(`users.resolve: ZITADEL unreadable (kind=${(error as Error).name})`);
+      throw unreadable();
+    }
+    const next = await this.nextState(
+      org,
+      { ...existing, identityReviewRequired: false },
+      read,
+      read.status,
+    );
+    return { read, roles, next };
+  }
+
+  /**
+   * Step 2, inside the caller's transaction (which holds the access lock): the flag must still be the one read before
+   * ZITADEL was called (same row version: any re-flag, status action or sync since then changes it), else 409. Then
+   * clears the flag and writes what ZITADEL holds, in one commit.
+   */
+  async commitResolve(
+    tx: DbTransaction,
+    org: IdpOrgRow,
+    scope: TxScope,
+    userId: string,
+    seen: UserRow,
+    plan: { roles: RoleKey[]; next: NextState },
+  ): Promise<UserRow> {
+    const current = await this.store.findById(tx, scope, userId, true);
+    if (
+      !current ||
+      current.identityReviewRequired !== true ||
+      (current.version ?? null) !== (seen.version ?? null)
+    ) {
+      throw new ConflictException({
+        code: 'conflict',
+        message:
+          'This person changed while the sign-in service was read. Check them and try again.',
+      });
+    }
+    await this.store.clearIdentityReview(tx, current.id);
+    await this.write(
+      tx,
+      org,
+      scope,
+      { ...current, identityReviewRequired: false },
+      plan.next,
+      plan.roles,
+    );
+    await this.store.bumpAuthzVersion(tx, scope);
+    return current;
   }
 
   /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
