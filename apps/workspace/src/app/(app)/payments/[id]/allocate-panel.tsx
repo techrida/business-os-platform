@@ -236,12 +236,23 @@ function AllocateForm({
             })}
           </tbody>
         </Table>
-        <p role="status" className={totalOver ? styles.totalOver : styles.total}>
+        {/* The running total changes with every digit, so it is not announced; only a problem is. */}
+        <p className={totalOver ? styles.totalOver : styles.total}>
           Allocated {money(total.toFixed(2), currency, numberSystems)} of{' '}
           {money(left.toFixed(2), currency, numberSystems)} remaining
           {totalOver
             ? `. That is ${money(total.minus(left).toFixed(2), currency, numberSystems)} more than is left on this payment.`
             : null}
+        </p>
+        <p role="status" className="sr-only">
+          {[
+            overRows.size > 0
+              ? `${overRows.size} ${overRows.size === 1 ? 'invoice is' : 'invoices are'} above the open amount.`
+              : '',
+            totalOver ? 'The total is more than is left on this payment.' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
         </p>
         <div className={styles.buttons}>
           <Button type="submit" disabled={pending || blocked}>

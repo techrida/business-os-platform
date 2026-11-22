@@ -576,7 +576,11 @@ export function PaymentForm({
               <Field label="Amount received" hint={amountHint} error={fe.amount}>
                 {(control) => (
                   // A retyped amount equal to the open one posts the same value, so the edit is read from the input event.
-                  <div onInput={() => setAmountTouched(true)}>
+                  <div
+                    onInput={() => setAmountTouched(true)}
+                    onPaste={() => setAmountTouched(true)}
+                    onDrop={() => setAmountTouched(true)}
+                  >
                     <AmountInput
                       {...control}
                       currency={currency}
@@ -584,7 +588,10 @@ export function PaymentForm({
                       required
                       min="0.01"
                       value={amount}
-                      onValueChange={setAmount}
+                      onValueChange={(next) => {
+                        setAmount(next);
+                        setAmountTouched(true);
+                      }}
                     />
                   </div>
                 )}

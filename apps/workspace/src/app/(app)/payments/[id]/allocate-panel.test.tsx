@@ -93,7 +93,7 @@ describe('allocate panel', () => {
     expect(html).toContain(`name="paymentId" value="${PAYMENT_ID}"`);
     expect(html).toContain(`name="idempotencyKey" value="${KEY}"`);
     expect(html).toContain('Allocate payment');
-    expect(html).toMatch(/role="status"[^>]*>Allocated NPR 0.00 of NPR 2,50,000.00 remaining</);
+    expect(html).toMatch(/<p class="[^"]*">Allocated NPR 0.00 of NPR 2,50,000.00 remaining</);
   });
 
   it('shows what is left on the payment and the customer advance, both from the server', () => {
@@ -175,9 +175,11 @@ describe('allocate panel running total', () => {
   const box = (root: HTMLElement, number: string) =>
     root.querySelector<HTMLInputElement>(`input[aria-label="Amount to allocate to ${number}"]`);
   const totalLine = (root: HTMLElement) =>
-    Array.from(root.querySelectorAll('[role="status"]')).find((el) =>
-      el.textContent?.startsWith('Allocated'),
-    )?.textContent;
+    Array.from(root.querySelectorAll('p')).find((el) => el.textContent?.startsWith('Allocated'))
+      ?.textContent;
+  // Only a problem is announced; the running total itself is not a live region.
+  const announced = (root: HTMLElement) =>
+    root.querySelector('p[role="status"].sr-only')?.textContent;
   const allocateButton = (root: HTMLElement) =>
     Array.from(root.querySelectorAll('button')).find(
       (b) => b.textContent?.trim() === 'Allocate payment',
@@ -209,6 +211,8 @@ describe('allocate panel running total', () => {
       // Old code left the button on and the row unmarked; only the server refused it.
       expect(allocateButton(root)?.disabled).toBe(true);
       expect(first?.getAttribute('aria-invalid')).toBe('true');
+      // The blocked button leaves the Tab order, so the problem is announced where it happens.
+      expect(announced(root)).toBe('1 invoice is above the open amount.');
       const message = document.getElementById(`amount-${INVOICE_ID}-error`);
       expect(message?.textContent).toBe('More than the NPR 2,50,000.00 open on this invoice.');
       expect(first?.getAttribute('aria-describedby')).toContain(`amount-${INVOICE_ID}-error`);
@@ -232,6 +236,7 @@ describe('allocate panel running total', () => {
         'Allocated NPR 1,000.01 of NPR 1,000.00 remaining. That is NPR 0.01 more than is left on this payment.',
       );
       expect(allocateButton(root)?.disabled).toBe(true);
+      expect(announced(root)).toBe('The total is more than is left on this payment.');
     } finally {
       await mounted.unmount();
     }
