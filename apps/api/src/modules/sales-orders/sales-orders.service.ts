@@ -1005,7 +1005,7 @@ export class SalesOrdersService {
 
   /**
    * The small-team rule (F1-Q11 a) for a caller `releaseRefusal` refuses as the order's creator: true when they are
-   * a Founder and no other active, unlocked member of the entity holds `sales_order.delivery_release` and a role
+   * a Founder and no other present member (active, or only temporarily locked after failed sign-ins) of the entity holds `sales_order.delivery_release` and a role
    * `deliveryHoldReleaser` allows at this amount. The creator counts as nobody else. Run on the caller's
    * transaction, one read after another (it shares the transaction's single connection). A detail load calls it at
    * most once.
