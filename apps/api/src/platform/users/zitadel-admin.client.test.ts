@@ -485,4 +485,21 @@ describe('operation deadline (round 4)', () => {
     }
     expect(calls).toEqual([]);
   });
+
+  it('checks the deadline after resolving the project id, right before createAuthorization (round 5)', async () => {
+    const c = client();
+    const target = c as unknown as { bosProjectId(): Promise<string> };
+    let resolved = 0;
+    vi.spyOn(target, 'bosProjectId').mockImplementation(async () => {
+      // The read in setGrants resolves it at once; the second resolution (for the create) is slow.
+      if (++resolved === 2) await new Promise((resolve) => setTimeout(resolve, 60));
+      return 'p1';
+    });
+    answers.push({ status: 200, body: {} }); // no authorizations yet
+
+    await expect(
+      runWithOperationDeadline(40, () => c.setGrants('u-1', 'o-1', ['finance'])),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(calls.some((x) => /CreateAuthorization/.test(x.path))).toBe(false);
+  });
 });
