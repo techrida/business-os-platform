@@ -548,7 +548,12 @@ export function CustomerForm({
                 <Input
                   name="panVatNo"
                   value={values.panVatNo}
-                  onChange={set('panVatNo')}
+                  onChange={(e) => {
+                    // The same number reaches the PAN box if the country becomes Nepal; an edit made
+                    // here must count there too, or a short PAN typed abroad is never stopped.
+                    setPanEdited(true);
+                    set('panVatNo')(e);
+                  }}
                   maxLength={20}
                   autoComplete="off"
                   className={styles.numeric}
