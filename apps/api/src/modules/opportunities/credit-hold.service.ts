@@ -22,6 +22,14 @@ type QuotationVersionRow = typeof quotationVersions.$inferSelect;
 const notFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Opportunity not found' });
 
+/** The order value the person gave the override for is not the deal's order value now: they have not reviewed it. */
+const orderChanged = () =>
+  new ConflictException({
+    code: 'conflict',
+    message:
+      'The order on this deal changed since you opened the override; reload to see its value',
+  });
+
 @Injectable()
 export class CreditHoldService {
   constructor(
@@ -56,8 +64,9 @@ export class CreditHoldService {
    * (`body.quotationVersionId`) become a sales order at the order value the person saw (`body.orderValue`). 404 for
    * a deal of another entity, or a version that is not one of this deal's quotations; 409 `conflict` when the version
    * is not accepted or its quotation already has a confirmed or completed order, when the deal is not on hold for it
-   * (nothing to override), or when the order is worth something else now. A deal whose override still covers that
-   * version at that value is returned as it is: that override stands, and nothing new is written. An override covers
+   * (nothing to override), or when the order is worth something else now than `body.orderValue`, also when an
+   * override already stands. A deal whose override still covers that version at that value is returned as it is
+   * when the body names that value: that override stands, and nothing new is written. An override covers
    * exactly one version and order value (R5 FU10, overrideCovers): a second order on the deal, a new version or
    * another value holds again, and a new override replaces the old one. The override is kept on the deal (who, when,
    * why, for which version and order value) and audited (`opportunity.credit_overridden`, with the limit, the
@@ -86,6 +95,9 @@ export class CreditHoldService {
         { versionId: version.id, orderValue: position.orderValue },
       );
       if (row.creditOverrideAt !== null && (!position.held || covers)) {
+        // A repeat still names the order value the person saw (R5 FX5): a standing override is no answer to an
+        // override given for another value, which is an order they have not reviewed.
+        if (body.orderValue !== position.orderValue) throw orderChanged();
         return this.toDto(tx, scope, row);
       }
       if (!position.held) {
@@ -96,13 +108,7 @@ export class CreditHoldService {
       }
       // The person gave the override for the order value they saw; if the deal's order is worth something else now
       // (a quotation was accepted or changed meanwhile), they have not reviewed it.
-      if (body.orderValue !== position.orderValue) {
-        throw new ConflictException({
-          code: 'conflict',
-          message:
-            'The order on this deal changed since you opened the override; reload to see its value',
-        });
-      }
+      if (body.orderValue !== position.orderValue) throw orderChanged();
       const now = new Date();
       const [updated] = await tx
         .update(opportunities)

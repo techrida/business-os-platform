@@ -70,7 +70,7 @@ test('a verified payment offers the allocate panel and refuses a bad amount in p
   }
 });
 
-test('the server refuses more than an invoice has open, in words', async ({ browser, baseURL }) => {
+test('the form stops more than an invoice has open, in words', async ({ browser, baseURL }) => {
   test.skip(
     !process.env['BOS_E2E_PAYMENT_VERIFIED'] || !process.env['BOS_E2E_INVOICE_ISSUED'],
     'needs an explicit disposable verified payment and open invoice pair',
@@ -89,9 +89,11 @@ test('the server refuses more than an invoice has open, in words', async ({ brow
     const allocations = finance.page.getByRole('region', { name: 'Allocations', exact: true });
     const before = await allocations.innerText();
     await amount.fill('999999.00');
-    await panel.getByRole('button', { name: 'Allocate payment', exact: true }).click();
-    await expect(panel.getByRole('alert')).toContainText('Nothing was allocated');
-    await expect(panel.getByRole('alert')).toContainText('more than');
+    // The form now catches this before the server: the row says why and Allocate is off.
+    await expect(panel).toContainText('More than the');
+    await expect(
+      panel.getByRole('button', { name: 'Allocate payment', exact: true }),
+    ).toBeDisabled();
     await expect(amount).toHaveValue(/^9,?99,?999\.00$/);
     await expect(allocations).toHaveText(before, { useInnerText: true });
   } finally {

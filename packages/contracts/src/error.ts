@@ -76,6 +76,8 @@ export const BILLING_ERROR_CODES = {
   credit_hold: 409,
   /** R5 FU10: a confirm of an already confirmed order named files the order does not have; nothing was filed. */
   evidence_not_filed: 409,
+  /** Confirm refused: the quotation already has a draft sales order of another revision; open that draft instead. */
+  draft_of_other_revision: 409,
   /** Issue refused: the drafted due date is before today, the issue date. `details` names both when known. */
   DUE_DATE_BEFORE_ISSUE: 422,
   contact_activity_required: 409, // FR-6/D48: a lead moves to contacted only with a done call, email or meeting.

@@ -2,9 +2,10 @@
 // TR-Q12d: when the record action answers with earlier payments that carry the same bank reference,
 // the form lists them and asks the person to confirm before the next submit records the payment.
 // Driven through the real form and a stubbed action, with matches in the route's own shape.
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, submit } from '@/test/form-interactions';
+import { click, fill, mountForm, settle, submit } from '@/test/form-interactions';
 
 import { CUSTOMER_ID } from '../_lib/fixtures';
 
@@ -56,6 +57,24 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** Record payment opens a review; Confirm in it sends the form. */
+async function submitAndConfirm(container: HTMLElement) {
+  await submit(container);
+  await click(
+    Array.from(document.querySelectorAll('[role="dialog"] button')).find(
+      (b) => b.textContent?.trim() === 'Confirm',
+    ) ?? null,
+  );
+}
+
+/** The visible amount box; the posted value sits on a hidden input named amount. */
+function amountBox(container: HTMLElement) {
+  const amountFor = Array.from(container.querySelectorAll('label[for]'))
+    .find((l) => l.textContent?.trim().startsWith('Amount received'))
+    ?.getAttribute('for');
+  return container.querySelector(`input#${CSS.escape(amountFor ?? 'missing')}`);
+}
+
 const mount = () =>
   mountForm(
     <PaymentForm
@@ -72,13 +91,24 @@ const mount = () =>
 
 describe('payment form, bank reference already recorded (TR-Q12d)', () => {
   it('lists the earlier payments with customer, date, amount and status, and sends the confirmation with the next submit', async () => {
-    mocks.action.mockResolvedValueOnce({
-      key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      referenceMatches: matches,
-    });
+    // Answered only once the review dialog has closed and handed focus back, as a real request is.
+    let answer: (state: RecordPaymentState) => void = () => {};
+    mocks.action.mockImplementationOnce(
+      () =>
+        new Promise<RecordPaymentState>((resolve) => {
+          answer = resolve;
+        }),
+    );
     const mounted = await mount();
     try {
-      await submit(mounted.container);
+      // The amount is required, and the browser checks it before the review opens.
+      await fill(amountBox(mounted.container), '250.50');
+      await submitAndConfirm(mounted.container);
+      await settle();
+      await act(async () => {
+        answer({ key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', referenceMatches: matches });
+        await Promise.resolve();
+      });
       // Nothing was recorded, so the warning takes focus and is announced from the button at the bottom.
       const warning = mounted.container.querySelector<HTMLElement>('[role="alert"]');
       expect(warning?.textContent).toContain(
@@ -102,7 +132,7 @@ describe('payment form, bank reference already recorded (TR-Q12d)', () => {
       );
       await click(confirm ?? null);
       mocks.action.mockResolvedValueOnce({ key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
-      await submit(mounted.container);
+      await submitAndConfirm(mounted.container);
       const sent = mocks.action.mock.calls[1]?.[1];
       expect(sent?.get('referenceConfirmed')).toBe(`${EARLIER},${OLDER}`);
       expect(sent?.get('idempotencyKey')).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
@@ -119,27 +149,23 @@ describe('payment form, bank reference already recorded (TR-Q12d)', () => {
     const mounted = await mount();
     try {
       const { container } = mounted;
-      const amountFor = Array.from(container.querySelectorAll('label[for]'))
-        .find((l) => l.textContent?.trim().startsWith('Amount received'))
-        ?.getAttribute('for');
-      // The visible box is the labelled one; the posted value sits on a hidden input named amount.
-      await fill(container.querySelector(`input#${CSS.escape(amountFor ?? 'missing')}`), '250.50');
+      await fill(amountBox(container), '250.50');
       await fill(container.querySelector('input[name="bankReference"]'), 'NIC 77812');
-      await submit(container);
+      await submitAndConfirm(container);
       await click(container.querySelector('input[name="referenceConfirmed"]'));
       // Someone recorded another payment with this reference in the meantime: the action warns again.
-      await submit(container);
+      await submitAndConfirm(container);
       const sent = mocks.action.mock.calls[1]?.[1];
       expect(sent?.get('referenceConfirmed')).toBe(EARLIER);
-      expect(sent?.get('amount')).toBe('250.50');
+      expect(Number(sent?.get('amount'))).toBe(250.5);
       expect(sent?.get('bankReference')).toBe('NIC 77812');
       expect(sent?.get('customerId')).toBe(CUSTOMER_ID);
 
       const confirm = container.querySelector<HTMLInputElement>('input[name="referenceConfirmed"]');
       expect(confirm?.value).toBe(`${EARLIER},${OLDER}`);
       expect(confirm?.checked).toBe(false);
-      expect(container.querySelector<HTMLInputElement>('input[name="amount"]')?.value).toBe(
-        '250.50',
+      expect(Number(container.querySelector<HTMLInputElement>('input[name="amount"]')?.value)).toBe(
+        250.5,
       );
       expect(container.querySelector<HTMLInputElement>('input[name="bankReference"]')?.value).toBe(
         'NIC 77812',

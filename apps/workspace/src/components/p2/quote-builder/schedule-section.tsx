@@ -186,7 +186,7 @@ export function ScheduleSection({
                         }}
                         onKeyDown={(ev) => {
                           if (ev.key === 'Escape' && draft) {
-                            onChange(m.key, { percent: draft.initialPercent });
+                            onChange(m.key, { percent: trimPercent(draft.initialPercent) });
                             onAmountDraft(m.key, undefined);
                           }
                         }}

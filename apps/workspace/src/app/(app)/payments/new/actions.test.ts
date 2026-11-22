@@ -113,14 +113,22 @@ describe('recordPaymentAction', () => {
     expect(sentBody(0)).toEqual({
       customerId: CUSTOMER_ID,
       currency: 'NPR',
-      amount: '1000000.00',
+      amount: '1000000',
       method: 'bank_transfer',
       receivedOn: '2020-01-02',
       bankReference: 'NIC-77812',
-      tdsWithheld: '0.00',
+      tdsWithheld: '0',
       proofDocumentIds: [PROOF_ID, PROOF_2],
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/payments');
+  });
+
+  it('sends the same body for padded and trimmed text, so a retry under one key matches', async () => {
+    // A form posted before hydration carries `12,50,000.00`; the hydrated one posts `1250000`.
+    await run(form({ amount: '12,50,000.00' }));
+    await run(form({ amount: '1250000' }));
+    expect(sentBody(0)).toEqual(sentBody(1));
+    expect(sentBody(0)).toMatchObject({ amount: '1250000' });
   });
 
   it('turns typed lakh grouping into plain digits and sends tax with its code', async () => {
@@ -134,8 +142,8 @@ describe('recordPaymentAction', () => {
       }),
     );
     expect(sentBody(0)).toMatchObject({
-      amount: '2018180.00',
-      tdsWithheld: '15000.00',
+      amount: '2018180',
+      tdsWithheld: '15000',
       withholdingCode: 'TDS-1.5',
     });
     expect(sentBody(0)).not.toHaveProperty('bankReference');
@@ -155,6 +163,18 @@ describe('recordPaymentAction', () => {
       const out = await run(form({ tdsWithheld: tds }));
       expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
     }
+  });
+
+  it('sends one body for a blank, a 0 and a 0.00 tax withheld, so a retry under one key matches', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const bodies: unknown[] = [];
+    for (const tds of ['', '0', '0.00']) {
+      mocks.apiFetch.mockClear();
+      await run(form({ tdsWithheld: tds }));
+      bodies.push(sentBody(0));
+    }
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(bodies[2]).toEqual(bodies[0]);
   });
 
   it('requires at least one proof file, and ignores ids that are not UUIDs', async () => {

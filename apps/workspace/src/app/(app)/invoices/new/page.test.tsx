@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CUSTOMER_LIST_MAX_LIMIT } from '@bos/contracts';
 import { ApiError } from '@/lib/api';
-import { choose, click, fill, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm } from '@/test/form-interactions';
 
 import { ManualInvoiceForm } from './manual-invoice-form';
 import NewInvoicePage from './page';
@@ -111,9 +111,10 @@ it('draws the Figma card eyebrows as decoration and one column header row for th
 it('offers an optional document discount, none by default', async () => {
   const html = renderToStaticMarkup(await NewInvoicePage());
   expect(html).toContain('name="discountMode"');
-  expect(html).toContain('No discount');
-  expect(html).toContain('Fixed amount');
-  // No value field until a discount type is chosen.
+  expect(html).toContain('value="none"');
+  expect(html).toContain('Discount %');
+  expect(html).toContain('Discount amount (NPR)');
+  // No value is posted until one of the two boxes is typed in.
   expect(html).not.toContain('name="discountValue"');
 });
 
@@ -182,24 +183,16 @@ describe('the form in a browser', () => {
   it('groups a fixed amount as the currency does and posts the plain number', async () => {
     // Fails on the old code: a plain text box showed 1250000 as typed.
     const container = await mount();
-    await choose(container, 'discountMode', 'Fixed amount');
     const amount = box(container, 'Discount amount (NPR)');
     await fill(amount, '1250000');
     expect(amount?.value).toBe('12,50,000');
     expect(posted(container)).toBe('1250000');
   });
 
-  it('takes a percentage in a percent box and clears the value when the type changes', async () => {
+  it('takes a percentage in a percent box', async () => {
     const container = await mount();
-    await choose(container, 'discountMode', 'Fixed amount');
-    await fill(box(container, 'Discount amount (NPR)'), '5000');
-    expect(posted(container)).toBe('5000');
-
-    await choose(container, 'discountMode', 'Percentage');
-    const percent = box(container, 'Discount (%)');
+    const percent = box(container, 'Discount %');
     expect(percent?.getAttribute('role')).toBe('spinbutton');
-    expect(percent?.value).toBe('');
-    expect(posted(container)).toBe('');
     await fill(percent, '12.5');
     expect(posted(container)).toBe('12.5');
   });
