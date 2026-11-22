@@ -107,7 +107,7 @@ describe('submitPaymentAction submit', () => {
     expect(headers.get('idempotency-key')).toBe(IDEM);
     expect(JSON.parse(init.body as string)).toEqual({
       currency: 'NPR',
-      amount: '2018180.00',
+      amount: '2018180',
       tdsWithheld: '0.00',
       method: 'bank_transfer',
       receivedOn: '2026-01-15',

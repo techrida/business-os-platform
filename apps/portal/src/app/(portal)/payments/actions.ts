@@ -62,7 +62,15 @@ function text(form: FormData, name: string): string {
 
 /** Customers type lakh grouping ("20,18,180.00"); the contract wants plain digits. A string clean-up, not arithmetic. */
 function normalizeAmount(raw: string): string {
-  return plainAmount(raw);
+  return canonicalAmount(plainAmount(raw));
+}
+
+/**
+ * The amount as the number inputs post it once hydrated (`1250.00` is `1250`). A form posted before
+ * hydration carries the padded text, and a retry under the same idempotency key must not change body.
+ */
+function canonicalAmount(plain: string): string {
+  return /^\d+\.\d*$/.test(plain) ? plain.replace(/\.?0*$/, '') || '0' : plain;
 }
 
 function codeOf(err: unknown): string {

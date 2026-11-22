@@ -113,7 +113,7 @@ describe('recordPaymentAction', () => {
     expect(sentBody(0)).toEqual({
       customerId: CUSTOMER_ID,
       currency: 'NPR',
-      amount: '1000000.00',
+      amount: '1000000',
       method: 'bank_transfer',
       receivedOn: '2020-01-02',
       bankReference: 'NIC-77812',
@@ -121,6 +121,14 @@ describe('recordPaymentAction', () => {
       proofDocumentIds: [PROOF_ID, PROOF_2],
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/payments');
+  });
+
+  it('sends the same body for padded and trimmed text, so a retry under one key matches', async () => {
+    // A form posted before hydration carries `12,50,000.00`; the hydrated one posts `1250000`.
+    await run(form({ amount: '12,50,000.00' }));
+    await run(form({ amount: '1250000' }));
+    expect(sentBody(0)).toEqual(sentBody(1));
+    expect(sentBody(0)).toMatchObject({ amount: '1250000' });
   });
 
   it('turns typed lakh grouping into plain digits and sends tax with its code', async () => {
@@ -134,8 +142,8 @@ describe('recordPaymentAction', () => {
       }),
     );
     expect(sentBody(0)).toMatchObject({
-      amount: '2018180.00',
-      tdsWithheld: '15000.00',
+      amount: '2018180',
+      tdsWithheld: '15000',
       withholdingCode: 'TDS-1.5',
     });
     expect(sentBody(0)).not.toHaveProperty('bankReference');
