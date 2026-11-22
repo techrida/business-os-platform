@@ -330,7 +330,9 @@ export class IdentityReconciler {
           },
         );
       }
-      if (grantsError !== null) throw grantsError;
+      if (grantsError !== null) {
+        throw grantsError instanceof Error ? grantsError : new Error('setGrants failed');
+      }
     } catch (error) {
       this.logger.error(
         `users.reconcile: could not reconcile the roles of ${p.zitadelUserId} after a failed change (kind=${errorName(error)}); the next sync mirrors what ZITADEL holds`,
