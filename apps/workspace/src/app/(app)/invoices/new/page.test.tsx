@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CUSTOMER_LIST_MAX_LIMIT } from '@bos/contracts';
 import { ApiError } from '@/lib/api';
-import { choose, click, fill, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm } from '@/test/form-interactions';
 
 import { ManualInvoiceForm } from './manual-invoice-form';
 import NewInvoicePage from './page';
