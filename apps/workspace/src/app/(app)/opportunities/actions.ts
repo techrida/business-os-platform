@@ -85,8 +85,11 @@ const OVERRIDE_REASON = 'Say why this deal may go ahead, up to 500 characters.';
 
 /**
  * Override a deal's credit hold (F1-Q20, `POST /v1/opportunities/:id/credit-override`) with a
- * required reason. The override is permanent for the deal, so its sales order can then be
- * confirmed. A deal no longer on hold, or whose order changed since the form opened (409), asks for a reload; a 403 says the permission is missing.
+ * required reason, for the quotation version and order value the dialog showed (R5 FU10): the
+ * override covers that one version at that value only, so its sales order can then be confirmed.
+ * A form without both asks for a reload rather than blaming the reason. A deal no longer on hold,
+ * or whose pending version or order changed since the form opened (409), asks for a reload; a 403
+ * says the permission is missing.
  */
 export async function overrideCreditHoldAction(
   _prev: CreditOverrideState,
@@ -98,12 +101,18 @@ export async function overrideCreditHoldAction(
   const session = await requireStaffSession(`/opportunities/${id}`);
 
   const reasonValue = form.get('reason');
+  const quotationVersionId = form.get('quotationVersionId');
   const orderValue = form.get('orderValue');
   const parsed = CreditOverrideBodySchema.safeParse({
     reason: typeof reasonValue === 'string' ? reasonValue.trim() : '',
-    ...(typeof orderValue === 'string' && orderValue !== '' ? { orderValue } : {}),
+    quotationVersionId: typeof quotationVersionId === 'string' ? quotationVersionId : '',
+    orderValue: typeof orderValue === 'string' ? orderValue : '',
   });
-  if (!parsed.success) return { fieldErrors: { reason: OVERRIDE_REASON } };
+  if (!parsed.success) {
+    return parsed.error.issues.some((issue) => issue.path[0] !== 'reason')
+      ? { error: INCOMPLETE, reload: true }
+      : { fieldErrors: { reason: OVERRIDE_REASON } };
+  }
 
   try {
     await overrideCreditHold(session, id, parsed.data);
