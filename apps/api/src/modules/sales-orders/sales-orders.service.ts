@@ -420,7 +420,26 @@ export class SalesOrdersService {
     // The quotation lock serialises two confirms: the second one finds the first one's order here. A draft (made
     // when the quotation was accepted, F1-Q25) is confirmed below, through every check a new order passes.
     const live = await liveOrderOf(tx, scope, quotation.id);
-    if (live !== undefined && live.status !== 'draft') return this.loadDetail(tx, scope, live.id);
+    if (live !== undefined && live.status !== 'draft') {
+      // R5 FU10 (FU7 Q4): the order is confirmed, so this confirm files nothing. Naming a file the order does not
+      // already have is refused (409 evidence_not_filed) rather than answered as if it were filed.
+      if (body.evidenceDocumentIds.length > 0) {
+        const filed = await tx
+          .select({ documentId: salesOrderEvidence.documentId })
+          .from(salesOrderEvidence)
+          .where(
+            scoped(scope).where(salesOrderEvidence, eq(salesOrderEvidence.salesOrderId, live.id)),
+          );
+        const filedIds = new Set(filed.map((r) => r.documentId));
+        if (body.evidenceDocumentIds.some((id) => !filedIds.has(id))) {
+          throw conflict(
+            'evidence_not_filed',
+            'This order was already confirmed, so the named files were not filed with it',
+          );
+        }
+      }
+      return this.loadDetail(tx, scope, live.id);
+    }
 
     if (version.status !== 'accepted') {
       throw conflict(
@@ -434,9 +453,10 @@ export class SalesOrdersService {
     // F1-Q20/F1-Q26 (Kuu R4a Q1b, R5 FU4): a customer whose open receivables, plus what its confirmed orders have not
     // invoiced yet, plus this order's gross NPR value are over its credit limit with this entity holds the deal here,
     // the hand-over to a sales order, until a holder of credit.override overrides the hold on the deal with a reason.
-    // An override covers orders up to the value it was given for: a bigger order needs a new one. The refusal names
-    // the deal only: the limit and the balance are for holders of credit.override
-    // (GET /v1/opportunities/:id/credit-hold, the same rule).
+    // An override covers exactly the quotation version and order value it was given for (R5 FU10, overrideCovers): a
+    // second order on the deal, a new version or another value needs a new one. The refusal names the deal and this
+    // version only (so the override dialog can send them): the limit and the balance are for holders of
+    // credit.override (GET /v1/opportunities/:id/credit-hold, the same rule).
     // Two confirms of one tenant never reach this line together: withTx takes the tenant's audit lock first and
     // holds it to the commit, so the second reads the first's order. Never run this under `audit: 'lazy'` (R5 FU6).
     const credit = await creditPosition(tx, scope, customerPartyId, { version });
@@ -445,18 +465,25 @@ export class SalesOrdersService {
         .select({
           creditOverrideAt: opportunities.creditOverrideAt,
           creditOverrideOrderValue: opportunities.creditOverrideOrderValue,
+          creditOverrideQuotationVersionId: opportunities.creditOverrideQuotationVersionId,
         })
         .from(opportunities)
         .where(scoped(scope).where(opportunities, eq(opportunities.id, quotation.opportunityId)));
       if (
         deal?.creditOverrideAt == null ||
-        !overrideCovers(deal.creditOverrideOrderValue, credit.orderValue)
+        !overrideCovers(
+          {
+            versionId: deal.creditOverrideQuotationVersionId,
+            orderValue: deal.creditOverrideOrderValue,
+          },
+          { versionId: version.id, orderValue: credit.orderValue },
+        )
       ) {
         throw new ConflictException({
           code: 'credit_hold',
           message:
             'With the receivables, the orders not yet invoiced and this order, the customer is over its credit limit; someone with credit override access must override the credit hold on the deal first',
-          details: { opportunityId: quotation.opportunityId },
+          details: { opportunityId: quotation.opportunityId, quotationVersionId: version.id },
         });
       }
     }
@@ -980,7 +1007,8 @@ export class SalesOrdersService {
    * The small-team rule (F1-Q11 a) for a caller `releaseRefusal` refuses as the order's creator: true when they are
    * a Founder and no other active, unlocked member of the entity holds `sales_order.delivery_release` and a role
    * `deliveryHoldReleaser` allows at this amount. The creator counts as nobody else. Run on the caller's
-   * transaction, one read after another (it shares the transaction's single connection).
+   * transaction, one read after another (it shares the transaction's single connection). A detail load calls it at
+   * most once.
    */
   private async soleEligibleToRelease(
     tx: DbTransaction,
@@ -1002,9 +1030,11 @@ export class SalesOrdersService {
       if (now.status !== 'active' || !now.roles.includes('founder')) return false;
     }
     const allowed: readonly string[] = deliveryHoldReleaser(new Dec(order.amountNpr), thresholdNpr);
+    // The role table is read once on this transaction for every candidate's role set (fresh, never shared with
+    // another request), not once per role set.
     const others = await otherEligibleUsers(
       tx,
-      { grants: this.roleCache },
+      { grants: this.roleCache.tableOn(tx) },
       scope,
       'sales_order.delivery_release',
       {
