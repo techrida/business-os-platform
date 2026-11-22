@@ -101,6 +101,7 @@ export const QUOTATION_ACTIONS = [
   'expire',
   'revise',
   'cancel',
+  'cancel_on_lost',
 ] as const;
 export type QuotationAction = (typeof QUOTATION_ACTIONS)[number];
 
@@ -147,6 +148,13 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('cancel', 'draft', 'cancelled', true),
   edge('cancel', 'returned', 'cancelled', true),
   edge('cancel', 'submitted', 'cancelled', true),
+  // A Lost opportunity ends every quotation still open on it, including an Approved or Sent one that a user may
+  // not cancel by hand: the customer must stop being able to accept a deal the company has closed.
+  edge('cancel_on_lost', 'draft', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'returned', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'submitted', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'approved', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'sent', 'cancelled', true, 'system'),
 ];
 
 export function quotationTransitionsFrom(status: QuotationStatus): QuotationTransition[] {
@@ -183,6 +191,9 @@ export const canReviseQuotation = (s: QuotationStatus): boolean =>
 /** A version in `s` may be cancelled (QUOTATION_TRANSITIONS: Draft, Returned or Submitted). */
 export const canCancelQuotation = (s: QuotationStatus): boolean =>
   QUOTATION_TRANSITIONS.some((t) => t.action === 'cancel' && t.from === s);
+/** A version in `s` is ended by a Lost opportunity: every live status (Draft, Returned, Submitted, Approved, Sent). */
+export const canCancelOnLost = (s: QuotationStatus): boolean =>
+  QUOTATION_TRANSITIONS.some((t) => t.action === 'cancel_on_lost' && t.from === s);
 
 // ---------------------------------------------------------------------------------------------
 // Lines, discount, payment schedule
