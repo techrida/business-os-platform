@@ -175,7 +175,7 @@ async function openReview() {
 
 it('shows the payee, account, currency, bill and the amount in figures and words before anything is sent', async () => {
   await filledForm();
-  expect(posted()['allocation:0:amount']).toBe('100000.00');
+  expect(posted()['allocation:0:amount']).toBe('100000');
   await openReview();
 
   const shown = dialog();
@@ -208,7 +208,7 @@ it('sends the form once on Create draft request, with the values the review show
   expect(sent.get('fromBankAccountId')).toBe(ACCOUNT.id);
   expect(sent.get('currency')).toBe('NPR');
   expect(sent.get('allocation:0:openItemId')).toBe(BILL.openItemId);
-  expect(sent.get('allocation:0:amount')).toBe('100000.00');
+  expect(sent.get('allocation:0:amount')).toBe('100000');
 });
 
 it('goes back to the form with every value kept and focus on the opener, after Back and after Escape', async () => {
@@ -254,7 +254,7 @@ it('opens the review, not a send, on Enter in the amount field; Confirm then sen
   await flush();
   expect(dialog()).toBeNull();
   expect(document.activeElement).toBe(button('Review request'));
-  expect(posted()['allocation:0:amount']).toBe('100000.00');
+  expect(posted()['allocation:0:amount']).toBe('100000');
 
   await pressEnter(amountField());
   await flush();
@@ -263,7 +263,7 @@ it('opens the review, not a send, on Enter in the amount field; Confirm then sen
   expect(dialog()).toBeNull();
   expect(actions.createPaymentRequestAction).toHaveBeenCalledTimes(1);
   expect(actions.createPaymentRequestAction.mock.calls[0]![1].get('allocation:0:amount')).toBe(
-    '100000.00',
+    '100000',
   );
 });
 

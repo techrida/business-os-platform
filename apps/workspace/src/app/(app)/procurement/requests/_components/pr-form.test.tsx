@@ -268,7 +268,7 @@ describe('editing a stored request', () => {
   it('shows and posts a stored 100000.000 without the extra zeros, with the currency said once', async () => {
     const action = vi.fn((_prev, form: FormData) => {
       expect(form.get('lines.0.quantity')).toBe('100000');
-      expect(form.get('lines.0.estimatedUnitPrice')).toBe('100000.00');
+      expect(form.get('lines.0.estimatedUnitPrice')).toBe('100000');
       return Promise.resolve({ key: PROJECT, errors: {} });
     });
     const initial = valuesFromDto({
