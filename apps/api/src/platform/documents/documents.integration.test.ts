@@ -22,6 +22,7 @@ import {
 } from '@bos/contracts';
 import { createTenantWithEntity } from '@bos/db';
 import {
+  BadRequestException,
   PayloadTooLargeException,
   ForbiddenException,
   ServiceUnavailableException,
@@ -452,6 +453,51 @@ describe('PUT .../content (raw streamed upload)', () => {
       expect.objectContaining({ action: 'document.rejected' }),
     );
   });
+
+  it.each([
+    [
+      'the stream breaks',
+      () =>
+        Readable.from(
+          (function* () {
+            yield PDF().subarray(0, 10);
+            throw new Error('connection reset');
+          })(),
+        ),
+    ],
+    ['the body is shorter than Content-Length', () => Readable.from([PDF().subarray(0, 10)])],
+  ])(
+    'keeps a version quarantined when %s: a second PUT is a 409 and the retry is a new version (EF3)',
+    async (_name, body) => {
+      const c = await create();
+      await expect(
+        service.receiveContent(c.versionId, body(), PDF().length, {
+          documentId: c.documentId,
+          who: { scope: current.scope, actor: current.actor },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      const failed = await row(c.versionId);
+      // Old code put it back to awaiting_content, so the next PUT reused the same version.
+      expect(failed.status).toBe('quarantined');
+      expect(failed.sha256).toBeNull();
+      expect(failed.detected_mime).toBeNull();
+      expect(existsSync(storage.quarantinePath(failed.storage_key))).toBe(false);
+
+      const again = await put(c.uploadPath, PDF(), 'application/pdf');
+      expect(again.status, JSON.stringify(again.body)).toBe(409);
+      expect((await row(c.versionId)).status).toBe('quarantined');
+
+      const next = await request(baseUrl)
+        .post(`/v1/documents/${c.documentId}/versions`)
+        .send({ filename: 'invoice.pdf', declaredMime: 'application/pdf', sizeBytes: PDF().length });
+      expect(next.status, JSON.stringify(next.body)).toBe(201);
+      const retry = next.body as Created;
+      expect(retry.versionId).not.toBe(c.versionId);
+      expect((await put(retry.uploadPath, PDF(), 'application/pdf')).status).toBe(200);
+      expect((await row(retry.versionId)).status).toBe('quarantined');
+      expect((await row(retry.versionId)).sha256).not.toBeNull();
+    },
+  );
 
   it('answers 411 when there is no Content-Length (chunked encoding)', async () => {
     const c = await create();
