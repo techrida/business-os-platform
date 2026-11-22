@@ -77,6 +77,10 @@ export interface PhoneListInputProps {
   rowErrors?: readonly (ReactNode | undefined)[] | undefined;
   /** An error about the whole list ("mark one number as primary"). */
   error?: ReactNode | undefined;
+  /** Shows the Primary control on each row. Off for a list whose order is its meaning (the company's printed numbers): the first row is still the primary one in what is posted. Default true. */
+  showPrimary?: boolean | undefined;
+  /** The most rows the list takes (at most MAX_PARTY_PHONES). Default MAX_PARTY_PHONES. */
+  maxRows?: number | undefined;
   /** Shows the optional label select (Mobile, Work, Home, Landline) on each row. */
   showLabels?: boolean | undefined;
   /** Names the rows in accessible names: "Phone 1 number". */
@@ -224,8 +228,9 @@ function startRows(
   given: readonly PartyPhoneInput[] | undefined,
   country: CountryCode,
   keyOf: (index: number) => string,
+  limit: number = MAX_PARTY_PHONES,
 ): PhoneRowState[] {
-  const phones = (given ?? []).slice(0, MAX_PARTY_PHONES);
+  const phones = (given ?? []).slice(0, limit);
   if (phones.length === 0) return [makeBlankRow(keyOf(0), country, true)];
   const primary = Math.max(
     0,
@@ -267,6 +272,8 @@ export function PhoneListInput({
   defaultCountry = DEFAULT_COUNTRY,
   rowErrors,
   error,
+  showPrimary = true,
+  maxRows = MAX_PARTY_PHONES,
   showLabels = true,
   noun = 'Phone',
   disabled,
@@ -274,6 +281,7 @@ export function PhoneListInput({
   className,
 }: PhoneListInputProps) {
   const base = useId();
+  const limit = Math.min(maxRows, MAX_PARTY_PHONES);
   const rootRef = useRef<HTMLDivElement>(null);
   // The first rows are keyed by position under this list's id; every row made later (add, clear, reset) takes the
   // next number from the counter, so a key is never reused and a removed row's box state can never come back.
@@ -284,7 +292,7 @@ export function PhoneListInput({
   };
   const blankRow = (isPrimary: boolean) => makeBlankRow(nextKey(), defaultCountry, isPrimary);
   const [rows, setRows] = useState<PhoneRowState[]>(() =>
-    startRows(defaultValue, defaultCountry, (index) => `${base}-start${index}`),
+    startRows(defaultValue, defaultCountry, (index) => `${base}-start${index}`, limit),
   );
 
   // Where focus goes once the rows have re-rendered: the moved row's button, the new or switched row's box.
@@ -397,14 +405,14 @@ export function PhoneListInput({
   }
 
   function add() {
-    if (rows.length >= MAX_PARTY_PHONES) return;
+    if (rows.length >= limit) return;
     const fresh = blankRow(rows.length === 0);
     pendingFocus.current = { key: fresh.key, target: 'number' };
     setRows([...rows, fresh]);
   }
 
   useFormReset(rootRef, () => {
-    setRows(startRows(defaultValue, defaultCountry, () => nextKey()));
+    setRows(startRows(defaultValue, defaultCountry, () => nextKey(), limit));
   });
 
   // What the form sees: valid numbers (each once), the rows that stop a save, and the primary number.
@@ -484,7 +492,7 @@ export function PhoneListInput({
     latest.current.onRowsChange?.(latest.current.rows);
   }, [rows]);
 
-  const full = rows.length >= MAX_PARTY_PHONES;
+  const full = rows.length >= limit;
   const single = rows.length === 1;
   const errorId = `${base}-error`;
   const limitId = `${base}-limit`;
@@ -567,18 +575,20 @@ export function PhoneListInput({
                     }}
                   />
                 ) : null}
-                <label className={styles.primary}>
-                  <input
-                    type="radio"
-                    name={`${name ?? base}.primary`}
-                    value={String(index)}
-                    checked={row.isPrimary}
-                    disabled={disabled === true}
-                    aria-label={`${noun} ${n} primary`}
-                    onChange={() => setPrimary(row.key)}
-                  />
-                  <span aria-hidden="true">Primary</span>
-                </label>
+                {showPrimary ? (
+                  <label className={styles.primary}>
+                    <input
+                      type="radio"
+                      name={`${name ?? base}.primary`}
+                      value={String(index)}
+                      checked={row.isPrimary}
+                      disabled={disabled === true}
+                      aria-label={`${noun} ${n} primary`}
+                      onChange={() => setPrimary(row.key)}
+                    />
+                    <span aria-hidden="true">Primary</span>
+                  </label>
+                ) : null}
                 {name ? (
                   <input
                     type="hidden"
@@ -647,7 +657,7 @@ export function PhoneListInput({
         </Button>
         {full ? (
           <span id={limitId} className={styles.limit}>
-            Up to {MAX_PARTY_PHONES} numbers.
+            Up to {limit} numbers.
           </span>
         ) : null}
       </div>

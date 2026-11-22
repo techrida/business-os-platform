@@ -337,3 +337,15 @@ describe('PhoneListInput, primary number for the duplicate lookup', () => {
     expect(list.seen.primary).toEqual(['+9779812345678', null]);
   });
 });
+
+describe('PhoneListInput showPrimary and maxRows', () => {
+  it('hides the Primary control and stops adding at maxRows', async () => {
+    const list = await mount({ showPrimary: false, maxRows: 2 });
+    expect(list.container.querySelector('input[aria-label="Phone 1 primary"]')).toBeNull();
+    await click(list.add());
+    expect(list.rows()).toBe(2);
+    expect(list.add().disabled).toBe(true);
+    expect(list.container.textContent).toContain('Up to 2 numbers.');
+    expect(list.posted('0.isPrimary')).toBe('true');
+  });
+});
