@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
 import { PrintAddressSchema } from './addresses.js';
-import { NepalPanSchema, PanVatNoSchema } from './crm.js';
+import { NepalPanSchema } from './crm.js';
 import {
   CompanyProfileSchema,
   DEFAULT_DOCUMENT_STYLE,
@@ -72,9 +72,6 @@ export const DELIVERY_HOLD_SETTINGS = {
   /** Above this NPR amount a delivery-hold release needs Management instead of Finance. 0 or more, 2 decimals. */
   'sales.delivery_hold.management_npr': NonNegativeDecimalString,
 } as const;
-
-/** `entity.pan_vat_no` as a stored row may still look (5 to 20 characters, from before the nine-digit rule). Reads only. */
-export const StoredEntityPanVatNoSchema = PanVatNoSchema.nullable();
 
 /** Defaults of the delivery-hold keys (D32: every setting has a default). */
 export const DELIVERY_HOLD_SETTING_DEFAULTS = {
