@@ -15,6 +15,7 @@ import {
 } from '@/components/p2/crm/verification-file';
 import { FilePreviewDialog } from '@/components/ui/file-preview-dialog';
 import { Button } from '@/components/ui/button';
+import { FocusOnArrival } from '@/components/ui/focus-on-arrival';
 import { Icon } from '@/components/ui/icon';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -368,6 +369,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   return (
     <Page>
+      <FocusOnArrival />
       <Breadcrumb
         items={[
           { label: 'Payments', href: '/payments' },
