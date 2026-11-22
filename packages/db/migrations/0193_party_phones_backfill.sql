@@ -6,14 +6,12 @@
 --     label NULL). The contact tables are tenant-level, so their writes take each tenant's default entity as the
 --     acting entity (as 0013 does); bos.organization_id is reset to '' after each tenant.
 --   * leads.phones_search: the lead's numbers, space-separated in sort order (only leads that got a number).
--- The number's country comes from its calling code through pg_temp.fx9_phone_country below: every calling code of
--- the pinned libphonenumber-js metadata (a generated table) maps to its main country, and the national part must
--- have one of that country's possible lengths, or match a stricter hand-written pattern for the common codes (+1
--- must be a NANP number: a 2-9 area code and a 2-9 exchange; a +977 national number starting with 9 is a 10-digit
--- mobile, a landline is 7 to 9 digits starting with neither 0 nor 9). A number whose code is unknown, or whose
--- national part fails its check, is not copied (Kuu: dev data may be cleared, so nothing is kept unconverted). The
--- check is a conservative pre-filter of the app's libphonenumber validation, not a copy of it. A country is never
--- guessed from digits without a code: every old value is already E.164 (the old CHECK).
+-- The number's country comes from pg_temp.fx9_phone_country below, which repeats the app's own check (phoneProblem
+-- in @bos/contracts: the pinned libphonenumber-js metadata, generated into the function, and the Nepal rule) step by
+-- step: a number the app would refuse is not copied, so every list response that reads the row can parse it, and a
+-- number the app accepts is copied (0194 then drops the old column). Kuu: dev data may be cleared, so nothing is
+-- kept unconverted. A country is never guessed from digits without a code: every old value is already E.164 (the
+-- old CHECK).
 --
 -- Idempotent: an owner that already has a phone row is skipped, and phones_search is written only when it differs,
 -- so a second run writes nothing. It has to run before 0194 drops the old columns. The short lock_timeout gives up
@@ -30,111 +28,427 @@ SELECT
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
 
--- The country of an E.164 number from its calling code, or NULL. Calling codes are prefix-free, so at most one row
--- of `c` matches (the longest-first order is only a safeguard); a national part that fails its check gives NULL
--- rather than falling through to a shorter code.
---   * `c` is GENERATED, do not edit by hand: every calling code in the libphonenumber-js 1.13.17 min metadata (the
---     version pinned in @bos/contracts) with its main country (the metadata's first country for the code: 1 -> US,
---     7 -> RU, 44 -> GB, 47 -> NO, 977 -> NP) and that country's possible national-number lengths. +247 (AC) and +383
---     (XK) are left out: no ISO 3166-1 country uses them, so such a number is not copied. Regenerate with this
---     command, run from packages/contracts (it prints "code country lengths" per row), and keep the function
---     identical in 0193 and 0195:
---       node -e "const m=require('libphonenumber-js/metadata.min.json'),iso=[...require('fs').readFileSync('src/countries.ts','utf8').split('export const ISO_COUNTRIES')[1].split('] as const')[0].matchAll(/'([A-Z]{2})'/g)].map(x=>x[1]);for(const[k,cs]of Object.entries(m.country_calling_codes)){const c=cs.find(x=>iso.includes(x));if(c)console.log(k,c,m.countries[c][3].join(','))}"
---   * `s` is hand-written: a stricter national pattern for the common codes, used instead of the length check. +1 is
---     read as US (the rest of the North American plan is not told apart here) and must be a NANP number (area code
---     and exchange each start with 2-9). +977 follows the Nepal rule of @bos/contracts: a national number starting
---     with 9 is a mobile of exactly 10 digits; a landline is 7 to 9 digits starting with neither 0 nor 9.
--- A conservative pre-filter only: the app's libphonenumber check (phoneProblem in @bos/contracts) is the authority,
--- and a number this keeps may still be refused by the app (for example an unassigned area code).
+-- pg_temp.fx9_phone_country(e164): the country of an old E.164 number, or NULL when the app would refuse it. It
+-- follows the app's check (phoneProblem in @bos/contracts: libphonenumber-js 1.13.17 with its min metadata, the
+-- version pinned there) step by step, so a number it keeps is one the app accepts and a number the app accepts is
+-- kept:
+--   1. The calling code is the prefix that is one (codes are prefix-free); the national number d follows it.
+--   2. libphonenumber's extractNationalNumber: when the main country's national prefix for parsing starts d, it is
+--      cut off (or d is rewritten by the transform rule), unless d matches the main country's national pattern and
+--      the cut number does not, or the cut number is too short or of an impossible length for its country. A cut
+--      number is not e164 any more, and the app refuses it (`parsed.number !== e164`), so such a number is dropped.
+--   3. getCountryByCallingCode: the code's only country, else the first in metadata order whose leading digits start
+--      d or (without leading digits) whose number types d matches; none found means the main country.
+--   4. isValid: d matches that country's national pattern entirely and, when the metadata lists number types for
+--      it, one of the types (pattern and possible lengths). Possible lengths are not checked otherwise.
+--   5. The country written is that country when it is in ISO_COUNTRIES (CountryCodeSchema), else the code's first
+--      ISO country (+290 TA is written SH). A code without one (+247 AC, +383 XK, the non-geographic codes) is
+--      unknown, so its number is dropped.
+--   +977 is not parsed by the app: Nepal keeps the contract's own rule (a 10-digit mobile starting with 9, or a 7 to 9
+--   digit landline starting 1 to 8), and so has no national prefix here.
+-- `c` (one row per country of a calling code, main country first) and `t` (the number types of the countries the
+-- min metadata lists them for) are GENERATED, do not edit by hand. The patterns are libphonenumber's own (JS regex
+-- syntax that Postgres AREs read the same way: \d, (?:), classes and bounded repeats); a transform rule's $n is
+-- written \n. Regenerate both lists by saving the script below as gen.mjs in packages/contracts and running
+-- `node gen.mjs` there (it prints the rows of c, a line ---, then the rows of t); keep the function identical in
+-- 0193 and 0195:
+--       import m from 'libphonenumber-js/min/metadata'; import { ISO_COUNTRIES } from './dist/countries.js';
+--       const iso = new Set(ISO_COUNTRIES), q = (s) => (s ? `'${s}'` : 'NULL'), c = [], t = [];
+--       for (const [code, list] of Object.entries(m.country_calling_codes)) {
+--         if (!list.some((x) => iso.has(x))) continue;
+--         list.forEach((x, ord) => {
+--           const [, , nnp, len, , np, , npfp, rule, , lead, types] = m.countries[x];
+--           const pre = code === '977' || ord > 0 ? '' : npfp || np || '';
+--           c.push(`\t\t(${q(code)}, ${ord}, ${q(x)}, ${iso.has(x)}, ${q(code === '977' ? '9\\d{9}|[1-8]\\d{6,8}' : nnp)}, '{${len}}', ` +
+--             `${q(lead)}, ${!!types}, ${q(pre)}, ${q(pre && rule ? rule.replace(/\$/g, '\\') : '')}, ${(pre.match(/\((?!\?)/g) || []).length})`);
+--           for (const y of types || []) if (y && y[0]) t.push(`\t\t(${q(x)}, ${q(y[0])}, '{${y[1] || len}}')`);
+--         });
+--       }
+--       console.log(c.join(',\n') + '\n---\n' + t.join(',\n'));
 CREATE OR REPLACE FUNCTION pg_temp.fx9_phone_country(e164 text) RETURNS char(2)
 LANGUAGE sql IMMUTABLE AS $$
+	WITH c(code, ord, country, iso, nnp, lengths, starts, typed, prefix, repl, ngroups) AS (VALUES
+		('1', 0, 'US', true, '[2-9]\d{9}|3\d{6}', '{10}', NULL, true, '1', NULL, 0),
+		('1', 1, 'AG', true, '(?:268|[58]\d\d|900)\d{7}', '{10}', '268', false, NULL, NULL, 0),
+		('1', 2, 'AI', true, '(?:264|[58]\d\d|900)\d{7}', '{10}', '264', false, NULL, NULL, 0),
+		('1', 3, 'AS', true, '(?:[58]\d\d|684|900)\d{7}', '{10}', '684', false, NULL, NULL, 0),
+		('1', 4, 'BB', true, '(?:246|[58]\d\d|900)\d{7}', '{10}', '246', false, NULL, NULL, 0),
+		('1', 5, 'BM', true, '(?:441|[58]\d\d|900)\d{7}', '{10}', '441', false, NULL, NULL, 0),
+		('1', 6, 'BS', true, '(?:242|[58]\d\d|900)\d{7}', '{10}', '242', false, NULL, NULL, 0),
+		('1', 7, 'CA', true, '[2-9]\d{9}|3\d{6}', '{7,10}', NULL, true, NULL, NULL, 0),
+		('1', 8, 'DM', true, '(?:[58]\d\d|767|900)\d{7}', '{10}', '767', false, NULL, NULL, 0),
+		('1', 9, 'DO', true, '(?:[58]\d\d|900)\d{7}', '{10}', '8001|8[024]9', false, NULL, NULL, 0),
+		('1', 10, 'GD', true, '(?:473|[58]\d\d|900)\d{7}', '{10}', '473', false, NULL, NULL, 0),
+		('1', 11, 'GU', true, '(?:[58]\d\d|671|900)\d{7}', '{10}', '671', false, NULL, NULL, 0),
+		('1', 12, 'JM', true, '(?:[58]\d\d|658|900)\d{7}', '{10}', '658|876', false, NULL, NULL, 0),
+		('1', 13, 'KN', true, '(?:[58]\d\d|900)\d{7}', '{10}', '869', false, NULL, NULL, 0),
+		('1', 14, 'KY', true, '(?:345|[58]\d\d|900)\d{7}', '{10}', '345', false, NULL, NULL, 0),
+		('1', 15, 'LC', true, '(?:[58]\d\d|758|900)\d{7}', '{10}', '758', false, NULL, NULL, 0),
+		('1', 16, 'MP', true, '[58]\d{9}|(?:67|90)0\d{7}', '{10}', '670', false, NULL, NULL, 0),
+		('1', 17, 'MS', true, '(?:[58]\d\d|664|900)\d{7}', '{10}', '664', false, NULL, NULL, 0),
+		('1', 18, 'PR', true, '(?:[589]\d\d|787)\d{7}', '{10}', '787|939', false, NULL, NULL, 0),
+		('1', 19, 'SX', true, '7215\d{6}|(?:[58]\d\d|900)\d{7}', '{10}', '721', false, NULL, NULL, 0),
+		('1', 20, 'TC', true, '(?:[58]\d\d|649|900)\d{7}', '{10}', '649', false, NULL, NULL, 0),
+		('1', 21, 'TT', true, '(?:[58]\d\d|900)\d{7}', '{10}', '868', false, NULL, NULL, 0),
+		('1', 22, 'VC', true, '(?:[58]\d\d|784|900)\d{7}', '{10}', '784', false, NULL, NULL, 0),
+		('1', 23, 'VG', true, '(?:284|[58]\d\d|900)\d{7}', '{10}', '284', false, NULL, NULL, 0),
+		('1', 24, 'VI', true, '[58]\d{9}|(?:34|90)0\d{7}', '{10}', '340', false, NULL, NULL, 0),
+		('7', 0, 'RU', true, '8\d{13}|[347-9]\d{9}', '{10,14}', '[3489]', false, '8', NULL, 0),
+		('7', 1, 'KZ', true, '8\d{13}|[78]\d{9}', '{10,14}', '7', false, NULL, NULL, 0),
+		('20', 0, 'EG', true, '[189]\d{8,9}|[24-6]\d{8}|[135]\d{7}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('27', 0, 'ZA', true, '[1-79]\d{8}|8\d{4,9}', '{5,6,7,8,9,10}', NULL, false, '0', NULL, 0),
+		('30', 0, 'GR', true, '5005000\d{3}|8\d{9,11}|(?:[269]\d|70)\d{8}', '{10,11,12}', NULL, false, NULL, NULL, 0),
+		('31', 0, 'NL', true, '(?:[124-7]\d\d|3(?:[02-9]\d|1[0-8]))\d{6}|8\d{6,9}|9\d{6,10}|1\d{4,5}', '{5,6,7,8,9,10,11}', NULL, false, '0', NULL, 0),
+		('32', 0, 'BE', true, '4\d{8}|[1-9]\d{7}', '{8,9}', NULL, false, '0', NULL, 0),
+		('33', 0, 'FR', true, '[1-9]\d{8}', '{9}', NULL, false, '0', NULL, 0),
+		('34', 0, 'ES', true, '400\d{6}|(?:51|[6-9]\d)\d{7}', '{9}', NULL, false, NULL, NULL, 0),
+		('36', 0, 'HU', true, '[235-7]\d{8}|[1-9]\d{7}', '{8,9}', NULL, false, '06', NULL, 0),
+		('39', 0, 'IT', true, '0\d{5,11}|1\d{8,10}|3(?:[0-8]\d{7,10}|9\d{7,8})|(?:43|55|70)\d{8}|8\d{5}(?:\d{2,4})?', '{6,7,8,9,10,11,12}', NULL, true, NULL, NULL, 0),
+		('39', 1, 'VA', true, '0\d{5,10}|3[0-8]\d{7,10}|55\d{8}|8\d{5}(?:\d{2,4})?|(?:1\d|39)\d{7,8}', '{6,7,8,9,10,11,12}', '06698', false, NULL, NULL, 0),
+		('40', 0, 'RO', true, '(?:[2378]\d|90)\d{7}|[23]\d{5}', '{6,9}', NULL, false, '0', NULL, 0),
+		('41', 0, 'CH', true, '8\d{11}|[2-9]\d{8}', '{9,12}', NULL, false, '0', NULL, 0),
+		('43', 0, 'AT', true, '1\d{3,12}|2\d{6,12}|43(?:(?:0\d|5[02-9])\d{3,9}|2\d{4,5}|[3467]\d{4}|8\d{4,6}|9\d{4,7})|5\d{4,12}|8\d{7,12}|9\d{8,12}|(?:[367]\d|4[0-24-9])\d{4,11}', '{4,5,6,7,8,9,10,11,12,13}', NULL, false, '0', NULL, 0),
+		('44', 0, 'GB', true, '[1-357-9]\d{9}|[18]\d{8}|8\d{6}', '{7,9,10}', NULL, true, '0|180020', NULL, 0),
+		('44', 1, 'GG', true, '(?:1481|[357-9]\d{3})\d{6}|8\d{6}(?:\d{2})?', '{7,9,10}', NULL, true, NULL, NULL, 0),
+		('44', 2, 'IM', true, '1624\d{6}|(?:[3578]\d|90)\d{8}', '{10}', '74576|(?:16|7[56])24', false, NULL, NULL, 0),
+		('44', 3, 'JE', true, '1534\d{6}|(?:[3578]\d|90)\d{8}', '{10}', NULL, true, NULL, NULL, 0),
+		('45', 0, 'DK', true, '[2-9]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('46', 0, 'SE', true, '(?:[26]\d\d|9)\d{9}|[1-9]\d{8}|[1-689]\d{7}|[1-4689]\d{6}|2\d{5}', '{6,7,8,9,10,12}', NULL, false, '0', NULL, 0),
+		('47', 0, 'NO', true, '(?:0|[2-9]\d{3})\d{4}', '{5,8}', '[02-689]|7[0-8]', false, NULL, NULL, 0),
+		('47', 1, 'SJ', true, '0\d{4}|(?:[489]\d|79)\d{6}', '{5,8}', '79', false, NULL, NULL, 0),
+		('48', 0, 'PL', true, '(?:6|8\d\d)\d{7}|[1-9]\d{6}(?:\d{2})?|[26]\d{5}', '{6,7,8,9,10}', NULL, false, NULL, NULL, 0),
+		('49', 0, 'DE', true, '[2579]\d{5,14}|49(?:[34]0|69|8\d)\d\d?|49(?:37|49|60|7[089]|9\d)\d{1,3}|49(?:2[024-9]|3[2-689]|7[1-7])\d{1,8}|(?:1|[368]\d|4[0-8])\d{3,13}|49(?:[015]\d|2[13]|31|[46][1-8])\d{1,9}', '{4,5,6,7,8,9,10,11,12,13,14,15}', NULL, false, '0', NULL, 0),
+		('51', 0, 'PE', true, '(?:[14-8]|9\d)\d{7}', '{8,9}', NULL, false, '0', NULL, 0),
+		('52', 0, 'MX', true, '[2-9]\d{9}', '{10}', NULL, false, NULL, NULL, 0),
+		('53', 0, 'CU', true, '(?:[2-7]|8\d\d)\d{7}|[2-47]\d{6}|[34]\d{5}', '{6,7,8,10}', NULL, false, '0', NULL, 0),
+		('54', 0, 'AR', true, '(?:11|[89]\d\d)\d{8}|[2368]\d{9}', '{10,11}', NULL, false, '0?(?:(11|2(?:2(?:02?|[13]|2[13-79]|4[1-6]|5[2457]|6[124-8]|7[1-4]|8[13-6]|9[1267])|3(?:02?|1[467]|2[03-6]|3[13-8]|[49][2-6]|5[2-8]|[67])|4(?:7[3-578]|9)|6(?:[0136]|2[24-6]|4[6-8]?|5[15-8])|80|9(?:0[1-3]|[19]|2\d|3[1-6]|4[02568]?|5[2-4]|6[2-46]|72?|8[23]?))|3(?:3(?:2[79]|6|8[2578])|4(?:0[0-24-9]|[12]|3[5-8]?|4[24-7]|5[4-68]?|6[02-9]|7[126]|8[2379]?|9[1-36-8])|5(?:1|2[1245]|3[237]?|4[1-46-9]|6[2-4]|7[1-6]|8[2-5]?)|6[24]|7(?:[069]|1[1568]|2[15]|3[145]|4[13]|5[14-8]|7[2-57]|8[126])|8(?:[01]|2[15-7]|3[2578]?|4[13-6]|5[4-8]?|6[1-357-9]|7[36-8]?|8[5-8]?|9[124])))15)?', '9\1', 1),
+		('55', 0, 'BR', true, '[1-467]\d{9,10}|55[0-46-9]\d{8}|[34]\d{7}|55\d{7,8}|(?:5[0-46-9]|[89]\d)\d{7,9}', '{8,9,10,11}', NULL, false, '(?:0|90)(?:(1[245]|2[1-35]|31|4[13]|[56]5|99)(\d{10,11}))?', '\2', 2),
+		('56', 0, 'CL', true, '12300\d{6}|6\d{9,10}|[2-9]\d{8}', '{9,10,11}', NULL, false, NULL, NULL, 0),
+		('57', 0, 'CO', true, '(?:46|60\d\d)\d{6}|(?:1\d|[39])\d{9}', '{8,10,11}', NULL, false, '0([3579]|4(?:[14]4|56))?', NULL, 1),
+		('58', 0, 'VE', true, '[68]00\d{7}|(?:[24]\d|[59]0)\d{8}', '{10}', NULL, false, '0', NULL, 0),
+		('60', 0, 'MY', true, '1\d{8,9}|(?:3\d|[4-9])\d{7}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('61', 0, 'AU', true, '1(?:[0-79]\d{7}(?:\d(?:\d{2})?)?|8[0-24-9]\d{7})|[2-478]\d{8}|1\d{4,7}', '{5,6,7,8,9,10,12}', NULL, true, '(183[12])|0', NULL, 1),
+		('61', 1, 'CC', true, '1(?:[0-79]\d{8}(?:\d{2})?|8[0-24-9]\d{7})|[148]\d{8}|1\d{5,7}', '{6,7,8,9,10,12}', NULL, true, NULL, NULL, 0),
+		('61', 2, 'CX', true, '1(?:[0-79]\d{8}(?:\d{2})?|8[0-24-9]\d{7})|[148]\d{8}|1\d{5,7}', '{6,7,8,9,10,12}', NULL, true, NULL, NULL, 0),
+		('62', 0, 'ID', true, '00[1-9]\d{9,14}|(?:[1-36]|8\d{5})\d{6}|00\d{9}|[1-9]\d{8,10}|[2-9]\d{7}', '{7,8,9,10,11,12,13,14,15,16,17}', NULL, false, '0', NULL, 0),
+		('63', 0, 'PH', true, '(?:[2-7]|9\d)\d{8}|2\d{5}|(?:1800|8)\d{7,9}', '{6,8,9,10,11,12,13}', NULL, false, '0', NULL, 0),
+		('64', 0, 'NZ', true, '11\d{8,12}|[29]\d{7,9}|(?:[34]\d|6[0-35-9])\d{6}|50\d{5}(?:\d{2,3})?|7\d{7,8}|8\d{4,9}', '{5,6,7,8,9,10,11,12,13,14}', NULL, false, '0', NULL, 0),
+		('65', 0, 'SG', true, '(?:(?:1\d|8)\d\d|7000)\d{7}|[3689]\d{7}', '{8,10,11}', NULL, false, NULL, NULL, 0),
+		('66', 0, 'TH', true, '(?:001800|[2-57]|[689]\d)\d{7}|1\d{7,9}', '{8,9,10,13}', NULL, false, '0', NULL, 0),
+		('81', 0, 'JP', true, '00[1-9]\d{6,14}|[25-9]\d{9}|(?:00|[1-9]\d\d)\d{6}', '{8,9,10,11,12,13,14,15,16,17}', NULL, false, '(000[2569]\d{4,6})$|(?:(?:003768)0?)|0', '\1', 1),
+		('82', 0, 'KR', true, '00[1-9]\d{8,11}|(?:[12]|5\d{3})\d{7}|[13-6]\d{9}|(?:[1-6]\d|80)\d{7}|[3-6]\d{4,5}|(?:00|7)0\d{8}', '{5,6,8,9,10,11,12,13,14}', NULL, false, '0(8(?:[1-46-8]|5\d\d))?', NULL, 1),
+		('84', 0, 'VN', true, '[12]\d{9}|[135-9]\d{8}|[16]\d{6,7}|7\d{6}', '{7,8,9,10}', NULL, false, '0', NULL, 0),
+		('86', 0, 'CN', true, '(?:(?:1[03-689]|2\d)\d\d|6)\d{8}|1\d{10}|[126]\d{6}(?:\d(?:\d{2})?)?|86\d{5,6}|(?:[3-579]\d|8[0-57-9])\d{5,9}', '{7,8,9,10,11,12}', NULL, false, '(1(?:[12]\d|79)\d\d)|0', NULL, 1),
+		('90', 0, 'TR', true, '4\d{6}|8\d{11,12}|(?:[2-58]\d\d|900)\d{7}', '{7,10,12,13}', NULL, false, '0', NULL, 0),
+		('91', 0, 'IN', true, '(?:000800|[2-9]\d\d)\d{7}|1\d{7,12}', '{8,9,10,11,12,13}', NULL, false, '0', NULL, 0),
+		('92', 0, 'PK', true, '122\d{6}|[24-8]\d{10,11}|9(?:[013-9]\d{8,10}|2(?:[01]\d\d|2(?:[06-8]\d|1[01]))\d{7})|(?:[2-8]\d{3}|92(?:[0-7]\d|8[1-9]))\d{6}|[24-9]\d{8}|[89]\d{7}', '{8,9,10,11,12}', NULL, false, '0', NULL, 0),
+		('93', 0, 'AF', true, '[2-7]\d{8}', '{9}', NULL, false, '0', NULL, 0),
+		('94', 0, 'LK', true, '[1-9]\d{8}', '{9}', NULL, false, '0', NULL, 0),
+		('95', 0, 'MM', true, '1\d{5,7}|95\d{6}|(?:[4-7]|9[0-46-9])\d{6,8}|(?:2|8\d)\d{5,8}', '{6,7,8,9,10}', NULL, false, '0', NULL, 0),
+		('98', 0, 'IR', true, '[1-9]\d{9}|(?:[1-8]\d\d|9)\d{3,4}', '{4,5,6,7,10}', NULL, false, '0', NULL, 0),
+		('211', 0, 'SS', true, '[19]\d{8}', '{9}', NULL, false, '0', NULL, 0),
+		('212', 0, 'MA', true, '[5-8]\d{8}', '{9}', '[5-8]', false, '0', NULL, 0),
+		('212', 1, 'EH', true, '[5-8]\d{8}', '{9}', NULL, true, NULL, NULL, 0),
+		('213', 0, 'DZ', true, '(?:[1-4]|[5-79]\d|80)\d{7}', '{8,9}', NULL, false, '0', NULL, 0),
+		('216', 0, 'TN', true, '[2-57-9]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('218', 0, 'LY', true, '[2-9]\d{8}', '{9}', NULL, false, '0', NULL, 0),
+		('220', 0, 'GM', true, '[48]\d{8}|[2-9]\d{6}', '{7,9}', NULL, false, NULL, NULL, 0),
+		('221', 0, 'SN', true, '(?:[378]\d|93)\d{7}', '{9}', NULL, false, NULL, NULL, 0),
+		('222', 0, 'MR', true, '(?:[2-4]\d\d|800)\d{5}', '{8}', NULL, false, NULL, NULL, 0),
+		('223', 0, 'ML', true, '[24-9]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('224', 0, 'GN', true, '722\d{6}|(?:3|6\d)\d{7}', '{8,9}', NULL, false, NULL, NULL, 0),
+		('225', 0, 'CI', true, '[02]\d{9}', '{10}', NULL, false, NULL, NULL, 0),
+		('226', 0, 'BF', true, '[024-7]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('227', 0, 'NE', true, '[027-9]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('228', 0, 'TG', true, '[279]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('229', 0, 'BJ', true, '01\d{8}', '{10}', NULL, false, NULL, NULL, 0),
+		('230', 0, 'MU', true, '(?:[57]|8\d\d)\d{7}|[2-468]\d{6}', '{7,8,10}', NULL, false, NULL, NULL, 0),
+		('231', 0, 'LR', true, '(?:[2457]\d|33|88)\d{7}|(?:2\d|[4-6])\d{6}', '{7,8,9}', NULL, false, '0', NULL, 0),
+		('232', 0, 'SL', true, '(?:[237-9]\d|66)\d{6}', '{8}', NULL, false, '0', NULL, 0),
+		('233', 0, 'GH', true, '[235]\d{8}|800\d{5,6}', '{8,9}', NULL, false, '0', NULL, 0),
+		('234', 0, 'NG', true, '(?:20|9\d)\d{8}|[78]\d{9,13}', '{10,11,12,13,14}', NULL, false, '0', NULL, 0),
+		('235', 0, 'TD', true, '(?:22|[3689]\d|77)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('236', 0, 'CF', true, '8776\d{4}|(?:[27]\d|61)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('237', 0, 'CM', true, '[26]\d{8}|88\d{6,7}', '{8,9}', NULL, false, NULL, NULL, 0),
+		('238', 0, 'CV', true, '(?:[2-59]\d\d|800)\d{4}', '{7}', NULL, false, NULL, NULL, 0),
+		('239', 0, 'ST', true, '(?:22|9\d)\d{5}', '{7}', NULL, false, NULL, NULL, 0),
+		('240', 0, 'GQ', true, '222\d{6}|(?:3\d|55|[89]0)\d{7}', '{9}', NULL, false, NULL, NULL, 0),
+		('241', 0, 'GA', true, '(?:[067]\d|11)\d{6}|[2-7]\d{6}', '{7,8}', NULL, false, '0(11\d{6}|60\d{6}|61\d{6}|6[256]\d{6}|7[467]\d{6})', '\1', 1),
+		('242', 0, 'CG', true, '222\d{6}|(?:0\d|80)\d{7}', '{9}', NULL, false, NULL, NULL, 0),
+		('243', 0, 'CD', true, '(?:(?:[189]|5\d)\d|2)\d{7}|[1-68]\d{6}', '{7,8,9,10}', NULL, false, '0', NULL, 0),
+		('244', 0, 'AO', true, '[29]\d{8}', '{9}', NULL, false, NULL, NULL, 0),
+		('245', 0, 'GW', true, '[49]\d{8}|4\d{6}', '{7,9}', NULL, false, NULL, NULL, 0),
+		('246', 0, 'IO', true, '3\d{6}', '{7}', NULL, false, NULL, NULL, 0),
+		('248', 0, 'SC', true, '(?:[2489]\d|64)\d{5}', '{7}', NULL, false, NULL, NULL, 0),
+		('249', 0, 'SD', true, '[19]\d{8}', '{9}', NULL, false, '0', NULL, 0),
+		('250', 0, 'RW', true, '(?:06|[27]\d\d|[89]00)\d{6}', '{8,9}', NULL, false, '0', NULL, 0),
+		('251', 0, 'ET', true, '(?:11|[2-57-9]\d)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('252', 0, 'SO', true, '[346-9]\d{8}|[12679]\d{7}|[1-5]\d{6}|[1348]\d{5}', '{6,7,8,9}', NULL, false, '0', NULL, 0),
+		('253', 0, 'DJ', true, '(?:2\d|77)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('254', 0, 'KE', true, '(?:[17]\d\d|900)\d{6}|(?:2|80)0\d{6,7}|[4-6]\d{6,8}', '{7,8,9,10}', NULL, false, '0', NULL, 0),
+		('255', 0, 'TZ', true, '(?:[25-8]\d|41|90)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('256', 0, 'UG', true, '800\d{6}|(?:[29]0|[347]\d)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('257', 0, 'BI', true, '(?:[267]\d|31)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('258', 0, 'MZ', true, '(?:2|8\d)\d{7}', '{8,9}', NULL, false, NULL, NULL, 0),
+		('260', 0, 'ZM', true, '800\d{6}|(?:21|[579]\d|63)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('261', 0, 'MG', true, '[23]\d{8}', '{9}', NULL, false, '([24-9]\d{6})$|0', '20\1', 1),
+		('262', 0, 'RE', true, '709\d{6}|(?:26|[689]\d)\d{7}', '{9}', NULL, true, '0', NULL, 0),
+		('262', 1, 'YT', true, '(?:639\d|7093)\d{5}|(?:26|80|9\d)\d{7}', '{9}', NULL, true, NULL, NULL, 0),
+		('263', 0, 'ZW', true, '8\d{6}(?:\d{3})?|[235-8]\d{8}', '{7,9,10}', NULL, false, '0', NULL, 0),
+		('264', 0, 'NA', true, '[68]\d{7,8}', '{8,9}', NULL, false, '0', NULL, 0),
+		('265', 0, 'MW', true, '(?:[1289]\d|31|77)\d{7}|1\d{6}', '{7,9}', NULL, false, '0', NULL, 0),
+		('266', 0, 'LS', true, '(?:[256]\d\d|800)\d{5}', '{8}', NULL, false, NULL, NULL, 0),
+		('267', 0, 'BW', true, '90\d{5}|(?:0800|[2-6]|(?:7|800)\d)\d{6}', '{7,8,10}', NULL, false, NULL, NULL, 0),
+		('268', 0, 'SZ', true, '0800\d{4}|(?:[237]\d|900)\d{6}', '{8,9}', NULL, false, NULL, NULL, 0),
+		('269', 0, 'KM', true, '[3478]\d{6}', '{7}', NULL, false, NULL, NULL, 0),
+		('290', 0, 'SH', true, '(?:[2569]\d|8)\d{3}', '{4,5}', '[2569]', false, NULL, NULL, 0),
+		('290', 1, 'TA', false, '8\d{3}', '{4}', '8', false, NULL, NULL, 0),
+		('291', 0, 'ER', true, '[178]\d{6}', '{7}', NULL, false, '0', NULL, 0),
+		('297', 0, 'AW', true, '(?:[25-79]\d\d|800)\d{4}', '{7}', NULL, false, NULL, NULL, 0),
+		('298', 0, 'FO', true, '[2-9]\d{5}', '{6}', NULL, false, '(10(?:01|[12]0|88))', NULL, 1),
+		('299', 0, 'GL', true, '(?:19|[2-689]\d|70)\d{4}', '{6}', NULL, false, NULL, NULL, 0),
+		('350', 0, 'GI', true, '(?:[25]\d|60)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('351', 0, 'PT', true, '1693\d{5}|(?:[26-9]\d|30)\d{7}', '{9}', NULL, false, NULL, NULL, 0),
+		('352', 0, 'LU', true, '35[013-9]\d{4,8}|6\d{8}|35\d{2,4}|(?:[2457-9]\d|3[0-46-9])\d{2,9}', '{4,5,6,7,8,9,10,11}', NULL, false, '(15(?:0[06]|1[12]|[35]5|4[04]|6[26]|77|88|99)\d)', NULL, 1),
+		('353', 0, 'IE', true, '(?:1\d|[2569])\d{6,8}|4\d{6,9}|7\d{8}|8\d{8,9}', '{7,8,9,10}', NULL, false, '0', NULL, 0),
+		('354', 0, 'IS', true, '(?:38\d|[4-9])\d{6}', '{7,9}', NULL, false, NULL, NULL, 0),
+		('355', 0, 'AL', true, '(?:700\d\d|900)\d{3}|8\d{5,7}|(?:[2-5]|6\d)\d{7}', '{6,7,8,9}', NULL, false, '0', NULL, 0),
+		('356', 0, 'MT', true, '3550\d{4}|(?:[2579]\d\d|800)\d{5}', '{8}', NULL, false, NULL, NULL, 0),
+		('357', 0, 'CY', true, '(?:[279]\d|[58]0)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('358', 0, 'FI', true, '[1-35689]\d{4}|7\d{10,11}|(?:[124-7]\d|3[0-46-9])\d{8}|[1-9]\d{5,8}', '{5,6,7,8,9,10,11,12}', '1[03-79]|[2-9]', false, '0', NULL, 0),
+		('358', 1, 'AX', true, '2\d{4,9}|35\d{4,5}|(?:60\d\d|800)\d{4,6}|7\d{5,11}|(?:[14]\d|3[0-46-9]|50)\d{4,8}', '{5,6,7,8,9,10,11,12}', '18', false, NULL, NULL, 0),
+		('359', 0, 'BG', true, '00800\d{7}|[2-7]\d{6,7}|[89]\d{6,8}|2\d{5}', '{6,7,8,9,12}', NULL, false, '0', NULL, 0),
+		('370', 0, 'LT', true, '(?:[3469]\d|52|[78]0)\d{6}', '{8}', NULL, false, '[08]', NULL, 0),
+		('371', 0, 'LV', true, '(?:[268]\d|78|90)\d{6}', '{8}', NULL, false, NULL, NULL, 0),
+		('372', 0, 'EE', true, '8\d{9}|[4578]\d{7}|(?:[3-8]\d|90)\d{5}', '{7,8,10}', NULL, false, NULL, NULL, 0),
+		('373', 0, 'MD', true, '(?:[235-7]\d|[89]0)\d{6}', '{8}', NULL, false, '0', NULL, 0),
+		('374', 0, 'AM', true, '(?:[1-489]\d|55|60|77)\d{6}', '{8}', NULL, false, '0', NULL, 0),
+		('375', 0, 'BY', true, '(?:[12]\d|33|44|902)\d{7}|8(?:0[0-79]\d{5,7}|[1-7]\d{9})|8(?:1[0-489]|[5-79]\d)\d{7}|8[1-79]\d{6,7}|8[0-79]\d{5}|8\d{5}', '{6,7,8,9,10,11}', NULL, false, '0|80?', NULL, 0),
+		('376', 0, 'AD', true, '(?:1|6\d)\d{7}|[135-9]\d{5}', '{6,8,9}', NULL, false, NULL, NULL, 0),
+		('377', 0, 'MC', true, '(?:[3489]|[67]\d)\d{7}', '{8,9}', NULL, false, '0', NULL, 0),
+		('378', 0, 'SM', true, '(?:0549|[5-7]\d)\d{6}', '{8,10}', NULL, false, '([89]\d{5})$', '0549\1', 1),
+		('380', 0, 'UA', true, '[89]\d{9}|[3-9]\d{8}', '{9,10}', NULL, false, '0', NULL, 0),
+		('381', 0, 'RS', true, '38[02-9]\d{6,9}|6\d{7,9}|90\d{4,8}|38\d{5,6}|(?:7\d\d|800)\d{3,9}|(?:[12]\d|3[0-79])\d{5,10}', '{6,7,8,9,10,11,12}', NULL, false, '0', NULL, 0),
+		('382', 0, 'ME', true, '(?:20|[3-79]\d)\d{6}|80\d{6,7}', '{8,9}', NULL, false, '0', NULL, 0),
+		('385', 0, 'HR', true, '[2-69]\d{8}|80\d{5,7}|[1-79]\d{7}|6\d{6}', '{7,8,9}', NULL, false, '0', NULL, 0),
+		('386', 0, 'SI', true, '[1-7]\d{7}|8\d{4,7}|90\d{4,6}', '{5,6,7,8}', NULL, false, '0', NULL, 0),
+		('387', 0, 'BA', true, '6\d{8}|(?:[35689]\d|49|70)\d{6}', '{8,9}', NULL, false, '0', NULL, 0),
+		('389', 0, 'MK', true, '[2-578]\d{7}', '{8}', NULL, false, '0', NULL, 0),
+		('420', 0, 'CZ', true, '(?:[2-578]\d|60)\d{7}|9\d{8,11}', '{9,10,11,12}', NULL, false, NULL, NULL, 0),
+		('421', 0, 'SK', true, '[2-689]\d{8}|[2-59]\d{6}|[2-5]\d{5}', '{6,7,9}', NULL, false, '0', NULL, 0),
+		('423', 0, 'LI', true, '[68]\d{8}|(?:[2378]\d|90)\d{5}', '{7,9}', NULL, false, '(1001)|0', NULL, 1),
+		('500', 0, 'FK', true, '[2-7]\d{4}', '{5}', NULL, false, NULL, NULL, 0),
+		('501', 0, 'BZ', true, '(?:0800\d|[2-8])\d{6}', '{7,11}', NULL, false, NULL, NULL, 0),
+		('502', 0, 'GT', true, '80\d{6}|(?:1\d{3}|[2-7])\d{7}', '{8,11}', NULL, false, NULL, NULL, 0),
+		('503', 0, 'SV', true, '[25-7]\d{7}|(?:80\d|900)\d{4}(?:\d{4})?', '{7,8,11}', NULL, false, NULL, NULL, 0),
+		('504', 0, 'HN', true, '8\d{10}|[237-9]\d{7}', '{8,11}', NULL, false, NULL, NULL, 0),
+		('505', 0, 'NI', true, '(?:1800|[25-8]\d{3})\d{4}', '{8}', NULL, false, NULL, NULL, 0),
+		('506', 0, 'CR', true, '(?:8\d|90)\d{8}|(?:[24-8]\d{3}|3005)\d{4}', '{8,10}', NULL, false, '(19(?:0[0-2468]|1[09]|20|66|77|99))', NULL, 1),
+		('507', 0, 'PA', true, '(?:00800|8\d{3})\d{6}|[68]\d{7}|[1-57-9]\d{6}', '{7,8,10,11}', NULL, false, NULL, NULL, 0),
+		('508', 0, 'PM', true, '[78]\d{8}|[2-9]\d{5}', '{6,9}', NULL, false, '0', NULL, 0),
+		('509', 0, 'HT', true, '[2-589]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('590', 0, 'GP', true, '7090\d{5}|(?:[56]9|[89]\d)\d{7}', '{9}', NULL, true, '0', NULL, 0),
+		('590', 1, 'BL', true, '7090\d{5}|(?:[56]9|[89]\d)\d{7}', '{9}', NULL, true, NULL, NULL, 0),
+		('590', 2, 'MF', true, '7090\d{5}|(?:[56]9|[89]\d)\d{7}', '{9}', NULL, true, NULL, NULL, 0),
+		('591', 0, 'BO', true, '(?:[2-7]\d\d|8001)\d{5}', '{8,9}', NULL, false, '0(1\d)?', NULL, 1),
+		('592', 0, 'GY', true, '(?:[2-8]\d{3}|9008)\d{3}', '{7}', NULL, false, NULL, NULL, 0),
+		('593', 0, 'EC', true, '1\d{9,10}|(?:[2-7]|9\d)\d{7}', '{8,9,10,11}', NULL, false, '0', NULL, 0),
+		('594', 0, 'GF', true, '(?:694\d|7093)\d{5}|(?:59|[89]\d)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('595', 0, 'PY', true, '[36-8]\d{5,8}|4\d{6,8}|59\d{6}|9\d{5,10}|(?:2\d|5[0-8])\d{6,7}', '{6,7,8,9,10,11}', NULL, false, '0', NULL, 0),
+		('596', 0, 'MQ', true, '7091\d{5}|(?:[56]9|[89]\d)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('597', 0, 'SR', true, '(?:[2-5]|[6-9]\d)\d{5}', '{6,7}', NULL, false, NULL, NULL, 0),
+		('598', 0, 'UY', true, '0004\d{2,9}|[1249]\d{7}|2\d{3,4}|(?:[49]\d|80)\d{5}', '{4,5,6,7,8,9,10,11,12,13}', NULL, false, '0', NULL, 0),
+		('599', 0, 'CW', true, '(?:[34]1|60|(?:7|9\d)\d)\d{5}', '{7,8}', '[69]', false, NULL, NULL, 0),
+		('599', 1, 'BQ', true, '(?:[34]1|7\d)\d{5}', '{7}', '[347]', false, NULL, NULL, 0),
+		('670', 0, 'TL', true, '7\d{7}|(?:[2-47]\d|[89]0)\d{5}', '{7,8}', NULL, false, NULL, NULL, 0),
+		('672', 0, 'NF', true, '[13]\d{5}', '{6}', NULL, false, '([0-258]\d{4})$', '3\1', 1),
+		('673', 0, 'BN', true, '[2-578]\d{6}', '{7}', NULL, false, NULL, NULL, 0),
+		('674', 0, 'NR', true, '(?:222|444|(?:55|8\d)\d|666|777|999)\d{4}', '{7}', NULL, false, NULL, NULL, 0),
+		('675', 0, 'PG', true, '(?:180|[78]\d{3})\d{4}|(?:[2-589]\d|64)\d{5}', '{7,8}', NULL, false, NULL, NULL, 0),
+		('676', 0, 'TO', true, '(?:0800|(?:[5-8]\d\d|999)\d)\d{3}|[2-8]\d{4}', '{5,7}', NULL, false, NULL, NULL, 0),
+		('677', 0, 'SB', true, '[6-9]\d{6}|[1-6]\d{4}', '{5,7}', NULL, false, NULL, NULL, 0),
+		('678', 0, 'VU', true, '[57-9]\d{6}|(?:[238]\d|48)\d{3}', '{5,7}', NULL, false, NULL, NULL, 0),
+		('679', 0, 'FJ', true, '45\d{5}|(?:0800\d|[235-9])\d{6}', '{7,11}', NULL, false, NULL, NULL, 0),
+		('680', 0, 'PW', true, '(?:[24-8]\d\d|345|900)\d{4}', '{7}', NULL, false, NULL, NULL, 0),
+		('681', 0, 'WF', true, '(?:40|72|8\d{4})\d{4}|[89]\d{5}', '{6,9}', NULL, false, NULL, NULL, 0),
+		('682', 0, 'CK', true, '[2-578]\d{4}', '{5}', NULL, false, NULL, NULL, 0),
+		('683', 0, 'NU', true, '(?:[4-7]|888\d)\d{3}', '{4,7}', NULL, false, NULL, NULL, 0),
+		('685', 0, 'WS', true, '(?:[2-6]|8\d{5})\d{4}|[78]\d{6}|[68]\d{5}', '{5,6,7,10}', NULL, false, NULL, NULL, 0),
+		('686', 0, 'KI', true, '(?:[37]\d|6[0-79])\d{6}|(?:[2-48]\d|50)\d{3}', '{5,8}', NULL, false, '0', NULL, 0),
+		('687', 0, 'NC', true, '(?:050|[2-57-9]\d\d)\d{3}', '{6}', NULL, false, NULL, NULL, 0),
+		('688', 0, 'TV', true, '(?:2|7\d\d|90)\d{4}', '{5,6,7}', NULL, false, NULL, NULL, 0),
+		('689', 0, 'PF', true, '4\d{5}(?:\d{2})?|8\d{7,8}', '{6,8,9}', NULL, false, NULL, NULL, 0),
+		('690', 0, 'TK', true, '[2-47]\d{3,6}', '{4,5,6,7}', NULL, false, NULL, NULL, 0),
+		('691', 0, 'FM', true, '(?:[39]\d\d|820)\d{4}', '{7}', NULL, false, NULL, NULL, 0),
+		('692', 0, 'MH', true, '329\d{4}|(?:[256]\d|45)\d{5}', '{7}', NULL, false, '1', NULL, 0),
+		('850', 0, 'KP', true, '85\d{6}|(?:19\d|[2-7])\d{7}', '{8,10}', NULL, false, '0', NULL, 0),
+		('852', 0, 'HK', true, '8[0-46-9]\d{6,7}|9\d{4,7}|(?:[2-7]|9\d{3})\d{7}', '{5,6,7,8,9,11}', NULL, false, NULL, NULL, 0),
+		('853', 0, 'MO', true, '0800\d{3}|(?:28|[68]\d)\d{6}', '{7,8}', NULL, false, NULL, NULL, 0),
+		('855', 0, 'KH', true, '1\d{9}|[1-9]\d{7,8}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('856', 0, 'LA', true, '(?:2\d|3)\d{8}|(?:[235-8]\d|41)\d{6}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('880', 0, 'BD', true, '[1-469]\d{9}|8[0-79]\d{7,8}|[2-79]\d{8}|[2-9]\d{7}|[3-9]\d{6}|[57-9]\d{5}', '{6,7,8,9,10}', NULL, false, '0', NULL, 0),
+		('886', 0, 'TW', true, '[2-689]\d{8}|7\d{9,10}|[2-8]\d{7}|2\d{6}', '{7,8,9,10,11}', NULL, false, '0', NULL, 0),
+		('960', 0, 'MV', true, '(?:800|9[0-57-9]\d)\d{7}|[34679]\d{6}', '{7,10}', NULL, false, NULL, NULL, 0),
+		('961', 0, 'LB', true, '[27-9]\d{7}|[13-9]\d{6}', '{7,8}', NULL, false, '0', NULL, 0),
+		('962', 0, 'JO', true, '(?:(?:[2689]|7\d)\d|32|427|53)\d{6}', '{8,9}', NULL, false, '0', NULL, 0),
+		('963', 0, 'SY', true, '[1-359]\d{8}|[1-5]\d{7}', '{8,9}', NULL, false, '0', NULL, 0),
+		('964', 0, 'IQ', true, '(?:1|7\d\d)\d{7}|[2-6]\d{7,8}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('965', 0, 'KW', true, '18\d{5}|(?:[2569]\d|41)\d{6}', '{7,8}', NULL, false, NULL, NULL, 0),
+		('966', 0, 'SA', true, '(?:[15]\d|800|92)\d{7}', '{9,10}', NULL, false, '0', NULL, 0),
+		('967', 0, 'YE', true, '(?:1|7\d)\d{7}|[1-7]\d{6}', '{7,8,9}', NULL, false, '0', NULL, 0),
+		('968', 0, 'OM', true, '(?:1505|[279]\d{3}|500)\d{4}|800\d{5,6}', '{7,8,9}', NULL, false, NULL, NULL, 0),
+		('970', 0, 'PS', true, '[2489]2\d{6}|(?:1\d|5)\d{8}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('971', 0, 'AE', true, '(?:[4-7]\d|9[0-689])\d{7}|800\d{2,9}|[2-4679]\d{7}', '{5,6,7,8,9,10,11,12}', NULL, false, '0', NULL, 0),
+		('972', 0, 'IL', true, '1\d{6}(?:\d{3,5})?|[57]\d{8}|[1-489]\d{7}', '{7,8,9,10,11,12}', NULL, false, '0', NULL, 0),
+		('973', 0, 'BH', true, '[136-9]\d{7}', '{8}', NULL, false, NULL, NULL, 0),
+		('974', 0, 'QA', true, '800\d{4}|(?:2|800)\d{6}|(?:0080|[3-7])\d{7}', '{7,8,9,11}', NULL, false, NULL, NULL, 0),
+		('975', 0, 'BT', true, '[178]\d{7}|[2-8]\d{6}', '{7,8}', NULL, false, NULL, NULL, 0),
+		('976', 0, 'MN', true, '[12]\d{7,9}|[5-9]\d{7}', '{8,9,10}', NULL, false, '0', NULL, 0),
+		('977', 0, 'NP', true, '9\d{9}|[1-8]\d{6,8}', '{8,10,11}', NULL, false, NULL, NULL, 0),
+		('992', 0, 'TJ', true, '(?:[0-57-9]\d|66)\d{7}', '{9}', NULL, false, NULL, NULL, 0),
+		('993', 0, 'TM', true, '[1-7]\d{7}', '{8}', NULL, false, '8', NULL, 0),
+		('994', 0, 'AZ', true, '365\d{6}|(?:[124579]\d|60|88)\d{7}', '{9}', NULL, false, '0', NULL, 0),
+		('995', 0, 'GE', true, '(?:[3-57]\d\d|800)\d{6}', '{9}', NULL, false, '0', NULL, 0),
+		('996', 0, 'KG', true, '8\d{9}|[235-9]\d{8}', '{9,10}', NULL, false, '0', NULL, 0),
+		('998', 0, 'UZ', true, '(?:20|33|[5-9]\d)\d{7}', '{9}', NULL, false, NULL, NULL, 0)
+	), t(country, pattern, lengths) AS (VALUES
+		('US', '983[2-57-9]\d{6}|(?:2(?:0[1-35-9]|1[02-9]|2[03-57-9]|3[1459]|4[08]|5[1-46]|6[0279]|7[02469]|8[13])|3(?:0[1-57-9]|1[02-9]|2[013-79]|3[0-24679]|4[167]|5[0-3]|6[01349]|8[056])|4(?:0[124-9]|1[02-579]|2[3-5]|3[0245]|4[023578]|58|6[349]|7[02589]|8[04])|5(?:0[1-57-9]|1[0235-8]|20|3[0149]|4[01]|5[179]|6[1-47]|7[0-5]|8[0256])|6(?:0[1-35-9]|1[024-9]|2[03689]|3[016]|4[0156]|5[01679]|6[0-279]|78|8[0-269])|7(?:0[1-46-8]|1[2-9]|2[04-8]|3[0-2478]|4[0378]|5[47]|6[02359]|7[0-59]|8[156])|8(?:0[1-68]|1[02-8]|2[0168]|3[0-2589]|4[03578]|5[046-9]|6[02-5]|7[028])|9(?:0[1346-9]|1[02-9]|2[0589]|3[0146-8]|4[01357-9]|5[12469]|7[0-3589]|8[04-69]))[2-9]\d{6}', '{10}'),
+		('US', '8(?:00|33|44|55|66|77|88)[2-9]\d{6}', '{10}'),
+		('US', '900[2-9]\d{6}', '{10}'),
+		('US', '52(?:3(?:[2-46-9][02-9]\d|5(?:[02-46-9]\d|5[0-46-9]))|4(?:[2-478][02-9]\d|5(?:[034]\d|2[024-9]|5[0-46-9])|6(?:0[1-9]|[2-9]\d)|9(?:[05-9]\d|2[0-5]|49)))\d{4}|52[34][2-9]1[02-9]\d{4}|5(?:00|2[125-9]|3[23]|44|66|77|88)[2-9]\d{6}', '{10}'),
+		('CA', '(?:2(?:04|[23]6|[48]9|5[07]|[67]3)|3(?:06|43|54|6[578]|82)|4(?:03|1[68]|[26]8|3[178]|50|74)|5(?:06|1[49]|48|79|8[147])|6(?:04|[18]3|39|47|72)|7(?:0[59]|42|53|78|8[02])|8(?:[06]7|19|25|7[39])|9(?:0[25]|42))[2-9]\d{6}', '{10}'),
+		('CA', '8(?:00|33|44|55|66|77|88)[2-9]\d{6}', '{10}'),
+		('CA', '900[2-9]\d{6}', '{10}'),
+		('CA', '52(?:3(?:[2-46-9][02-9]\d|5(?:[02-46-9]\d|5[0-46-9]))|4(?:[2-478][02-9]\d|5(?:[034]\d|2[024-9]|5[0-46-9])|6(?:0[1-9]|[2-9]\d)|9(?:[05-9]\d|2[0-5]|49)))\d{4}|52[34][2-9]1[02-9]\d{4}|(?:5(?:2[125-9]|3[23]|44|66|77|88)|6(?:22|33))[2-9]\d{6}', '{10}'),
+		('CA', '310\d{4}', '{7}'),
+		('CA', '600[2-9]\d{6}', '{10}'),
+		('IT', '0(?:669[0-79]\d{1,6}|831\d{2,8})|0(?:1(?:[0159]\d|[27][1-5]|31|4[1-4]|6[1356]|8[2-57])|2\d\d|3(?:[0159]\d|2[1-4]|3[12]|[48][1-6]|6[2-59]|7[1-7])|4(?:[0159]\d|[23][1-9]|4[245]|6[1-5]|7[1-4]|81)|5(?:[0159]\d|2[1-5]|3[2-6]|4[1-79]|6[4-6]|7[1-578]|8[3-8])|6(?:[0-57-9]\d|6[0-8])|7(?:[0159]\d|2[12]|3[1-7]|4[2-46]|6[13569]|7[13-6]|8[1-59])|8(?:[0159]\d|2[3-578]|3[2356]|[6-8][1-5])|9(?:[0159]\d|[238][1-5]|4[12]|6[1-8]|7[1-6]))\d{2,7}', '{6,7,8,9,10,11,12}'),
+		('IT', '3[2-9]\d{7,8}|(?:31|43)\d{8}', '{9,10}'),
+		('IT', '80(?:0\d{3}|3)\d{3}', '{6,9}'),
+		('IT', '(?:0878\d{3}|89(?:2\d|3[04]|4(?:[0-4]|[5-9]\d\d)|5[0-4]))\d\d|(?:1(?:44|6[346])|89(?:38|5[5-9]|9))\d{6}', '{6,8,9,10}'),
+		('IT', '1(?:78\d|99)\d{6}', '{9,10}'),
+		('IT', '3[2-8]\d{9,10}', '{11,12}'),
+		('IT', '55\d{8}', '{10}'),
+		('IT', '84(?:[08]\d{3}|[17])\d{3}', '{6,9}'),
+		('GB', '(?:1(?:1(?:3(?:[0-58]\d\d|73[0-5])|4(?:(?:[0-5]\d|70)\d|69[7-9])|(?:(?:5[0-26-9]|[78][0-49])\d|6(?:[0-4]\d|5[01]))\d)|(?:2(?:(?:0[024-9]|2[3-9]|3[3-79]|4[1-689]|[58][02-9]|6[0-47-9]|7[013-9]|9\d)\d|1(?:[0-7]\d|8[0-3]))|(?:3(?:0\d|1[0-8]|[25][02-9]|3[02-579]|[468][0-46-9]|7[1-35-79]|9[2-578])|4(?:0[03-9]|[137]\d|[28][02-57-9]|4[02-69]|5[0-8]|[69][0-79])|5(?:0[1-35-9]|[16]\d|2[024-9]|3[015689]|4[02-9]|5[03-9]|7[0-35-9]|8[0-468]|9[0-57-9])|6(?:0[034689]|1\d|2[0-35689]|[38][013-9]|4[1-467]|5[0-69]|6[13-9]|7[0-8]|9[0-24578])|7(?:0[0246-9]|2\d|3[0236-8]|4[03-9]|5[0-46-9]|6[013-9]|7[0-35-9]|8[024-9]|9[02-9])|8(?:0[35-9]|2[1-57-9]|3[02-578]|4[0-578]|5[124-9]|6[2-69]|7\d|8[02-9]|9[02569])|9(?:0[02-589]|[18]\d|2[02-689]|3[1-57-9]|4[2-9]|5[0-579]|6[2-47-9]|7[0-24578]|9[2-57]))\d)\d)|2(?:0[013478]|3[0189]|4[017]|8[0-46-9]|9[0-2])\d{3})\d{4}|1(?:2(?:0(?:46[1-4]|87[2-9])|545[1-79]|76(?:2\d|3[1-8]|6[1-6])|9(?:7(?:2[0-4]|3[2-5])|8(?:2[2-8]|7[0-47-9]|8[3-5])))|3(?:6(?:38[2-5]|47[23])|8(?:47[04-9]|64[0157-9]))|4(?:044[1-7]|20(?:2[23]|8\d)|6(?:0(?:30|5[2-57]|6[1-8]|7[2-8])|140)|8(?:052|87[1-3]))|5(?:2(?:4(?:3[2-79]|6\d)|76\d)|6(?:26[06-9]|686))|6(?:06(?:4\d|7[4-79])|295[5-7]|35[34]\d|47(?:24|61)|59(?:5[08]|6[67]|74)|9(?:55[0-4]|77[23]))|7(?:26(?:6[13-9]|7[0-7])|(?:442|688)\d|50(?:2[0-3]|[3-68]2|76))|8(?:27[56]\d|37(?:5[2-5]|8[239])|843[2-58])|9(?:0(?:0(?:6[1-8]|85)|52\d)|3583|4(?:66[1-8]|9(?:2[01]|81))|63(?:23|3[1-4])|9561))\d{3}', '{9,10}'),
+		('GB', '7(?:457[0-57-9]|700[01]|911[028])\d{5}|7(?:[1-3]\d\d|4(?:[0-46-9]\d|5[0-689])|5(?:0[0-8]|[13-9]\d|2[0-35-9])|7(?:0[1-9]|[1-7]\d|8[02-9]|9[0-689])|8(?:[014-9]\d|[23][0-8])|9(?:[024-9]\d|1[02-9]|3[0-689]))\d{6}', '{10}'),
+		('GB', '80[08]\d{7}|800\d{6}|8001111', '{7,9,10}'),
+		('GB', '(?:8(?:4[2-5]|7[0-3])|9(?:[01]\d|8[2-49]))\d{7}|845464\d', '{7,10}'),
+		('GB', '70\d{8}', '{10}'),
+		('GB', '(?:3[0347]|55)\d{8}', '{10}'),
+		('GB', '76(?:464|652)\d{5}|76(?:0[0-28]|2[356]|34|4[01347]|5[49]|6[0-369]|77|8[14]|9[139])\d{6}', '{10}'),
+		('GB', '56\d{8}', '{10}'),
+		('GG', '1481[25-9]\d{5}', '{10}'),
+		('GG', '7(?:(?:781|839)\d|911[17])\d{5}', '{10}'),
+		('GG', '80[08]\d{7}|800\d{6}|8001111', '{7,9,10}'),
+		('GG', '(?:8(?:4[2-5]|7[0-3])|9(?:[01]\d|8[0-3]))\d{7}|845464\d', '{7,10}'),
+		('GG', '70\d{8}', '{10}'),
+		('GG', '(?:3[0347]|55)\d{8}', '{10}'),
+		('GG', '76(?:464|652)\d{5}|76(?:0[0-28]|2[356]|34|4[01347]|5[49]|6[0-369]|77|8[14]|9[139])\d{6}', '{10}'),
+		('GG', '56\d{8}', '{10}'),
+		('JE', '1534[0-24-8]\d{5}', '{10}'),
+		('JE', '7(?:(?:(?:50|82)9|937)\d|7(?:00[378]|97\d))\d{5}', '{10}'),
+		('JE', '80(?:07(?:35|81)|8901)\d{4}', '{10}'),
+		('JE', '(?:8(?:4(?:4(?:4(?:05|42|69)|703)|5(?:041|800))|7(?:0002|1206))|90(?:066[59]|1810|71(?:07|55)))\d{4}', '{10}'),
+		('JE', '701511\d{4}', '{10}'),
+		('JE', '(?:3(?:0(?:07(?:35|81)|8901)|3\d{4}|4(?:4(?:4(?:05|42|69)|703)|5(?:041|800))|7(?:0002|1206))|55\d{4})\d{4}', '{10}'),
+		('JE', '76(?:464|652)\d{5}|76(?:0[0-28]|2[356]|34|4[01347]|5[49]|6[0-369]|77|8[14]|9[139])\d{6}', '{10}'),
+		('JE', '56\d{8}', '{10}'),
+		('AU', '(?:(?:241|349)0\d\d|8(?:51(?:0(?:0[03-9]|[12479]\d|3[2-9]|5[0-8]|6[1-9]|8[0-7])|1(?:[0235689]\d|1[0-69]|4[0-589]|7[0-47-9])|2(?:0[0-79]|[18][13579]|2[14-9]|3[0-46-9]|[4-6]\d|7[89]|9[0-4])|[34]\d\d)|91(?:(?:[0-58]\d|6[0135-9])\d|7(?:0[0-24-9]|[1-9]\d)|9(?:[0-46-9]\d|5[0-79]))))\d{3}|(?:2(?:[0-26-9]\d|3[0-8]|4[02-9]|5[0135-9])|3(?:[0-3589]\d|4[0-578]|6[1-9]|7[0-35-9])|7(?:[013-57-9]\d|2[0-8])|8(?:55|6[0-8]|[78]\d|9[02-9]))\d{6}', '{9}'),
+		('AU', '4(?:79[01]|83[0-36-9]|9(?:5[0-3]|6[0-4]))\d{5}|4(?:[0-36]\d|4[047-9]|[58][0-24-9]|7[02-8]|9[0-47-9])\d{6}', '{9}'),
+		('AU', '180(?:0\d{3}|2)\d{3}', '{7,10}'),
+		('AU', '190[0-26]\d{6}', '{10}'),
+		('AU', '163\d{2,6}', '{5,6,7,8,9}'),
+		('AU', '14(?:5(?:1[0458]|[23][458])|71\d)\d{4}', '{9}'),
+		('AU', '13(?:00\d{6}(?:\d{2})?|45[0-4]\d{3})|13\d{4}', '{6,8,10,12}'),
+		('CC', '8(?:51(?:0(?:02|31|60|89)|1(?:18|76)|223)|91(?:0(?:1[0-2]|29)|1(?:[28]2|50|79)|2(?:10|64)|3(?:[06]8|22)|4[29]8|62\d|70[23]|959))\d{3}', '{9}'),
+		('CC', '4(?:79[01]|83[0-36-9]|9(?:5[0-3]|6[0-4]))\d{5}|4(?:[0-36]\d|4[047-9]|[58][0-24-9]|7[02-8]|9[0-47-9])\d{6}', '{9}'),
+		('CC', '180(?:0\d{3}|2)\d{3}', '{7,10}'),
+		('CC', '190[0-26]\d{6}', '{10}'),
+		('CC', '14(?:5(?:1[0458]|[23][458])|71\d)\d{4}', '{9}'),
+		('CC', '13(?:00\d{6}(?:\d{2})?|45[0-4]\d{3})|13\d{4}', '{6,8,10,12}'),
+		('CX', '8(?:51(?:0(?:01|30|59|88)|1(?:17|46|75)|2(?:22|35))|91(?:00[6-9]|1(?:[28]1|49|78)|2(?:09|63)|3(?:12|26|75)|4(?:56|97)|64\d|7(?:0[01]|1[0-2])|958))\d{3}', '{9}'),
+		('CX', '4(?:79[01]|83[0-36-9]|9(?:5[0-3]|6[0-4]))\d{5}|4(?:[0-36]\d|4[047-9]|[58][0-24-9]|7[02-8]|9[0-47-9])\d{6}', '{9}'),
+		('CX', '180(?:0\d{3}|2)\d{3}', '{7,10}'),
+		('CX', '190[0-26]\d{6}', '{10}'),
+		('CX', '14(?:5(?:1[0458]|[23][458])|71\d)\d{4}', '{9}'),
+		('CX', '13(?:00\d{6}(?:\d{2})?|45[0-4]\d{3})|13\d{4}', '{6,8,10,12}'),
+		('EH', '528[89]\d{5}', '{9}'),
+		('EH', '(?:6(?:[0-79]\d|8[0-247-9])|7(?:[016-8]\d|2[0-8]|3[01]|5[0-5]))\d{6}', '{9}'),
+		('EH', '80[0-7]\d{6}', '{9}'),
+		('EH', '89\d{7}', '{9}'),
+		('EH', '(?:592(?:4[0-2]|93)|80[89]\d\d)\d{4}', '{9}'),
+		('RE', '2631[0-6]\d{4}|26(?:2\d|30|88)\d{5}', '{9}'),
+		('RE', '(?:69(?:2\d\d|3(?:[06][0-6]|1[0-3]|2[0-2]|3[0-39]|4\d|5[0-5]|7[0-37]|8[0-8]|9[0-479]))|7092[0-3])\d{4}', '{9}'),
+		('RE', '80\d{7}', '{9}'),
+		('RE', '89[1-37-9]\d{6}', '{9}'),
+		('RE', '9(?:399[0-3]|479[0-6]|76(?:2[278]|3[0-37]))\d{4}', '{9}'),
+		('RE', '8(?:1[019]|2[0156]|84|90)\d{6}', '{9}'),
+		('YT', '26(?:89\d|9(?:0[0-467]|15|5[0-4]|6\d|[78]0))\d{4}', '{9}'),
+		('YT', '(?:639(?:0[0-79]|1[019]|[267]\d|3[09]|40|5[05-9]|9[04-79])|7093[5-7])\d{4}', '{9}'),
+		('YT', '80\d{7}', '{9}'),
+		('YT', '9(?:(?:39|47)8[01]|769\d)\d{4}', '{9}'),
+		('GP', '(?:59(?:0(?:0[1-68]|[14][0-24-9]|2[0-68]|3[1-9]|5[3-579]|[68][0-689]|7[08]|9\d)|87\d)|80[6-9]\d\d)\d{4}', '{9}'),
+		('GP', '(?:69(?:0\d\d|1(?:2[2-9]|3[0-5]))|7090[0-4])\d{4}', '{9}'),
+		('GP', '80[0-5]\d{6}', '{9}'),
+		('GP', '8[129]\d{7}', '{9}'),
+		('GP', '9(?:(?:39[5-7]|76[018])\d|475[0-6])\d{4}', '{9}'),
+		('BL', '(?:59(?:0(?:2[7-9]|3[3-7]|5[12]|87)|87\d)|80[6-9]\d\d)\d{4}', '{9}'),
+		('BL', '(?:69(?:0\d\d|1(?:2[2-9]|3[0-5]))|7090[0-4])\d{4}', '{9}'),
+		('BL', '80[0-5]\d{6}', '{9}'),
+		('BL', '8[129]\d{7}', '{9}'),
+		('BL', '9(?:(?:39[5-7]|76[018])\d|475[0-6])\d{4}', '{9}'),
+		('MF', '(?:59(?:0(?:0[079]|[14]3|[27][79]|3[03-7]|5[0-268]|87)|87\d)|80[6-9]\d\d)\d{4}', '{9}'),
+		('MF', '(?:69(?:0\d\d|1(?:2[2-9]|3[0-5]))|7090[0-4])\d{4}', '{9}'),
+		('MF', '80[0-5]\d{6}', '{9}'),
+		('MF', '8[129]\d{7}', '{9}'),
+		('MF', '9(?:(?:39[5-7]|76[018])\d|475[0-6])\d{4}', '{9}')
+	), n AS (
+		-- 1. The calling code and the national number d.
+		SELECT c.code, substr(e164, 2 + length(c.code)) AS d, c.nnp, c.prefix, c.repl, c.ngroups
+		  FROM c
+		 WHERE c.ord = 0 AND e164 ~ '^\+[1-9][0-9]{6,14}$' AND substr(e164, 2) LIKE c.code || '%'
+	), s AS (
+		-- 2. d with the national prefix cut off or transformed, NULL when the prefix does not start d.
+		SELECT n.*, CASE
+		         WHEN r.m IS NULL THEN NULL
+		         WHEN n.repl IS NOT NULL AND n.ngroups > 0 AND coalesce(r.m[n.ngroups], '') <> ''
+		           THEN regexp_replace(n.d, '^(?:' || n.prefix || ')', n.repl)
+		         ELSE regexp_replace(n.d, '^(?:' || n.prefix || ')', '')
+		       END AS cut
+		  FROM n CROSS JOIN LATERAL (SELECT regexp_match(n.d, '^(?:' || n.prefix || ')') AS m) AS r
+	), v AS (
+		-- 4. Each candidate number x (d, and a different cut) against each country of the code.
+		SELECT k.x, c.ord, c.country, c.iso, c.starts, c.typed, c.lengths::int[] AS lengths,
+		       count(*) OVER (PARTITION BY k.x) AS countries,
+		       k.x ~ ('^(?:' || c.nnp || ')$')
+		         AND (NOT c.typed OR EXISTS (SELECT 1 FROM t
+		                                      WHERE t.country = c.country AND length(k.x) = ANY (t.lengths::int[])
+		                                        AND k.x ~ ('^(?:' || t.pattern || ')$'))) AS valid
+		  FROM s CROSS JOIN LATERAL (VALUES (s.d), (nullif(s.cut, s.d))) AS k(x)
+		  JOIN c ON c.code = s.code
+		 WHERE k.x IS NOT NULL
+	), p AS (
+		-- 3. The country libphonenumber picks for x.
+		SELECT DISTINCT ON (v.x) v.*
+		  FROM v
+		 ORDER BY v.x,
+		          v.countries = 1 OR CASE WHEN v.starts IS NOT NULL THEN v.x ~ ('^(?:' || v.starts || ')')
+		                                  ELSE v.typed AND v.valid END DESC,
+		          v.ord
+	)
 	SELECT CASE
-		WHEN e164 !~ '^\+[1-9][0-9]{6,14}$' THEN NULL
-		ELSE (
-			SELECT CASE
-			         WHEN s.national IS NOT NULL THEN CASE WHEN n.digits ~ s.national THEN c.country END
-			         WHEN length(n.digits) = ANY (c.lengths::int[]) THEN c.country
-			       END
-			  FROM (VALUES
-				('1', 'US', '{10}'), ('7', 'RU', '{10,14}'), ('20', 'EG', '{8,9,10}'), ('27', 'ZA', '{5,6,7,8,9,10}'),
-				('30', 'GR', '{10,11,12}'), ('31', 'NL', '{5,6,7,8,9,10,11}'), ('32', 'BE', '{8,9}'),
-				('33', 'FR', '{9}'), ('34', 'ES', '{9}'), ('36', 'HU', '{8,9}'), ('39', 'IT', '{6,7,8,9,10,11,12}'),
-				('40', 'RO', '{6,9}'), ('41', 'CH', '{9,12}'), ('43', 'AT', '{4,5,6,7,8,9,10,11,12,13}'),
-				('44', 'GB', '{7,9,10}'), ('45', 'DK', '{8}'), ('46', 'SE', '{6,7,8,9,10,12}'), ('47', 'NO', '{5,8}'),
-				('48', 'PL', '{6,7,8,9,10}'), ('49', 'DE', '{4,5,6,7,8,9,10,11,12,13,14,15}'), ('51', 'PE', '{8,9}'),
-				('52', 'MX', '{10}'), ('53', 'CU', '{6,7,8,10}'), ('54', 'AR', '{10,11}'), ('55', 'BR', '{8,9,10,11}'),
-				('56', 'CL', '{9,10,11}'), ('57', 'CO', '{8,10,11}'), ('58', 'VE', '{10}'), ('60', 'MY', '{8,9,10}'),
-				('61', 'AU', '{5,6,7,8,9,10,12}'), ('62', 'ID', '{7,8,9,10,11,12,13,14,15,16,17}'),
-				('63', 'PH', '{6,8,9,10,11,12,13}'), ('64', 'NZ', '{5,6,7,8,9,10,11,12,13,14}'),
-				('65', 'SG', '{8,10,11}'), ('66', 'TH', '{8,9,10,13}'), ('81', 'JP', '{8,9,10,11,12,13,14,15,16,17}'),
-				('82', 'KR', '{5,6,8,9,10,11,12,13,14}'), ('84', 'VN', '{7,8,9,10}'), ('86', 'CN', '{7,8,9,10,11,12}'),
-				('90', 'TR', '{7,10,12,13}'), ('91', 'IN', '{8,9,10,11,12,13}'), ('92', 'PK', '{8,9,10,11,12}'),
-				('93', 'AF', '{9}'), ('94', 'LK', '{9}'), ('95', 'MM', '{6,7,8,9,10}'), ('98', 'IR', '{4,5,6,7,10}'),
-				('211', 'SS', '{9}'), ('212', 'MA', '{9}'), ('213', 'DZ', '{8,9}'), ('216', 'TN', '{8}'),
-				('218', 'LY', '{9}'), ('220', 'GM', '{7,9}'), ('221', 'SN', '{9}'), ('222', 'MR', '{8}'),
-				('223', 'ML', '{8}'), ('224', 'GN', '{8,9}'), ('225', 'CI', '{10}'), ('226', 'BF', '{8}'),
-				('227', 'NE', '{8}'), ('228', 'TG', '{8}'), ('229', 'BJ', '{10}'), ('230', 'MU', '{7,8,10}'),
-				('231', 'LR', '{7,8,9}'), ('232', 'SL', '{8}'), ('233', 'GH', '{8,9}'),
-				('234', 'NG', '{10,11,12,13,14}'), ('235', 'TD', '{8}'), ('236', 'CF', '{8}'), ('237', 'CM', '{8,9}'),
-				('238', 'CV', '{7}'), ('239', 'ST', '{7}'), ('240', 'GQ', '{9}'), ('241', 'GA', '{7,8}'),
-				('242', 'CG', '{9}'), ('243', 'CD', '{7,8,9,10}'), ('244', 'AO', '{9}'), ('245', 'GW', '{7,9}'),
-				('246', 'IO', '{7}'), ('248', 'SC', '{7}'), ('249', 'SD', '{9}'), ('250', 'RW', '{8,9}'),
-				('251', 'ET', '{9}'), ('252', 'SO', '{6,7,8,9}'), ('253', 'DJ', '{8}'), ('254', 'KE', '{7,8,9,10}'),
-				('255', 'TZ', '{9}'), ('256', 'UG', '{9}'), ('257', 'BI', '{8}'), ('258', 'MZ', '{8,9}'),
-				('260', 'ZM', '{9}'), ('261', 'MG', '{9}'), ('262', 'RE', '{9}'), ('263', 'ZW', '{7,9,10}'),
-				('264', 'NA', '{8,9}'), ('265', 'MW', '{7,9}'), ('266', 'LS', '{8}'), ('267', 'BW', '{7,8,10}'),
-				('268', 'SZ', '{8,9}'), ('269', 'KM', '{7}'), ('290', 'SH', '{4,5}'), ('291', 'ER', '{7}'),
-				('297', 'AW', '{7}'), ('298', 'FO', '{6}'), ('299', 'GL', '{6}'), ('350', 'GI', '{8}'),
-				('351', 'PT', '{9}'), ('352', 'LU', '{4,5,6,7,8,9,10,11}'), ('353', 'IE', '{7,8,9,10}'),
-				('354', 'IS', '{7,9}'), ('355', 'AL', '{6,7,8,9}'), ('356', 'MT', '{8}'), ('357', 'CY', '{8}'),
-				('358', 'FI', '{5,6,7,8,9,10,11,12}'), ('359', 'BG', '{6,7,8,9,12}'), ('370', 'LT', '{8}'),
-				('371', 'LV', '{8}'), ('372', 'EE', '{7,8,10}'), ('373', 'MD', '{8}'), ('374', 'AM', '{8}'),
-				('375', 'BY', '{6,7,8,9,10,11}'), ('376', 'AD', '{6,8,9}'), ('377', 'MC', '{8,9}'),
-				('378', 'SM', '{8,10}'), ('380', 'UA', '{9,10}'), ('381', 'RS', '{6,7,8,9,10,11,12}'),
-				('382', 'ME', '{8,9}'), ('385', 'HR', '{7,8,9}'), ('386', 'SI', '{5,6,7,8}'), ('387', 'BA', '{8,9}'),
-				('389', 'MK', '{8}'), ('420', 'CZ', '{9,10,11,12}'), ('421', 'SK', '{6,7,9}'), ('423', 'LI', '{7,9}'),
-				('500', 'FK', '{5}'), ('501', 'BZ', '{7,11}'), ('502', 'GT', '{8,11}'), ('503', 'SV', '{7,8,11}'),
-				('504', 'HN', '{8,11}'), ('505', 'NI', '{8}'), ('506', 'CR', '{8,10}'), ('507', 'PA', '{7,8,10,11}'),
-				('508', 'PM', '{6,9}'), ('509', 'HT', '{8}'), ('590', 'GP', '{9}'), ('591', 'BO', '{8,9}'),
-				('592', 'GY', '{7}'), ('593', 'EC', '{8,9,10,11}'), ('594', 'GF', '{9}'),
-				('595', 'PY', '{6,7,8,9,10,11}'), ('596', 'MQ', '{9}'), ('597', 'SR', '{6,7}'),
-				('598', 'UY', '{4,5,6,7,8,9,10,11,12,13}'), ('599', 'CW', '{7,8}'), ('670', 'TL', '{7,8}'),
-				('672', 'NF', '{6}'), ('673', 'BN', '{7}'), ('674', 'NR', '{7}'), ('675', 'PG', '{7,8}'),
-				('676', 'TO', '{5,7}'), ('677', 'SB', '{5,7}'), ('678', 'VU', '{5,7}'), ('679', 'FJ', '{7,11}'),
-				('680', 'PW', '{7}'), ('681', 'WF', '{6,9}'), ('682', 'CK', '{5}'), ('683', 'NU', '{4,7}'),
-				('685', 'WS', '{5,6,7,10}'), ('686', 'KI', '{5,8}'), ('687', 'NC', '{6}'), ('688', 'TV', '{5,6,7}'),
-				('689', 'PF', '{6,8,9}'), ('690', 'TK', '{4,5,6,7}'), ('691', 'FM', '{7}'), ('692', 'MH', '{7}'),
-				('850', 'KP', '{8,10}'), ('852', 'HK', '{5,6,7,8,9,11}'), ('853', 'MO', '{7,8}'),
-				('855', 'KH', '{8,9,10}'), ('856', 'LA', '{8,9,10}'), ('880', 'BD', '{6,7,8,9,10}'),
-				('886', 'TW', '{7,8,9,10,11}'), ('960', 'MV', '{7,10}'), ('961', 'LB', '{7,8}'),
-				('962', 'JO', '{8,9}'), ('963', 'SY', '{8,9}'), ('964', 'IQ', '{8,9,10}'), ('965', 'KW', '{7,8}'),
-				('966', 'SA', '{9,10}'), ('967', 'YE', '{7,8,9}'), ('968', 'OM', '{7,8,9}'), ('970', 'PS', '{8,9,10}'),
-				('971', 'AE', '{5,6,7,8,9,10,11,12}'), ('972', 'IL', '{7,8,9,10,11,12}'), ('973', 'BH', '{8}'),
-				('974', 'QA', '{7,8,9,11}'), ('975', 'BT', '{7,8}'), ('976', 'MN', '{8,9,10}'),
-				('977', 'NP', '{8,10,11}'), ('992', 'TJ', '{9}'), ('993', 'TM', '{8}'), ('994', 'AZ', '{9}'),
-				('995', 'GE', '{9}'), ('996', 'KG', '{9,10}'), ('998', 'UZ', '{9}')
-			  ) AS c(code, country, lengths)
-			  LEFT JOIN (VALUES
-				('880', '^(1[0-9]{9}|[2-9][0-9]{7,8})$'),
-				('971', '^[2-9][0-9]{7,8}$'),
-				('977', '^(9[0-9]{9}|[1-8][0-9]{6,8})$'),
-				('91', '^[6-9][0-9]{9}$'),
-				('44', '^[1-9][0-9]{9}$'),
-				('86', '^(1[0-9]{10}|[2-9][0-9]{8,9})$'),
-				('61', '^[2-478][0-9]{8}$'),
-				('92', '^[2-9][0-9]{9}$'),
-				('94', '^[1-9][0-9]{8}$'),
-				('49', '^[1-9][0-9]{9,10}$'),
-				('33', '^[1-9][0-9]{8}$'),
-				('81', '^[1-9][0-9]{8,9}$'),
-				('65', '^[3689][0-9]{7}$'),
-				('1', '^[2-9][0-9]{2}[2-9][0-9]{6}$')
-			  ) AS s(code, national) ON s.code = c.code
-			 CROSS JOIN LATERAL (SELECT substr(e164, 2 + length(c.code)) AS digits) AS n
-			 WHERE substr(e164, 2) LIKE c.code || '%'
-			 ORDER BY length(c.code) DESC
-			 LIMIT 1)
-	END::char(2);
+	         WHEN s.cut IS NOT NULL AND s.cut <> s.d
+	              AND NOT (s.d ~ ('^(?:' || s.nnp || ')$') AND s.cut !~ ('^(?:' || s.nnp || ')$'))
+	              AND length(s.cut) >= pc.lengths[1]
+	              AND (length(s.cut) = ANY (pc.lengths) OR length(s.cut) > pc.lengths[array_upper(pc.lengths, 1)])
+	           THEN NULL
+	         WHEN pd.valid AND pd.iso THEN pd.country
+	         WHEN pd.valid THEN (SELECT o.country FROM c AS o WHERE o.code = s.code AND o.iso ORDER BY o.ord LIMIT 1)
+	       END::char(2)
+	  FROM s
+	  JOIN p AS pd ON pd.x = s.d
+	  LEFT JOIN p AS pc ON pc.x = s.cut;
 $$;
 --> statement-breakpoint
 DO $$
