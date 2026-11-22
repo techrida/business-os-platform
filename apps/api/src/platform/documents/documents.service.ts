@@ -1681,14 +1681,11 @@ export class DocumentsService {
     version: VersionRow,
     flags: { skipScan: boolean },
   ): Promise<void> {
-    // A generated file (no person to retry) is refused instead, as a failed finish is: `rejected` holds no file, so the
-    // render job discards the document and renders again. A quarantined version with no sha256 would sit there for good.
+    // A generated file has no person to start a new upload: it goes back to `awaiting_content`, as before, so the render
+    // job's own cleanup (discard the unfilled document, render again) still finds it. A quarantined version with no
+    // sha256 would count as filled for good.
     if (flags.skipScan) {
-      await this.reject(who, version, {
-        reason: 'generated_unfinished',
-        detectedMime: null,
-        sha256: null,
-      });
+      await this.reopen(who, version);
       return;
     }
     try {
@@ -1698,6 +1695,18 @@ export class DocumentsService {
         `partial bytes of version ${version.id} could not be removed: ${describe(error)}`,
       );
     }
+  }
+
+  /** Puts a half-received generated version back to awaiting_content (no bytes kept), so the job can write it again. */
+  private async reopen(who: { scope: TxScope; actor: Actor }, version: VersionRow): Promise<void> {
+    const s = scoped(who.scope);
+    await this.storage.removeQuarantine(version.storageKey);
+    await withTx(this.db, who.scope, who.actor, async (tx) => {
+      await tx
+        .update(documentVersions)
+        .set({ status: 'awaiting_content', updatedAt: new Date() })
+        .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
+    });
   }
 }
 

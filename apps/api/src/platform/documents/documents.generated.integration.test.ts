@@ -284,7 +284,7 @@ describe('generated documents', () => {
     expect(queue.add).not.toHaveBeenCalled();
   });
 
-  it('a generated file whose write fails is refused (rejected), never left quarantined without bytes (EF3)', async () => {
+  it('a generated file whose write fails goes back to awaiting_content, never left quarantined without bytes (EF3)', async () => {
     const file = pdf();
     const { created, who } = await generate(randomUUID(), file);
     vi.spyOn(storage, 'writeQuarantine').mockRejectedValueOnce(new Error('EIO'));
@@ -295,7 +295,7 @@ describe('generated documents', () => {
     const r = await versionRow(created.versionId);
     // Left `quarantined` with no sha256 it would count as a filled version for good, and the render job could never
     // discard the document and render again.
-    expect(r.status).toBe('rejected');
+    expect(r.status).toBe('awaiting_content');
     expect(queue.add).not.toHaveBeenCalled();
   });
 
