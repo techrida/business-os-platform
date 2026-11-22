@@ -1,7 +1,8 @@
 'use client';
-// The new-lead form's duplicate hint (F1-Q54 a). Wraps the form and listens to its company, person, email and phone
-// inputs as they bubble up, so LeadForm itself is unchanged and is never remounted (typed values stay put). The hint
-// only informs: it links the readable matches and never touches the form or its Save button.
+// The new-lead form's duplicate hint (F1-Q54 a). Wraps the form and listens to its company, person and email inputs as
+// they bubble up, so LeadForm is never remounted (typed values stay put). The phone comes as a prop instead: the
+// lead's primary number in E.164, which the phone list reports through LeadForm's `onPrimaryPhoneChange` (see
+// new-lead-form.tsx). The hint only informs: it links the readable matches and never touches the form or its Save.
 import Link from 'next/link';
 import { type FormEvent, type ReactNode, useState } from 'react';
 
@@ -13,28 +14,32 @@ import {
 } from '../_lib/use-duplicate-hint';
 import styles from './duplicate-hint.module.css';
 
-/** LeadForm's input names for the looked-up fields. */
-const FIELD_OF_INPUT: Readonly<Record<string, keyof DuplicateFields>> = {
+type TypedFields = Omit<DuplicateFields, 'phone'>;
+
+/** LeadForm's input names for the looked-up typed fields. */
+const FIELD_OF_INPUT: Readonly<Record<string, keyof TypedFields>> = {
   companyName: 'company',
   contactName: 'name',
   email: 'email',
-  phone: 'phone',
 };
 
-const EMPTY: DuplicateFields = { company: '', name: '', email: '', phone: '' };
+const EMPTY: TypedFields = { company: '', name: '', email: '' };
 
 export function LeadDuplicateHint({
   children,
+  phone = null,
   fetcher = fetchLeadDuplicates,
   delayMs,
 }: {
   children: ReactNode;
+  /** The lead's primary number as E.164, or null while none is complete and valid. */
+  phone?: string | null | undefined;
   /** Tests pass a fake; the page uses the BFF route. */
-  fetcher?: DuplicateFetcher;
-  delayMs?: number;
+  fetcher?: DuplicateFetcher | undefined;
+  delayMs?: number | undefined;
 }) {
-  const [fields, setFields] = useState<DuplicateFields>(EMPTY);
-  const matches = useDuplicateHint(fields, fetcher, delayMs);
+  const [typed, setTyped] = useState<TypedFields>(EMPTY);
+  const matches = useDuplicateHint({ ...typed, phone }, fetcher, delayMs);
 
   const onInput = (event: FormEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -42,7 +47,7 @@ export function LeadDuplicateHint({
     const field = FIELD_OF_INPUT[target.name];
     if (field === undefined) return;
     const value = target.value;
-    setFields((current) => (current[field] === value ? current : { ...current, [field]: value }));
+    setTyped((current) => (current[field] === value ? current : { ...current, [field]: value }));
   };
 
   return (

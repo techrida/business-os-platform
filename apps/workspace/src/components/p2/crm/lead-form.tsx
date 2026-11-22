@@ -1,22 +1,37 @@
 'use client';
 
+import {
+  DEFAULT_COUNTRY,
+  MAX_PARTY_PHONES,
+  type CountryCode,
+  type PartyPhoneInput,
+} from '@bos/contracts';
 import type { Currency } from '@bos/locale';
-import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useActionState,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { CountrySelect } from '@/components/ui/country-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
-import { PhoneInput } from '@/components/ui/phone-input';
 import { Panel } from '@/components/ui/panel';
+import { PhoneListInput, type PhoneRowProblem } from '@/components/ui/phone-list-input';
 import { toast } from '@/components/ui/toast';
 import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
-import { SCHEDULE_ACTIVITY_KINDS } from './forms';
+import { EMAIL_OR_PHONE, SCHEDULE_ACTIVITY_KINDS } from './forms';
 import type { FormAction, FormState } from './types';
 
 type FollowUpKind = (typeof SCHEDULE_ACTIVITY_KINDS)[number];
@@ -34,7 +49,6 @@ const EMPTY: Record<string, string> = {
   companyName: '',
   contactName: '',
   email: '',
-  phone: '',
   requirement: '',
   expectedValue: '',
   currency: 'NPR',
@@ -115,6 +129,14 @@ function PersonSelect({
   );
 }
 
+/** The fields the API always needs; the email-or-phone check waits for them (see `checkBeforeSave`). */
+const REQUIRED = ['title', 'source', 'companyName', 'contactName'] as const;
+
+/** The primary of a saved list (the first when none is marked), or null for none. */
+function primaryOf(phones: readonly PartyPhoneInput[] | undefined): string | null {
+  return (phones?.find((phone) => phone.isPrimary) ?? phones?.[0])?.e164 ?? null;
+}
+
 /** The new-lead form. Inputs are controlled so a refusal does not wipe what was typed. */
 export function LeadForm({
   action,
@@ -124,6 +146,10 @@ export function LeadForm({
   defaultOwnerId,
   callerUnplaced = false,
   idempotencyKey,
+  onPrimaryPhoneChange,
+  defaultPhones,
+  defaultCountry,
+  phonesKey,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
@@ -141,6 +167,17 @@ export function LeadForm({
   callerUnplaced?: boolean | undefined;
   /** Made once per page render on the server; the action hands back the key the next try uses. */
   idempotencyKey: string;
+  /**
+   * The primary number as E.164 once it is complete and valid, else null: told once with the
+   * starting number and again whenever it changes. The page hands it to the duplicate hint.
+   */
+  onPrimaryPhoneChange?: ((e164: string | null) => void) | undefined;
+  /** The saved numbers an edit starts with; a new lead starts with one blank Nepal row. */
+  defaultPhones?: readonly PartyPhoneInput[] | undefined;
+  /** The saved country an edit starts with; a new lead starts in Nepal. */
+  defaultCountry?: CountryCode | undefined;
+  /** Changes when the saved record changes (its version), so the phone list starts again from `defaultPhones`. */
+  phonesKey?: string | number | undefined;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, {
     values: EMPTY,
@@ -154,14 +191,28 @@ export function LeadForm({
     ownerUserId: defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : ''),
   }));
   const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
+  const [country, setCountry] = useState<CountryCode>(defaultCountry ?? DEFAULT_COUNTRY);
+  // The complete, valid numbers as the list last reported them, and its primary. They are also what
+  // the list restores when React resets the form after a refused save, so the typed numbers stay.
+  const startPhones = (key: typeof phonesKey) => ({
+    key,
+    saved: defaultPhones ?? [],
+    primary: primaryOf(defaultPhones),
+    problems: [] as PhoneRowProblem[],
+  });
+  const [phones, setPhones] = useState(() => startPhones(phonesKey));
+  if (phones.key !== phonesKey) setPhones(startPhones(phonesKey));
+  // Refusals found before the action runs; cleared as soon as the field they name changes.
+  const [clientErrors, setClientErrors] = useState<Partial<Record<string, string>>>({});
   const summary = useRef<HTMLDivElement>(null);
   const form = useRef<HTMLFormElement>(null);
   function update(name: string, value: string) {
     setValues((values) => ({ ...values, [name]: value }));
+    if (name === 'email') setClientErrors({});
   }
   const set = (name: string) => (e: { target: { value: string } }) => update(name, e.target.value);
   const formId = useId();
-  const err = state.fieldErrors;
+  const err = { ...state.fieldErrors, ...clientErrors };
   const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
   const unplaced = defaultOwnerId === undefined;
   // The chosen value stays listed even if it is not in the enabled list, so the select never blanks.
@@ -180,16 +231,39 @@ export function LeadForm({
     }
   }, [state]);
 
-  // The duplicate hint around this form listens for input events from the fields it looks up, by
-  // name. The phone box posts through a hidden input named `phone`, which fires no events of its
-  // own, so the posted number is announced from there once it has rendered.
-  const phone = values['phone'];
+  // The primary number goes to the page (the duplicate hint): the starting one, then each change.
+  const primaryPhone = phones.primary;
+  const reportPrimary = useRef(onPrimaryPhoneChange);
   useEffect(() => {
-    const hidden = form.current?.querySelector<HTMLInputElement>(
-      'input[type="hidden"][name="phone"]',
-    );
-    hidden?.dispatchEvent(new Event('input', { bubbles: true }));
-  }, [phone]);
+    reportPrimary.current = onPrimaryPhoneChange;
+  });
+  useEffect(() => {
+    reportPrimary.current?.(primaryPhone);
+  }, [primaryPhone]);
+
+  // Stopped here, before the action runs; focus stays on a phone box that has already stopped the
+  // submit itself. A phone row the list says must not be saved (a number listed twice) keeps its
+  // reason under the row. A lead also needs a way to reach the person: the reason goes under the
+  // email. While another required field is empty that save goes on, so the server names every
+  // missing field at once, this one included.
+  function checkBeforeSave(event: FormEvent<HTMLFormElement>) {
+    const stopped = event.defaultPrevented;
+    const problem = phones.problems[0];
+    if (problem !== undefined) {
+      event.preventDefault();
+      if (!stopped) {
+        form.current
+          ?.querySelector<HTMLInputElement>(`input[aria-label="Phone ${problem.index + 1} number"]`)
+          ?.focus();
+      }
+      return;
+    }
+    if ((values['email'] ?? '').trim() !== '' || phones.saved.length > 0) return;
+    if (REQUIRED.some((name) => (values[name] ?? '').trim() === '')) return;
+    event.preventDefault();
+    setClientErrors({ email: EMAIL_OR_PHONE });
+    if (!stopped) form.current?.querySelector<HTMLInputElement>('input[name="email"]')?.focus();
+  }
 
   return (
     <>
@@ -211,6 +285,7 @@ export function LeadForm({
         id={formId}
         ref={form}
         action={formAction}
+        onSubmit={checkBeforeSave}
         noValidate
         className={styles.form}
         aria-busy={pending || undefined}
@@ -317,6 +392,9 @@ export function LeadForm({
                 />
               )}
             </Field>
+            <Field label="Country" error={err['country']}>
+              {(c) => <CountrySelect name="country" value={country} onChange={setCountry} {...c} />}
+            </Field>
             <Field label="Email" hint="Optional." error={err['email']}>
               {(c) => (
                 <Input
@@ -329,21 +407,29 @@ export function LeadForm({
                 />
               )}
             </Field>
-            <Field
-              label="Phone"
-              hint="Optional. +977 is filled in; for a number abroad, choose Number from another country."
-              error={err['phone']}
-            >
-              {(c) => (
-                <PhoneInput
-                  name="phone"
-                  value={values['phone']}
-                  onValueChange={(phone) => update('phone', phone)}
-                  {...c}
-                />
-              )}
-            </Field>
           </div>
+
+          <Field label="Phone" hint="Optional. Pick each number's country, or type + and its code.">
+            {(c) => (
+              <PhoneListInput
+                key={phonesKey}
+                name="phones"
+                aria-labelledby={c['aria-labelledby']}
+                defaultValue={phones.saved}
+                rowErrors={Array.from(
+                  { length: MAX_PARTY_PHONES },
+                  (_, row) => err[`phones.${row}`],
+                )}
+                error={err['phones']}
+                onChange={(saved) => {
+                  setPhones((current) => ({ ...current, saved }));
+                  if (saved.length > 0) setClientErrors({});
+                }}
+                onPrimaryChange={(primary) => setPhones((current) => ({ ...current, primary }))}
+                onValidityChange={(problems) => setPhones((current) => ({ ...current, problems }))}
+              />
+            )}
+          </Field>
 
           <Field
             label="Requirement"

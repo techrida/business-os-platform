@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import type { ActivityDto, LeadDto, LeadOwnerOption } from '@bos/contracts';
+import {
+  formatPartyPhoneForPrint,
+  type ActivityDto,
+  type LeadDto,
+  type LeadOwnerOption,
+} from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +49,7 @@ vi.mock('../actions', () => ({
   rescheduleFollowUpAction: vi.fn(),
   cancelFollowUpAction: vi.fn(),
   updateLeadOwnerAction: vi.fn(),
+  updateLeadContactAction: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -51,6 +57,10 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/components/p2/crm/mark-contacted-dialog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/p2/crm/mark-contacted-dialog')>();
   return { ...actual, MarkContactedDialog: vi.fn(actual.MarkContactedDialog) };
+});
+vi.mock('@/components/p2/crm/convert-dialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/p2/crm/convert-dialog')>();
+  return { ...actual, ConvertDialog: vi.fn(actual.ConvertDialog) };
 });
 vi.mock('@/components/p2/crm/stage-confirm-dialog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/p2/crm/stage-confirm-dialog')>();
@@ -74,7 +84,8 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   companyName: 'Himalayan Agro Foods Pvt. Ltd.',
   contactName: 'Sunita Shrestha',
   email: null,
-  phone: null,
+  country: 'NP',
+  phones: [],
   customerId: null,
   contactId: null,
   requirement: null,
@@ -185,6 +196,54 @@ beforeEach(() => {
   mocks.listLeadLostReasonChoices.mockReset().mockResolvedValue([]);
   vi.mocked(MarkContactedDialog).mockClear();
   vi.mocked(StageConfirmDialog).mockClear();
+});
+
+describe('lead country and phones (FX9)', () => {
+  const PHONES: LeadDto['phones'] = [
+    { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
+    { country: 'NP', e164: '+9779812345678', isPrimary: false },
+  ];
+
+  it('shows the primary number, formatted, and the country by name', async () => {
+    mocks.getLead.mockResolvedValue(lead({ country: 'US', phones: PHONES }));
+    const overview = card(await render(), 'Lead overview').textContent ?? '';
+    expect(overview).toContain(formatPartyPhoneForPrint('+14155552671'));
+    expect(overview).not.toContain(formatPartyPhoneForPrint('+9779812345678'));
+    expect(overview).toContain('United States');
+  });
+
+  it('says Not set without a number, and offers the editor to an editor', async () => {
+    const overview = card(await render(), 'Lead overview');
+    expect(overview.textContent).toContain('Not set');
+    expect(overview.textContent).toContain('Edit country and phones');
+  });
+
+  it('offers no editor on a read-only or converted lead', async () => {
+    mocks.getLead.mockResolvedValue(lead({ canEdit: false, allowedMoves: [], phones: PHONES }));
+    expect(card(await render(), 'Lead overview').textContent).not.toContain(
+      'Edit country and phones',
+    );
+    mocks.getLead.mockResolvedValue(lead({ stage: 'converted', allowedMoves: [] }));
+    expect(card(await render(), 'Lead overview').textContent).not.toContain(
+      'Edit country and phones',
+    );
+  });
+
+  it("hands the convert dialog the lead's country and numbers", async () => {
+    const { ConvertDialog } = await import('@/components/p2/crm/convert-dialog');
+    mocks.getLead.mockResolvedValue(
+      lead({
+        stage: 'qualified',
+        allowedMoves: ['on_hold', 'lost'],
+        country: 'US',
+        phones: PHONES,
+      }),
+    );
+    await render();
+    const handed = vi.mocked(ConvertDialog).mock.calls.at(-1)?.[0].lead;
+    expect(handed).toMatchObject({ country: 'US', phones: PHONES });
+    expect(handed).not.toHaveProperty('phone');
+  });
 });
 
 describe('lead detail page composition (U14 D39, D41, D48)', () => {

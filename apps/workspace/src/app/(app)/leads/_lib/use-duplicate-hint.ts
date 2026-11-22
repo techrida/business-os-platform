@@ -19,7 +19,8 @@ export interface DuplicateFields {
   company: string;
   name: string;
   email: string;
-  phone: string;
+  /** The lead's primary number as E.164 (`+<country code><number>`), or null while none is complete and valid. */
+  phone: string | null;
 }
 
 export type DuplicateFetcher = (
@@ -37,15 +38,19 @@ export const fetchLeadDuplicates: DuplicateFetcher = async (query, signal) => {
   return LeadDuplicatesResponseSchema.parse(await res.json()).matches;
 };
 
-/** The fields worth looking up (3+ characters, phone 7+ digits); null when none is. */
+/**
+ * The fields worth looking up (3+ characters, phone 7+ digits); null when none is. The phone goes as the E.164 it
+ * came as: the API compares its digits, so the `+` and country code are kept rather than guessed again.
+ */
 export function duplicateQuery(fields: DuplicateFields): URLSearchParams | null {
   const query = new URLSearchParams();
   for (const key of ['company', 'name', 'email'] as const) {
     const value = fields[key].trim();
     if (value.length >= LEAD_DUPLICATE_MIN_LENGTH) query.set(key, value);
   }
-  if (fields.phone.replace(/\D/g, '').length >= LEAD_DUPLICATE_MIN_PHONE_DIGITS) {
-    query.set('phone', fields.phone.trim());
+  const phone = fields.phone?.trim() ?? '';
+  if (phone.replace(/\D/g, '').length >= LEAD_DUPLICATE_MIN_PHONE_DIGITS) {
+    query.set('phone', phone);
   }
   return query.size === 0 ? null : query;
 }

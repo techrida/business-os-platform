@@ -2,6 +2,7 @@ import { NO_SPACES } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
 import {
+  EMAIL_OR_PHONE,
   isOverdue,
   isPastDue,
   kathmanduLocalToIso,
@@ -291,14 +292,22 @@ describe('parseLead', () => {
     source: 'referral',
     companyName: 'Binford Ltd.',
     contactName: 'Sunita Shrestha',
+    country: 'NP',
+    email: 'sunita@binford.com.np',
+  };
+  /** One blank phone row, as the list posts it when nothing was typed. */
+  const blankRow = {
+    'phones.0.number': '',
+    'phones.0.country': 'NP',
+    'phones.0.label': '',
+    'phones.0.isPrimary': 'true',
   };
 
   it('drops empty optional fields and strips grouping from the value', () => {
     const r = parseLead(
       form({
         ...base,
-        email: '',
-        phone: '',
+        ...blankRow,
         expectedValue: '12,50,000.50',
         currency: 'NPR',
         probability: '',
@@ -306,29 +315,109 @@ describe('parseLead', () => {
     );
     expect(r).toEqual({
       ok: true,
-      data: { ...base, expectedValue: '1250000.50', currency: 'NPR' },
+      data: { ...base, phones: [], expectedValue: '1250000.50', currency: 'NPR' },
     });
   });
 
   it('names each bad field in words', () => {
     const r = parseLead(
-      form({ ...base, title: '', phone: '98123', expectedValue: 'abc', probability: '120' }),
+      form({
+        ...base,
+        title: '',
+        'phones.0.number': '+97798123',
+        'phones.0.country': 'NP',
+        'phones.0.isPrimary': 'true',
+        expectedValue: 'abc',
+        probability: '120',
+      }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(Object.keys(r.fieldErrors).sort()).toEqual([
         'expectedValue',
-        'phone',
+        'phones.0',
         'probability',
         'title',
       ]);
-      expect(r.fieldErrors.phone).toMatch(/\+977/);
+      expect(r.fieldErrors['phones.0']).toMatch(/Nepal/);
     }
   });
 
   it('says to remove the space in an expected value typed as 10 50, not read as 1050', () => {
     const r = parseLead(form({ ...base, expectedValue: '10 50', currency: 'NPR' }));
     expect(r).toEqual({ ok: false, fieldErrors: { expectedValue: NO_SPACES } });
+  });
+
+  it('builds the country and the phones, each with its own country, blank rows left out', () => {
+    const r = parseLead(
+      form({
+        ...base,
+        email: '',
+        country: 'US',
+        'phones.0.number': '+9779812345678',
+        'phones.0.country': 'NP',
+        'phones.0.label': 'mobile',
+        'phones.0.isPrimary': 'false',
+        'phones.1.number': '',
+        'phones.1.country': 'NP',
+        'phones.1.label': '',
+        'phones.1.isPrimary': 'false',
+        'phones.2.number': '+14155552671',
+        'phones.2.country': 'US',
+        'phones.2.label': '',
+        'phones.2.isPrimary': 'true',
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.country).toBe('US');
+      expect(r.data.email).toBeUndefined();
+      expect(r.data.phones).toEqual([
+        { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: false },
+        { country: 'US', e164: '+14155552671', isPrimary: true },
+      ]);
+    }
+  });
+
+  it('makes the first number primary when the primary row was left blank', () => {
+    const r = parseLead(
+      form({
+        ...base,
+        ...blankRow,
+        'phones.1.number': '+14155552671',
+        'phones.1.country': 'US',
+        'phones.1.isPrimary': 'false',
+      }),
+    );
+    expect(r.ok && r.data.phones).toEqual([
+      { country: 'US', e164: '+14155552671', isPrimary: true },
+    ]);
+  });
+
+  it('asks for an email or a phone when neither was given', () => {
+    const r = parseLead(form({ ...base, email: '', ...blankRow }));
+    expect(r).toEqual({ ok: false, fieldErrors: { email: EMAIL_OR_PHONE } });
+  });
+
+  it('puts a number listed twice under the row it was typed in, and a missing country on Country', () => {
+    const r = parseLead(
+      form({
+        ...base,
+        country: '',
+        ...blankRow,
+        'phones.1.number': '+14155552671',
+        'phones.1.country': 'US',
+        'phones.1.isPrimary': 'false',
+        'phones.2.number': '+14155552671',
+        'phones.2.country': 'US',
+        'phones.2.isPrimary': 'false',
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.fieldErrors['phones.2']).toBe('This number is listed twice.');
+      expect(r.fieldErrors.country).toMatch(/country/);
+    }
   });
 });
 
@@ -384,9 +473,9 @@ describe('parseConvert', () => {
   const create = {
     customerMode: 'create',
     legalName: 'Binford Ltd.',
-    line1: 'Ring Road',
-    city: 'Kathmandu',
-    country: 'NP',
+    'address.line': 'Ring Road',
+    'address.city': 'Kathmandu',
+    'address.country': 'NP',
     opportunityName: 'Binford dispatch automation',
     expectedVersion: '4',
   };
@@ -394,7 +483,91 @@ describe('parseConvert', () => {
     contactMode: 'create',
     contactName: 'Sunita Shrestha',
     contactEmail: 'sunita@binford.example',
+    contactCountry: 'NP',
   };
+
+  it('posts the customer country beside its address lines, and refuses an address without a country', () => {
+    const r = parseConvert(form({ ...create, ...withContact }));
+    expect(r.ok && r.data.customer).toMatchObject({
+      mode: 'create',
+      customer: { country: 'NP', address: { line: 'Ring Road', city: 'Kathmandu' } },
+    });
+    const noCountry = parseConvert(form({ ...create, ...withContact, 'address.country': '' }));
+    expect(noCountry.ok).toBe(false);
+    if (!noCountry.ok) expect(noCountry.fieldErrors['address.country']).toMatch(/country/i);
+    const noCity = parseConvert(form({ ...create, ...withContact, 'address.city': ' ' }));
+    expect(noCity.ok).toBe(false);
+    if (!noCity.ok) expect(noCity.fieldErrors['address.city']).toMatch(/city/i);
+  });
+
+  it('refuses a short PAN for a Nepal customer and saves a foreign customer without one', () => {
+    const short = parseConvert(form({ ...create, ...withContact, panVatNo: '12345' }));
+    expect(short.ok).toBe(false);
+    if (!short.ok) expect(short.fieldErrors.panVatNo).toBe('A Nepal PAN is 9 digits.');
+    const foreign = parseConvert(
+      form({ ...create, ...withContact, 'address.country': 'IN', 'address.city': 'Delhi' }),
+    );
+    expect(foreign.ok && foreign.data.customer).toMatchObject({
+      mode: 'create',
+      customer: { country: 'IN' },
+    });
+    if (foreign.ok && foreign.data.customer.mode === 'create') {
+      expect(foreign.data.customer.customer.panVatNo).toBeUndefined();
+    }
+    const foreignTaxId = parseConvert(
+      form({ ...create, ...withContact, 'address.country': 'IN', panVatNo: 'AAAPL1234C' }),
+    );
+    expect(foreignTaxId.ok).toBe(true);
+  });
+
+  it('posts the contact country and two phones in different countries as given', () => {
+    const r = parseConvert(
+      form({
+        ...create,
+        ...withContact,
+        contactCountry: 'US',
+        'contactPhones.0.number': '+9779812345678',
+        'contactPhones.0.country': 'NP',
+        'contactPhones.0.label': 'mobile',
+        'contactPhones.0.isPrimary': 'false',
+        'contactPhones.1.number': '+14155552671',
+        'contactPhones.1.country': 'US',
+        'contactPhones.1.label': '',
+        'contactPhones.1.isPrimary': 'true',
+      }),
+    );
+    expect(r.ok && r.data.contact).toMatchObject({
+      mode: 'create',
+      contact: {
+        country: 'US',
+        phones: [
+          { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: false },
+          { country: 'US', e164: '+14155552671', isPrimary: true },
+        ],
+      },
+    });
+  });
+
+  it('puts a refused phone under its row and needs a contact country', () => {
+    const r = parseConvert(
+      form({
+        ...create,
+        ...withContact,
+        contactCountry: '',
+        'contactPhones.0.number': '',
+        'contactPhones.0.country': 'NP',
+        'contactPhones.0.isPrimary': 'true',
+        'contactPhones.1.number': '+1415555',
+        'contactPhones.1.country': 'US',
+        'contactPhones.1.isPrimary': 'false',
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.fieldErrors['contactPhones.1']).toMatch(/United States/);
+      expect(r.fieldErrors.contactCountry).toMatch(/country/i);
+    }
+  });
 
   it('needs a contact, and a new one needs an email (quotations are emailed)', () => {
     for (const extra of [{}, { contactMode: 'none' }]) {
@@ -424,14 +597,7 @@ describe('parseConvert', () => {
   });
 
   it('builds create-customer with a contact from the lead', () => {
-    const r = parseConvert(
-      form({
-        ...create,
-        contactMode: 'create',
-        contactName: 'Sunita Shrestha',
-        contactEmail: 'sunita@binford.example',
-      }),
-    );
+    const r = parseConvert(form({ ...create, ...withContact }));
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data.customer).toMatchObject({
@@ -509,6 +675,8 @@ describe('parseLead owner and first follow-up', () => {
     source: 'referral',
     companyName: 'Binford Ltd.',
     contactName: 'Sunita Shrestha',
+    country: 'NP',
+    email: 'sunita@binford.com.np',
   };
 
   it('sends the chosen owner and plans the follow-up only when it has a time', () => {

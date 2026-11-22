@@ -294,3 +294,41 @@ export async function updateLeadOwnerAction(
   revalidatePath('/leads');
   return { ok: true };
 }
+
+/** What the country and phones editor gets back. `reload` means the lead changed underneath the page. */
+export type LeadContactState = FollowUpState;
+
+/**
+ * Change the lead person's country and numbers (`PATCH /v1/leads/:id` with `country` and/or the
+ * whole `phones` list, whichever the editor posted, and the version the page showed). A number the
+ * contract refuses comes back under its row; the server's own refusal (a lead left with neither an
+ * email nor a phone is a 400) comes back in its words; a stale version (409) as the reload message.
+ */
+export async function updateLeadContactAction(
+  _prev: LeadContactState,
+  form: FormData,
+): Promise<LeadContactState> {
+  const leadValue = form.get('leadId');
+  const leadId = typeof leadValue === 'string' ? leadValue : '';
+  if (!UUID.test(leadId)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/leads/${leadId}`);
+
+  // The owner has its own editor and action; this one never hands the lead over.
+  form.delete('ownerUserId');
+  const parsed = parseLeadUpdate(form);
+  if (!parsed.ok) {
+    const { expectedVersion, ownerUserId: nothingPosted, ...fieldErrors } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    if (nothingPosted) return { error: 'Change the country or a phone number first.' };
+    return { fieldErrors };
+  }
+  try {
+    await updateLead(session, leadId, parsed.data);
+  } catch (err) {
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  return { ok: true };
+}
