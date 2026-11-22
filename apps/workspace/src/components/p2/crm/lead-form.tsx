@@ -10,6 +10,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -179,6 +180,17 @@ export function LeadForm({
     }
   }, [state]);
 
+  // The duplicate hint around this form listens for input events from the fields it looks up, by
+  // name. The phone box posts through a hidden input named `phone`, which fires no events of its
+  // own, so the posted number is announced from there once it has rendered.
+  const phone = values['phone'];
+  useEffect(() => {
+    const hidden = form.current?.querySelector<HTMLInputElement>(
+      'input[type="hidden"][name="phone"]',
+    );
+    hidden?.dispatchEvent(new Event('input', { bubbles: true }));
+  }, [phone]);
+
   return (
     <>
       <PageHeader
@@ -319,16 +331,14 @@ export function LeadForm({
             </Field>
             <Field
               label="Phone"
-              hint="Optional. With the country code, for example +9779812345678."
+              hint="Optional. +977 is filled in; for a number abroad, choose Number from another country."
               error={err['phone']}
             >
               {(c) => (
-                <Input
+                <PhoneInput
                   name="phone"
-                  type="tel"
-                  autoComplete="off"
                   value={values['phone']}
-                  onChange={set('phone')}
+                  onValueChange={(phone) => update('phone', phone)}
                   {...c}
                 />
               )}

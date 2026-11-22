@@ -122,6 +122,7 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
     ).toBeVisible({ timeout: 60_000 });
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
       if (
         await page
           .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })

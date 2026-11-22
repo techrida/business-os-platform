@@ -105,7 +105,7 @@ describe('PaymentForm', () => {
     expect(html).toContain('Paying invoice');
     expect(html).toContain('INV-2083/84-00001');
     expect(html).toContain(`name="invoice" value="${INVOICE.id}"`);
-    expect(html).toContain('value="1000000.00"');
+    expect(html).toContain('name="amount" value="1,000,000.00"');
     expect(html).toContain('<input type="hidden" name="currency" value="USD"/>');
     expect(html).not.toContain('Payments in it are still accepted');
   });

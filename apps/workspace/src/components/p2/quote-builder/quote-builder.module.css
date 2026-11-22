@@ -100,11 +100,6 @@
   overflow-wrap: anywhere;
 }
 
-.numInput {
-  font-variant-numeric: tabular-nums;
-  text-align: end;
-}
-
 .plainList {
   display: grid;
   gap: 8px;

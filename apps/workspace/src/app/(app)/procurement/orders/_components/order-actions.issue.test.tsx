@@ -214,7 +214,7 @@ it('starts the amend price from a stored 100000.000 without the extra zeros and 
     )!;
     const price = posted.parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
     expect(price.value).toBe('1,00,000.00');
-    expect(posted.value).toBe('100000.00');
+    expect(posted.value).toBe('100000');
     // The currency is shown by the box, so the label does not repeat it.
     expect(document.querySelector(`label[for="${price.id}"]`)?.textContent).toBe('Unit price');
 

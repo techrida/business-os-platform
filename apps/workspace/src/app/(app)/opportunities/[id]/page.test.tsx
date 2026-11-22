@@ -695,6 +695,29 @@ describe('opportunity stage action buttons, timeline and read-only hygiene', () 
     expect((await timeline())[3]).toBe('upcoming: Quotation SentNot yet');
   });
 
+  it('keeps Quotation Sent reached on a lost deal whose only quotation was sent and then cancelled', async () => {
+    // Losing a deal cancels its open quotations, sent ones included; the stage history still proves it.
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('lost', {
+        stageReason: 'Price',
+        stageHistory: [
+          {
+            from: 'qualified',
+            to: 'quotation_sent',
+            at: '2026-11-01T05:00:00.000Z',
+            actorName: null,
+          },
+          { from: 'quotation_sent', to: 'lost', at: '2026-11-05T05:00:00.000Z', actorName: 'Asha' },
+        ],
+      }),
+    );
+    mocks.listQuotations.mockResolvedValue([quote(Q1, { status: 'cancelled', canEdit: false })]);
+    expect((await timeline())[3]).toBe('done: Quotation SentReached');
+    // Without that history the cancelled quotation proves nothing, as before.
+    mocks.getOpportunity.mockResolvedValue(opportunity('lost', { stageReason: 'Price' }));
+    expect((await timeline())[3]).toBe('upcoming: Quotation SentNot yet');
+  });
+
   it('enforces read-only mode when canEdit is false and allowedMoves is empty', async () => {
     mocks.getOpportunity.mockResolvedValue(
       opportunity('qualified', { allowedMoves: [], canEdit: false }),
