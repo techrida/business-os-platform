@@ -66,6 +66,13 @@ const mount = (fields: FieldSpec[], section: 'sales' | 'workflows' = 'sales') =>
 const byLabel = (root: ParentNode, label: string): HTMLButtonElement | null =>
   root.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 
+/** The visible number box a field's `<label>` names (the hidden input beside it posts the value). */
+const boxLabelled = (root: HTMLElement, label: string): HTMLInputElement | null => {
+  const tag = Array.from(root.querySelectorAll('label')).find((l) => l.textContent === label);
+  const box = tag?.htmlFor ? root.ownerDocument.getElementById(tag.htmlFor) : null;
+  return box instanceof HTMLInputElement && box.type === 'text' ? box : null;
+};
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   window.history.replaceState(null, '', '/settings/sales');
@@ -74,7 +81,7 @@ beforeEach(() => {
 describe('focus after Undo and Reset', () => {
   it('moves focus to the field when Undo removes its own button', async () => {
     const mounted = await mount([validity('30')]);
-    const input = mounted.container.querySelector<HTMLInputElement>('input[type="number"]');
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     await fill(input, '45');
     const undo = byLabel(mounted.container, 'Undo change to Quotation validity (days)');
     undo?.focus();
@@ -87,7 +94,7 @@ describe('focus after Undo and Reset', () => {
 
   it('moves focus to the field when Reset to default removes its own button', async () => {
     const mounted = await mount([validity('30')]);
-    const input = mounted.container.querySelector<HTMLInputElement>('input[type="number"]');
+    const input = boxLabelled(mounted.container, 'Quotation validity (days)');
     const reset = byLabel(mounted.container, 'Reset Quotation validity (days) to default');
     reset?.focus();
     await click(reset);
@@ -99,10 +106,9 @@ describe('focus after Undo and Reset', () => {
 
   it('moves focus to the first input of a group setting', async () => {
     const mounted = await mount([sla], 'workflows');
-    const [remind] = Array.from(
-      mounted.container.querySelectorAll<HTMLInputElement>('input[type="number"]'),
-    );
-    await fill(remind ?? null, '12');
+    const remind = boxLabelled(mounted.container, 'Remind after (hours)');
+    expect(remind).not.toBeNull();
+    await fill(remind, '12');
     await click(byLabel(mounted.container, `Undo change to ${sla.label}`));
     expect(remind?.value).toBe('24');
     expect(document.activeElement).toBe(remind);

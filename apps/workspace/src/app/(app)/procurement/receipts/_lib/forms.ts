@@ -1,4 +1,11 @@
-import { ReceiptKindSchema, type ConfirmReceiptBody, type ReceiptKind } from '@bos/contracts';
+import {
+  decimalPattern,
+  QUANTITY_LIMITS,
+  ReceiptKindSchema,
+  type ConfirmReceiptBody,
+  type ReceiptKind,
+} from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
 
 import { toScaled, type Errors } from '../../orders/_lib/forms';
 
@@ -56,8 +63,8 @@ function isRealDate(value: string): boolean {
   return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
 }
 
-/** The API takes up to 14 whole digits and 4 decimals. */
-const QUANTITY_SHAPE = /^\d{1,14}(\.\d{1,4})?$/;
+/** The contract's quantity shape: up to 14 whole digits and 4 decimals. */
+const QUANTITY_SHAPE = decimalPattern(QUANTITY_LIMITS);
 
 export function parseReceipt(
   purchaseOrderId: string,
@@ -93,7 +100,11 @@ export function parseReceipt(
         continue;
       }
 
-      const q = QUANTITY_SHAPE.test(quantity) ? toScaled(quantity, 4) : null;
+      if (/\s/.test(quantity)) {
+        errors[key('quantity')] = NO_SPACES;
+        continue;
+      }
+      const q = QUANTITY_SHAPE.test(quantity) ? toScaled(quantity, QUANTITY_LIMITS.scale) : null;
       if (q === null) {
         errors[key('quantity')] = 'Use a number with up to 4 decimal places.';
         continue;

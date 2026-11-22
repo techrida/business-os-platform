@@ -7,6 +7,7 @@ import {
   CUSTOMER_VISIBLE_STATUSES,
   type CustomerQuotationView,
   CustomerQuotationViewSchema,
+  dropUnknownGrants,
   MeResponseSchema,
   type PortalDisplay,
   PortalDisplaySchema,
@@ -102,7 +103,12 @@ export async function getMe(session: Pick<Session, 'accessToken'>): Promise<Port
   const res = await authedFetch(session.accessToken, '/v1/me', { method: 'GET' });
   const body = await readBody(res);
   if (!res.ok) throw new ApiError(res.status, `GET /v1/me failed with ${res.status}`, body);
-  const parsed = PortalMeSchema.safeParse(body);
+  // A newer API may send a permission or scope this build has no name for: drop those rows, warn, keep signing in.
+  const { body: known, dropped } = dropUnknownGrants(body);
+  if (dropped.length > 0) {
+    console.warn(JSON.stringify({ event: 'me.unknown_grants_dropped', dropped }));
+  }
+  const parsed = PortalMeSchema.safeParse(known);
   if (!parsed.success) {
     // 502: the upstream answered, but not with the shape we agreed on.
     throw new ApiError(502, 'GET /v1/me returned an invalid body', parsed.error.issues);

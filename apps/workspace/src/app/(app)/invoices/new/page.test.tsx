@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CUSTOMER_LIST_MAX_LIMIT } from '@bos/contracts';
 import { ApiError } from '@/lib/api';
+import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
+import { ManualInvoiceForm } from './manual-invoice-form';
 import NewInvoicePage from './page';
 
 vi.mock('server-only', () => ({}));
@@ -112,4 +115,92 @@ it('offers an optional document discount, none by default', async () => {
   expect(html).toContain('Fixed amount');
   // No value field until a discount type is chosen.
   expect(html).not.toContain('name="discountValue"');
+});
+
+describe('the form in a browser', () => {
+  let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
+  beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+  afterEach(async () => {
+    await mounted?.unmount();
+    mounted = undefined;
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+  });
+
+  const mount = async (today?: string) => {
+    mounted = await mountForm(
+      <ManualInvoiceForm
+        action={vi.fn()}
+        customers={[{ id: customerPage.items[0]!.id, label: 'Invoice customer', currency: 'NPR' }]}
+        taxCodes={[]}
+        enabledCurrencies={['NPR', 'INR', 'USD']}
+        idempotencyKey="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        {...(today ? { today } : {})}
+      />,
+    );
+    return mounted.container;
+  };
+
+  /** The visible box `Field` labels with `label`. */
+  const box = (container: HTMLElement, label: string) => {
+    const id = Array.from(container.querySelectorAll('label[for]'))
+      .find((l) => l.textContent?.trim().startsWith(label))
+      ?.getAttribute('for');
+    return id ? container.querySelector<HTMLInputElement>(`input[id="${id}"]`) : null;
+  };
+  const posted = (container: HTMLElement) =>
+    new FormData(container.querySelector('form')!).get('discountValue');
+
+  it('offers no due date before today in Kathmandu', async () => {
+    // Fails on the old code: the due-date picker had no minimum, so a past date could be chosen.
+    // 21:00 UTC on the 14th is already the 15th in Kathmandu (UTC+5:45). The page passes no date, so the
+    // form's own today is the one under test. Only Date is faked; the inputs' timers stay real.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-14T21:00:00Z'));
+    const container = await mount();
+    await click(container.querySelector('button[aria-label="Calendar"]'));
+    const disabled = (day: string) =>
+      Array.from(document.querySelectorAll('[role="gridcell"]')).some(
+        (c) => c.textContent?.trim() === day && c.querySelector('[aria-disabled="true"]') !== null,
+      );
+    expect(disabled('14')).toBe(true);
+    expect(disabled('15')).toBe(false);
+    expect(disabled('16')).toBe(false);
+  });
+
+  it('groups a fixed amount as the currency does and posts the plain number', async () => {
+    // Fails on the old code: a plain text box showed 1250000 as typed.
+    const container = await mount();
+    await choose(container, 'discountMode', 'Fixed amount');
+    const amount = box(container, 'Discount amount (NPR)');
+    await fill(amount, '1250000');
+    expect(amount?.value).toBe('12,50,000');
+    expect(posted(container)).toBe('1250000');
+  });
+
+  it('takes a percentage in a percent box and clears the value when the type changes', async () => {
+    const container = await mount();
+    await choose(container, 'discountMode', 'Fixed amount');
+    await fill(box(container, 'Discount amount (NPR)'), '5000');
+    expect(posted(container)).toBe('5000');
+
+    await choose(container, 'discountMode', 'Percentage');
+    const percent = box(container, 'Discount (%)');
+    expect(percent?.getAttribute('role')).toBe('spinbutton');
+    expect(percent?.value).toBe('');
+    expect(posted(container)).toBe('');
+    await fill(percent, '12.5');
+    expect(posted(container)).toBe('12.5');
+  });
 });

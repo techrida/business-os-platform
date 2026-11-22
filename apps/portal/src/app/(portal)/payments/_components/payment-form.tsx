@@ -1,13 +1,21 @@
 'use client';
 
-import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
-import { useActionState, useEffect, useRef, useState } from 'react';
+import {
+  CURRENCIES,
+  type Currency,
+  MONEY_LIMITS,
+  PAYMENT_METHODS,
+  type PaymentMethod,
+} from '@bos/contracts';
+import { DEFAULT_NUMBER_SYSTEMS, type NumberSystems } from '@bos/locale';
+import { type ComponentProps, useActionState, useEffect, useRef, useState } from 'react';
 
 import { type PaymentFormState, submitPaymentAction } from '@/app/(portal)/payments/actions';
 import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { DecimalInput, MoneyInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 
 import styles from './payment-form.module.css';
@@ -39,6 +47,27 @@ export function paymentCurrencyOptions(
   return CURRENCIES.map((code) => ({ code, off: code !== 'NPR' && !enabled.includes(code) }));
 }
 
+/**
+ * An amount in the chosen currency. With no currency chosen yet (an invoice in a switched-off
+ * currency starts blank) there is no code to show and no grouping to follow, so the box still
+ * limits digits and decimals but shows no currency.
+ */
+function AmountBox({
+  currency,
+  numberSystems,
+  showWords,
+  ...rest
+}: Omit<ComponentProps<typeof MoneyInput>, 'currency'> & {
+  currency: Currency | undefined;
+}) {
+  if (currency === undefined) {
+    return <DecimalInput {...rest} intDigits={MONEY_LIMITS.intDigits} scale={MONEY_LIMITS.scale} />;
+  }
+  return (
+    <MoneyInput {...rest} currency={currency} numberSystems={numberSystems} showWords={showWords} />
+  );
+}
+
 export function PaymentForm({
   idempotencyKey,
   today,
@@ -46,6 +75,7 @@ export function PaymentForm({
   defaultCurrency,
   enabledCurrencies,
   suggestedAmount,
+  numberSystems = DEFAULT_NUMBER_SYSTEMS,
 }: {
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
@@ -59,6 +89,8 @@ export function PaymentForm({
   enabledCurrencies: readonly Currency[];
   /** The server's open amount for that invoice, or empty. */
   suggestedAmount: string;
+  /** How the selling company groups digits, per currency (`PortalDisplay.numberSystems`). */
+  numberSystems?: NumberSystems | undefined;
 }) {
   const [state, formAction, pending] = useActionState<PaymentFormState, FormData>(
     submitPaymentAction,
@@ -74,6 +106,7 @@ export function PaymentForm({
   // because the hidden field submits whatever value it holds.
   const [currency, setCurrency] = useState<string>(invoiceCurrencyOff ? '' : defaultCurrency);
   const [amount, setAmount] = useState(suggestedAmount);
+  const chosenCurrency = CURRENCIES.find((c) => c === currency);
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [receivedOn, setReceivedOn] = useState(today);
   const [bankReference, setBankReference] = useState('');
@@ -194,14 +227,16 @@ export function PaymentForm({
           error={fe.amount}
         >
           {(control) => (
-            <Input
-              name="amount"
-              inputMode="decimal"
-              autoComplete="off"
-              required
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+            <AmountBox
               {...control}
+              name="amount"
+              currency={chosenCurrency}
+              numberSystems={numberSystems}
+              required
+              min="0.01"
+              showWords
+              value={amount}
+              onValueChange={setAmount}
             />
           )}
         </Field>
@@ -266,14 +301,14 @@ export function PaymentForm({
             error={fe.tdsWithheld}
           >
             {(control) => (
-              <Input
+              <AmountBox
+                {...control}
                 name="tdsWithheld"
-                inputMode="decimal"
-                autoComplete="off"
+                currency={chosenCurrency}
+                numberSystems={numberSystems}
                 placeholder="0.00"
                 value={tds}
-                onChange={(e) => setTds(e.target.value)}
-                {...control}
+                onValueChange={setTds}
               />
             )}
           </Field>

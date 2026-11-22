@@ -1,4 +1,5 @@
 import type { VendorBillLineBody } from '@bos/contracts';
+import { hasInnerSpace, NO_SPACES } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
 
@@ -70,11 +71,21 @@ export function parseBillLines(
       bad = true;
     };
 
+    // "10 50" is refused with its own reason: joining the halves would be a silent 10 to 100 times error.
     const q = toScaled(quantity, 4);
-    if (q === null) fail('quantity', 'Use a number with up to 4 decimal places.');
-    else if (q === 0n) fail('quantity', 'The quantity must be above zero.');
+    if (q === null) {
+      fail(
+        'quantity',
+        hasInnerSpace(quantity) ? NO_SPACES : 'Use a number with up to 4 decimal places.',
+      );
+    } else if (q === 0n) fail('quantity', 'The quantity must be above zero.');
     if (toScaled(unitPrice, 2) === null) {
-      fail('unitPrice', 'Use an amount such as 1250.50, with up to 2 decimal places.');
+      fail(
+        'unitPrice',
+        hasInnerSpace(unitPrice)
+          ? NO_SPACES
+          : 'Use an amount such as 1250.50, with up to 2 decimal places.',
+      );
     }
     if (!isGuid(accountId)) fail('accountId', 'Choose the expense account this line is booked to.');
     if (!isGuid(taxCodeId)) fail('taxCodeId', 'Choose the VAT treatment of this line.');

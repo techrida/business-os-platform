@@ -165,6 +165,16 @@ describe('createManualInvoiceAction', () => {
     expect(state.errors['discount']).toMatch(/0 to 100/);
   });
 
+  it('refuses a percentage with a space inside and says to remove it, before the API', async () => {
+    // Fails on the old code: "1 5" was sent as a 15% discount.
+    const state = await createManualInvoiceAction(
+      prev,
+      form({ discountMode: 'pct', discountValue: '1 5' }),
+    );
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.errors['discount']).toBe('Remove the space inside the number.');
+  });
+
   it('refuses an incomplete form in place and never calls the API, so the key stays unused', async () => {
     const state = await createManualInvoiceAction(
       prev,

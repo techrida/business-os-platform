@@ -119,6 +119,23 @@ describe('getMe', () => {
     expect(headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
   });
 
+  it('signs in with a permission or scope it does not know: drops the row and warns', async () => {
+    const known = { permission: 'customer.read', scope: 'own' };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...validMe,
+        permissions: [known, { permission: 'vat.sales.read.v2', scope: 'all' }],
+      }),
+    );
+    const me = await getMe({ accessToken: TOKEN });
+    expect(me.permissions).toEqual([known]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('vat.sales.read.v2@all');
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain(TOKEN);
+    warn.mockRestore();
+  });
+
   it('throws ApiError with the status and body on a non-2xx response', async () => {
     const body = { statusCode: 401, error: 'unauthorized' };
     fetchMock.mockResolvedValue(Response.json(body, { status: 401 }));
