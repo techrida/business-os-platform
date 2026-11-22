@@ -28,6 +28,11 @@ import type { DocumentOwnerPolicy } from './platform/documents/documents.ports';
 import { DocumentsService } from './platform/documents/documents.service';
 import { OutboxDrainer } from './platform/notify/outbox.drainer';
 import { OutboxDrainScheduler, OutboxProcessor } from './platform/notify/outbox.processor';
+import {
+  PartyImportExpiryProcessor,
+  PartyImportExpiryScheduler,
+  PartyImportExpirySweeper,
+} from './modules/party-imports/party-import-expiry.sweeper';
 import { UserLocks } from './platform/users/user-locks';
 import { UsersProcessor } from './platform/users/users.processor';
 
@@ -99,6 +104,18 @@ describe('WorkerModule boot (DI graph)', () => {
     );
     expect(moduleRef.get(PaymentPromiseScheduler, { strict: false })).toBeInstanceOf(
       PaymentPromiseScheduler,
+    );
+  });
+
+  it('resolves the party import expiry sweeper, processor and scheduler', () => {
+    expect(moduleRef.get(PartyImportExpirySweeper, { strict: false })).toBeInstanceOf(
+      PartyImportExpirySweeper,
+    );
+    expect(moduleRef.get(PartyImportExpiryProcessor, { strict: false })).toBeInstanceOf(
+      PartyImportExpiryProcessor,
+    );
+    expect(moduleRef.get(PartyImportExpiryScheduler, { strict: false })).toBeInstanceOf(
+      PartyImportExpiryScheduler,
     );
   });
 

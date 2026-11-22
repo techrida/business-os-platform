@@ -17,7 +17,7 @@ import { users } from './identity.js';
 import { appSchema, organizations, tenants } from './platform.js';
 
 export const PARTY_IMPORT_BATCH_KINDS = ['customer', 'vendor'] as const;
-export const PARTY_IMPORT_BATCH_STATUSES = ['previewed', 'committed'] as const;
+export const PARTY_IMPORT_BATCH_STATUSES = ['previewed', 'committed', 'expired'] as const;
 
 export const partyImportBatches = appSchema.table(
   'party_import_batches',
@@ -65,8 +65,15 @@ export const partyImportBatches = appSchema.table(
       t.organizationId,
       t.createdAt,
     ),
+    // 0185: the daily expiry job reads the previewed batches oldest first.
+    index('party_import_batches_previewed_created_idx')
+      .on(t.createdAt)
+      .where(sql`${t.status} = 'previewed'`),
     check('party_import_batches_kind_check', sql`${t.kind} in ('customer', 'vendor')`),
-    check('party_import_batches_status_check', sql`${t.status} in ('previewed', 'committed')`),
+    check(
+      'party_import_batches_status_check',
+      sql`${t.status} in ('previewed', 'committed', 'expired')`,
+    ),
     check(
       'party_import_batches_file_name_check',
       sql`btrim(${t.fileName}) <> '' AND length(${t.fileName}) <= 200`,
@@ -77,7 +84,7 @@ export const partyImportBatches = appSchema.table(
     ),
     check(
       'party_import_batches_rows_check',
-      sql`jsonb_typeof(${t.rows}) = 'array' AND jsonb_array_length(${t.rows}) = ${t.rowCount}`,
+      sql`jsonb_typeof(${t.rows}) = 'array' AND CASE WHEN ${t.status} = 'expired' THEN ${t.rows} = '[]'::jsonb ELSE jsonb_array_length(${t.rows}) = ${t.rowCount} END`,
     ),
     check(
       'party_import_batches_committed_check',
