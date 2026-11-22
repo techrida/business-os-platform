@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { RequestPaymentBodySchema } from '@bos/contracts';
+import { hasInnerSpace, NO_SPACES } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -50,23 +51,28 @@ export async function createPaymentRequestAction(
   if (!Number.isInteger(count) || count < 1 || count > 200)
     return { key, error: 'Add between 1 and 200 payable items.' };
   const purchaseOrderId = text(form, 'purchaseOrderId');
+  const allocations = Array.from({ length: count }, (_, i) => ({
+    openItemId: text(form, `allocation:${i}:openItemId`),
+    amount: text(form, `allocation:${i}:amount`),
+  }));
   const parsed = RequestPaymentBodySchema.safeParse({
     vendorPartyId: text(form, 'vendorPartyId'),
     fromBankAccountId: text(form, 'fromBankAccountId'),
     currency: text(form, 'currency'),
     paymentType: 'settlement',
     ...(purchaseOrderId === '' ? {} : { purchaseOrderId }),
-    allocations: Array.from({ length: count }, (_, i) => ({
-      openItemId: text(form, `allocation:${i}:openItemId`),
-      amount: text(form, `allocation:${i}:amount`),
-    })),
+    allocations,
   });
   if (!parsed.success) {
     const errors: Record<string, string> = {};
     for (const issue of parsed.error.issues) {
+      // "10 50" is not 1050: a space inside the amount gets its own sentence.
+      const typed = allocations[Number(issue.path[1])]?.amount ?? '';
       errors[issue.path.join('.')] =
         issue.path.at(-1) === 'amount'
-          ? 'Enter an amount above zero, with up to two decimal places.'
+          ? hasInnerSpace(typed)
+            ? NO_SPACES
+            : 'Enter an amount above zero, with up to two decimal places.'
           : issue.path.at(-1) === 'currency'
             ? 'Choose a currency.'
             : issue.path.at(-1) === 'fromBankAccountId'

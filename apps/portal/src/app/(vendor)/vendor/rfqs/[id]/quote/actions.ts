@@ -6,6 +6,7 @@ import { VendorQuotationSubmissionBodySchema } from '@bos/contracts';
 import { redirect } from 'next/navigation';
 
 import { DEADLINE_PASSED_TEXT } from '@/components/vendor/rfq-deadline';
+import { spaceAware } from '@/lib/amount-hint';
 import { ApiError } from '@/lib/api';
 import { submitVendorQuotation } from '@/lib/api.vendor-writes';
 import { currencyNotEnabledText } from '@/lib/enabled-currencies';
@@ -109,6 +110,12 @@ export async function submitQuoteAction(
       const field: QuoteField | undefined = head === 'documentId' ? 'file' : (head as QuoteField);
       if (field !== undefined && field in FIELD_MESSAGE) fieldErrors[field] = FIELD_MESSAGE[field];
     }
+  }
+  if (fieldErrors.total !== undefined) {
+    fieldErrors.total = spaceAware(text(form, 'total'), fieldErrors.total);
+  }
+  if (fieldErrors.deliveryDays !== undefined) {
+    fieldErrors.deliveryDays = spaceAware(days, fieldErrors.deliveryDays);
   }
   if (!parsed.success || Object.keys(fieldErrors).length > 0) {
     // Nothing reached the API, so the same key is still unused.

@@ -11,7 +11,8 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { Combobox, useExclusiveOpen } from '@/components/ui/combobox';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Select } from '@/components/ui/field';
+import { MoneyInput, QuantityInput } from '@/components/ui/number-input';
 import { expenseAccountOptions } from '@/lib/company-account-options';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
@@ -225,25 +226,23 @@ export function BillEntryForm({
                   <div className={styles.lineFields}>
                     <Field label="Quantity" error={errors[`${i}.quantity`]}>
                       {(control) => (
-                        <Input
+                        <QuantityInput
+                          {...control}
                           name={fieldName(i, 'quantity')}
                           value={row.quantity}
-                          onChange={(e) => set(i, 'quantity', e.target.value)}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          {...control}
+                          onValueChange={(plain) => set(i, 'quantity', plain)}
+                          currency="NPR"
                         />
                       )}
                     </Field>
                     <Field label="Unit price (NPR)" error={errors[`${i}.unitPrice`]}>
                       {(control) => (
-                        <Input
+                        <MoneyInput
+                          {...control}
                           name={fieldName(i, 'unitPrice')}
                           value={row.unitPrice}
-                          onChange={(e) => set(i, 'unitPrice', e.target.value)}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          {...control}
+                          onValueChange={(plain) => set(i, 'unitPrice', plain)}
+                          currency="NPR"
                         />
                       )}
                     </Field>

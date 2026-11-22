@@ -1,5 +1,9 @@
+// @vitest-environment jsdom
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+
+import { mountForm, paste, typeKeys } from '@/test/form-interactions';
 
 import { IDLE } from '../action-state';
 
@@ -116,4 +120,127 @@ it('opens the tax invoice route in the form without the JSON toggle (U23-Q4)', (
   expect(html).not.toContain('When amountNpr');
   // The saved spec goes out unchanged, false as a boolean.
   expect(html).toContain('&quot;value&quot;:false');
+});
+
+// The editor posts only the hidden `spec` JSON, built from its state; the number boxes post nothing.
+let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+});
+afterEach(async () => {
+  await mounted?.unmount();
+  mounted = undefined;
+  document.body.innerHTML = '';
+});
+
+const amountRoute = {
+  ...spec,
+  rules: [
+    {
+      id: 'big',
+      when: { field: 'amountNpr', op: 'gt', value: '100' },
+      add: { id: 'founder', kind: 'role', role: 'founder', reason: 'Founder approves' },
+      position: 'end',
+      reason: 'Large amounts',
+    },
+  ],
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+
+async function mountEditor(initialSpec: unknown) {
+  mounted = await mountForm(
+    <WorkflowEditor
+      action={() => Promise.resolve(IDLE)}
+      mode="version"
+      documentType="test_memo"
+      initialSpec={initialSpec}
+      submitLabel="Save"
+      groupKeys={[]}
+      users={null}
+    />,
+  );
+  const { container } = mounted;
+  const box = (label: string) => {
+    const labelEl = [...container.querySelectorAll('label')].find(
+      (l) => l.textContent?.trim() === label,
+    );
+    const input = labelEl ? container.querySelector(`#${CSS.escape(labelEl.htmlFor)}`) : null;
+    if (!(input instanceof HTMLInputElement)) throw new Error(`Missing box ${label}`);
+    return input;
+  };
+  const posted = () => {
+    const text = new FormData(container.querySelector('form')!).get('spec');
+    expect(typeof text === 'string' && text !== '').toBe(true);
+    return JSON.parse(text as string) as {
+      rules: { when: { value: unknown } }[];
+      sla: { remindAfterHours: number; escalateAfterHours: number };
+    };
+  };
+  return { container, box, posted };
+}
+
+async function selectAll(input: HTMLInputElement) {
+  await act(() => {
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+    return Promise.resolve();
+  });
+}
+
+it('saves the stored amount unchanged until the admin edits it', async () => {
+  const { box, posted } = await mountEditor(amountRoute);
+  expect(box('Amount (NPR)').value).toBe('100.00');
+  expect(posted().rules[0]!.when.value).toBe('100');
+  expect(posted().sla).toMatchObject({ remindAfterHours: 24, escalateAfterHours: 72 });
+});
+
+it('refuses a minus in the amount, so the saved amount is never negative', async () => {
+  const { container, box, posted } = await mountEditor(amountRoute);
+  const amount = box('Amount (NPR)');
+  await selectAll(amount);
+  await typeKeys(amount, '7');
+  expect(amount.value).toBe('7');
+  await typeKeys(amount, '-');
+  expect(amount.value).toBe('7');
+  expect(posted().rules[0]!.when.value).toBe('7');
+
+  await selectAll(amount);
+  await typeKeys(amount, '-5');
+  expect(amount.value).toBe('5');
+  expect(posted().rules[0]!.when.value).toBe('5');
+
+  await selectAll(amount);
+  await paste(amount, '-5');
+  expect(amount.value).toBe('5');
+  expect(posted().rules[0]!.when.value).toBe('5');
+  expect(container.querySelector('input[name="spec"]')!.getAttribute('value')).not.toContain('-5');
+});
+
+it('groups the amount in lakh style and saves the plain number', async () => {
+  const { box, posted } = await mountEditor(amountRoute);
+  const amount = box('Amount (NPR)');
+  await selectAll(amount);
+  await typeKeys(amount, '1250000');
+  expect(amount.value).toBe('12,50,000');
+  expect(posted().rules[0]!.when.value).toBe('1250000');
+  // Leaving the box (as clicking Save does) pads to two decimals; the saved amount stays positive.
+  await act(() => Promise.resolve(amount.blur()));
+  expect(amount.value).toBe('12,50,000.00');
+  expect(posted().rules[0]!.when.value).toBe('1250000.00');
+});
+
+it('takes whole hours only in the reminder and escalation boxes', async () => {
+  const { box, posted } = await mountEditor(amountRoute);
+  const remind = box('Remind after (hours)');
+  const escalate = box('Escalate after (hours)');
+  expect(remind.inputMode).toBe('numeric');
+  expect(escalate.inputMode).toBe('numeric');
+
+  await selectAll(remind);
+  await typeKeys(remind, '-1.5');
+  expect(remind.value).toBe('15');
+  await selectAll(escalate);
+  await typeKeys(escalate, '4-8.');
+  expect(escalate.value).toBe('48');
+  expect(posted().sla).toMatchObject({ remindAfterHours: 15, escalateAfterHours: 48 });
 });

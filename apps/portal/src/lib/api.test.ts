@@ -110,6 +110,19 @@ describe('apiFetch', () => {
 });
 
 describe('getMe', () => {
+  it('signs in with a permission it does not know: drops the row and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...validMe,
+        permissions: [{ permission: 'vat.sales.read.v2', scope: 'all' }],
+      }),
+    );
+    expect((await getMe({ accessToken: TOKEN })).permissions).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
   it('returns the parsed /v1/me body', async () => {
     fetchMock.mockResolvedValue(Response.json(validMe));
     await expect(getMe({ accessToken: TOKEN })).resolves.toEqual(validMe);

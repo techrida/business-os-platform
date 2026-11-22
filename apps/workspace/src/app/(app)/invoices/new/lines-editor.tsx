@@ -1,12 +1,13 @@
 'use client';
 
-import type { TaxCode } from '@bos/contracts';
+import type { Currency, TaxCode } from '@bos/contracts';
 import { useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { MoneyInput, QuantityInput } from '@/components/ui/number-input';
 
 import { MAX_LINES, newLine, type FieldErrors, type LineValues } from './lines';
 import styles from './lines-editor.module.css';
@@ -51,7 +52,7 @@ export function LinesEditor({
   layout,
 }: {
   lines: readonly LineValues[];
-  currency: string;
+  currency: Currency;
   /** null when the list failed to load. */
   taxCodes: readonly TaxCode[] | null;
   errors: Readonly<FieldErrors>;
@@ -138,25 +139,24 @@ export function LinesEditor({
                 </Field>
                 <Field label={label('Quantity')} error={e('quantity')}>
                   {(control) => (
-                    <Input
-                      inputMode="decimal"
-                      autoComplete="off"
-                      className={styles.numeric}
-                      value={line.quantity}
-                      onChange={(ev) => onChange(line.key, { quantity: ev.target.value })}
+                    // No min: a line needs a quantity above zero, so the box flags 0 as the server does.
+                    <QuantityInput
                       {...control}
+                      className={styles.numeric}
+                      currency={currency}
+                      value={line.quantity}
+                      onValueChange={(quantity) => onChange(line.key, { quantity })}
                     />
                   )}
                 </Field>
                 <Field label={label(`Unit price (${currency})`)} error={e('unitPrice')}>
                   {(control) => (
-                    <Input
-                      inputMode="decimal"
-                      autoComplete="off"
-                      className={styles.numeric}
-                      value={line.unitPrice}
-                      onChange={(ev) => onChange(line.key, { unitPrice: ev.target.value })}
+                    <MoneyInput
                       {...control}
+                      className={styles.numeric}
+                      currency={currency}
+                      value={line.unitPrice}
+                      onValueChange={(unitPrice) => onChange(line.key, { unitPrice })}
                     />
                   )}
                 </Field>

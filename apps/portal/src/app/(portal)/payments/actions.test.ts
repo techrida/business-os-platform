@@ -165,3 +165,17 @@ describe('submitPaymentAction submit', () => {
     expect(callOf(fetchMock).headers.get('idempotency-key')).toBe(IDEM);
   });
 });
+
+describe('submitPaymentAction amount with a space', () => {
+  it('says to remove the space for `10 50`, not the generic message', async () => {
+    const state = await submitPaymentAction(
+      { key: IDEM },
+      form({ amount: '10 50', tdsWithheld: '1 000' }),
+    );
+    expect(state.fieldErrors?.amount).toBe('Remove the space inside the number.');
+    expect(state.fieldErrors?.tdsWithheld).toBe('Remove the space inside the number.');
+    const other = await submitPaymentAction({ key: IDEM }, form({ amount: '0.00' }));
+    expect(other.fieldErrors?.amount).toMatch(/above zero/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

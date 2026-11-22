@@ -3,7 +3,7 @@ import type { AdminPaymentTerm } from '@bos/contracts';
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm, typeKeys } from '@/test/form-interactions';
 
 // F1-Q49: the Payment terms panel sends each edit with the version it showed, so a stale screen is refused rather
 // than overwriting someone else's change, and never offers to change the days of an existing term.
@@ -45,6 +45,15 @@ const buttonByText = (text: string): HTMLButtonElement | null =>
   Array.from(document.querySelectorAll('button')).find(
     (b) => b.textContent?.replace(/\s+/g, ' ').trim() === text,
   ) ?? null;
+
+function fieldByLabel(scope: HTMLElement, text: string): HTMLInputElement {
+  const label = Array.from(scope.querySelectorAll('label')).find(
+    (l) => l.textContent?.trim() === text,
+  );
+  const field = label ? document.getElementById(label.htmlFor) : null;
+  if (!(field instanceof HTMLInputElement)) throw new Error(`No field labelled ${text}`);
+  return field;
+}
 
 const submitDialog = () =>
   act(() => {
@@ -89,6 +98,36 @@ describe('PaymentTermsPanel', () => {
     await submitDialog();
     expect(actions.renamePaymentTermAction).not.toHaveBeenCalled();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await mounted.unmount();
+  });
+
+  it('takes whole days up to 365 in a text box and refuses more', async () => {
+    actions.addPaymentTermAction.mockResolvedValue({ status: 'ok', message: 'Added.' });
+    const mounted = await mountForm(<PaymentTermsPanel terms={[NET30]} />);
+    await click(buttonByText('Add payment term'));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.querySelector('input[type="number"]')).toBeNull();
+    const days = fieldByLabel(dialog, 'Days to pay');
+    expect(days.type).toBe('text');
+    expect(days.inputMode).toBe('numeric');
+
+    await typeKeys(days, '366');
+    expect(days.value).toBe('36');
+    expect(dialog.querySelector('[role="status"]')?.textContent).toBe('At most 365');
+    await typeKeys(days, '.');
+    expect(days.value).toBe('36');
+    expect(dialog.querySelector('[role="status"]')?.textContent).toBe('Whole numbers only.');
+
+    await typeKeys(days, '{Backspace}{Backspace}365');
+    expect(days.value).toBe('365');
+    await fill(fieldByLabel(dialog, 'Name'), 'Net 365');
+    await fill(fieldByLabel(dialog, 'Code'), 'net365');
+    await submitDialog();
+    expect(actions.addPaymentTermAction).toHaveBeenCalledWith({
+      code: 'NET365',
+      name: 'Net 365',
+      netDays: '365',
+    });
     await mounted.unmount();
   });
 
