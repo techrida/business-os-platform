@@ -1,0 +1,135 @@
+/* The digits-only inputs (PAN, phone). The box carries the field look from field.module.css, so the
+   fixed prefix sits inside it; the real input inside is bare. Focus and invalid states repeat the
+   bordered-field treatment from number-input.module.css. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.box {
+  composes: control from './field.module.css';
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: text;
+}
+
+.box:focus-within {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
+}
+
+.box[data-invalid] {
+  border-color: var(--input-error-border);
+}
+
+.box[data-invalid]:focus-within {
+  box-shadow: var(--bos-field-focus-shadow-error);
+}
+
+.box:has(.input:disabled),
+.box:has(.input:disabled):hover {
+  border-color: var(--input-border);
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Above the global field-focus rule (0,3,1): the box shows focus, not the input inside it. */
+.box .input,
+.box .input:focus:not(:disabled),
+.box .input[aria-invalid='true']:focus:not(:disabled) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.box .input::placeholder {
+  color: var(--input-placeholder);
+}
+
+.box .input:disabled {
+  cursor: not-allowed;
+}
+
+.affix {
+  flex: none;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.status {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Empty but present, so the live region exists before its first message. */
+.status:not(:empty),
+.count {
+  margin-top: 6px;
+}
+
+.status > span {
+  display: block;
+}
+
+.status[data-tone='error'] {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
+.count {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mode {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link, var(--action-primary));
+  font: inherit;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mode:disabled {
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Forced-colours mode drops box-shadow and recolours borders, so the box needs a real outline. */
+@media (forced-colors: active) {
+  .box:focus-within {
+    outline: 2px solid Highlight;
+  }
+}

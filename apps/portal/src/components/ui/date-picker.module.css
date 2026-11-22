@@ -1,0 +1,317 @@
+/* Copy of the workspace DatePicker styles (apps/workspace/src/components/ui/date-picker.module.css); the portal has one focus shadow token. */
+/* Date picker (react-aria-components) on the design tokens. The segmented field mirrors .control
+   in field.module.css: same height, radius, border and focus treatment (the field's own border
+   turns the focus colour, with an inset 1px line, nothing outside the box). */
+
+.root {
+  min-width: 0;
+}
+
+/* The Bikram Sambat date of the chosen day, under the field. */
+.bs {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.picker {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  padding-inline: 10px 6px;
+  border: var(--border-width-thin) solid var(--date-picker-border);
+  border-radius: var(--radius-lg);
+  background: var(--date-picker-bg);
+  color: var(--date-picker-text);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  transition: border-color 120ms ease;
+}
+
+.group[data-hovered] {
+  border-color: var(--input-hover-border);
+}
+
+.group[data-focus-within] {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-focus-shadow);
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+.picker[data-invalid] .group {
+  border-color: var(--input-error-border);
+}
+
+.picker[data-invalid] .group[data-focus-within] {
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.picker[data-disabled] .group {
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+.picker[data-disabled] .segment {
+  color: inherit;
+}
+
+@media (pointer: coarse) {
+  .group {
+    min-height: 44px;
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}
+
+.input {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.segment {
+  padding: 1px 2px;
+  border-radius: var(--radius-xs);
+  font-variant-numeric: tabular-nums;
+  caret-color: transparent;
+  outline: none;
+}
+
+.segment[data-type='literal'] {
+  padding-inline: 0;
+  color: var(--date-picker-muted-text);
+}
+
+.segment[data-placeholder] {
+  color: var(--input-placeholder);
+}
+
+/* The segment being edited: filled, so it is obvious which part the keyboard acts on. */
+.segment:focus {
+  background: var(--date-picker-selected-bg);
+  color: var(--date-picker-selected-text);
+  forced-color-adjust: none;
+}
+
+.trigger {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+}
+
+.trigger[data-hovered] {
+  background: var(--interactive-hover);
+}
+
+.trigger[data-pressed] {
+  background: var(--interactive-pressed);
+}
+
+/* Keyboard focus on the button keeps the standard ring. */
+.trigger[data-focus-visible] {
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.trigger[data-disabled] {
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.popover {
+  z-index: 110;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+  border: var(--border-width-thin) solid var(--dropdown-border);
+  border-radius: var(--radius-lg);
+  background: var(--dropdown-bg);
+  box-shadow: var(--shadow-section);
+  color: var(--dropdown-text);
+}
+
+.popover[data-entering] {
+  animation: bos-date-in 120ms ease-out;
+}
+
+.popover[data-exiting] {
+  animation: bos-date-in 80ms ease-in reverse;
+}
+
+@keyframes bos-date-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.dialog {
+  padding: 12px;
+  outline: none;
+}
+
+.calendar {
+  width: max-content;
+  max-width: 100%;
+}
+
+.calendarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-block-end: 8px;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: var(--line-height-body-small);
+  text-align: center;
+  flex: 1;
+}
+
+.nav {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.prevIcon {
+  transform: scaleX(-1);
+}
+
+.nav[data-hovered] {
+  background: var(--interactive-hover);
+}
+
+.nav[data-pressed] {
+  background: var(--interactive-pressed);
+}
+
+.nav[data-focus-visible] {
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.nav[data-disabled] {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.grid {
+  border-collapse: collapse;
+}
+
+.weekday {
+  padding-block-end: 4px;
+  color: var(--date-picker-muted-text);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  text-align: center;
+}
+
+.cell {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: var(--border-width-thin) solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--date-picker-text);
+  font-size: var(--font-size-body-small);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  outline: none;
+}
+
+.cell[data-hovered]:not([data-selected]):not([data-disabled]) {
+  background: var(--interactive-hover);
+}
+
+.cell[data-pressed]:not([data-selected]) {
+  background: var(--interactive-pressed);
+}
+
+.cell[data-outside-month] {
+  display: none;
+}
+
+.today:not([data-selected]) {
+  border-color: var(--input-border);
+  font-weight: var(--font-weight-medium);
+}
+
+.cell[data-selected] {
+  background: var(--date-picker-selected-bg);
+  color: var(--date-picker-selected-text);
+  forced-color-adjust: none;
+}
+
+.cell[data-focus-visible] {
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.cell[data-disabled],
+.cell[data-unavailable] {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.cell[data-unavailable] {
+  text-decoration: line-through;
+}
+
+.cell[data-invalid] {
+  background: var(--status-error);
+  color: var(--text-inverse);
+}
+
+@media (forced-colors: active) {
+  .group[data-focus-within] {
+    outline-color: Highlight;
+  }
+
+  .cell[data-selected],
+  .segment:focus {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cell[data-focus-visible],
+  .nav[data-focus-visible],
+  .trigger[data-focus-visible] {
+    outline-color: Highlight;
+  }
+}

@@ -16,6 +16,7 @@
     "@bos/locale": "workspace:*",
     "@bos/pdf-viewer": "workspace:*",
     "@fontsource-variable/outfit": "catalog:",
+    "@internationalized/date": "catalog:",
     "ioredis": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",

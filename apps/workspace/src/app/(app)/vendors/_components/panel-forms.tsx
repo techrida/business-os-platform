@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { toast } from '@/components/ui/toast';
 import { formatBytes, guessMime } from '@/lib/kernel-ui';
 
@@ -140,18 +141,14 @@ function ContactFields({ errors }: { errors: PanelState<ContactField>['errors'] 
         </Field>
         <Field
           label="Phone"
-          hint="Optional. Start with + and the country code, for example +9779812345678."
+          hint="Optional. Nepal numbers need only the digits."
           error={errors.phone}
         >
           {(c) => (
-            <Input
-              type="tel"
+            <PhoneInput
               name="phone"
               value={v.phone}
-              onChange={set('phone')}
-              maxLength={30}
-              autoComplete="off"
-              className={styles.numeric}
+              onValueChange={(phone) => set('phone')({ target: { value: phone } })}
               {...c}
             />
           )}
