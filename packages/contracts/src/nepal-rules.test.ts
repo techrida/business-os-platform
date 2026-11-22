@@ -17,8 +17,8 @@ import {
 import { SETTINGS, StoredEntityPanVatNoSchema } from './settings.js';
 import { VendorPanSchema } from './vendors.js';
 
-const address = (country: string) => ({ line1: 'Baneshwor', city: 'Kathmandu', country });
-const contact = { fullName: 'Sita Rai', email: 'sita@example.com' };
+const address = { line: 'Baneshwor', city: 'Kathmandu' };
+const contact = { fullName: 'Sita Rai', email: 'sita@example.com', country: 'NP' };
 
 describe('PhoneSchema, Nepal numbers', () => {
   it.each(['+9779812345678', '+97714123456', '+9776152345'])('accepts %s', (phone) => {
@@ -47,7 +47,8 @@ describe('Nepal PAN on a customer', () => {
     CreateCustomerBodySchema.safeParse({
       legalName: 'Himal Foods',
       panVatNo,
-      address: address(country),
+      country,
+      address,
       contact,
     });
 
@@ -65,11 +66,9 @@ describe('Nepal PAN on a customer', () => {
   });
 
   it('applies the same rule on an update that sends both fields', () => {
-    const body = { expectedVersion: 1, panVatNo: '12345', address: address('NP') };
+    const body = { expectedVersion: 1, panVatNo: '12345', country: 'NP' };
     expect(UpdateCustomerBodySchema.safeParse(body).success).toBe(false);
-    expect(UpdateCustomerBodySchema.safeParse({ ...body, address: address('IN') }).success).toBe(
-      true,
-    );
+    expect(UpdateCustomerBodySchema.safeParse({ ...body, country: 'IN' }).success).toBe(true);
     expect(
       UpdateCustomerBodySchema.safeParse({ expectedVersion: 1, panVatNo: '12345' }).success,
     ).toBe(true);
@@ -79,7 +78,7 @@ describe('Nepal PAN on a customer', () => {
     const body = (country: string, panVatNo: string) => ({
       customer: {
         mode: 'create' as const,
-        customer: { legalName: 'Himal Foods', panVatNo, address: address(country) },
+        customer: { legalName: 'Himal Foods', panVatNo, country, address },
       },
       contact: { mode: 'create' as const, contact },
       opportunityName: 'Deal',

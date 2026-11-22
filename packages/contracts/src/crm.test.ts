@@ -31,11 +31,17 @@ import {
   lostReasonsToken,
 } from './index.js';
 
-const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const address = { line: '1 Durbar Marg', city: 'Kathmandu' };
 
 describe('CreateCustomerBodySchema', () => {
-  const contact = { fullName: 'Sita Rai', email: 'sita@himal.example' };
-  const ok = { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: '301234567', address, contact };
+  const contact = { fullName: 'Sita Rai', email: 'sita@himal.example', country: 'NP' };
+  const ok = {
+    legalName: 'Himal Traders Pvt. Ltd.',
+    panVatNo: '301234567',
+    country: 'NP',
+    address,
+    contact,
+  };
 
   it('parses a customer and defaults the relationship to prospect', () => {
     const c = CreateCustomerBodySchema.parse(ok);
@@ -61,7 +67,10 @@ describe('CreateCustomerBodySchema', () => {
     const { contact: _none, ...noContact } = ok;
     expect(CreateCustomerBodySchema.safeParse(noContact).success).toBe(false);
     expect(
-      CreateCustomerBodySchema.safeParse({ ...ok, contact: { fullName: 'Sita Rai' } }).success,
+      CreateCustomerBodySchema.safeParse({
+        ...ok,
+        contact: { fullName: 'Sita Rai', country: 'NP' },
+      }).success,
     ).toBe(false);
     expect(
       CreateCustomerBodySchema.safeParse({ ...ok, contact: { ...contact, email: 'nope' } }).success,
@@ -83,10 +92,18 @@ describe('CreateCustomerBodySchema', () => {
 
 describe('CreateContactBodySchema and ContactWithEmailBodySchema', () => {
   it('lets a later contact omit the email, but not a contact that must carry one', () => {
-    expect(CreateContactBodySchema.safeParse({ fullName: 'Ravi' }).success).toBe(true);
-    expect(ContactWithEmailBodySchema.safeParse({ fullName: 'Ravi' }).success).toBe(false);
+    expect(CreateContactBodySchema.safeParse({ fullName: 'Ravi', country: 'NP' }).success).toBe(
+      true,
+    );
+    expect(ContactWithEmailBodySchema.safeParse({ fullName: 'Ravi', country: 'NP' }).success).toBe(
+      false,
+    );
     expect(
-      ContactWithEmailBodySchema.safeParse({ fullName: 'Ravi', email: 'ravi@x.example' }).success,
+      ContactWithEmailBodySchema.safeParse({
+        fullName: 'Ravi',
+        email: 'ravi@x.example',
+        country: 'NP',
+      }).success,
     ).toBe(true);
   });
 });
@@ -472,6 +489,8 @@ describe('lead follow-up (D39)', () => {
     source: 'website',
     companyName: 'Acme',
     contactName: 'Asha',
+    country: 'NP',
+    email: 'asha@acme.example',
   };
   const due = '2026-12-01T10:00:00+05:45';
 
@@ -518,6 +537,7 @@ describe('CreateLeadBodySchema', () => {
     source: 'referral',
     companyName: 'Himal Traders',
     contactName: 'Sita Rai',
+    country: 'NP',
     email: 'sita@himal.example',
     expectedValue: '1500000.00',
     currency: 'NPR',
@@ -539,11 +559,11 @@ describe('CreateLeadBodySchema', () => {
 describe('ConvertLeadBodySchema', () => {
   const newCustomer = {
     mode: 'create',
-    customer: { legalName: 'Himal Traders Pvt. Ltd.', address },
+    customer: { legalName: 'Himal Traders Pvt. Ltd.', country: 'NP', address },
   } as const;
   const newContact = {
     mode: 'create',
-    contact: { fullName: 'Sita Rai', email: 'sita@himal.example' },
+    contact: { fullName: 'Sita Rai', email: 'sita@himal.example', country: 'NP' },
   } as const;
 
   it('parses a conversion that creates a customer', () => {
@@ -575,7 +595,7 @@ describe('ConvertLeadBodySchema', () => {
     expect(
       ConvertLeadBodySchema.safeParse({
         ...base,
-        contact: { mode: 'create', contact: { fullName: 'Sita Rai' } },
+        contact: { mode: 'create', contact: { fullName: 'Sita Rai', country: 'NP' } },
       }).success,
     ).toBe(false);
     // The new customer itself carries no contact: the conversion names it separately.

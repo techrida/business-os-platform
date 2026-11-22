@@ -3,8 +3,11 @@
 // proposed by one person and verified by another, and every DTO shows the last four digits only.
 import { z } from 'zod';
 
-import { AddressSchema, EmailSchema, NepalPanSchema, PhoneSchema } from './crm.js';
+import { AddressLinesSchema } from './addresses.js';
+import { CountryCodeSchema } from './countries.js';
+import { EmailSchema, NepalPanSchema } from './crm.js';
 import { CurrencySchema } from './money.js';
+import { PartyPhonesSchema } from './phones.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const isoDate = z.iso.date();
@@ -92,10 +95,15 @@ export const CreateVendorBodySchema = z
     kind: VendorKindSchema,
     pan: VendorPanSchema.optional(),
     vatRegistered: z.boolean(),
-    /** ISO 3166-1 alpha-2, such as NP. */
-    country: z.string().regex(/^[A-Z]{2}$/, 'use a 2-letter country code'),
+    /** ISO 3166-1 alpha-2, such as NP. The vendor's address country is this one (FX9). */
+    country: CountryCodeSchema,
     categoryId: z.guid().optional(),
-    address: AddressSchema.optional(),
+    /**
+     * The street lines and city, or left out. Both or none: `AddressLinesSchema` requires both, so a line without a
+     * city (or a city without a line) is refused, and leaving the address out stores neither (the nullable
+     * `address_line` and `address_city` columns, held together by `vendors_address_check`).
+     */
+    address: AddressLinesSchema.optional(),
   })
   .refine((v) => v.kind === 'foreign' || v.pan !== undefined, {
     message: 'a PAN is required unless the vendor is foreign',
@@ -125,7 +133,9 @@ export const VendorDtoSchema = z.strictObject({
   kind: VendorKindSchema,
   pan: z.string().nullable(),
   vatRegistered: z.boolean(),
-  country: z.string(),
+  country: CountryCodeSchema,
+  /** The street lines and city; null when the vendor has no address on file. The country is `country`. */
+  address: AddressLinesSchema.nullable(),
   status: VendorStatusSchema,
   version: z.number().int().min(1),
   approvedAt: isoDateTime.nullable(),
@@ -146,10 +156,15 @@ export const VendorAccountDtoSchema = z.strictObject({
 });
 export type VendorAccountDto = z.infer<typeof VendorAccountDtoSchema>;
 
+/**
+ * A vendor contact. Its country may differ from the vendor's; each phone carries its own country (FX9). `phones`
+ * defaults to none.
+ */
 export const VendorContactBodySchema = z.strictObject({
   name: text(120),
   email: EmailSchema.optional(),
-  phone: PhoneSchema.optional(),
+  country: CountryCodeSchema,
+  phones: PartyPhonesSchema.default([]),
   role: text(80).optional(),
   isPortalAdmin: z.boolean().default(false),
 });

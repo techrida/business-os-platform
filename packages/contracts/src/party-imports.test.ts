@@ -10,7 +10,171 @@ import {
   PARTY_IMPORT_MAX_ROWS,
   PARTY_IMPORT_REQUIRED,
   PartyImportRowSchema,
+  checkPartyImportPlace,
+  formatPhonesCell,
+  parsePhonesCell,
+  type PartyImportKind,
 } from './party-imports.js';
+
+/** The example row of `kind` as the cells of one line, with `changes` laid over it. */
+const exampleCells = (
+  kind: PartyImportKind,
+  changes: Record<string, string> = {},
+): Record<string, string> => {
+  const cells: Record<string, string> = {};
+  PARTY_IMPORT_COLUMNS[kind].forEach((column, index) => {
+    cells[column] = PARTY_IMPORT_EXAMPLE[kind][index]!;
+  });
+  return { ...cells, ...changes };
+};
+
+describe('phones cell (FX9)', () => {
+  it('reads semicolon-separated numbers, takes each country from its code and makes the first primary', () => {
+    expect(parsePhonesCell('+1 4155552671; +977 9812345678')).toEqual({
+      ok: true,
+      phones: [
+        { country: 'US', e164: '+14155552671', isPrimary: true },
+        { country: 'NP', e164: '+9779812345678', isPrimary: false },
+      ],
+    });
+  });
+
+  it('drops spaces, hyphens and brackets inside a number, and takes plain E.164', () => {
+    const parsed = parsePhonesCell('+977 (1) 412-3456;+14155552671');
+    expect(parsed.ok && parsed.phones.map((p) => [p.country, p.e164])).toEqual([
+      ['NP', '+97714123456'],
+      ['US', '+14155552671'],
+    ]);
+  });
+
+  it('reads an empty cell as no numbers, and its own canonical text back to the same numbers', () => {
+    expect(parsePhonesCell('')).toEqual({ ok: true, phones: [] });
+    const parsed = parsePhonesCell('+1 4155552671; +977 9812345678');
+    if (!parsed.ok) throw new Error(parsed.message);
+    const text = formatPhonesCell(parsed.phones);
+    expect(text).toBe('+14155552671;+9779812345678');
+    expect(parsePhonesCell(text)).toEqual(parsed);
+  });
+
+  it("reads the template's own cell back, which carries the spreadsheet formula guard's apostrophe", () => {
+    const parsed = parsePhonesCell(`'${PARTY_IMPORT_EXAMPLE.customer[8]}`);
+    expect(parsed.ok && parsed.phones.map((p) => p.e164)).toEqual([
+      '+9779812345678',
+      '+97714123456',
+    ]);
+    expect(parsePhonesCell("''+9779812345678").ok).toBe(false);
+  });
+
+  it('refuses a number its country rejects, with a message', () => {
+    const parsed = parsePhonesCell('+977 123');
+    expect(parsed.ok).toBe(false);
+    // Too short to be E.164 at all, so the E.164 rule speaks first; the message names the item.
+    expect(!parsed.ok && parsed.message).toMatch(/^"\+977 123": .+/);
+    const landline = parsePhonesCell('+977 012345678');
+    expect(!landline.ok && landline.message).toMatch(/leading 0 of a Nepal number/);
+  });
+
+  it('refuses a number without +, other characters, an empty item, a repeat and too many numbers', () => {
+    expect(parsePhonesCell('9812345678').ok).toBe(false);
+    expect(parsePhonesCell('+977 98123x45678').ok).toBe(false);
+    expect(parsePhonesCell('+977 9812345678;;+14155552671').ok).toBe(false);
+    expect(parsePhonesCell('+977 9812345678; +9779812345678').ok).toBe(false);
+    expect(parsePhonesCell('+999 1234567').ok).toBe(false);
+    const six = [
+      '+9779812345671',
+      '+9779812345672',
+      '+9779812345673',
+      '+9779812345674',
+      '+9779812345675',
+      '+9779812345676',
+    ].join(';');
+    expect(parsePhonesCell(six).ok).toBe(false);
+  });
+});
+
+describe('import line address, country, phones and PAN (FX9)', () => {
+  it('accepts each template example row as it stands', () => {
+    for (const kind of PARTY_IMPORT_KINDS) {
+      expect(checkPartyImportPlace(kind, exampleCells(kind)).issues).toEqual([]);
+    }
+    expect(checkPartyImportPlace('customer', exampleCells('customer')).values).toMatchObject({
+      address_line: 'Thapathali Marg 12',
+      address_city: 'Kathmandu',
+      address_country: 'NP',
+      contact_country: 'NP',
+      contact_phones: '+9779812345678;+97714123456',
+    });
+  });
+
+  it('accepts a foreign customer with no PAN, and a foreign tax id that is not 9 digits', () => {
+    const foreign = exampleCells('customer', {
+      pan_vat_no: '',
+      address_country: 'us',
+      contact_country: 'US',
+      contact_phones: '+1 4155552671',
+    });
+    const checked = checkPartyImportPlace('customer', foreign);
+    expect(checked.issues).toEqual([]);
+    expect(checked.values.address_country).toBe('US');
+    expect(
+      checkPartyImportPlace('customer', { ...foreign, pan_vat_no: 'EIN-12345' }).issues,
+    ).toEqual([]);
+  });
+
+  it('refuses a 5-digit PAN for a customer in Nepal', () => {
+    const issues = checkPartyImportPlace(
+      'customer',
+      exampleCells('customer', { pan_vat_no: '12345' }),
+    ).issues;
+    expect(issues.map((i) => i.column)).toEqual(['pan_vat_no']);
+  });
+
+  it('refuses an address line without a city, for a customer and a vendor', () => {
+    for (const kind of PARTY_IMPORT_KINDS) {
+      const issues = checkPartyImportPlace(kind, exampleCells(kind, { address_city: '' })).issues;
+      expect(issues.map((i) => i.column)).toEqual(['address_city']);
+    }
+  });
+
+  it('lets a vendor leave out the whole address, but not a customer', () => {
+    const blank = { address_line: '', address_city: '' };
+    expect(checkPartyImportPlace('vendor', exampleCells('vendor', blank)).issues).toEqual([]);
+    expect(
+      checkPartyImportPlace('customer', exampleCells('customer', blank)).issues.map(
+        (i) => i.column,
+      ),
+    ).toEqual(['address_line', 'address_city']);
+  });
+
+  it('refuses a customer with no address country instead of assuming Nepal, and an unknown code', () => {
+    for (const address_country of ['', 'ZZ', 'Nepal']) {
+      const issues = checkPartyImportPlace(
+        'customer',
+        exampleCells('customer', { address_country }),
+      ).issues;
+      expect(issues.map((i) => i.column)).toEqual(['address_country']);
+    }
+  });
+
+  it("needs the contact's country when a contact is given, and reports a bad phones cell on its column", () => {
+    expect(
+      checkPartyImportPlace(
+        'customer',
+        exampleCells('customer', { contact_country: '' }),
+      ).issues.map((i) => i.column),
+    ).toEqual(['contact_country']);
+    expect(
+      checkPartyImportPlace(
+        'customer',
+        exampleCells('customer', { contact_phones: '+977 123' }),
+      ).issues.map((i) => i.column),
+    ).toEqual(['contact_phones']);
+    expect(
+      checkPartyImportPlace('vendor', exampleCells('vendor', { contact_phone: '+1 4155552671' }))
+        .values.contact_phone,
+    ).toBe('+14155552671');
+  });
+});
 
 describe('party import templates', () => {
   it('gives each kind an example row of the same width as its header, and required columns that exist', () => {
@@ -21,6 +185,26 @@ describe('party import templates', () => {
       }
       expect(new Set(PARTY_IMPORT_COLUMNS[kind]).size).toBe(PARTY_IMPORT_COLUMNS[kind].length);
     }
+  });
+
+  it('uses the FX9 address, country and phones columns', () => {
+    expect(PARTY_IMPORT_COLUMNS.customer).toEqual(
+      expect.arrayContaining([
+        'address_line',
+        'address_city',
+        'address_country',
+        'contact_phones',
+        'contact_country',
+      ]),
+    );
+    expect(PARTY_IMPORT_COLUMNS.customer).not.toContain('address_line1');
+    expect(PARTY_IMPORT_COLUMNS.customer).not.toContain('contact_phone');
+    expect(PARTY_IMPORT_REQUIRED.customer).toEqual(
+      expect.arrayContaining(['address_country', 'contact_country']),
+    );
+    expect(PARTY_IMPORT_COLUMNS.vendor).toEqual(
+      expect.arrayContaining(['address_line', 'address_city', 'country']),
+    );
   });
 
   it('keeps the limits the brief set: 2 MB and 2,000 rows', () => {

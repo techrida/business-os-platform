@@ -4,7 +4,8 @@
 import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
-import { AddressSchema, NepalPanSchema, PanVatNoSchema } from './crm.js';
+import { PrintAddressSchema } from './addresses.js';
+import { NepalPanSchema, PanVatNoSchema } from './crm.js';
 import {
   CompanyProfileSchema,
   DEFAULT_DOCUMENT_STYLE,
@@ -109,7 +110,7 @@ export const SETTINGS = {
   /** The selling entity's PAN or VAT number as quotations print it. Per entity; null until an admin sets it. */
   'entity.pan_vat_no': NepalPanSchema.nullable(),
   /** The selling entity's address as quotations print it. Per entity; null until set, and no PDF renders without it. */
-  'entity.address': AddressSchema.nullable(),
+  'entity.address': PrintAddressSchema.nullable(),
   // P3 sales and invoicing.
   /** Billing split used when the accepted quotation has no payment schedule: slices that add up to 100%. */
   'sales.default_schedule': ScheduleTemplateSchema,

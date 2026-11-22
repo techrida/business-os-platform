@@ -52,7 +52,7 @@ describe('P2 settings', () => {
   });
 
   describe('the selling entity', () => {
-    const address = { line1: 'Kupondole', city: 'Lalitpur', country: 'NP' };
+    const address = { line: 'Kupondole', city: 'Lalitpur', country: 'NP' };
 
     it.each([
       ['entity.pan_vat_no', '301234567', true],
@@ -64,6 +64,8 @@ describe('P2 settings', () => {
       ['entity.address', { ...address, country: 'Nepal' }, false],
       ['entity.address', { ...address, extra: 'x' }, false],
       ['entity.address', { city: 'Lalitpur', country: 'NP' }, false],
+      ['entity.address', { line: 'Kupondole', city: 'Lalitpur' }, false],
+      ['entity.address', { line1: 'Kupondole', city: 'Lalitpur', country: 'NP' }, false],
     ] as const)('%s accepts %j: %s', (key, value, ok) => {
       expect(SETTINGS[key].safeParse(value).success).toBe(ok);
     });
