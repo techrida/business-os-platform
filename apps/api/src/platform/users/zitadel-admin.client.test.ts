@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CoreConfig } from '../config/config';
+import { runWithOperationDeadline } from './operation-deadline';
 import {
   PORTAL_LOGIN_POLICY,
   ZITADEL_ENDPOINTS,
@@ -341,7 +342,6 @@ describe('lockUser and unlockUser (F1-Q5)', () => {
   it.each([
     ['lockUser', '/zitadel.user.v2.UserService/LockUser'],
     ['unlockUser', '/zitadel.user.v2.UserService/UnlockUser'],
-    ['deleteUser', '/zitadel.user.v2.UserService/DeleteUser'],
   ] as const)('%s posts { userId } to %s', async (method, path) => {
     await client()[method]('u-1');
 
@@ -412,5 +412,94 @@ describe('ensureOrgLockoutPolicy (F1-Q4)', () => {
     await expect(client().ensureOrgLockoutPolicy('o-1', WANT)).resolves.toBe('updated');
 
     expect(sent.map((s) => s.method)).toEqual(['GET', 'POST', 'PUT']);
+  });
+});
+
+describe('listGrants (FU8)', () => {
+  const project = { status: 200, body: { projects: [{ projectId: 'p1', name: 'business-os' }] } };
+
+  it('refuses an omitted authorizations list when the count is positive: a broken answer is not "no roles"', async () => {
+    answers.push(project, { status: 200, body: { details: { totalResult: '2' } } });
+
+    await expect(client().listGrants('u-1', 'o-1')).rejects.toThrow(/positive count/);
+  });
+
+  it('reads an omitted list with no count (or a zero count) as no roles', async () => {
+    const c = client();
+    answers.push(project, { status: 200, body: {} });
+    expect(await c.listGrants('u-1', 'o-1')).toEqual([]);
+
+    answers.push({ status: 200, body: { details: { totalResult: '0' } } });
+    expect(await c.listGrants('u-1', 'o-1')).toEqual([]);
+  });
+});
+
+describe('operation deadline (round 4)', () => {
+  const past = <T>(fn: () => Promise<T>) =>
+    runWithOperationDeadline(5, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return fn();
+    });
+
+  it('starts no mutating request once the deadline has passed, also inside setGrants after its read', async () => {
+    const c = client();
+    answers.push(
+      { status: 200, body: { projects: [{ projectId: 'p1', name: 'business-os' }] } },
+      {
+        status: 200,
+        body: {
+          authorizations: [{ id: 'a1', organization: { id: 'o-1' }, roles: [{ key: 'sales' }] }],
+        },
+      },
+    );
+
+    // The read runs, then the deadline check stops the write.
+    await expect(
+      runWithOperationDeadline(40, async () => {
+        const read = c.listGrants('u-1', 'o-1');
+        await read;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return c.setGrants('u-1', 'o-1', ['finance']);
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(
+      calls.every(
+        (x) =>
+          !/Authorization(Update|Create|Delete)|UpdateAuthorization|DeleteAuthorization|CreateAuthorization/.test(
+            x.path,
+          ),
+      ),
+    ).toBe(true);
+
+    calls.length = 0;
+    const mutations: Array<() => Promise<unknown>> = [
+      () => c.lockUser('u-1'),
+      () => c.unlockUser('u-1'),
+      () => c.deactivateUser('u-1'),
+      () => c.reactivateUser('u-1'),
+      () => c.sendInviteCode('u-1'),
+      () => c.createHuman('o-1', { email: 'a@b.test', givenName: 'A', familyName: 'B' }),
+    ];
+    for (const call of mutations) {
+      await expect(past(call)).rejects.toMatchObject({ status: 503 });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('checks the deadline after resolving the project id, right before createAuthorization (round 5)', async () => {
+    const c = client();
+    const target = c as unknown as { bosProjectId(): Promise<string> };
+    let resolved = 0;
+    vi.spyOn(target, 'bosProjectId').mockImplementation(async () => {
+      // The read in setGrants resolves it at once; the second resolution (for the create) is slow.
+      if (++resolved === 2) await new Promise((resolve) => setTimeout(resolve, 60));
+      return 'p1';
+    });
+    answers.push({ status: 200, body: {} }); // no authorizations yet
+
+    await expect(
+      runWithOperationDeadline(40, () => c.setGrants('u-1', 'o-1', ['finance'])),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(calls.some((x) => /CreateAuthorization/.test(x.path))).toBe(false);
   });
 });
