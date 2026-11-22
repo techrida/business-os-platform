@@ -2,7 +2,7 @@
 // DocumentsService.receiveGenerated (D28: PDFs the system renders itself skip the scan), so both paths set the
 // same columns, move the document's current_version_id the same way and write the same audit event.
 import { documents, documentVersions, scoped } from '@bos/db';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 
 import type { DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
@@ -44,7 +44,17 @@ export async function markVersionClean(
       scannedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(s.where(documentVersions, stillQuarantined(v.id)))
+    // Only an upload that recorded its validation (sha256 and detected type) can be published as clean.
+    .where(
+      s.where(
+        documentVersions,
+        and(
+          stillQuarantined(v.id),
+          isNotNull(documentVersions.sha256),
+          isNotNull(documentVersions.detectedMime),
+        ),
+      ),
+    )
     .returning();
   // Zero rows: the version moved on since the caller read it. Do not point the document at it or audit a scan.
   if (updated === undefined) return null;

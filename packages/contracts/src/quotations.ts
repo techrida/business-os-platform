@@ -101,6 +101,7 @@ export const QUOTATION_ACTIONS = [
   'expire',
   'revise',
   'cancel',
+  'cancel_on_lost',
 ] as const;
 export type QuotationAction = (typeof QUOTATION_ACTIONS)[number];
 
@@ -125,8 +126,9 @@ function edge(
 
 /**
  * The version state machine of A2 section 2.2. Approval steps are not states: a Submitted version
- * stays Submitted while the kernel request runs (A2 C3). `cascade_reject` is the Lost-opportunity
- * cascade. `cancel` ends a quotation that has not been approved yet (Kuu, F1-Q27: Cancel only, no
+ * stays Submitted while the kernel request runs (A2 C3). `cascade_reject` was the original Lost-opportunity
+ * cascade for an Approved or Sent version; nothing runs it, and the Lost cascade uses `cancel_on_lost` (R5 FU12).
+ * `cancel` ends a quotation that has not been approved yet (Kuu, F1-Q27: Cancel only, no
  * Recall): a Draft, a Returned one, or a Submitted one, whose open approval request is cancelled with it.
  */
 export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
@@ -147,6 +149,13 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('cancel', 'draft', 'cancelled', true),
   edge('cancel', 'returned', 'cancelled', true),
   edge('cancel', 'submitted', 'cancelled', true),
+  // A Lost opportunity ends every quotation still open on it, including an Approved or Sent one that a user may
+  // not cancel by hand: the customer must stop being able to accept a deal the company has closed.
+  edge('cancel_on_lost', 'draft', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'returned', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'submitted', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'approved', 'cancelled', true, 'system'),
+  edge('cancel_on_lost', 'sent', 'cancelled', true, 'system'),
 ];
 
 export function quotationTransitionsFrom(status: QuotationStatus): QuotationTransition[] {
@@ -183,6 +192,9 @@ export const canReviseQuotation = (s: QuotationStatus): boolean =>
 /** A version in `s` may be cancelled (QUOTATION_TRANSITIONS: Draft, Returned or Submitted). */
 export const canCancelQuotation = (s: QuotationStatus): boolean =>
   QUOTATION_TRANSITIONS.some((t) => t.action === 'cancel' && t.from === s);
+/** A version in `s` is ended by a Lost opportunity: every live status (Draft, Returned, Submitted, Approved, Sent). */
+export const canCancelOnLost = (s: QuotationStatus): boolean =>
+  QUOTATION_TRANSITIONS.some((t) => t.action === 'cancel_on_lost' && t.from === s);
 
 // ---------------------------------------------------------------------------------------------
 // Lines, discount, payment schedule
