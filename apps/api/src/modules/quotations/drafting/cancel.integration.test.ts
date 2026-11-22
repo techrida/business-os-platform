@@ -554,7 +554,7 @@ describe('the Lost cascade (QuotationLostHandler)', () => {
     expect((await versionRow(q.currentVersionId)).status).toBe('draft');
   });
 
-  it("drops a cancelled Sent version's still-pending \"ready to review\" mail, and leaves claimed, sent and unrelated mail alone", async () => {
+  it('drops a cancelled Sent version\'s still-pending "ready to review" mail, and leaves claimed, sent and unrelated mail alone', async () => {
     // The real producer: QuotationSendService queues this mail through notifyEmail with these fields.
     const notify = new NotifyService(
       db,

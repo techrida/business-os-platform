@@ -464,20 +464,25 @@ describe('portal reads on a real database', () => {
     }
   });
 
-  it('tells the customer a sent-then-cancelled quotation is closed (409), and 404s a never-sent cancelled one or another party\'s', async () => {
+  it("tells the customer a sent-then-cancelled quotation is closed (409), and 404s a never-sent cancelled one or another party's", async () => {
     const w = await seedWorld();
     const sentThenCancelled = await seedQuotation(w, w.entityA, w.partyP, 'sent');
     const neverSent = await seedQuotation(w, w.entityA, w.partyP, 'draft');
     const otherParty = await seedQuotation(w, w.entityA, w.partyQ, 'sent');
-    await withTx(db, { tenantId: w.tenantId, organizationId: w.entityA }, seedActor(), async (tx) => {
-      for (const s of [sentThenCancelled, neverSent, otherParty]) {
-        // As the Lost cascade leaves it: status, the time and the reason.
-        await tx.execute(sql`
+    await withTx(
+      db,
+      { tenantId: w.tenantId, organizationId: w.entityA },
+      seedActor(),
+      async (tx) => {
+        for (const s of [sentThenCancelled, neverSent, otherParty]) {
+          // As the Lost cascade leaves it: status, the time and the reason.
+          await tx.execute(sql`
           UPDATE app.quotation_versions
              SET status = 'cancelled', cancelled_at = now(), cancel_reason = 'Opportunity marked lost: Price'
            WHERE id = ${s.versionId}::uuid`);
-      }
-    });
+        }
+      },
+    );
 
     const portal = serviceFor(customerOf(w, w.entityA, w.partyP));
     expect(await refusal(portal.get(sentThenCancelled.versionId))).toEqual({
