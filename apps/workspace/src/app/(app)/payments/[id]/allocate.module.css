@@ -46,6 +46,19 @@
   line-height: var(--line-height-caption);
 }
 
+/* The running total under the table; it turns red once it passes what is left on the payment. */
+.total,
+.totalOver {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.totalOver {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
 .openAmount {
   font-weight: var(--font-weight-medium);
 }

@@ -24,10 +24,6 @@
   gap: 20px;
 }
 
-.numeric {
-  font-variant-numeric: tabular-nums;
-}
-
 .tds summary {
   min-height: 40px;
   display: flex;
