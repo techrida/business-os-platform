@@ -348,12 +348,6 @@ export const SWEEP_EVERY_MS = 10 * 60_000;
 export const SWEEP_STALE_MS = 15 * 60_000;
 /** One sweep re-queues at most this many versions per list, so a long outage cannot flood the queue at once. */
 const SWEEP_BATCH = 200;
-/**
- * A version claimed by an upload (quarantined) that never recorded its validation (sha256 and detected type, written in
- * one statement after the length and type checks) is an unfinished upload, not a file waiting for a scan. It is only
- * reopened after this long, so a slow upload still streaming is never cut off.
- */
-export const UNFINISHED_UPLOAD_MS = 2 * 60 * 60_000;
 /** Job states that mean "a worker will still look at this version". */
 const LIVE_STATES = [
   'active',
@@ -406,12 +400,12 @@ export class ScanSweepProcessor extends WorkerHost {
       and(
         eq(documentVersions.status, 'quarantined'),
         lt(documentVersions.updatedAt, cutoff),
-        // Validated uploads only: see UNFINISHED_UPLOAD_MS for the rest.
+        // Validated uploads only (sha256 and detected type, recorded together after the checks). An upload that never recorded
+        // them stays quarantined for good: never scanned, published or served. The user uploads again as a new version.
         isNotNull(documentVersions.sha256),
         isNotNull(documentVersions.detectedMime),
       ),
     );
-    await this.reopenUnfinished(now);
     const failed = await this.list(
       and(
         eq(documentVersions.status, 'scan_failed'),
@@ -461,46 +455,6 @@ export class ScanSweepProcessor extends WorkerHost {
     // it as stale, so failing the job here is for visibility, not for recovery.
     if (failures.length > 0) throw new Error(`scan sweep: ${failures.join('; ')}`);
     return result;
-  }
-
-  /**
-   * Puts uploads that never recorded their validation back to `awaiting_content` (the trigger allows it while sha256 is
-   * empty), so the client sends the content again. Their stray file is overwritten by that next upload.
-   */
-  private async reopenUnfinished(now: Date): Promise<void> {
-    const cutoff = new Date(now.getTime() - UNFINISHED_UPLOAD_MS);
-    const unfinished = await this.list(
-      and(
-        eq(documentVersions.status, 'quarantined'),
-        lt(documentVersions.updatedAt, cutoff),
-        isNull(documentVersions.sha256),
-      ),
-    );
-    for (const v of unfinished) {
-      try {
-        const scope = { tenantId: v.tenantId, organizationId: v.organizationId };
-        const s = scoped(scope);
-        await withTx(this.db, scope, systemActor('docs.scan.sweep'), (tx) =>
-          tx
-            .update(documentVersions)
-            .set({ status: 'awaiting_content', detectedMime: null, updatedAt: new Date() })
-            .where(
-              s.where(
-                documentVersions,
-                and(
-                  eq(documentVersions.id, v.id),
-                  eq(documentVersions.status, 'quarantined'),
-                  isNull(documentVersions.sha256),
-                ),
-              ),
-            ),
-        );
-      } catch (error) {
-        this.logger.error(
-          `could not reopen unfinished upload ${v.id}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
   }
 
   /** Oldest first, only versions whose document is not removed. */
