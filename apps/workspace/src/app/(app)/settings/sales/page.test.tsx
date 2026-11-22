@@ -99,11 +99,11 @@ describe('the delivery hold card', () => {
       'The Founder may release any amount; the person who created the order never can.',
     );
     expect(html).toContain('Management releases holds above (NPR)');
-    // The shared number input: before hydration the labelled box posts what it shows (a plain field: trailing zeros dropped).
+    // The shared number input: before hydration the labelled box posts what it shows.
     const input = html.match(/<input[^>]*name="v:sales\.delivery_hold\.management_npr"[^>]*>/)?.[0];
     expect(input).toBeDefined();
     expect(input).toContain('type="text"');
-    expect(input).toContain('value="250000.5"');
+    expect(input).toContain('value="250000.50"');
     expect(html).not.toContain('type="number"');
     const labelFor = html.match(
       /<label[^>]*for="([^"]+)"[^>]*>Management releases holds above \(NPR\)<\/label>/,
@@ -114,7 +114,8 @@ describe('the delivery hold card', () => {
     // Decimal keyboard: the 0.01 step allows two decimals.
     expect(box).toContain('inputMode="decimal"');
     expect(box).toContain('value="250000.50"');
-    expect(box).not.toContain('name=');
+    // Until hydration the box carries the name; a hidden input takes over after.
+    expect(box).toContain('name="v:sales.delivery_hold.management_npr"');
   });
 
   it('keeps the other cards when the threshold cannot be read', async () => {

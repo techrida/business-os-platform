@@ -1494,7 +1494,7 @@ describe('server values with zero decimals in unpadded fields', () => {
     expect(hidden()).toBe('60');
   });
 
-  it('shows a 1.500000 rate as 1.5', async () => {
+  it('keeps a 1.500000 rate as stored in a plain decimal field, and posts 1.5', async () => {
     const { box, hidden } = await mount(
       <DecimalInput
         aria-label="Rate"
@@ -1504,7 +1504,7 @@ describe('server values with zero decimals in unpadded fields', () => {
         defaultValue="1.500000"
       />,
     );
-    expect(box.value).toBe('1.5');
+    expect(box.value).toBe('1.500000');
     expect(hidden()).toBe('1.5');
   });
 });

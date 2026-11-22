@@ -96,6 +96,8 @@ interface EngineProps extends NumberInputCommonProps {
   grouping: NumberSystem | null;
   prefix?: string | undefined;
   suffix?: string | undefined;
+  /** A plain decimal field that shows a server value as stored (`250000.50`), not trimmed (`60.0000` -> `60`). */
+  keepZeros?: boolean | undefined;
   /** Decimals the box pads to on blur and for values set from outside. */
   padTo?: number | undefined;
   /** Zero is an error on blur (QuantityString needs more than zero). */
@@ -206,6 +208,7 @@ function fromValue(
   limits: NumberLimits,
   grouping: NumberSystem | null,
   padTo: number | undefined,
+  keepZeros = false,
 ): string {
   if (value === '') return '';
   let trimmed = value.includes(',') ? plainAmount(value) : value;
@@ -219,7 +222,11 @@ function fromValue(
   const check = withinLimits(trimmed, limits);
   if (!check.ok) return value;
   return display(
-    padTo === undefined ? withoutTrailingZeros(check.value) : new Dec(check.value).toFixed(padTo),
+    padTo === undefined
+      ? keepZeros
+        ? check.value
+        : withoutTrailingZeros(check.value)
+      : new Dec(check.value).toFixed(padTo),
     grouping,
   );
 }
@@ -300,6 +307,7 @@ function NumberBox({
   prefix,
   suffix,
   padTo,
+  keepZeros,
   positive,
   describe,
   spin,
@@ -361,7 +369,7 @@ function NumberBox({
   }
 
   const initial = () =>
-    fromValue(controlled ? value : (defaultValue ?? ''), limits, grouping, padTo);
+    fromValue(controlled ? value : (defaultValue ?? ''), limits, grouping, padTo, keepZeros);
   const [text, setText] = useState(initial);
   // A server value the field cannot hold is flagged from the first render, so the server HTML and
   // the hydrated box agree.
@@ -376,7 +384,7 @@ function NumberBox({
   // A controlled parent that holds a different number wins: it refused the edit or set a new value.
   // The comparison is with the parent value as the box would show it, so a rebuilt text always
   // matches on the next render (`1,250,000` is shown as `12,50,000.00`).
-  const fromParent = controlled ? fromValue(value, limits, grouping, padTo) : '';
+  const fromParent = controlled ? fromValue(value, limits, grouping, padTo, keepZeros) : '';
   if (controlled && !sameNumber(postedOf(text), postedOf(fromParent))) {
     setText(fromParent);
     setError(foreign(fromParent) ? problem(fromParent) : null);
@@ -455,7 +463,13 @@ function NumberBox({
   useFormReset(rootRef, () => {
     clearNotice();
     keyed.current = null;
-    const next = fromValue(controlled ? value : (defaultValue ?? ''), limits, grouping, padTo);
+    const next = fromValue(
+      controlled ? value : (defaultValue ?? ''),
+      limits,
+      grouping,
+      padTo,
+      keepZeros,
+    );
     setError(foreign(next) ? problem(next) : null);
     // A controlled parent owns the value; reporting the reset to it would undo its state.
     if (controlled) {
@@ -998,6 +1012,7 @@ export function DecimalInput({ intDigits, scale, ...rest }: DecimalInputProps) {
       {...rest}
       limits={{ intDigits, scale }}
       grouping={null}
+      keepZeros
       describe={(number) => number}
     />
   );
