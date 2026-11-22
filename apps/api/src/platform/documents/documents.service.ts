@@ -13,6 +13,7 @@
 //   create()          -> awaiting_content   a row exists, no bytes yet
 //   receiveContent()  -> quarantined        bytes on disk under quarantine/, type checked, docs.scan queued
 //                     -> rejected           wrong type or too big (file deleted)
+//                     -> quarantined, no sha256   the write failed (interrupted, wrong length): stays so, never reopened
 //   scan processor    -> clean | infected | scan_failed
 //
 // Generated files (a quotation PDF a job rendered) take the same road under the system actor, minus the scan
@@ -845,13 +846,17 @@ export class DocumentsService {
         await this.reject(who, version, { reason: 'too_large', detectedMime: null, sha256: null });
         throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
       }
-      await this.reopen(who, version);
+      await this.abandon(version);
       this.logger.warn(`upload of version ${versionId} did not finish: ${describe(error)}`);
-      throw new BadRequestException('The upload was interrupted. Send the content again.');
+      throw new BadRequestException(
+        'The upload was interrupted. Start a new upload; this version cannot take the content again.',
+      );
     }
     if (written.bytes !== contentLength) {
-      await this.reopen(who, version);
-      throw new BadRequestException('The body length did not match Content-Length. Send it again.');
+      await this.abandon(version);
+      throw new BadRequestException(
+        'The body length did not match Content-Length. Start a new upload; this version cannot take the content again.',
+      );
     }
 
     // Step 3: the type check, on the quarantined file.
@@ -1664,16 +1669,21 @@ export class DocumentsService {
     await this.storage.removeQuarantine(version.storageKey);
   }
 
-  /** Puts a half-received version back to awaiting_content so the client can send the content again. */
-  private async reopen(who: { scope: TxScope; actor: Actor }, version: VersionRow): Promise<void> {
-    const s = scoped(who.scope);
-    await this.storage.removeQuarantine(version.storageKey);
-    await withTx(this.db, who.scope, who.actor, async (tx) => {
-      await tx
-        .update(documentVersions)
-        .set({ status: 'awaiting_content', updatedAt: new Date() })
-        .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
-    });
+  /**
+   * A failed write (an interrupted stream or a body that did not match Content-Length) keeps its version
+   * `quarantined` with no sha256: it is never put back to `awaiting_content` (round 5, EF3), so a second PUT is a 409
+   * and the retry is a new version. Only the partial bytes go. The scan sweeper skips a version without a recorded
+   * sha256, so nothing scans or serves it; the uploader removes the document or supersedes it with a new version.
+   * Best effort: a leftover partial file is harmless, and the failure the caller reports is the upload's own.
+   */
+  private async abandon(version: VersionRow): Promise<void> {
+    try {
+      await this.storage.removeQuarantine(version.storageKey);
+    } catch (error) {
+      this.logger.warn(
+        `partial bytes of version ${version.id} could not be removed: ${describe(error)}`,
+      );
+    }
   }
 }
 
