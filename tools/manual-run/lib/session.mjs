@@ -12,7 +12,7 @@ import {
   registerSecret,
   registerTotpSecret,
 } from './redact.mjs';
-import { totp } from './totp.mjs';
+import { totp, claimCode } from './totp.mjs';
 
 export { totp };
 
@@ -979,7 +979,7 @@ export async function realLogin(session, page, key, startUrl) {
       stage = 'type the one-time code';
       session.guard();
       onLoginPage('the one-time code');
-      const value = totp(p.totpSecret);
+      const value = await claimCode(p.totpSecret);
       registerCode(value);
       session.log(`  · typing the one-time code (masked) at ${new Date().toISOString()}`);
       await code.fill(value);

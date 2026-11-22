@@ -887,7 +887,7 @@ export function workflow(cfg) {
             const scored = quotes
               .getByRole('row')
               .filter({ hasText: VENDOR })
-              .filter({ hasText: /\b90(\.00)?\b/ });
+              .filter({ hasText: /(^|[^\d.])90(\.00)?(?!\d)/ });
             s.expect(
               await reloadUntil(s, scored, 6, 5000, { waitFirstMs: 60000 }),
               'the Score column shows 90',
@@ -1643,11 +1643,51 @@ export function workflow(cfg) {
             await s.see(review, 'the Review the payment request dialog');
             await s.see(review.getByText(VENDOR), `the review names ${VENDOR}`);
             await s.pause(400);
+            // FQA3 (EF1 Q2, EF4): Esc and Back return focus to the Review request button; while the
+            // draft is being created the button is aria-disabled, not disabled, so it keeps focus.
+            const focusFails = [];
+            const focusName = () =>
+              s.page.evaluate(() => {
+                const e = document.activeElement;
+                return e
+                  ? `${e.tagName.toLowerCase()} "${(e.textContent || '').trim().slice(0, 40)}"`
+                  : 'none';
+              });
+            await s.page.keyboard.press('Escape');
+            await review.waitFor({ state: 'hidden', timeout: 10000 });
+            const afterEsc = await focusName();
+            if (!/Review request/.test(afterEsc)) focusFails.push(`after Esc: ${afterEsc}`);
+            await s.click(s.button('Review request'), 'Review request (again)');
+            await s.see(review, 'the review dialog again');
+            await review.getByRole('button', { name: 'Back', exact: true }).click();
+            await review.waitFor({ state: 'hidden', timeout: 10000 });
+            const afterBack = await focusName();
+            if (!/Review request/.test(afterBack)) focusFails.push(`after Back: ${afterBack}`);
+            await s.click(s.button('Review request'), 'Review request (third time)');
+            await s.see(review, 'the review dialog a third time');
             await review.getByRole('button', { name: 'Create draft request', exact: true }).click();
+            const pending = await s.page
+              .evaluate(() => {
+                const b = [...document.querySelectorAll('button')].find((x) =>
+                  /^Review request$|^Creating/.test((x.textContent || '').trim()),
+                );
+                return b
+                  ? { disabled: b.disabled, aria: b.getAttribute('aria-disabled') }
+                  : { gone: true };
+              })
+              .catch(() => ({ gone: true }));
+            s.checks.push(`Review button while creating: ${JSON.stringify(pending)}`);
+            if (!pending.gone && pending.disabled !== false)
+              focusFails.push('the Review button is disabled while creating');
             await s.page.waitForURL(new RegExp(`/payables/payment-requests/${UUID}$`), {
               timeout: cfg.navTimeout,
             });
             s.record('paymentRequestUrl', pathOf(s.page.url()));
+            s.expect(
+              !focusFails.length,
+              'Review dialog focus and pending checks',
+              focusFails.join('; '),
+            );
           } else await openUrl(s, 'paymentRequestUrl', (p) => p.getByRole('heading', { level: 1 }));
           const items = await s.text(s.page.getByRole('main'));
           s.expect(hasAmount(items, 113000), 'Total requested NPR 113,000');
