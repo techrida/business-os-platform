@@ -331,7 +331,7 @@ export function QuoteForm({
             <span className={rows.headFields}>
               <span>Item</span>
               <span>Quantity</span>
-              <span>Unit price ({values.currency})</span>
+              <span>Unit price</span>
               <span>Tax code</span>
             </span>
           </div>
@@ -383,10 +383,7 @@ export function QuoteForm({
                         />
                       )}
                     </Field>
-                    <Field
-                      label={lineLabel(`Unit price (${values.currency})`)}
-                      error={err[`lines.${i}.unitPrice`]}
-                    >
+                    <Field label={lineLabel('Unit price')} error={err[`lines.${i}.unitPrice`]}>
                       {(control) => (
                         <MoneyInput
                           {...control}
