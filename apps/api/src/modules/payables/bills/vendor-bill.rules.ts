@@ -23,6 +23,8 @@ import {
   type MatchLineResult,
   type MatchTolerance,
 } from '@bos/money-rules';
+import { kathmanduDateString } from '@bos/locale';
+import { UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 
@@ -34,6 +36,20 @@ export const MATCH_EXCEPTION_DOCUMENT_TYPE = 'match_exception';
 /** The audit entity type of the module's domain events. */
 export const BILL_AUDIT_ENTITY = 'vendor_bills';
 export const MATCH_EXCEPTION_AUDIT_ENTITY = 'match_exceptions';
+
+/**
+ * 422 BILL_DATE_IN_FUTURE: a vendor invoice cannot be dated after today in Kathmandu. Bill entry, the conversion of a
+ * portal submission and the vendor's own portal submission all refuse it; the clients' `max` is advisory.
+ */
+export function assertInvoiceDateByToday(invoiceDate: string, now: Date): void {
+  const today = kathmanduDateString(now);
+  if (invoiceDate <= today) return;
+  throw new UnprocessableEntityException({
+    code: 'BILL_DATE_IN_FUTURE',
+    message: `The invoice date ${invoiceDate} is after today (${today}); use today or an earlier date`,
+    details: { invoiceDate, today },
+  });
+}
 
 /** The unique key that makes INV-001, inv 001 and INV/001 one invoice of a vendor in a fiscal year (check 8). */
 export const BILL_DEDUP_CONSTRAINT = 'vendor_bills_tenant_org_vendor_invoice_fy_unique';

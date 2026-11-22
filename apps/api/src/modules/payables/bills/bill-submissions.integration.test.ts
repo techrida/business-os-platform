@@ -904,3 +904,100 @@ describe('duplicate invoice numbers in the inbox (I-33, a warning, not a block)'
     expect((await rowIn(second.id)).duplicates).toEqual([]);
   });
 });
+
+describe('invoice date of a portal bill (FX6 #6): today in Kathmandu at the latest', () => {
+  /** The vendor's own submission through the real portal producer, on a clock at `at`. */
+  async function portalSubmit(vendorId: string, invoiceDate: string, at: Date) {
+    const documentId = randomUUID();
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.documents (id, tenant_id, organization_id, owner_type, owner_id)
+          VALUES (${documentId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_portal_intake', ${vendorId})`,
+    );
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, 1, 'invoice.pdf',
+                  'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean')`,
+    );
+    const vendorCaller = {
+      current: () => ({
+        ...principalNow(),
+        userId: U.portal,
+        orgKind: 'vendor' as const,
+        partyId: vendorId,
+        roles: ['vendor_user'],
+        grants: new Map<Permission, Scope>([
+          ['portal.vendor.read', 'customer_org'],
+          ['portal.vendor.submit', 'customer_org'],
+        ]),
+      }),
+    };
+    const portal = new VendorPortalInboxService(
+      db,
+      {} as never,
+      new AuditService(db),
+      vendorCaller as never,
+      {} as never,
+      undefined,
+      () => at,
+    );
+    return portal.submitBill(
+      { scope: scopeA, actor: { kind: 'user', id: U.portal, correlationId: 'portal-corr' } },
+      {
+        vendorInvoiceNo: `PINV-${randomUUID().slice(0, 8)}`,
+        invoiceDate,
+        currency: 'NPR',
+        claimedTotal: '1130.00',
+        documentId,
+      },
+      randomUUID(),
+    );
+  }
+  const submissionsOf = (vendorId: string) =>
+    read((tx) =>
+      tx
+        .select({ id: vendorBillSubmissions.id, invoiceDate: vendorBillSubmissions.invoiceDate })
+        .from(vendorBillSubmissions)
+        .where(eq(vendorBillSubmissions.vendorPartyId, vendorId)),
+    );
+
+  it('refuses a vendor submission dated tomorrow with 422 BILL_DATE_IN_FUTURE and takes today', async () => {
+    const vendorId = await vendor();
+    // 18:14:59 UTC is the last second of 9 November in Kathmandu (UTC+05:45).
+    const lastSecondOfNov9 = new Date('2026-11-09T18:14:59Z');
+
+    const refused = await httpErrorOf(portalSubmit(vendorId, '2026-11-10', lastSecondOfNov9));
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'BILL_DATE_IN_FUTURE',
+      details: { invoiceDate: '2026-11-10', today: '2026-11-09' },
+    });
+    expect(await submissionsOf(vendorId)).toEqual([]);
+
+    const ok = await portalSubmit(vendorId, '2026-11-09', lastSecondOfNov9);
+    expect(await submissionsOf(vendorId)).toEqual([{ id: ok.id, invoiceDate: '2026-11-09' }]);
+    // A second later it is 10 November there, and that date is taken.
+    await portalSubmit(vendorId, '2026-11-10', new Date('2026-11-09T18:15:00Z'));
+    expect(await submissionsOf(vendorId)).toHaveLength(2);
+  });
+
+  it('refuses to convert a stored submission dated after today, leaving it in the inbox', async () => {
+    const vendorId = await vendor();
+    const sub = await submission({ vendorId });
+    // A row saved before the rule can carry a later date; the service clock reads 9 November in Kathmandu.
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_bill_submissions SET invoice_date = '2026-11-10' WHERE id = ${sub.id}`,
+    );
+
+    const refused = await httpErrorOf(
+      service.convertSubmission(sub.id, { lines: plainLines() }, randomUUID()),
+    );
+    expect(refused.getStatus()).toBe(422);
+    expect((refused.getResponse() as { code?: string }).code).toBe('BILL_DATE_IN_FUTURE');
+    expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
+    expect(await billsOf(vendorId)).toEqual([]);
+  });
+});

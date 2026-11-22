@@ -23,12 +23,14 @@ import {
   approvalRequests,
   createCostCenter,
   createDepartment,
+  createExpenseAccount,
   createParty,
   createStaffUser,
   createTenantWithEntity,
   purchaseOrderLines,
   purchaseOrders,
   purchaseRequests,
+  vendorBills,
 } from '@bos/db';
 import { ForbiddenException, HttpException, type ArgumentsHost } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
@@ -44,11 +46,13 @@ import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
+import { VendorBillsService } from '../../payables/bills/vendor-bills.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { PrCommitmentSubject } from '../sourcing/pr-commitment.subject';
 import {
@@ -910,5 +914,154 @@ describe('live vendor bills block cancel and cancelAndRecreate (K3 Q3)', () => {
     expect(codeOf(recreateErr)).toBe('PO_HAS_RECEIPTS');
     expect((await poRow(id)).status).toBe('issued');
     expect(await posOfRequest(prId)).toHaveLength(1);
+  });
+});
+
+// The second transaction waits at withTx's tenant audit-chain lock (tx.ts), taken before any row lock, so the first
+// always commits before the second reads the order. The bill's FOR SHARE on the order backs that up: dropping it alone
+// leaves both tests green.
+describe('bill entry and cancel in two concurrent transactions (FU9 follow-up)', () => {
+  /** A caller fixed to one user, so two calls in flight never read each other's identity. */
+  const callerFor = (userId: string, role: RoleKey) => ({
+    current: () => ({
+      scope: scopeA,
+      actor: { kind: 'user' as const, id: userId, correlationId: `test-${role}` },
+      principal: { ...principalNow(), ...scopeA, userId, roles: [role], grants: grantsOf(role) },
+    }),
+  });
+  /**
+   * An AuditService that holds the first `action` record until released, inside the writing transaction and so after
+   * its row locks are taken. `paused` gives that transaction's backend pid.
+   */
+  function gatedAudit(action: string) {
+    const real = new AuditService(db);
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let pausedAt: (pid: number) => void = () => undefined;
+    const paused = new Promise<number>((resolve) => (pausedAt = resolve));
+    const gated = Object.create(real) as AuditService;
+    gated.record = async (tx, event) => {
+      if (event.action === action) {
+        const { rows } = await tx.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
+        pausedAt(rows[0]!.pid);
+        await released;
+      }
+      return real.record(tx, event);
+    };
+    return { audit: gated, release, paused };
+  }
+  /** Resolves once some backend waits on a lock that backend `pid` holds. */
+  async function blockedBy(pid: number): Promise<void> {
+    for (let i = 0; i < 400; i += 1) {
+      const { rows } = await ownerPool.query<{ n: string }>(
+        'SELECT count(*) AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))',
+        [pid],
+      );
+      if (Number(rows[0]!.n) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`nothing waited on backend ${pid}`);
+  }
+  const ordersAs = (a: AuditService = new AuditService(db)) =>
+    new PurchaseOrdersService(db, approvals, a, callerFor(U.proc, 'procurement'), () => now);
+  const billsAs = (a: AuditService = new AuditService(db)) =>
+    new VendorBillsService(
+      db,
+      approvals,
+      a,
+      new SettingsService(db),
+      callerFor(U.acct, 'accountant'),
+      () => now,
+    );
+  /** An issued order with nothing received, and the body of a bill of its one line. */
+  async function issuedWithBillBody() {
+    const vendorId = await vendor();
+    const { id } = await plainDraft(vendorId);
+    await service.issue(id, randomUUID());
+    const [line] = await linesOfPo(id);
+    const { rows } = await exec(
+      scopeA,
+      sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill_intake', ${vendorId}) RETURNING id`,
+    );
+    const documentId = (rows[0] as { id: string }).id;
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, 1, 'invoice.pdf',
+                  'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean')`,
+    );
+    const body = {
+      vendorPartyId: vendorId,
+      kind: 'bill' as const,
+      vendorInvoiceNo: `INV-LOCK-${randomUUID().slice(0, 8)}`,
+      invoiceDate: '2026-11-09',
+      currency: 'NPR' as const,
+      purchaseOrderId: id,
+      documentId,
+      lines: [
+        {
+          poLineId: line!.id,
+          accountId: (await createExpenseAccount(appPool, scopeA)).id,
+          quantity: '1',
+          unitPrice: '79646.02',
+          taxCodeId: vatCode,
+        },
+      ],
+    };
+    return { id, body };
+  }
+  const billsOf = (poId: string) =>
+    read((tx) =>
+      tx
+        .select({ id: vendorBills.id })
+        .from(vendorBills)
+        .where(eq(vendorBills.purchaseOrderId, poId)),
+    );
+
+  it('cancel first: the bill waits for the order lock, then is refused 409 PO_NOT_BILLABLE', async () => {
+    const { id, body } = await issuedWithBillBody();
+    const gate = gatedAudit('procurement.po.cancelled');
+    const cancel = ordersAs(gate.audit).cancel(id, { reason: 'Wrong order' }, randomUUID());
+    let bill: Promise<unknown> | undefined;
+    try {
+      const pid = await gate.paused;
+      bill = billsAs().create(body, randomUUID());
+      bill.catch(() => undefined);
+      await blockedBy(pid);
+    } finally {
+      gate.release();
+    }
+    expect((await cancel).status).toBe('cancelled');
+    const refused = await httpErrorOf(bill);
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_NOT_BILLABLE');
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_NOT_BILLABLE' });
+    expect((await poRow(id)).status).toBe('cancelled');
+    expect(await billsOf(id)).toEqual([]);
+  });
+
+  it('bill first: the cancel waits for the bill to commit, then is refused 409 PO_HAS_BILLS', async () => {
+    const { id, body } = await issuedWithBillBody();
+    const gate = gatedAudit('payables.bill.entered');
+    const bill = billsAs(gate.audit).create(body, randomUUID());
+    let cancel: Promise<unknown> | undefined;
+    try {
+      const pid = await gate.paused;
+      cancel = ordersAs().cancel(id, { reason: 'Wrong order' }, randomUUID());
+      cancel.catch(() => undefined);
+      await blockedBy(pid);
+    } finally {
+      gate.release();
+    }
+    const entered = await bill;
+    const refused = await httpErrorOf(cancel);
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_HAS_BILLS');
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_HAS_BILLS' });
+    expect((await poRow(id)).status).toBe('issued');
+    expect(await billsOf(id)).toEqual([{ id: entered.id }]);
+    expect(await auditRows(id, 'procurement.po.cancelled')).toEqual([]);
   });
 });

@@ -109,6 +109,8 @@ export type ErrorCode =
   | 'serials_required'
   | 'serials_not_allowed'
   | 'serial_duplicate'
+  | 'RECEIPT_DATE_IN_FUTURE'
+  | 'BILL_DATE_IN_FUTURE'
   | 'VENDOR_NOT_APPROVED'
   | 'VENDOR_NOT_IN_ENTITY'
   | 'FEWER_THAN_MIN_QUOTES'
@@ -279,6 +281,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   serials_required: 'This line needs one serial number for each unit received',
   serials_not_allowed: 'This line does not take serial numbers',
   serial_duplicate: 'A serial number was already received on this purchase order line',
+  RECEIPT_DATE_IN_FUTURE: 'The receipt date is after today',
+  BILL_DATE_IN_FUTURE: 'The invoice date is after today',
   VENDOR_NOT_APPROVED: 'The vendor is not approved for this action',
   VENDOR_NOT_IN_ENTITY: 'A vendor has no account in this entity',
   FEWER_THAN_MIN_QUOTES: 'There are fewer quotations than the minimum; give a reason to go on',
@@ -542,6 +546,8 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'serials_required',
   'serials_not_allowed',
   'serial_duplicate',
+  // FX6: a receipt dated after today in Kathmandu (create and confirm).
+  'RECEIPT_DATE_IN_FUTURE',
   // P4 purchase orders: an amendment names a line of another order, changes nothing, or cuts below what arrived.
   'PO_AMENDMENT_INVALID',
   // P4 vendor bills (payables): what the bill entry and the match refuse (a request the server will not take
@@ -550,6 +556,8 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'BILL_KIND_NOT_SUPPORTED',
   'CURRENCY_NOT_SUPPORTED',
   'CURRENCY_NOT_ENABLED',
+  // FX6: an invoice dated after today in Kathmandu (bill entry, a converted or a new portal submission).
+  'BILL_DATE_IN_FUTURE',
   'SUBMISSION_HAS_NO_VENDOR',
   'SUBMISSION_INCOMPLETE',
   'SUBMISSION_MISMATCH',
