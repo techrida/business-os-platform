@@ -846,14 +846,14 @@ export class DocumentsService {
         await this.reject(who, version, { reason: 'too_large', detectedMime: null, sha256: null });
         throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
       }
-      await this.abandon(version);
+      await this.failedWrite(who, version, flags);
       this.logger.warn(`upload of version ${versionId} did not finish: ${describe(error)}`);
       throw new BadRequestException(
         'The upload was interrupted. Start a new upload; this version cannot take the content again.',
       );
     }
     if (written.bytes !== contentLength) {
-      await this.abandon(version);
+      await this.failedWrite(who, version, flags);
       throw new BadRequestException(
         'The body length did not match Content-Length. Start a new upload; this version cannot take the content again.',
       );
@@ -1676,7 +1676,21 @@ export class DocumentsService {
    * sha256, so nothing scans or serves it; the uploader removes the document or supersedes it with a new version.
    * Best effort: a leftover partial file is harmless, and the failure the caller reports is the upload's own.
    */
-  private async abandon(version: VersionRow): Promise<void> {
+  private async failedWrite(
+    who: { scope: TxScope; actor: Actor },
+    version: VersionRow,
+    flags: { skipScan: boolean },
+  ): Promise<void> {
+    // A generated file (no person to retry) is refused instead, as a failed finish is: `rejected` holds no file, so the
+    // render job discards the document and renders again. A quarantined version with no sha256 would sit there for good.
+    if (flags.skipScan) {
+      await this.reject(who, version, {
+        reason: 'generated_unfinished',
+        detectedMime: null,
+        sha256: null,
+      });
+      return;
+    }
     try {
       await this.storage.removeQuarantine(version.storageKey);
     } catch (error) {
