@@ -114,10 +114,16 @@ export type ErrorCode =
   | 'FEWER_THAN_MIN_QUOTES'
   | 'rfq_deadline_passed'
   | 'PO_HAS_RECEIPTS'
+  | 'PO_HAS_BILLS'
   | 'PO_HAS_NO_LINES'
   | 'PO_VENDOR_CHANGE_NOT_DRAFT'
   | 'PO_VENDOR_UNCHANGED'
   | 'PO_REFERENCED'
+  | 'PO_VENDOR_CHANGE_NO_RFQ'
+  | 'PO_VENDOR_NO_QUOTATION'
+  | 'PO_VENDOR_CHANGE_PENDING'
+  | 'VENDOR_CURRENCY_NOT_SUPPORTED'
+  | 'VENDOR_NOT_VAT_REGISTERED'
   | 'PO_CHANGED'
   | 'VENDOR_NO_VERIFIED_BANK_ACCOUNT'
   | 'PO_AMENDMENT_INVALID'
@@ -278,9 +284,17 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   FEWER_THAN_MIN_QUOTES: 'There are fewer quotations than the minimum; give a reason to go on',
   rfq_deadline_passed: 'The quotation deadline of this RFQ has passed',
   PO_HAS_RECEIPTS: 'Goods or services were received on this purchase order',
+  PO_HAS_BILLS: 'Vendor bills still refer to this purchase order',
   PO_HAS_NO_LINES: 'The purchase order has no lines',
   PO_VENDOR_CHANGE_NOT_DRAFT: 'Cancel this order and create a new one',
   PO_VENDOR_UNCHANGED: 'The purchase order already has this vendor',
+  PO_VENDOR_CHANGE_NO_RFQ:
+    'This draft has no RFQ, so the new vendor has no quotation; create a new purchase order',
+  PO_VENDOR_NO_QUOTATION: "The new vendor has no quotation on this order's RFQ",
+  PO_VENDOR_CHANGE_PENDING: 'A change of vendor on this order is waiting for approval',
+  VENDOR_CURRENCY_NOT_SUPPORTED: 'The vendor cannot trade in the currency of this order',
+  VENDOR_NOT_VAT_REGISTERED:
+    'The order carries VAT and the vendor is not VAT registered; confirm to go on',
   PO_REFERENCED:
     'Payment requests or bills already refer to this order; cancel it and create a new one',
   PO_CHANGED: 'This purchase order changed since you opened it. Reload and try again.',
@@ -442,12 +456,21 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // P4 purchase orders: issue with no lines, cancel or close after something was received. Issuing also
   // throws VENDOR_NOT_APPROVED and VENDOR_NOT_IN_ENTITY.
   'PO_HAS_RECEIPTS',
+  // K3 Q3: cancel (or cancel and raise again) while a bill that is not voided names the order.
+  'PO_HAS_BILLS',
   'PO_HAS_NO_LINES',
   // F1-Q40 a: changing the vendor of a PO that is not a draft, to the vendor it already has, of a draft a payment
   // request, bill or portal submission already refers to, or to a vendor without a verified bank account.
   'PO_VENDOR_CHANGE_NOT_DRAFT',
   'PO_VENDOR_UNCHANGED',
   'PO_REFERENCED',
+  // K3 Q1/Q2: the vendor swap needs the new vendor's own quotation on the order's RFQ, a matching currency, and the
+  // VAT warning acknowledged; an earlier swap waiting for approval blocks issue and a second swap.
+  'PO_VENDOR_CHANGE_NO_RFQ',
+  'PO_VENDOR_NO_QUOTATION',
+  'PO_VENDOR_CHANGE_PENDING',
+  'VENDOR_CURRENCY_NOT_SUPPORTED',
+  'VENDOR_NOT_VAT_REGISTERED',
   'VENDOR_NO_VERIFIED_BANK_ACCOUNT',
   // Issuing a draft from a page that read an older version (a vendor change by another buyer since).
   'PO_CHANGED',

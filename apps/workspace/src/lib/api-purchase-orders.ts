@@ -87,6 +87,11 @@ export const PurchaseOrderSchema = z.object({
    * of a service). A read-only reader gets false for both.
    */
   can: z.object({ enterBill: z.boolean(), receive: z.boolean() }).optional(),
+  /** A draft whose change of vendor waits for approval: it cannot be issued until that is decided. */
+  pendingVendorChange: z
+    .object({ approvalRequestId: z.guid(), vendorId: z.guid(), total: Text })
+    .nullable()
+    .optional(),
 });
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 
@@ -360,12 +365,16 @@ export function changePurchaseOrderVendor(
   id: string,
   vendorId: string,
   idempotencyKey: string,
+  acknowledgeVatWarning = false,
 ): Promise<PurchaseOrder> {
   return call(
     session,
     `${PO}/${seg(id)}/change-vendor`,
     PurchaseOrderSchema,
-    post(idempotencyKey, { vendorId }),
+    post(
+      idempotencyKey,
+      acknowledgeVatWarning ? { vendorId, acknowledgeVatWarning } : { vendorId },
+    ),
   );
 }
 

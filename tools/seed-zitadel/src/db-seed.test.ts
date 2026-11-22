@@ -28,6 +28,7 @@ import {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
+  PO_VENDOR_CHANGE_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
   VENDOR_BILL_WORKFLOW_SPEC,
@@ -119,9 +120,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 13 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 14 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes + 3 cost centres + 3 bank and 7 expense accounts
-    expect(changed).toBe(grantCount + 1 + 13 * 3 + 1 + 3 + 2 + 2 + 3 + 3 + 7);
+    expect(changed).toBe(grantCount + 1 + 14 * 3 + 1 + 3 + 2 + 2 + 3 + 3 + 7);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -290,7 +291,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(13);
+    expect(versions).toHaveLength(14);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -363,10 +364,10 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 13 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 14 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(13);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(14);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -390,7 +391,7 @@ describe('seedKernelRows: P4 purchasing', () => {
     return call ? (JSON.parse(String(call.values[3])) as unknown) : undefined;
   };
 
-  it('seeds purchase_request, pr_commitment and po_amendment for the entity, keyed by their document type', async () => {
+  it('seeds purchase_request, pr_commitment, po_amendment and po_vendor_change for the entity, keyed by their document type', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
 
@@ -415,6 +416,13 @@ describe('seedKernelRows: P4 purchasing', () => {
       'Purchase order amendment',
       'po_amendment',
     ]);
+    expect(definitionOf(calls, 'po_vendor_change')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'po_vendor_change',
+      'Purchase order vendor change',
+      'po_vendor_change',
+    ]);
     // What is stored is the schema's defaulted form of the API's spec (the parity test pins the copies).
     expect(specOf(calls, 'purchase_request')).toEqual(
       WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC),
@@ -424,6 +432,9 @@ describe('seedKernelRows: P4 purchasing', () => {
     );
     expect(specOf(calls, 'po_amendment')).toEqual(
       WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC),
+    );
+    expect(specOf(calls, 'po_vendor_change')).toEqual(
+      WorkflowSpecSchema.parse(PO_VENDOR_CHANGE_WORKFLOW_SPEC),
     );
   });
 
@@ -481,6 +492,7 @@ describe('seedKernelRows: P4 purchasing', () => {
       'purchase_request',
       'pr_commitment',
       'po_amendment',
+      'po_vendor_change',
       'emergency_review',
       'vendor_bill',
       'match_exception',
@@ -1227,6 +1239,13 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       ],
       ['tenant-uuid', 'org-uuid', 'pr_commitment', 'Purchase commitment approval', 'pr_commitment'],
       ['tenant-uuid', 'org-uuid', 'po_amendment', 'Purchase order amendment', 'po_amendment'],
+      [
+        'tenant-uuid',
+        'org-uuid',
+        'po_vendor_change',
+        'Purchase order vendor change',
+        'po_vendor_change',
+      ],
       [
         'tenant-uuid',
         'org-uuid',
