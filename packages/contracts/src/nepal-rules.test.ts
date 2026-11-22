@@ -7,14 +7,16 @@ import {
   UpdateCustomerBodySchema,
   nepalPanProblem,
 } from './crm.js';
+import * as documentStyle from './document-style.js';
 import {
   CompanyProfileSchema,
   SnapshotCompanyProfileSchema,
-  StoredCompanyProfileSchema,
   documentSellerContact,
   formatPhoneForPrint,
+  snapshotProfileFrom,
 } from './document-style.js';
-import { SETTINGS, StoredEntityPanVatNoSchema } from './settings.js';
+import * as settings from './settings.js';
+import { SETTINGS } from './settings.js';
 import { VendorPanSchema } from './vendors.js';
 
 const address = { line: 'Baneshwor', city: 'Kathmandu' };
@@ -99,9 +101,11 @@ describe('Nepal PAN on a customer', () => {
 });
 
 describe('the company profile', () => {
+  const npMobile = { country: 'NP', e164: '+9779812345678' };
+  const usWork = { country: 'US', e164: '+14155552671', label: 'work' };
   const profile = {
     displayName: 'Techrida',
-    phones: ['+9779812345678', '+97714123456'],
+    phones: [npMobile, { country: 'NP', e164: '+97714123456', label: null }, usWork],
     email: null,
     website: null,
     panVatNo: '123456789',
@@ -109,33 +113,110 @@ describe('the company profile', () => {
     signatoryTitle: null,
     logoDocumentId: null,
   };
-  const legacy = { ...profile, phones: ['01-4123456', 'office'], panVatNo: '12-34567' };
 
-  it('writes E.164 phones and a nine-digit PAN', () => {
+  it('reads and writes phones with their own country and a nine-digit PAN', () => {
     expect(CompanyProfileSchema.safeParse(profile).success).toBe(true);
-    expect(CompanyProfileSchema.safeParse(legacy).success).toBe(false);
-    expect(CompanyProfileSchema.safeParse({ ...profile, phones: ['+9778123456789'] }).success).toBe(
+    expect(
+      CompanyProfileSchema.safeParse({
+        ...profile,
+        phones: [npMobile, { country: 'US', e164: '+14155552671' }],
+      }).success,
+    ).toBe(true);
+    expect(CompanyProfileSchema.safeParse({ ...profile, panVatNo: 'AB12345' }).success).toBe(false);
+    expect(CompanyProfileSchema.safeParse({ ...profile, panVatNo: '12-34567' }).success).toBe(
       false,
     );
-    expect(CompanyProfileSchema.safeParse({ ...profile, panVatNo: 'AB12345' }).success).toBe(false);
   });
 
-  it('still reads a legacy row, so no screen or render fails on it', () => {
-    expect(StoredCompanyProfileSchema.safeParse(legacy).success).toBe(true);
-    expect(documentSellerContact(legacy)?.phones).toEqual(['01-4123456', 'office']);
+  it('refuses a number that is not valid for its country', () => {
+    const usAsNepal = CompanyProfileSchema.safeParse({
+      ...profile,
+      phones: [{ country: 'NP', e164: '+14155552671' }],
+    });
+    expect(usAsNepal.success).toBe(false);
+    expect(usAsNepal.error?.issues[0]?.path).toEqual(['phones', 0, 'e164']);
+    expect(
+      CompanyProfileSchema.safeParse({
+        ...profile,
+        phones: [{ country: 'NP', e164: '+9778123456789' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CompanyProfileSchema.safeParse({
+        ...profile,
+        phones: [{ country: 'NP', e164: '+977 9812345678' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses the FX8 shape: bare string phones, a primary flag, more than four numbers', () => {
+    expect(CompanyProfileSchema.safeParse({ ...profile, phones: ['+9779812345678'] }).success).toBe(
+      false,
+    );
+    expect(
+      CompanyProfileSchema.safeParse({ ...profile, phones: [{ ...npMobile, isPrimary: true }] })
+        .success,
+    ).toBe(false);
+    expect(
+      CompanyProfileSchema.safeParse({
+        ...profile,
+        phones: [
+          '+9779812345671',
+          '+9779812345672',
+          '+9779812345673',
+          '+9779812345674',
+          '+9779812345675',
+        ].map((e164) => ({ country: 'NP', e164 })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('no longer exports the tolerant FX8 read schemas', () => {
+    expect('StoredCompanyProfileSchema' in documentStyle).toBe(false);
+    expect('StoredEntityPanVatNoSchema' in settings).toBe(false);
+  });
+
+  it('snapshots each phone as its E.164 number', () => {
+    const parsed = CompanyProfileSchema.parse(profile);
+    const snapshot = snapshotProfileFrom(parsed, null);
+    expect(snapshot.phones).toEqual(['+9779812345678', '+97714123456', '+14155552671']);
+    expect(SnapshotCompanyProfileSchema.safeParse(snapshot).success).toBe(true);
   });
 
   it('keeps a snapshot frozen before the strict rules readable', () => {
-    const snapshot = { ...legacy, logoDataUrl: null };
-    const { logoDocumentId: _ignored, ...rest } = snapshot;
-    expect(SnapshotCompanyProfileSchema.safeParse(rest).success).toBe(true);
+    const snapshot = {
+      displayName: 'Techrida',
+      logoDataUrl: null,
+      phones: ['+977 9812345678', '01-4123456', 'office'],
+      email: null,
+      website: null,
+      panVatNo: '12-34567',
+      signatoryName: null,
+      signatoryTitle: null,
+    };
+    expect(SnapshotCompanyProfileSchema.safeParse(snapshot).success).toBe(true);
   });
 
-  it('holds the entity PAN setting to nine digits on a write only', () => {
+  it('prints the seller contact phones, a foreign one in international format', () => {
+    expect(documentSellerContact(profile)?.phones).toEqual([
+      '+977 9812345678',
+      '+977 1-4123456',
+      '+1 415 555 2671',
+    ]);
+    expect(documentSellerContact(profile)?.phones.map(formatPhoneForPrint)).toEqual(
+      documentSellerContact(profile)?.phones,
+    );
+  });
+
+  it('prints no seller contact for a profile stored with FX8 string phones', () => {
+    expect(documentSellerContact({ ...profile, phones: ['+9779812345678'] })).toBeNull();
+  });
+
+  it('holds the entity PAN setting to nine digits', () => {
     expect(SETTINGS['entity.pan_vat_no'].safeParse('123456789').success).toBe(true);
     expect(SETTINGS['entity.pan_vat_no'].safeParse('12345').success).toBe(false);
+    expect(SETTINGS['entity.pan_vat_no'].safeParse('12-34567').success).toBe(false);
     expect(SETTINGS['entity.pan_vat_no'].safeParse(null).success).toBe(true);
-    expect(StoredEntityPanVatNoSchema.safeParse('12-34567').success).toBe(true);
     expect(VendorPanSchema.safeParse('12345').success).toBe(false);
   });
 });
@@ -145,7 +226,9 @@ describe('formatPhoneForPrint', () => {
     ['+9779812345678', '+977 9812345678'],
     ['+97714123456', '+977 1-4123456'],
     ['+97761523456', '+977 61-523456'],
-    ['+14155552671', '+14155552671'],
+    ['+14155552671', '+1 415 555 2671'],
+    ['+1 415 555 2671', '+1 415 555 2671'],
+    ['+447911123456', '+44 7911 123456'],
     ['01-4123456', '01-4123456'],
     ['+977 1-4123456', '+977 1-4123456'],
     ['+977123', '+977123'],

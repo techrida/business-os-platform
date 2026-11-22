@@ -165,7 +165,10 @@ describe('company profile: the setting references a document, the snapshot holds
     const profile = {
       ...EMPTY_COMPANY_PROFILE,
       displayName: 'Techrida',
-      phones: ['01-4000000'],
+      phones: [
+        { country: 'NP' as const, e164: '+97714000000' },
+        { country: 'US' as const, e164: '+14155552671', label: 'work' as const },
+      ],
       logoDocumentId: DOC_ID,
       legacyLogoDataUrl: PNG,
     };
@@ -173,11 +176,10 @@ describe('company profile: the setting references a document, the snapshot holds
     expect(snapshot).toEqual({
       ...EMPTY_SNAPSHOT_COMPANY_PROFILE,
       displayName: 'Techrida',
-      phones: ['01-4000000'],
+      phones: ['+97714000000', '+14155552671'],
       logoDataUrl: PNG,
     });
     expect(SnapshotCompanyProfileSchema.safeParse(snapshot).success).toBe(true);
-    expect(snapshot.phones).not.toBe(profile.phones);
     expect(snapshotProfileFrom(EMPTY_COMPANY_PROFILE, null)).toEqual(
       EMPTY_SNAPSHOT_COMPANY_PROFILE,
     );
@@ -276,13 +278,17 @@ describe('documentSellerContact', () => {
         ...EMPTY_COMPANY_PROFILE,
         displayName: 'Acme',
         website: 'https://acme.example',
-        phones: ['01-4000000', '9800000000'],
+        phones: [
+          { country: 'NP', e164: '+97714000000' },
+          { country: 'NP', e164: '+9779800000000', label: 'mobile' },
+          { country: 'US', e164: '+14155552671' },
+        ],
         email: 'hello@acme.example',
         signatoryName: 'Ram Thapa',
         signatoryTitle: 'Director',
       }),
     ).toEqual({
-      phones: ['01-4000000', '9800000000'],
+      phones: ['+977 1-4000000', '+977 9800000000', '+1 415 555 2671'],
       email: 'hello@acme.example',
       signatoryName: 'Ram Thapa',
       signatoryTitle: 'Director',
@@ -291,6 +297,13 @@ describe('documentSellerContact', () => {
 
   it('is null for a profile that does not validate', () => {
     expect(documentSellerContact({ phones: 'not a list' })).toBeNull();
+    expect(documentSellerContact({ ...EMPTY_COMPANY_PROFILE, phones: ['01-4000000'] })).toBeNull();
+    expect(
+      documentSellerContact({
+        ...EMPTY_COMPANY_PROFILE,
+        phones: [{ country: 'NP', e164: '+14155552671' }],
+      }),
+    ).toBeNull();
     expect(documentSellerContact(undefined)).toBeNull();
   });
 });

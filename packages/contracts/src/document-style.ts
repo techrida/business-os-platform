@@ -3,8 +3,9 @@
 // workspace (settings screens, live previews), so a preview can never draw something the PDF cannot.
 import { z } from 'zod';
 
-import { NepalPanSchema, PanVatNoSchema, PhoneSchema } from './crm.js';
-import { nepalPhoneProblem } from './phones.js';
+import { CountryCodeSchema } from './countries.js';
+import { NepalPanSchema, PanVatNoSchema } from './crm.js';
+import { formatPartyPhoneForPrint, PhoneLabelSchema, phoneProblem } from './phones.js';
 import { CURRENCIES, type Currency } from './money.js';
 import { richTextSchema } from './rich-text.js';
 
@@ -196,50 +197,46 @@ export const LogoDataUrlSchema = z
     'must be a PNG, JPEG or WebP image',
   );
 
+/** The most phone numbers the company profile prints. */
+export const MAX_COMPANY_PHONES = 4;
+
 /**
- * The company fields a write checks: phones are E.164 numbers (Nepal ones a mobile or landline) and the PAN is the
- * company's own nine digits. What a row held before these rules (free-text phones, a 5 to 20 character PAN) is read
- * with `legacyProfileFields` instead, so an old row never fails a screen or a render.
+ * One phone number of the company profile (FX9): its country and the E.164 number, which must be valid for that
+ * country (Nepal keeps FX8's mobile and landline rules), and an optional label. There is no primary flag: the list
+ * order is the print order.
  */
-const companyProfileFields = {
+export const CompanyPhoneSchema = z
+  .strictObject({
+    country: CountryCodeSchema,
+    e164: z.string(),
+    label: PhoneLabelSchema.nullable().optional(),
+  })
+  .superRefine((phone, ctx) => {
+    const problem = phoneProblem(phone.country, phone.e164);
+    if (problem !== null) ctx.addIssue({ code: 'custom', message: problem, path: ['e164'] });
+  });
+export type CompanyPhone = z.infer<typeof CompanyPhoneSchema>;
+
+/**
+ * The stored setting `entity.profile`, read and written with the same strict rules (FX9: no legacy rows to
+ * tolerate). Phones carry their own country; the PAN is the company's own nine digits. The logo is a scanned
+ * document, referenced by id; the bytes are never in the setting. `legacyLogoDataUrl` is set only by migration 0058
+ * for a logo saved before logos were documents, and is cleared once that logo is uploaded as a document; reads fall
+ * back to it until then.
+ */
+export const CompanyProfileSchema = z.strictObject({
   displayName: text(120).nullable(),
-  phones: z.array(PhoneSchema).max(4),
+  phones: z.array(CompanyPhoneSchema).max(MAX_COMPANY_PHONES),
   email: z.email().max(200).nullable(),
   website: text(200).nullable(),
   /** Printed with the footer next to the address; the PAN/VAT number is its own setting (`entity.pan_vat_no`). */
   panVatNo: NepalPanSchema.nullable(),
   signatoryName: text(120).nullable(),
   signatoryTitle: text(120).nullable(),
-};
-
-/** The same fields as a row may hold them from before the strict rules: free-text phones, a loose PAN. Reads only. */
-const legacyProfileFields = {
-  ...companyProfileFields,
-  phones: z.array(text(40)).max(4),
-  panVatNo: PanVatNoSchema.nullable(),
-};
-
-/**
- * The stored setting `entity.profile`. The logo is a scanned document, referenced by id; the bytes are never in the
- * setting. `legacyLogoDataUrl` is set only by migration 0058 for a logo saved before logos were documents, and is
- * cleared once that logo is uploaded as a document; reads fall back to it until then.
- */
-export const CompanyProfileSchema = z.strictObject({
-  ...companyProfileFields,
   logoDocumentId: z.guid().nullable().default(null),
   legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
 });
 export type CompanyProfile = z.infer<typeof CompanyProfileSchema>;
-
-/**
- * `CompanyProfileSchema` as a stored row may still look: phones and PAN from before the strict contracts. Every
- * read of `entity.profile` uses this one; only a write uses the strict schema.
- */
-export const StoredCompanyProfileSchema = z.strictObject({
-  ...legacyProfileFields,
-  logoDocumentId: z.guid().nullable().default(null),
-  legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
-});
 
 export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
   displayName: null,
@@ -254,17 +251,19 @@ export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
 
 /**
  * The profile as frozen onto a document: the logo is its bytes, so changing or removing the logo later never alters
- * a document already sent. This is the shape every stored snapshot already has.
+ * a document already sent. This is the shape every stored snapshot already has. A snapshot is a sent document, not
+ * a setting, so it keeps the shape it was frozen with: phones are strings (E.164 since FX9, free text before) and the
+ * PAN is the loose 5 to 20 characters.
  */
 export const SnapshotCompanyProfileSchema = z.strictObject({
-  displayName: legacyProfileFields.displayName,
+  displayName: text(120).nullable(),
   logoDataUrl: LogoDataUrlSchema.nullable(),
-  phones: legacyProfileFields.phones,
-  email: legacyProfileFields.email,
-  website: legacyProfileFields.website,
-  panVatNo: legacyProfileFields.panVatNo,
-  signatoryName: legacyProfileFields.signatoryName,
-  signatoryTitle: legacyProfileFields.signatoryTitle,
+  phones: z.array(text(40)).max(MAX_COMPANY_PHONES),
+  email: z.email().max(200).nullable(),
+  website: text(200).nullable(),
+  panVatNo: PanVatNoSchema.nullable(),
+  signatoryName: text(120).nullable(),
+  signatoryTitle: text(120).nullable(),
 });
 export type SnapshotCompanyProfile = z.infer<typeof SnapshotCompanyProfileSchema>;
 
@@ -287,7 +286,7 @@ export function snapshotProfileFrom(
   return {
     displayName: profile.displayName,
     logoDataUrl,
-    phones: [...profile.phones],
+    phones: profile.phones.map((phone) => phone.e164),
     email: profile.email,
     website: profile.website,
     panVatNo: profile.panVatNo,
@@ -342,14 +341,16 @@ export type DocumentSellerContact = z.infer<typeof DocumentSellerContactSchema>;
 
 /**
  * The customer-facing contact of a stored `entity.profile`, named key by key so the logo, display name, website or a
- * key added later never reach a document. Null when the stored value does not validate (a row edited by hand): the
- * document then prints no contact block rather than failing.
+ * key added later never reach a document. Phones come out in print form (`formatPartyPhoneForPrint`: FX8's format for
+ * Nepal, international for any other country); printing them again changes nothing. Null when the stored value does
+ * not validate against the strict profile (a row edited by hand, or one from before FX9): the document then prints no
+ * contact block rather than failing.
  */
 export function documentSellerContact(rawProfile: unknown): DocumentSellerContact | null {
-  const profile = StoredCompanyProfileSchema.safeParse(rawProfile);
+  const profile = CompanyProfileSchema.safeParse(rawProfile);
   if (!profile.success) return null;
   return {
-    phones: [...profile.data.phones],
+    phones: profile.data.phones.map((phone) => formatPartyPhoneForPrint(phone.e164)),
     email: profile.data.email,
     signatoryName: profile.data.signatoryName,
     signatoryTitle: profile.data.signatoryTitle,
@@ -482,14 +483,11 @@ export const DEFAULT_TERM_PRESETS: TermPresetList = [
 
 /**
  * A phone number as a letterhead, quotation or invoice prints it. A Nepal mobile is `+977 9812345678`; a landline
- * puts its area code first, `+977 1-4123456` (Kathmandu, one digit) and `+977 61-523456` (two digits). Any other
- * text, a number from abroad or a free-text value stored before phones were E.164, prints as it is. Applied to an
- * already formatted number it changes nothing.
+ * puts its area code first, `+977 1-4123456` (Kathmandu, one digit) and `+977 61-523456` (two digits). A valid
+ * number from abroad prints in international format (`+1 415 555 2671`). Any other text, such as a free-text value
+ * frozen onto a document before phones were E.164, prints as it is. Applied to an already formatted number it changes
+ * nothing. The same rule as `formatPartyPhoneForPrint`, kept under this name for the renderers that print a string.
  */
 export function formatPhoneForPrint(phone: string): string {
-  if (!/^\+977\d+$/.test(phone) || nepalPhoneProblem(phone) !== null) return phone;
-  const national = phone.slice(4);
-  if (national.length === 10) return `+977 ${national}`;
-  const area = national.startsWith('1') ? 1 : 2;
-  return `+977 ${national.slice(0, area)}-${national.slice(area)}`;
+  return formatPartyPhoneForPrint(phone);
 }
