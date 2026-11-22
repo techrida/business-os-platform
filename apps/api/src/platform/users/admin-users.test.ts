@@ -594,7 +594,7 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
     expectZitadelUntouched();
   });
 
-  it('removes the roles but never deletes the identity it created when the placement fails after ZITADEL was written', async () => {
+  it('never deletes the identity or strips grants when the placement fails after ZITADEL was written; the person is denied in BOS (round 3)', async () => {
     department();
     retiredOnRecheck();
 
@@ -605,10 +605,17 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
     expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
     expect(zitadel.createCalls).toBe(1);
     expect(zitadel.users.has('z-created-1')).toBe(true);
-    expect(zitadel.grants.get('z-created-1')).toEqual([]);
+    // No compensation in ZITADEL: the grant stays; BOS holds the person closed and flagged.
+    expect(zitadel.grants.get('z-created-1')).toEqual(['sales']);
+    expect(store.users).toHaveLength(1);
+    expect(store.users[0]).toMatchObject({
+      zitadelUserId: 'z-created-1',
+      identityReviewRequired: true,
+    });
+    expect(store.users[0]!.status).not.toBe('active');
   });
 
-  it('removes the roles but keeps an identity it did not create (an earlier open invite) when the placement fails late', async () => {
+  it('keeps an identity it did not create (an earlier open invite), strips nothing when the placement fails late, and denies the person (round 3)', async () => {
     department();
     zitadel.users.set('z-open', {
       id: 'z-open',
@@ -626,7 +633,9 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
 
     expect((error as { getStatus?: () => number }).getStatus?.()).toBe(422);
     expect(zitadel.users.has('z-open')).toBe(true);
-    expect(zitadel.grants.get('z-open')).toEqual([]);
+    expect(zitadel.grants.get('z-open')).toEqual(['sales']);
+    expect(store.users[0]).toMatchObject({ zitadelUserId: 'z-open', identityReviewRequired: true });
+    expect(store.users[0]!.status).not.toBe('active');
   });
 
   it('refuses an unknown department, and a malformed one with 400', async () => {
@@ -660,14 +669,17 @@ describe('POST /v1/admin/users/invite with a department and level (F1-Q50)', () 
 describe('inviting again after a half-finished invite', () => {
   const both: Permission[] = ['admin.users.invite', 'admin.roles.write'];
 
-  it('finds the ZITADEL user created by the failed attempt and finishes the missing steps', async () => {
+  it('flags the ZITADEL user created by the failed attempt; a retry reuses it and the flag keeps the person closed (round 3)', async () => {
     zitadel.failSetGrantsOnce = true;
     await expect(
       asAdmin(both, () => controller.invite({ ...NEW_USER, roles: ['finance'] })),
     ).rejects.toThrow('ZITADEL 503 during setGrants');
-    // ZITADEL has the user; the mirror and the grant do not.
+    // ZITADEL has the user; BOS holds a closed, flagged, role-less row for it; nothing was undone.
     expect(zitadel.users.size).toBe(1);
-    expect(store.users).toHaveLength(0);
+    expect(store.users).toHaveLength(1);
+    expect(store.users[0]).toMatchObject({ identityReviewRequired: true });
+    expect(store.users[0]!.status).not.toBe('active');
+    expect(store.roles.get(store.users[0]!.id) ?? []).toEqual([]);
 
     // A second user ahead of the first in the org, so the lookup has to page past it.
     const [created] = [...zitadel.users.values()];
@@ -692,12 +704,12 @@ describe('inviting again after a half-finished invite', () => {
       id: userId,
       zitadelUserId: created!.id,
       email: NEW_USER.email,
-      status: 'invited',
+      identityReviewRequired: true,
     });
+    // The retry finished the steps, but only an admin's resolve clears the flag: the person stays closed.
+    expect(store.users[0]!.status).not.toBe('active');
     expect(zitadel.grants.get(created!.id)).toEqual(['finance']);
-    expect(store.roles.get(userId)).toEqual(['finance']);
     expect(zitadel.inviteCodes).toContain(created!.id);
-    expect(authz.invalidations).toBe(1);
   });
 
   it('still refuses with 409 when the email belongs to an active user', async () => {
@@ -718,7 +730,7 @@ describe('inviting again after a half-finished invite', () => {
     expect(store.users).toHaveLength(0);
   });
 
-  it('strips the added grants when reusing an open invite and phase C fails while still invited; never adds a role back (FU8)', async () => {
+  it('keeps the grants and denies the person when reusing an open invite and phase C fails while still invited; no setGrants replay (round 3)', async () => {
     zitadel.users.set('z-open', {
       id: 'z-open',
       orgId: STAFF_ZORG,
@@ -734,10 +746,14 @@ describe('inviting again after a half-finished invite', () => {
       asAdmin(both, () => controller.invite({ ...NEW_USER, roles: ['finance'] })),
     ).rejects.toThrow('db write failed');
 
-    expect(zitadel.grants.get('z-open')).toEqual([]);
+    // Nothing is replayed into ZITADEL; the person is flagged and cannot be opened by a sync or a sign-in.
+    expect(zitadel.grants.get('z-open')).toEqual(['finance']);
+    const row = store.users.find((u) => u.zitadelUserId === 'z-open');
+    expect(row).toMatchObject({ identityReviewRequired: true });
+    expect(row!.status).not.toBe('active');
   });
 
-  it('leaves no grant the invite added when reusing an open invite and the person finishes sign-up before phase C fails (FU8)', async () => {
+  it('denies the person and replays no grants when the person finishes sign-up before phase C fails (round 3)', async () => {
     zitadel.users.set('z-open', {
       id: 'z-open',
       orgId: STAFF_ZORG,
@@ -767,8 +783,11 @@ describe('inviting again after a half-finished invite', () => {
       asAdmin(both, () => controller.invite({ ...NEW_USER, roles: ['finance'] })),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    // The row the person's sign-up wrote has no roles, so the finance grant this invite added is gone.
-    expect(zitadel.grants.get('z-open')).toEqual([]);
+    // No compensation: the grant stays in ZITADEL, but BOS now denies the person until an admin resolves the flag.
+    expect(zitadel.grants.get('z-open')).toEqual(['finance']);
+    const row = store.users.find((u) => u.zitadelUserId === 'z-open');
+    expect(row).toMatchObject({ identityReviewRequired: true });
+    expect(row!.status).not.toBe('active');
   });
 });
 
@@ -1227,7 +1246,7 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     });
   });
 
-  it('fails closed (no unlock compensation) when the DB write fails after re-locking a failed_sign_ins user (FU1)', async () => {
+  it('fails closed (no unlock compensation) when the DB write fails after re-locking a failed_sign_ins user (round 3)', async () => {
     addUser(STAFF, { status: 'inactive', lockReason: 'failed_sign_ins' });
     Object.assign(zitadel.users.get(`z-${STAFF}`)!, { status: 'active', locked: false });
     vi.spyOn(store, 'updateUser').mockRejectedValueOnce(new Error('db write failed'));
@@ -1235,8 +1254,13 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     const error = await act('lock', STAFF);
 
     expect(error).toBeInstanceOf(Error);
-    expect(zitadel.statusCalls).toEqual([`lock:z-${STAFF}`]);
-    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: true });
+    expect(zitadel.statusCalls[0]).toBe(`lock:z-${STAFF}`);
+    expect(zitadel.statusCalls.some((c) => c.startsWith('unlock'))).toBe(false);
+    expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive' });
+    // The person is denied in BOS: closed and flagged for an admin to resolve.
+    const row = store.users.find((u) => u.id === STAFF)!;
+    expect(row.identityReviewRequired).toBe(true);
+    expect(row.status).not.toBe('active');
   });
 
   it('refuses to lock someone already under an admin lock', async () => {
@@ -1291,9 +1315,12 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     expect(error).toBeInstanceOf(Error);
     // Must NEVER call reactivateUser (which could leave ZITADEL active when lock + re-deactivate both fail).
     expect(zitadel.statusCalls).toEqual([`unlock:z-${STAFF}`, `deactivate:z-${STAFF}`]);
-    expect(lockSpy).not.toHaveBeenCalled();
+    expect(lockSpy).toHaveBeenCalled(); // the one best-effort close; it failed, the row is the safe state
     expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: false });
     expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('reactivate'));
+    const row = store.users.find((u) => u.id === STAFF)!;
+    expect(row.identityReviewRequired).toBe(true);
+    expect(row.status).not.toBe('active');
   });
 
   it('retries lockUser when deactivate fails after unlock in phase B so ZITADEL never ends active (FU1 round-2 B)', async () => {
@@ -1357,7 +1384,8 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     vi.spyOn(zitadel, 'lockUser').mockRejectedValueOnce(
       new ZitadelHttpError('/LockUser', 400, 'failed_precondition'),
     );
-    // Reset DB row back to locked so phase A plans an unlock.
+    // An admin resolved the flag the first failure set; reset the row back to locked so phase A plans an unlock.
+    await store.clearIdentityReview({} as never, STAFF);
     const row = store.users.find((u) => u.id === STAFF)!;
     await store.updateUser({} as never, STAFF, {
       email: row.email,
@@ -1394,7 +1422,7 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     expect(zitadel.users.get(`z-${STAFF}`)).toMatchObject({ status: 'inactive', locked: false });
   });
 
-  it('strips only added roles in ZITADEL when sync copies setRoles before phase C fails via a revoked grant (FU1 round-2 A)', async () => {
+  it('strips nothing in ZITADEL when sync copies setRoles before phase C fails via a revoked grant; the person is denied (round 3)', async () => {
     addUser(STAFF, { roles: ['accountant'] });
     const realSetGrants = zitadel.setGrants.bind(zitadel);
     vi.spyOn(zitadel, 'setGrants').mockImplementationOnce(async (id, orgId, roles) => {
@@ -1413,7 +1441,11 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     ).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ForbiddenException);
-    expect(zitadel.grants.get(`z-${STAFF}`)).toEqual(['accountant']);
+    // No role is stripped or re-granted: ZITADEL keeps what the set wrote, BOS closes and flags the person.
+    expect(zitadel.grants.get(`z-${STAFF}`)).toEqual(['accountant', 'founder']);
+    const row = store.users.find((u) => u.id === STAFF)!;
+    expect(row.identityReviewRequired).toBe(true);
+    expect(row.status).not.toBe('active');
   });
 
   it('does not reactivate ZITADEL when admin A deactivates while admin B committed a lock (FU1 item 1)', async () => {
@@ -1708,7 +1740,7 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     expect(zitadel.statusCalls).toEqual([]);
   });
 
-  it('turns a ZITADEL refusal into 409 and an outage into 503, changing nothing in the mirror', async () => {
+  it('turns a ZITADEL refusal into 409 changing nothing, and an ambiguous outage into 503 that closes and flags the person (round 3)', async () => {
     addUser(STAFF);
     zitadel.failNextStatusCall = new ZitadelHttpError('/DeactivateUser', 400, 'precondition');
     const refused = await act('deactivate', STAFF);
@@ -1716,10 +1748,16 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     expect((refused as ConflictException).getResponse()).toMatchObject({
       code: 'identity_refused',
     });
+    // A definite refusal on the first call applied nothing: the row is untouched.
+    expect(store.users.find((u) => u.id === STAFF)).toMatchObject({ status: 'active' });
+    expect(store.users.find((u) => u.id === STAFF)?.identityReviewRequired).toBeFalsy();
 
+    // A timeout leaves ZITADEL's state unknown: the row is closed and flagged, never left open.
     zitadel.failNextStatusCall = new Error('socket hang up');
     expect(await act('deactivate', STAFF)).toBeInstanceOf(ServiceUnavailableException);
-    expect(store.users.find((u) => u.id === STAFF)?.status).toBe('active');
+    const row = store.users.find((u) => u.id === STAFF)!;
+    expect(row.status).not.toBe('active');
+    expect(row.identityReviewRequired).toBe(true);
   });
 
   it('lists a locked person with why and until when, as the directory needs to offer Unlock (F1-Q4)', async () => {
