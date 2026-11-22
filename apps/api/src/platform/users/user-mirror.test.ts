@@ -383,7 +383,7 @@ describe('UserMirror as the UserDirectory backend', () => {
     );
   });
 
-  it('setRoles compensates ZITADEL grants when the row changes or the DB write fails', async () => {
+  it('setRoles replays nothing into ZITADEL when the row changes meanwhile; the person is closed and flagged (round 3)', async () => {
     zitadel.users.set('z1', zUser('z1'));
     zitadel.grants.set('z1', ['accountant']);
     await mirror.syncUser('z1');
@@ -408,12 +408,12 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect((conflict as ConflictException).getResponse()).toMatchObject({ code: 'conflict' });
     expect(zitadel.setGrantsCalls).toEqual([
       { userId: 'z1', orgId: STAFF_ZORG, roles: ['finance'] },
-      { userId: 'z1', orgId: STAFF_ZORG, roles: [] },
     ]);
-    expect(await store.rolesOf(db, TENANT, id)).toEqual([]);
+    expect(store.users[0]).toMatchObject({ identityReviewRequired: true });
+    expect(store.users[0]!.status).not.toBe('active');
   });
 
-  it('setRoles leaves ZITADEL and the row agreeing on the roles both still hold after a concurrent role conflict, never re-adding (FU8)', async () => {
+  it('setRoles never re-grants or strips after a concurrent role conflict (a console change); the person is denied (round 3)', async () => {
     zitadel.users.set('z1', zUser('z1'));
     zitadel.grants.set('z1', ['accountant']);
     await mirror.syncUser('z1');
@@ -431,36 +431,39 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect(conflict).toBeInstanceOf(ConflictException);
     expect(zitadel.setGrantsCalls).toEqual([
       { userId: 'z1', orgId: STAFF_ZORG, roles: ['finance'] },
-      { userId: 'z1', orgId: STAFF_ZORG, roles: [] },
     ]);
-    expect(zitadel.grants.get('z1')).toEqual([]);
-    expect(await store.rolesOf(db, TENANT, id)).toEqual([]);
+    expect(store.users[0]).toMatchObject({ identityReviewRequired: true });
+    expect(store.users[0]!.status).not.toBe('active');
+    // A later sync never reopens the flagged row.
+    await mirror.syncUser('z1');
+    expect(store.users[0]!.status).not.toBe('active');
+    expect(store.users[0]).toMatchObject({ identityReviewRequired: true });
   });
 
   it.each([
     {
-      label: 'added role -> strips added role back to previous',
+      label: 'added role -> keeps the added role in ZITADEL, no strip',
       initial: ['accountant'] as const,
       requested: ['accountant', 'founder'] as const,
-      expectedZitadel: ['accountant'],
-      expectedCalls: 2,
+      expectedZitadel: ['accountant', 'founder'],
+      expectedCalls: 1,
     },
     {
-      label: 'replace (add + remove) -> strips added role and never re-adds removed role',
+      label: 'replace (add + remove) -> no strip and no re-add',
       initial: ['accountant'] as const,
       requested: ['founder'] as const,
-      expectedZitadel: [],
-      expectedCalls: 2,
+      expectedZitadel: ['founder'],
+      expectedCalls: 1,
     },
     {
-      label: 'pure removal -> leaves smaller set, never re-adds removed role',
+      label: 'pure removal -> leaves the smaller set',
       initial: ['accountant', 'sales'] as const,
       requested: ['sales'] as const,
       expectedZitadel: ['sales'],
       expectedCalls: 1,
     },
   ])(
-    'setRoles when sync copies phase-B grants before phase C fails via revoked grant: $label (FU1 round-2 A)',
+    'setRoles when sync copies phase-B grants before phase C fails via revoked grant: $label (round 3: denied, no compensation)',
     async ({ initial, requested, expectedZitadel, expectedCalls }) => {
       zitadel.users.set('z1', zUser('z1'));
       zitadel.grants.set('z1', [...initial]);
@@ -486,6 +489,8 @@ describe('UserMirror as the UserDirectory backend', () => {
       expect(error).toBeInstanceOf(ForbiddenException);
       expect(zitadel.setGrantsCalls).toHaveLength(expectedCalls);
       expect(zitadel.grants.get('z1')).toEqual(expectedZitadel);
+      expect(store.users[0]).toMatchObject({ identityReviewRequired: true });
+      expect(store.users[0]!.status).not.toBe('active');
     },
   );
 });
