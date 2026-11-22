@@ -101,6 +101,28 @@ describe('buildDocumentStyleSnapshot', () => {
     });
   });
 
+  it('still freezes a profile saved before phones were E.164 and the PAN was nine digits (FX8)', async () => {
+    const { settings } = settingsOf({
+      'entity.pan_vat_no': '12-34567',
+      'entity.profile': {
+        ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+        phones: ['01-4123456', 'main office'],
+        panVatNo: 'ab-123456',
+      },
+    });
+    const snapshot = await buildDocumentStyleSnapshot(settings, scope, at);
+    expect(snapshot.profile).toMatchObject({
+      phones: ['01-4123456', 'main office'],
+      panVatNo: 'ab-123456',
+    });
+    const entityOnly = await buildDocumentStyleSnapshot(
+      settingsOf({ 'entity.pan_vat_no': '12-34567' }).settings,
+      scope,
+      at,
+    );
+    expect(entityOnly.profile.panVatNo).toBe('12-34567');
+  });
+
   it('leaves the number empty when neither the profile nor the entity has one', async () => {
     const { settings } = settingsOf({ 'entity.pan_vat_no': null });
     const snapshot = await buildDocumentStyleSnapshot(settings, scope, at);
