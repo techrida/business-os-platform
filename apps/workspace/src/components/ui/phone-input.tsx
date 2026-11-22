@@ -144,8 +144,9 @@ export function PhoneInput(props: PhoneInputProps) {
     onEditedChange,
     ...rest
   } = props;
-  // Whether the user has edited either box. The box remounts on a country switch, so the flag lives
-  // here: a short draft that comes back is still stopped at submit.
+  // Whether the user has edited the box now shown. The box remounts on a country switch, so the flag
+  // lives here and is kept per country with `left`: a short draft that comes back is still stopped at
+  // submit, and typing abroad does not mark an untouched stored Nepal number as edited.
   const [edited, setEdited] = useState(editedProp ?? false);
   const start = value ?? defaultValue ?? '';
   // A stored number the Nepal box cannot hold (a foreign number, or +977 with too many digits) opens
@@ -158,17 +159,21 @@ export function PhoneInput(props: PhoneInputProps) {
   useLayoutEffect(() => {
     if (value !== undefined) current.current = value;
   });
-  const left = useRef<{ international: boolean; posted: string } | null>(null);
+  const left = useRef<{ international: boolean; posted: string; edited: boolean } | null>(null);
   const locked = props.disabled === true || props.readOnly === true;
 
   function toggle() {
     const next = !international;
-    const restored = left.current?.international === next ? left.current.posted : '';
-    left.current = { international, posted: current.current };
+    const back = left.current?.international === next ? left.current : null;
+    const restored = back?.posted ?? '';
+    const restoredEdited = back?.edited ?? false;
+    left.current = { international, posted: current.current, edited };
     current.current = restored;
     setInternational(next);
     setSeed(restored);
     onValueChange?.(restored);
+    setEdited(restoredEdited);
+    if (restoredEdited !== edited) onEditedChange?.(restoredEdited);
   }
 
   return (

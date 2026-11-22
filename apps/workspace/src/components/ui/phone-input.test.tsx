@@ -324,4 +324,30 @@ describe('PhoneInput, drafts and pastes that used to slip through', () => {
     await submit(phone.container);
     expect(reached).toHaveBeenCalledWith(false);
   });
+
+  it('keeps a stored short Nepal number untouched after another country is typed in and left', async () => {
+    const flags: boolean[] = [];
+    const phone = await mount(
+      <PhoneInput
+        aria-label="Phone"
+        name="phone"
+        defaultValue="+9779812345"
+        onEditedChange={(next) => flags.push(next)}
+      />,
+    );
+    const reached = vi.fn();
+    phone.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await phone.switchCountry();
+    await typeKeys(phone.box(), '14155550123');
+    await phone.switchCountry();
+    expect(phone.box().value).toBe('9812345');
+    expect(phone.hidden()).toBe('+9779812345');
+    await submit(phone.container);
+    expect(reached).toHaveBeenCalledWith(false);
+    // The parent hears the flag of the box now shown: edited abroad, untouched back in Nepal.
+    expect(flags).toEqual([true, false]);
+  });
 });
