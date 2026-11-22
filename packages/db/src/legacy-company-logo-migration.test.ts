@@ -35,7 +35,7 @@ function savedProfile(displayName: string, logoDataUrl: string | null): Record<s
   return {
     displayName,
     logoDataUrl,
-    phones: ['+97715550100'],
+    phones: [],
     email: 'office@example.test',
     website: 'https://example.test',
     panVatNo: null,
