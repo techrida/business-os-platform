@@ -1,36 +1,32 @@
+import type { PartyPhone } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { addressLines } from './display';
+import { addressText, primaryPhone } from './display';
 
-const texts = (lines: { text: string }[]) => lines.map((l) => l.text);
-
-describe('addressLines', () => {
-  it('lists only the parts that are set, in writing order', () => {
-    expect(texts(addressLines({ line1: 'Balaju', city: 'Kathmandu', country: 'NP' }))).toEqual([
-      'Balaju',
-      'Kathmandu',
-      'NP',
-    ]);
-    expect(
-      texts(
-        addressLines({
-          line1: 'Plot 4',
-          line2: 'Ring Road',
-          city: 'Lalitpur',
-          district: 'Lalitpur',
-          province: 'Bagmati',
-          postalCode: '44700',
-          country: 'NP',
-        }),
-      ),
-    ).toEqual(['Plot 4', 'Ring Road', 'Lalitpur, Lalitpur, Bagmati', '44700 NP']);
+describe('addressText', () => {
+  it('writes street, city and the country name for a Nepal customer', () => {
+    expect(addressText({ line: 'Durbar Marg 1', city: 'Kathmandu' }, 'NP')).toBe(
+      'Durbar Marg 1, Kathmandu, Nepal',
+    );
   });
 
-  it('gives each line its own slot even when two lines read the same', () => {
-    expect(addressLines({ line1: 'KTM', city: 'KTM', country: 'NP' })).toEqual([
-      { slot: 'line1', text: 'KTM' },
-      { slot: 'place', text: 'KTM' },
-      { slot: 'postal', text: 'NP' },
-    ]);
+  it('names a foreign country in full', () => {
+    expect(addressText({ line: '1 Market St', city: 'San Francisco' }, 'US')).toBe(
+      '1 Market St, San Francisco, United States',
+    );
+  });
+});
+
+describe('primaryPhone', () => {
+  const np: PartyPhone = { country: 'NP', e164: '+9779812345678', isPrimary: false };
+  const us: PartyPhone = { country: 'US', e164: '+14155552671', isPrimary: true };
+
+  it('picks the primary number wherever it sits', () => {
+    expect(primaryPhone([np, us])).toBe(us);
+  });
+
+  it('falls back to the first number when none is marked, and to none for an empty list', () => {
+    expect(primaryPhone([np])).toBe(np);
+    expect(primaryPhone([])).toBeNull();
   });
 });

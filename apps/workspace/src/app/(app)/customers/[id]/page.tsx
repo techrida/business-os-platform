@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ContactDto, PartyAccountDto, VerificationCaseDto } from '@bos/contracts';
+import {
+  type ContactDto,
+  type CountryCode,
+  countryName,
+  formatPartyPhoneForPrint,
+  type PartyAccountDto,
+  type VerificationCaseDto,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -20,6 +27,7 @@ import {
 import { CommercialTerms } from '@/components/p2/customers/commercial-terms';
 import { ContactForm } from '@/components/p2/customers/contact-form';
 import { CustomerAddress } from '@/components/p2/customers/customer-address';
+import { primaryPhone } from '@/components/p2/customers/display';
 import { PortalInviteForm } from '@/components/p2/customers/portal-invite-form';
 import {
   checklistProgress,
@@ -92,11 +100,14 @@ function Contacts({
   here,
   mayWrite,
   customerId,
+  customerCountry,
 }: {
   result: PromiseSettledResult<Listing<ContactDto>>;
   here: string;
   mayWrite: boolean;
   customerId: string;
+  /** A contact based elsewhere names their own country; one in the customer's country does not. */
+  customerCountry: CountryCode;
 }) {
   // What the add-contact form needs from the loaded list. Unknown (the list failed) reads as "no",
   // and the API still refuses a second main contact (409) or a missing first email (422).
@@ -115,6 +126,7 @@ function Contacts({
             idempotencyKey={randomUUID()}
             hasPrimary={hasPrimary}
             requireEmail={requireEmail}
+            customerCountry={customerCountry}
             inDialog
           />
         ) : null
@@ -143,41 +155,47 @@ function Contacts({
             </tr>
           </thead>
           <tbody>
-            {result.value.items.map((c) => (
-              <tr key={c.id}>
-                <Td>
-                  <div className={styles.identity}>
-                    <Avatar name={c.fullName} shape="circle" />
-                    <div className={styles.identityText}>
-                      <span className={styles.contactName}>{c.fullName}</span>
-                      {c.email !== null ? (
-                        <a href={`mailto:${c.email}`} className={styles.email}>
-                          {c.email}
-                        </a>
+            {result.value.items.map((c) => {
+              const phone = primaryPhone(c.phones);
+              return (
+                <tr key={c.id}>
+                  <Td>
+                    <div className={styles.identity}>
+                      <Avatar name={c.fullName} shape="circle" />
+                      <div className={styles.identityText}>
+                        <span className={styles.contactName}>{c.fullName}</span>
+                        {c.email !== null ? (
+                          <a href={`mailto:${c.email}`} className={styles.email}>
+                            {c.email}
+                          </a>
+                        ) : null}
+                        {c.country !== customerCountry ? (
+                          <span className={styles.note}>{countryName(c.country)}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </Td>
+                  <Td>
+                    <div className={styles.contactTitle}>
+                      {c.title !== null ? <span>{c.title}</span> : null}
+                      {c.isPrimary ? <Badge tone="info">Main contact</Badge> : null}
+                      {c.title === null && !c.isPrimary ? (
+                        <span className={styles.quiet}>Not set</span>
                       ) : null}
                     </div>
-                  </div>
-                </Td>
-                <Td>
-                  <div className={styles.contactTitle}>
-                    {c.title !== null ? <span>{c.title}</span> : null}
-                    {c.isPrimary ? <Badge tone="info">Main contact</Badge> : null}
-                    {c.title === null && !c.isPrimary ? (
+                  </Td>
+                  <Td nowrap>
+                    {phone !== null ? (
+                      <a href={`tel:${phone.e164}`} className={styles.numeric}>
+                        {formatPartyPhoneForPrint(phone.e164)}
+                      </a>
+                    ) : (
                       <span className={styles.quiet}>Not set</span>
-                    ) : null}
-                  </div>
-                </Td>
-                <Td nowrap>
-                  {c.phone !== null ? (
-                    <a href={`tel:${c.phone}`} className={styles.numeric}>
-                      {c.phone}
-                    </a>
-                  ) : (
-                    <span className={styles.quiet}>Not set</span>
-                  )}
-                </Td>
-              </tr>
-            ))}
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
           </tbody>
         </Table>
       )}
@@ -453,7 +471,13 @@ export default async function CustomerPage({
     {
       key: 'address',
       label: 'Address',
-      value: <CustomerAddress address={customer.address} className={styles.address} />,
+      value: (
+        <CustomerAddress
+          address={customer.address}
+          country={customer.country}
+          className={styles.address}
+        />
+      ),
     },
   ];
 
@@ -522,6 +546,7 @@ export default async function CustomerPage({
                 here={here}
                 mayWrite={mayWrite && !merged}
                 customerId={customer.id}
+                customerCountry={customer.country}
               />
             </TabPanel>
             <TabPanel id="terms">

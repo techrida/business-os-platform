@@ -38,7 +38,8 @@ const customer = (over: Record<string, unknown> = {}) => ({
   relationship: 'active',
   ownerUserId: SALES,
   defaultCurrency: 'NPR',
-  address: { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' },
+  country: 'NP',
+  address: { line: 'Durbar Marg 1', city: 'Kathmandu' },
   mergedIntoId: null,
   version: 2,
   createdAt: '2026-11-19T05:46:00.000Z',
@@ -68,11 +69,13 @@ const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 let detail: unknown = customer();
+let contactsBody: unknown = [];
 // What the API answers a Sales user: the record, its contacts and cases, and 403 for the admin directory.
 const fetchMock = vi.fn<typeof fetch>((input) => {
   const path = new URL(input as URL | string).pathname;
   if (path === `/v1/customers/${CUSTOMER}`) return Promise.resolve(json(200, detail));
-  if (path === `/v1/customers/${CUSTOMER}/contacts`) return Promise.resolve(json(200, []));
+  if (path === `/v1/customers/${CUSTOMER}/contacts`)
+    return Promise.resolve(json(200, contactsBody));
   if (path === '/v1/verification-cases') return Promise.resolve(json(200, []));
   if (path === '/v1/payment-terms') return Promise.resolve(json(200, []));
   return Promise.resolve(
@@ -98,6 +101,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ accessToken: 'tok', roles: ['sales'], userId: SALES });
   fetchMock.mockClear();
+  contactsBody = [];
   stubApiEnv();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -199,5 +203,70 @@ describe('customer detail logo', () => {
     const html = await renderHtml();
     expect(logoGroup(html)).not.toContain('type="file"');
     expect(html).not.toContain('Edit Details');
+  });
+});
+
+describe('customer detail address and contact phones', () => {
+  const contact = (over: Record<string, unknown>) => ({
+    id: '99999999-9999-4999-8999-999999999999',
+    customerId: CUSTOMER,
+    fullName: 'Ana Bista',
+    email: 'ana@himalayan.test',
+    country: 'NP',
+    phones: [],
+    title: null,
+    isPrimary: true,
+    version: 1,
+    ...over,
+  });
+
+  it('shows a Nepal address as street, city and country name', async () => {
+    detail = customer({ people: [] });
+    expect(await renderHtml()).toContain('Durbar Marg 1, Kathmandu, Nepal');
+  });
+
+  it("names a foreign customer's country", async () => {
+    detail = customer({
+      country: 'US',
+      address: { line: '1 Market St', city: 'San Francisco' },
+      people: [],
+    });
+    const html = await renderHtml();
+    expect(html).toContain('1 Market St, San Francisco, United States');
+    expect(html).not.toContain('Nepal');
+  });
+
+  it('links the primary phone of a contact with two numbers, not the other one', async () => {
+    detail = customer({ people: [] });
+    contactsBody = [
+      contact({
+        phones: [
+          { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
+          { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: false },
+        ],
+      }),
+    ];
+    const html = await renderHtml();
+    expect(html).toContain('href="tel:+14155552671"');
+    expect(html).toContain('+1 415 555 2671');
+    expect(html).not.toContain('9812345678');
+  });
+
+  it("names a contact's own country only when it differs from the customer's", async () => {
+    detail = customer({ people: [] });
+    contactsBody = [
+      contact({ fullName: 'Ana Bista', country: 'NP' }),
+      contact({
+        id: '88888888-8888-4888-8888-888888888888',
+        fullName: 'John Doe',
+        email: null,
+        country: 'GB',
+        isPrimary: false,
+      }),
+    ];
+    const html = await renderHtml();
+    const table = html.slice(html.indexOf('<caption'), html.indexOf('</table>'));
+    expect(table).toContain('United Kingdom');
+    expect(table).not.toContain('Nepal');
   });
 });

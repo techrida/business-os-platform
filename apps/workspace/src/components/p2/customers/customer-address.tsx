@@ -1,20 +1,16 @@
-import type { Address } from '@bos/contracts';
+import type { AddressLines, CountryCode } from '@bos/contracts';
 
-import { addressLines } from './display';
+import { addressText } from './display';
 
-/** A customer's address, one span per line. Keyed by slot: two lines may read the same. */
+/** A customer's address as one line: street, city and country name. */
 export function CustomerAddress({
   address,
+  country,
   className,
 }: {
-  address: Address;
+  address: AddressLines;
+  country: CountryCode;
   className?: string | undefined;
 }) {
-  return (
-    <span className={className}>
-      {addressLines(address).map((line) => (
-        <span key={line.slot}>{line.text}</span>
-      ))}
-    </span>
-  );
+  return <span className={className}>{addressText(address, country)}</span>;
 }

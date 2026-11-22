@@ -1,17 +1,11 @@
 import type { DuplicateMatch } from './duplicate-check';
-import type {
-  ContactField,
-  ContactValues,
-  CustomerField,
-  CustomerValues,
-  FieldErrors,
-} from './forms';
+import type { ContactErrors, ContactValues, CustomerErrors, CustomerValues } from './forms';
 
 /** What the customer create and edit actions hand back to their form. */
 export interface CustomerFormState {
   /** The idempotency key the next submit will use (create only). Rotated after a definite refusal. */
   key: string;
-  errors: FieldErrors<CustomerField>;
+  errors: CustomerErrors;
   /** A refusal that is not about one field: 403, 409, 5xx or a lost connection. */
   error?: string;
   /** The page is out of date: offer a reload instead of a retry. */
@@ -30,7 +24,7 @@ export interface CustomerFormState {
 /** What the add-contact action hands back. `savedCount` rises on each success and resets the form. */
 export interface ContactFormState {
   key: string;
-  errors: FieldErrors<ContactField>;
+  errors: ContactErrors;
   error?: string;
   /** A short confirmation, such as "Sita Sharma was added." Shown as a toast. */
   saved?: string;

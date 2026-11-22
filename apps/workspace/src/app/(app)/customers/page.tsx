@@ -1,4 +1,4 @@
-import { CUSTOMER_RELATIONSHIPS, pageWindow, type CustomerDto } from '@bos/contracts';
+import { CUSTOMER_RELATIONSHIPS, countryName, pageWindow, type CustomerDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -108,6 +108,8 @@ function Row({
           </div>
         </div>
       </Td>
+      {/* FX9: city and country only; the full address and the phones are on the detail page. */}
+      <Td>{`${c.address.city}, ${countryName(c.country)}`}</Td>
       <Td>{c.industry ?? <span className={styles.quiet}>Not set</span>}</Td>
       <Td nowrap>{c.panVatNo ?? <span className={styles.quiet}>Not set</span>}</Td>
       <Td nowrap>
@@ -285,10 +287,11 @@ export default async function CustomersPage({
             </Alert>
           ) : null}
           <div className={styles.directory}>
-            <Table caption="Organizations" minWidth={900} className={styles.table ?? ''}>
+            <Table caption="Organizations" minWidth={1020} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th className={styles.organizationColumn}>Organization</Th>
+                  <Th>Location</Th>
                   <Th>Industry</Th>
                   <Th>PAN/VAT</Th>
                   <Th>Owner</Th>

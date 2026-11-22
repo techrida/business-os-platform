@@ -43,17 +43,44 @@ describe('customer form', () => {
     expect(inputTag(html, 'contactName')).toContain('required=""');
     expect(inputTag(html, 'contactEmail')).toContain('type="email"');
     expect(inputTag(html, 'contactEmail')).toContain('required=""');
-    // The phone is a PhoneInput: +977 shown as a fixed prefix, a numeric keypad, E.164 posted by a hidden input.
-    expect(inputTag(html, 'contactPhone')).toContain('type="hidden"');
-    expect(inputTag(html, 'contactPhone')).not.toContain('required');
+    // The phones are a PhoneListInput: each row has its own country, +977 shown as a fixed prefix
+    // for Nepal, and E.164 posted by a hidden input per row.
+    expect(inputTag(html, 'contactPhones\\.0\\.number')).toContain('type="hidden"');
+    expect(inputTag(html, 'contactPhones\\.0\\.country')).toContain('value="NP"');
+    expect(html).toContain('aria-label="Phone 1 number"');
+    expect(html).toContain('aria-label="Phone 1 country"');
     expect(html).toContain('>+977<');
-    expect(html).toContain('inputMode="numeric"');
+    expect(html).not.toContain('name="contactPhone"');
+    // The contact's own country starts from the address country.
+    expect(inputTag(html, 'contactCountry')).toContain('value="NP"');
   });
 
   it('does not ask for a contact when editing the customer', () => {
     const html = render('edit');
     expect(html).not.toContain('Primary Contact');
     expect(html).not.toContain('name="contactEmail"');
+    expect(html).not.toContain('name="contactCountry"');
+    expect(html).not.toContain('name="contactPhones.');
+  });
+
+  // FX9: one Address box, City and a Country picker replace the old five address fields.
+  it('asks for the address as Address, City and Country, and posts them under address.', () => {
+    const html = render('edit', ['NPR'], {
+      ...EMPTY_CUSTOMER_VALUES,
+      line: '500 Howard Street',
+      city: 'San Francisco',
+      country: 'US',
+    });
+    expect(html).toMatch(
+      /<textarea[^>]*name="address\.line"[^>]*required=""[^>]*>500 Howard Street/,
+    );
+    expect(inputTag(html, 'address\\.city')).toContain('value="San Francisco"');
+    expect(inputTag(html, 'address\\.country')).toContain('value="US"');
+    expect(html).toContain('role="combobox"');
+    for (const old of ['line1', 'line2', 'district', 'province', 'postalCode', 'country']) {
+      expect(html).not.toContain(`name="${old}"`);
+    }
+    expect(html).not.toContain('Country code');
   });
 
   // Fails on the old form, which listed every currency in CURRENCIES whatever Settings said.
@@ -85,18 +112,12 @@ describe('customer form', () => {
     expect(html).not.toContain('switched off in Settings');
   });
 
-  it('numbers the card eyebrows in the order the cards appear, and leaves them out of the headings', () => {
-    const create = render('create');
-    expect(create).toContain('01 · The basics');
-    expect(create).toContain('02 · The contact');
-    expect(create).toContain('03 · The address');
-    expect(create).toContain('04 · The terms');
-    // Without the contact card the numbers close up instead of skipping 02.
-    const edit = render('edit');
-    expect(edit).toContain('01 · The basics');
-    expect(edit).toContain('02 · The address');
-    expect(edit).toContain('03 · The terms');
-    expect(edit).not.toContain('The contact');
-    expect(create).toContain('aria-hidden="true">01 · The basics');
+  // The card headings speak for themselves: no "01 · The basics" kicker above them.
+  it('puts no numbered kicker above the card headings', () => {
+    for (const html of [render('create'), render('edit')]) {
+      expect(html).toContain('Basic Company Information');
+      expect(html).toContain('Business Address');
+      expect(html).not.toMatch(/0\d · The /);
+    }
   });
 });

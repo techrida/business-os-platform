@@ -42,7 +42,8 @@ const customer = (defaultCurrency: CustomerDto['defaultCurrency']): CustomerDeta
   relationship: 'active',
   ownerUserId: null,
   defaultCurrency,
-  address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+  country: 'NP',
+  address: { line: 'Balaju', city: 'Kathmandu' },
   mergedIntoId: null,
   version: 2,
   createdAt: '2026-11-08T05:45:00.000Z',
@@ -85,5 +86,21 @@ describe('the edit organization page', () => {
 
     expect(currencyOptions(html)).toEqual(['NPR']);
     expect(html).not.toContain('switched off in Settings');
+  });
+
+  // FX9: the form starts from the saved address line, city and the party's country (here a foreign one).
+  it("fills the form with the organization's saved address, city and country", async () => {
+    api.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'USD'] });
+    api.getCustomer.mockResolvedValue({
+      ...customer('USD'),
+      panVatNo: null,
+      country: 'US',
+      address: { line: '500 Howard Street', city: 'San Francisco' },
+    });
+    const html = await render();
+
+    expect(html).toContain('500 Howard Street');
+    expect(html).toContain('San Francisco');
+    expect(html).toContain('value="US"');
   });
 });
