@@ -3,7 +3,7 @@ import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm, paste } from '@/test/form-interactions';
 
 import { emptyValues, toContent, type BuilderValues } from './model';
 import { PREVIEW_TIMEOUT_MS, QuoteBuilder, type BuilderTarget } from './quote-builder';
@@ -326,6 +326,20 @@ describe('quotation discount: percent and amount side by side (FX5 #5)', () => {
     await removeSecondLine();
     expect(discountBox('Discount amount (NPR)').value).toBe('400.00');
     expect(discountBox('Discount %').value).toBe('10');
+  });
+
+  it('takes over as the amount when the worked-out amount is typed over with the same number', async () => {
+    await mountPair();
+    await fill(discountBox('Discount %'), '10');
+    // The amount box shows 500.00 (worked out). Typing 500 over it changes nothing numerically but is
+    // the person choosing a fixed amount: a later base change must not move it.
+    const amount = discountBox('Discount amount (NPR)');
+    amount.focus();
+    amount.select();
+    await paste(amount, '500');
+    await removeSecondLine();
+    expect(discountBox('Discount amount (NPR)').value).toBe('500.00');
+    expect(await savedDiscount()).toMatchObject({ mode: 'amount' });
   });
 
   it('works the percentage out again when the line base changes under an amount', async () => {

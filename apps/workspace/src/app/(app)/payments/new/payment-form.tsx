@@ -317,7 +317,8 @@ export function PaymentForm({
   function requestReview() {
     const form = formRef.current;
     if (busy || form === null) return;
-    if (!form.checkValidity()) {
+    // The amount box is plain text, so the browser's check does not see a zero; the action does.
+    if (!form.checkValidity() || !/[1-9]/.test(amount)) {
       confirmed.current = true;
       form.requestSubmit();
       return;
@@ -576,11 +577,7 @@ export function PaymentForm({
               <Field label="Amount received" hint={amountHint} error={fe.amount}>
                 {(control) => (
                   // A retyped amount equal to the open one posts the same value, so the edit is read from the input event.
-                  <div
-                    onInput={() => setAmountTouched(true)}
-                    onPaste={() => setAmountTouched(true)}
-                    onDrop={() => setAmountTouched(true)}
-                  >
+                  <div onInput={() => setAmountTouched(true)}>
                     <AmountInput
                       {...control}
                       currency={currency}

@@ -117,7 +117,7 @@ describe('recordPaymentAction', () => {
       method: 'bank_transfer',
       receivedOn: '2020-01-02',
       bankReference: 'NIC-77812',
-      tdsWithheld: '0.00',
+      tdsWithheld: '0',
       proofDocumentIds: [PROOF_ID, PROOF_2],
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/payments');
@@ -163,6 +163,18 @@ describe('recordPaymentAction', () => {
       const out = await run(form({ tdsWithheld: tds }));
       expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
     }
+  });
+
+  it('sends one body for a blank, a 0 and a 0.00 tax withheld, so a retry under one key matches', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const bodies: unknown[] = [];
+    for (const tds of ['', '0', '0.00']) {
+      mocks.apiFetch.mockClear();
+      await run(form({ tdsWithheld: tds }));
+      bodies.push(sentBody(0));
+    }
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(bodies[2]).toEqual(bodies[0]);
   });
 
   it('requires at least one proof file, and ignores ids that are not UUIDs', async () => {

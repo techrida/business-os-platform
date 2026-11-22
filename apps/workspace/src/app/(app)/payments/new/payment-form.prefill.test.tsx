@@ -194,6 +194,23 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
     }
   }, 15_000);
 
+  it('does not count a refused paste as an edit, so the currency switch still clears the prefill', async () => {
+    const mounted = await mount();
+    try {
+      const box = mounted.container;
+      const amountBox = boxFor(box, 'Amount received');
+      amountBox?.focus();
+      amountBox?.select();
+      // The input refuses another currency's amount and leaves the open amount as it was.
+      await paste(amountBox, 'EUR 20');
+      expect(amountBox?.value).toBe('750.00');
+      await pick(box, 'Currency', 'INR (Indian rupee)');
+      expect(value(box, 'amount')).toBe('');
+    } finally {
+      await mounted.unmount();
+    }
+  }, 15_000);
+
   it('counts a pasted amount as typed, so a currency change keeps it', async () => {
     const mounted = await mount();
     try {

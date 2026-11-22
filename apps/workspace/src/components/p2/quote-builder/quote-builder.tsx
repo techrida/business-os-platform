@@ -283,20 +283,24 @@ export function QuoteBuilder({
   const pair = discountPair(values.discountMode, values.discountValue, base);
   const discountError = errors['discount.value'] ?? errors['discount'];
 
-  const setDiscount = (side: 'pct' | 'amount') => (raw: string) => {
-    if (plainNumber(raw) === '') {
-      edit((v) => ({ ...v, discountMode: 'none', discountValue: '' }));
-      return;
-    }
-    // The worked-out side reporting the number it already shows (for example padding on blur) is
-    // not a new entry, so it must not take over as the discount.
-    if (side !== values.discountMode) {
-      const shown = decimalOf(side === 'pct' ? pair.pct : pair.amount);
-      const typed = decimalOf(raw);
-      if (shown !== null && typed !== null && shown.eq(typed)) return;
-    }
-    edit((v) => ({ ...v, discountMode: side, discountValue: raw }));
-  };
+  const setDiscount =
+    (side: 'pct' | 'amount', typed = false) =>
+    (raw: string) => {
+      if (plainNumber(raw) === '') {
+        edit((v) => ({ ...v, discountMode: 'none', discountValue: '' }));
+        return;
+      }
+      // `typed`: the person edited this box, so it becomes the discount even when the number is the
+      // one it already showed (typing 100 over a worked-out 100.00).
+      // The worked-out side reporting the number it already shows (for example padding on blur) is
+      // not a new entry, so it must not take over as the discount.
+      if (!typed && side !== values.discountMode) {
+        const shown = decimalOf(side === 'pct' ? pair.pct : pair.amount);
+        const typed = decimalOf(raw);
+        if (shown !== null && typed !== null && shown.eq(typed)) return;
+      }
+      edit((v) => ({ ...v, discountMode: side, discountValue: raw }));
+    };
 
   // ---- Totals and approval route: ask the platform, show what it says ----------------------
 
@@ -836,7 +840,12 @@ export function QuoteBuilder({
                 error={values.discountMode !== 'amount' ? discountError : undefined}
               >
                 {(control) => (
-                  <PercentInput value={pair.pct} onValueChange={setDiscount('pct')} {...control} />
+                  <PercentInput
+                    value={pair.pct}
+                    onValueChange={setDiscount('pct')}
+                    onUserEdit={setDiscount('pct', true)}
+                    {...control}
+                  />
                 )}
               </Field>
               <Field
@@ -855,6 +864,7 @@ export function QuoteBuilder({
                     value={pair.amount}
                     max={base === null ? undefined : base.toFixed(2)}
                     onValueChange={setDiscount('amount')}
+                    onUserEdit={setDiscount('amount', true)}
                     {...control}
                   />
                 )}

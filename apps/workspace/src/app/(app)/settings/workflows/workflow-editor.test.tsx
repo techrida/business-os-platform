@@ -223,10 +223,10 @@ it('groups the amount in lakh style and saves the plain number', async () => {
   await typeKeys(amount, '1250000');
   expect(amount.value).toBe('12,50,000');
   expect(posted().rules[0]!.when.value).toBe('1250000');
-  // Leaving the box (as clicking Save does) pads to two decimals; the saved amount stays positive.
+  // Leaving the box (as clicking Save does) pads the display to two decimals; the saved amount stays `1250000`.
   await act(() => Promise.resolve(amount.blur()));
   expect(amount.value).toBe('12,50,000.00');
-  expect(posted().rules[0]!.when.value).toBe('1250000.00');
+  expect(posted().rules[0]!.when.value).toBe('1250000');
 });
 
 it('takes whole hours only in the reminder and escalation boxes', async () => {
