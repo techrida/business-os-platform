@@ -386,7 +386,8 @@ export class VendorsService {
     nameIndex?: Map<string, string[]>,
   ): Promise<VendorDto> {
     const { scope, actor, principal } = this.caller.current();
-    const pan = body.pan ?? null;
+    // The column holds upper case (vendors_pan_format_check); the foreign tax id contract accepts either case.
+    const pan = body.pan?.toUpperCase() ?? null;
     if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
     const id = randomUUID();
     try {
@@ -488,13 +489,14 @@ export class VendorsService {
           message: 'The legal name and PAN of an approved vendor change through a new KYB review',
         });
       }
-      if (fields.pan !== undefined) {
+      const pan = fields.pan?.toUpperCase();
+      if (pan !== undefined) {
         // A Nepal vendor's PAN is nine digits; a foreign vendor's tax id keeps the loose shape (FX9).
-        const panProblem = vendorPanProblem(row.country, fields.pan);
+        const panProblem = vendorPanProblem(row.country, pan);
         if (panProblem !== undefined) {
           throw new BadRequestException({ code: 'bad_request', message: panProblem });
         }
-        await this.assertPanFree(tx, scope.tenantId, fields.pan, id);
+        await this.assertPanFree(tx, scope.tenantId, pan, id);
       }
       if (fields.ownerUserId !== undefined) {
         await this.assertUser(tx, scope.tenantId, fields.ownerUserId);
@@ -502,7 +504,7 @@ export class VendorsService {
       try {
         const updated = await updateVersioned(tx, vendors, id, expectedVersion, {
           ...(fields.legalName !== undefined && { legalName: fields.legalName }),
-          ...(fields.pan !== undefined && { pan: fields.pan }),
+          ...(pan !== undefined && { pan }),
           ...(fields.address !== undefined && addressColumns(fields.address)),
           ...(fields.vatRegistered !== undefined && { vatRegistered: fields.vatRegistered }),
           ...(fields.ownerUserId !== undefined && { ownerUserId: fields.ownerUserId }),
@@ -516,7 +518,7 @@ export class VendorsService {
         }
         return toVendorDto(updated, principal);
       } catch (error) {
-        if (fields.pan !== undefined && isUnique(error, PAN_INDEX)) throw duplicatePan(fields.pan);
+        if (pan !== undefined && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
         throw error;
       }
     });

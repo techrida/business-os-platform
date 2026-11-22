@@ -483,6 +483,28 @@ export function PhoneListInput({
     lastPrimary.current = primaryE164;
     latest.current.onPrimaryChange?.(primaryE164);
   }, [primaryE164]);
+  // A number listed twice (or a row the list holds back) must not be submitted: after a refusal React resets the form
+  // and the list restarts from its valid rows, so a server error keyed to a row position would land on another row.
+  // Stop the submit here and focus the first such row, unless a number box already stopped it and kept focus.
+  useEffect(() => {
+    const form = rootRef.current?.closest('form');
+    if (!form) return;
+    const guard = (event: Event) => {
+      const problem = latest.current.problems[0];
+      if (problem === undefined) return;
+      const stopped = event.defaultPrevented;
+      event.preventDefault();
+      if (!stopped) {
+        rootRef.current
+          ?.querySelector<HTMLInputElement>(
+            `input[aria-label="${noun} ${problem.index + 1} number"]`,
+          )
+          ?.focus();
+      }
+    };
+    form.addEventListener('submit', guard);
+    return () => form.removeEventListener('submit', guard);
+  }, [noun]);
   const firstRows = useRef(true);
   useEffect(() => {
     if (firstRows.current) {
