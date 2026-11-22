@@ -43,6 +43,8 @@ export interface PhoneRowState {
   isPrimary: boolean;
   /** Whether the user has edited the number; handed back to the box when it remounts. */
   edited: boolean;
+  /** Whether the user picked this row's country; a blank row they have not touched follows the party's country. */
+  countryPicked: boolean;
   /** What the box mounts with, and `mount` remounts it (country or mode changed). */
   seed: string;
   mount: number;
@@ -71,9 +73,15 @@ export interface PhoneListInputProps {
    * name nothing is posted; the caller uses `onChange`.
    */
   name?: string | undefined;
-  /** The country a new row starts in. */
+  /**
+   * The country a new row starts in. When it changes, a blank row the user has not touched (no digits typed, no
+   * country picked) moves to it; every other row keeps its own.
+   */
   defaultCountry?: CountryCode | undefined;
-  /** Errors from the server, by row position (`phones.1.e164`), shown under that row. */
+  /**
+   * Errors from the server, by row position when they arrive (`phones.1.e164`), shown under that row. Each error
+   * stays with its row when rows are then moved or removed.
+   */
   rowErrors?: readonly (ReactNode | undefined)[] | undefined;
   /** An error about the whole list ("mark one number as primary"). */
   error?: ReactNode | undefined;
@@ -88,6 +96,8 @@ export interface PhoneListInputProps {
   disabled?: boolean | undefined;
   /** The list's visible label element, so the group is named by it. */
   'aria-labelledby'?: string | undefined;
+  /** The list's hint (and a `Field` error), so the group is described by it along with the list's own error. */
+  'aria-describedby'?: string | undefined;
   className?: string | undefined;
 }
 
@@ -218,9 +228,47 @@ function makeBlankRow(key: string, country: CountryCode, isPrimary: boolean): Ph
     label: null,
     isPrimary,
     edited: false,
+    countryPicked: false,
     seed: '',
     mount: 0,
   };
+}
+
+/** Whether a row is still as the list made it: blank, never typed in, its country not picked by the user. */
+const untouched = (row: PhoneRowState) =>
+  row.mode === 'national' && row.e164 === '' && !row.edited && !row.countryPicked;
+
+/** A row's server error, held by the row's key so it stays with that row through moves and removals. */
+interface BoundErrors {
+  source: readonly (ReactNode | undefined)[] | undefined;
+  byKey: ReadonlyMap<string, ReactNode>;
+}
+
+function bindErrors(
+  source: readonly (ReactNode | undefined)[] | undefined,
+  rows: readonly PhoneRowState[],
+): BoundErrors {
+  const byKey = new Map<string, ReactNode>();
+  rows.forEach((row, index) => {
+    const found = source?.[index];
+    if (found !== undefined && found !== null && found !== false && found !== '') {
+      byKey.set(row.key, found);
+    }
+  });
+  return { source, byKey };
+}
+
+/** Same errors at the same positions. A caller may build a fresh array each render; that is not a new error. */
+function sameErrors(
+  a: readonly (ReactNode | undefined)[] | undefined,
+  b: readonly (ReactNode | undefined)[] | undefined,
+): boolean {
+  if (a === b) return true;
+  const length = Math.max(a?.length ?? 0, b?.length ?? 0);
+  for (let index = 0; index < length; index += 1) {
+    if (!Object.is(a?.[index], b?.[index])) return false;
+  }
+  return true;
 }
 
 /** The rows a list opens with: the given numbers (one primary), or one blank primary row. */
@@ -244,6 +292,7 @@ function startRows(
     label: phone.label ?? null,
     isPrimary: index === primary,
     edited: false,
+    countryPicked: false,
     seed: phone.e164,
     mount: 0,
   }));
@@ -278,6 +327,7 @@ export function PhoneListInput({
   noun = 'Phone',
   disabled,
   'aria-labelledby': labelledBy,
+  'aria-describedby': describedBy,
   className,
 }: PhoneListInputProps) {
   const base = useId();
@@ -294,6 +344,25 @@ export function PhoneListInput({
   const [rows, setRows] = useState<PhoneRowState[]>(() =>
     startRows(defaultValue, defaultCountry, (index) => `${base}-start${index}`, limit),
   );
+
+  // The party's country changed: blank rows the user has not touched follow it; any other row keeps its own.
+  const [rowsCountry, setRowsCountry] = useState(defaultCountry);
+  if (rowsCountry !== defaultCountry) {
+    setRowsCountry(defaultCountry);
+    setRows((current) =>
+      current.map((row) => (untouched(row) ? { ...row, country: defaultCountry } : row)),
+    );
+  }
+
+  // Server errors arrive by row position; they are held by row key from then on, so a removed row's error goes with
+  // it. They are bound again when new ones arrive, and after a form reset (which makes fresh rows).
+  const [bound, setBound] = useState(() => bindErrors(rowErrors, rows));
+  if (!sameErrors(bound.source, rowErrors)) {
+    setBound(bindErrors(rowErrors, rows));
+  }
+
+  // What the polite live region last said: a moved row's new position.
+  const [announcement, setAnnouncement] = useState('');
 
   // Where focus goes once the rows have re-rendered: the moved row's button, the new or switched row's box.
   const pendingFocus = useRef<{ key: string; target: 'number' | 'up' | 'down' } | null>(null);
@@ -345,7 +414,11 @@ export function PhoneListInput({
   }
 
   function onCountry(row: PhoneRowState, country: CountryCode) {
-    if (country === row.country && row.mode === 'national') return;
+    if (country === row.country && row.mode === 'national') {
+      // A deliberate pick stops the row following the party country.
+      if (!row.countryPicked) update(row.key, (current) => ({ ...current, countryPicked: true }));
+      return;
+    }
     update(row.key, (current) => {
       // The digits after the old code carry over to the new one, so picking the wrong country and back loses nothing.
       const prefix = `+${dialOf(current.country)}`;
@@ -353,18 +426,21 @@ export function PhoneListInput({
         current.e164.startsWith(prefix) && ALL_DIGITS.test(current.e164.slice(prefix.length))
           ? current.e164.slice(prefix.length)
           : null;
-      const seed =
+      const rawSeed =
         current.e164 === ''
           ? ''
           : national === null
             ? current.e164
             : `+${dialOf(country)}${national}`;
+      // A bare calling code would show as an empty box that still holds a value, so it is cleared.
+      const seed = rawSeed === `+${dialOf(country)}` ? '' : rawSeed;
       return {
         country,
         mode: 'national',
         e164: seed,
         seed,
         edited: current.edited || current.e164 !== '',
+        countryPicked: true,
         mount: current.mount + 1,
       };
     });
@@ -376,6 +452,15 @@ export function PhoneListInput({
 
   function move(key: string, step: -1 | 1) {
     pendingFocus.current = { key, target: step === -1 ? 'up' : 'down' };
+    const from = rows.findIndex((row) => row.key === key);
+    const to = from + step;
+    if (from !== -1 && to >= 0 && to < rows.length) {
+      // An identical message would not change the live region, so it would not be read again.
+      setAnnouncement((previous) => {
+        const text = `${noun} ${from + 1} moved to position ${to + 1}.`;
+        return previous === text ? `${text}\u00a0` : text;
+      });
+    }
     setRows((current) => {
       const from = current.findIndex((row) => row.key === key);
       const to = from + step;
@@ -413,6 +498,8 @@ export function PhoneListInput({
 
   useFormReset(rootRef, () => {
     setRows(startRows(defaultValue, defaultCountry, () => nextKey(), limit));
+    // The fresh rows have new keys: the errors (this commit's, or ones still to come) bind to them by position.
+    setBound({ source: [], byKey: new Map() });
   });
 
   // What the form sees: valid numbers (each once), the rows that stop a save, and the primary number.
@@ -518,6 +605,7 @@ export function PhoneListInput({
   const single = rows.length === 1;
   const errorId = `${base}-error`;
   const limitId = `${base}-limit`;
+  const groupDescribedBy = [describedBy, error ? errorId : undefined].filter(Boolean).join(' ');
 
   return (
     <div
@@ -526,9 +614,12 @@ export function PhoneListInput({
       {...(labelledBy === undefined
         ? { 'aria-label': `${noun} numbers` }
         : { 'aria-labelledby': labelledBy })}
-      {...(error ? { 'aria-describedby': errorId } : {})}
+      {...(groupDescribedBy ? { 'aria-describedby': groupDescribedBy } : {})}
       className={[styles.root, className].filter(Boolean).join(' ')}
     >
+      <p className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </p>
       <ol className={styles.rows}>
         {rows.map((row, index) => {
           const n = index + 1;
@@ -537,7 +628,7 @@ export function PhoneListInput({
             (problem) =>
               problem.key === row.key && problem.message === 'This number is already listed.',
           );
-          const rowError = rowErrors?.[index] ?? duplicate?.message;
+          const rowError = bound.byKey.get(row.key) ?? duplicate?.message;
           const rowErrorId = `${row.key}-error`;
           const blank = single && row.e164 === '';
           return (
@@ -550,6 +641,7 @@ export function PhoneListInput({
                   value={row.country}
                   disabled={disabled === true}
                   onChange={(country) => onCountry(row, country)}
+                  onReselect={(country) => onCountry(row, country)}
                 />
               </div>
               <div className={styles.number} data-part="number">

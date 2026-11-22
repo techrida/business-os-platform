@@ -415,6 +415,8 @@ export function LeadForm({
                 key={phonesKey}
                 name="phones"
                 aria-labelledby={c['aria-labelledby']}
+                aria-describedby={c['aria-describedby']}
+                defaultCountry={country}
                 defaultValue={phones.saved}
                 rowErrors={Array.from(
                   { length: MAX_PARTY_PHONES },

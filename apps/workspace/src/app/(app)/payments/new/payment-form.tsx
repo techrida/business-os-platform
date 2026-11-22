@@ -412,7 +412,10 @@ export function PaymentForm({
                   // Still the form's submit button, so Enter in a text field presses it.
                   type="submit"
                   form={formId}
-                  disabled={busy}
+                  // aria-disabled, not disabled: a focused button that turns disabled drops focus to the
+                  // page body, and focus is here while a confirmed payment records. requestReview
+                  // ignores presses while busy, so nothing posts twice.
+                  aria-disabled={busy || undefined}
                   aria-busy={busy || undefined}
                   onClick={(event) => {
                     // Stops both the submit and the trigger's own toggle: the review opens only once

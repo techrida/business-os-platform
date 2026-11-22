@@ -12,6 +12,7 @@ import {
 } from '@bos/contracts';
 import type { ZodError } from 'zod';
 
+import { rawPhoneRows } from '@/components/ui/phone-rows';
 import type { CreateVendorContact, UpdateVendorFields } from '@/lib/api-vendors';
 
 import { identityLocked } from './model';
@@ -284,18 +285,14 @@ export interface PhoneDraft {
  * the primary row was the blank one, the first number left becomes primary.
  */
 export function readPhones(form: FormData, name: string): PhoneDraft[] {
-  const out: PhoneDraft[] = [];
-  for (let i = 0; form.has(`${name}.${i}.number`); i++) {
-    const e164 = formText(form, `${name}.${i}.number`).trim();
-    if (e164 === '') continue;
-    const label = formText(form, `${name}.${i}.label`);
-    out.push({
-      country: formText(form, `${name}.${i}.country`).trim().toUpperCase(),
-      e164,
+  const out: PhoneDraft[] = rawPhoneRows(form, name).map(
+    ({ country, number, label, isPrimary }) => ({
+      country: country.toUpperCase(),
+      e164: number,
       label: (PHONE_LABELS as readonly string[]).includes(label) ? (label as PhoneLabel) : null,
-      isPrimary: formText(form, `${name}.${i}.isPrimary`) === 'true',
-    });
-  }
+      isPrimary,
+    }),
+  );
   const first = out[0];
   if (first !== undefined && !out.some((p) => p.isPrimary)) first.isPrimary = true;
   return out;

@@ -115,6 +115,30 @@ describe('lead form country and phones', () => {
     expect(container.querySelector('input[name="phone"]')).toBeNull();
   });
 
+  it("moves a blank phone row to the lead's new country, and keeps a row with digits typed", async () => {
+    const container = await mountLead(vi.fn<FormAction>());
+    await click(container.querySelector('button[data-action="add"]'));
+    await typeKeys(numberBox(container, 2), '98123');
+    await pickCountry(boxFor(container, 'Country')!, 'India');
+    expect(container.querySelector<HTMLInputElement>('input[name="country"]')?.value).toBe('IN');
+    expect(countryBox(container, 1).value).toBe('+91');
+    expect(container.querySelector<HTMLInputElement>('input[name="phones.0.country"]')?.value).toBe(
+      'IN',
+    );
+    expect(countryBox(container, 2).value).toBe('+977');
+  });
+
+  it('describes the phone list by its hint for screen readers', async () => {
+    const container = await mountLead(vi.fn<FormAction>());
+    const group = numberBox(container, 1).closest('[role="group"][aria-labelledby]')!;
+    const label = document.getElementById(group.getAttribute('aria-labelledby')!);
+    expect(label?.textContent?.trim()).toBe('Phone');
+    const hints = (group.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .map((id) => document.getElementById(id)?.textContent);
+    expect(hints).toContain("Optional. Pick each number's country, or type + and its code.");
+  });
+
   it('posts two phones in different countries, which parseLead turns into the contract list', async () => {
     const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
     const container = await mountLead(action);

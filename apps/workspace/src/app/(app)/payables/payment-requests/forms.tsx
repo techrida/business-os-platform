@@ -3,7 +3,7 @@
 import { CURRENCIES, type CompanyBankAccount, type Currency } from '@bos/contracts';
 import { amountInWords } from '@bos/locale';
 import Link from 'next/link';
-import { useActionState, useEffect, useId, useRef, useState } from 'react';
+import { useActionState, useId, useRef, useState } from 'react';
 
 import {
   ActionDialog,
@@ -149,15 +149,6 @@ export function PaymentRequestEntry({
           : `${item.billNumber} · ${item.vendorInvoiceNo}`;
       },
     });
-  // The dialog has no Radix trigger (the opener is the form's submit button), so focus goes back to the opener here.
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (review !== null) wasOpen.current = true;
-    else if (wasOpen.current) {
-      wasOpen.current = false;
-      opener.current?.focus();
-    }
-  }, [review]);
   return (
     <>
       <PageHeader
@@ -182,6 +173,12 @@ export function PaymentRequestEntry({
               open={review !== null}
               onOpenChange={(open) => {
                 if (!open) setReview(null);
+              }}
+              // No Radix trigger (the opener is the form's submit button), so focus goes back to
+              // the opener here.
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                opener.current?.focus();
               }}
               title="Review the payment request"
               description="Check the payee and the amount. Create draft request saves it as a draft; it goes to approvers only when you submit it."

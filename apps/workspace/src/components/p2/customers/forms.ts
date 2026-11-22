@@ -13,6 +13,8 @@ import {
   type UpdateCustomerBody,
 } from '@bos/contracts';
 
+import { postedPhoneRowIndexes, rawPhoneRows } from '@/components/ui/phone-rows';
+
 /**
  * Pure helpers for the customer and contact forms: read what was typed, check it with the
  * contracts' schemas, and word every refusal for a person. No server code, so a test or a Client
@@ -50,36 +52,22 @@ export function normalizePhone(raw: string): string {
   return raw.replace(/[\s().-]+/g, '');
 }
 
-const ROW_FIELD = /^(\d+)\.(number|country|label|isPrimary)$/;
-
 /**
  * The phone rows `PhoneListInput name={name}` posted, in row order. A row with no number is left out
  * (an untouched blank row is not a phone). When no remaining row is marked primary, the first one is,
  * as the list itself does: the primary radio may sit on a blank row that was just skipped.
  */
 export function readPhoneRows(form: FormData, name: string): PhoneRow[] {
-  const prefix = `${name}.`;
-  const indexes = new Set<number>();
-  for (const key of form.keys()) {
-    if (!key.startsWith(prefix)) continue;
-    const match = ROW_FIELD.exec(key.slice(prefix.length));
-    if (match) indexes.add(Number(match[1]));
-  }
-  const read = (index: number, field: string): string => {
-    const v = form.get(`${prefix}${index}.${field}`);
-    return typeof v === 'string' ? v.trim() : '';
-  };
   const rows: PhoneRow[] = [];
-  for (const index of [...indexes].sort((a, b) => a - b)) {
-    const e164 = normalizePhone(read(index, 'number'));
+  for (const posted of rawPhoneRows(form, name, { rows: postedPhoneRowIndexes(form, name) })) {
+    const e164 = normalizePhone(posted.number);
     if (e164 === '') continue;
-    const label = read(index, 'label');
     rows.push({
-      country: read(index, 'country').toUpperCase(),
+      country: posted.country.toUpperCase(),
       e164,
-      ...(label !== '' ? { label } : {}),
-      isPrimary: read(index, 'isPrimary') === 'true',
-      index,
+      ...(posted.label !== '' ? { label: posted.label } : {}),
+      isPrimary: posted.isPrimary,
+      index: posted.row,
     });
   }
   const first = rows[0];

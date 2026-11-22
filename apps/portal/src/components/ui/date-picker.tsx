@@ -272,6 +272,20 @@ export function DatePicker({
     ]
       .filter(Boolean)
       .join(' ') || undefined;
+  // `Field` names the picker with a `<label for>`, but the id lands on React Aria's group, which a
+  // label cannot focus. A click on that label focuses the first segment, as React Aria's own label does.
+  useEffect(() => {
+    if (id === undefined || disabled === true) return;
+    const doc = rootRef.current?.ownerDocument;
+    if (!doc) return;
+    const onLabelClick = (event: MouseEvent) => {
+      const label = event.target instanceof Element ? event.target.closest('label') : null;
+      if (label?.htmlFor !== id) return;
+      rootRef.current?.querySelector<HTMLElement>('[role="spinbutton"], [role="textbox"]')?.focus();
+    };
+    doc.addEventListener('click', onLabelClick);
+    return () => doc.removeEventListener('click', onLabelClick);
+  }, [id, disabled]);
   const contextContainer = usePopoverContainer();
   const container = popoverContainer ?? contextContainer;
   const isInvalid =
