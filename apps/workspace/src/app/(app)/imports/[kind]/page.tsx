@@ -80,7 +80,7 @@ export default async function ImportPage({
             <li>
               <a href={`/imports/${slug}/template`}>Download the template</a> and fill one row per{' '}
               {meta.singular}. Required columns: {required.join(', ')}. All columns:{' '}
-              {templateColumns(meta.kind).join(', ')}.
+              {templateColumns(meta.kind).join(', ')}. {meta.format}
             </li>
             <li>
               Upload the file. You see every row checked, with its errors, before anything is

@@ -71,10 +71,32 @@ it('shows the template link, the upload form and the recent imports for a role t
   expect(html).toContain('action="/imports/customers/upload"');
   expect(html.toLowerCase()).toContain('enctype="multipart/form-data"');
   expect(html).toContain('type="file"');
-  expect(html).toContain('legal_name, address_line1, address_city, contact_email');
+  expect(html).toContain(
+    'Required columns: legal_name, address_line, address_city, address_country, contact_email, contact_country.',
+  );
+  expect(html).toContain(
+    'address_line, address_city, address_country, contact_name, contact_email, contact_phones, contact_country.',
+  );
+  expect(html).toContain('two-letter ISO codes, such as NP or US');
+  expect(html).toContain('+ and the country code, then the number (+977 9812345678)');
+  expect(html).toContain('separate several numbers with semicolons');
+  expect(html).not.toContain('address_line1');
   expect(html).toContain('people.csv');
   expect(html).toContain(`/imports/result/${batch.id}`);
   expect(api.listImports).toHaveBeenCalledWith(session, 'customer');
+});
+
+it('explains the vendor columns: one country with a Nepal default, the phones and the optional address', async () => {
+  session.roles = ['procurement'];
+  const html = await render('vendors');
+  expect(html).toContain('Required columns: legal_name.');
+  expect(html).toContain(
+    'pan, vat_registered, country, address_line, address_city, contact_name, contact_email, contact_phone.',
+  );
+  expect(html).toContain('leave it empty for a vendor in Nepal');
+  expect(html).toContain('separate several numbers with semicolons');
+  expect(html).toContain('its line and city go together');
+  expect(api.listImports).toHaveBeenCalledWith(session, 'vendor');
 });
 
 it('refuses a role without the grant of that kind before listing anything, and an unknown kind is a 404', async () => {

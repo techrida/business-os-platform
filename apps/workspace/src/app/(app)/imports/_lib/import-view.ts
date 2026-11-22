@@ -22,6 +22,8 @@ export const IMPORT_KINDS = {
     listHref: '/customers',
     grant: 'customer.write',
     help: 'Each row creates one customer (a prospect, owned by you) with its first contact. A row with a PAN or VAT number is matched on that number, a row without one on the company name; a match is skipped, so uploading the same file twice creates nothing the second time.',
+    format:
+      'Write countries as two-letter ISO codes, such as NP or US. Write each phone as + and the country code, then the number (+977 9812345678), and separate several numbers with semicolons.',
   },
   vendors: {
     kind: 'vendor',
@@ -31,6 +33,8 @@ export const IMPORT_KINDS = {
     listHref: '/vendors',
     grant: 'vendor.write',
     help: 'Each row creates one vendor, unverified like a vendor you add by hand: it still needs its documents, verification and approval. A row is matched on its PAN, or on the company name when a foreign vendor has none; a match is skipped, so uploading the same file twice creates nothing the second time.',
+    format:
+      'Write the country as a two-letter ISO code, such as NP or US; leave it empty for a vendor in Nepal. Write each phone as + and the country code, then the number (+977 9812345678), and separate several numbers with semicolons. The address is optional, but its line and city go together.',
   },
 } as const satisfies Record<
   string,
@@ -42,6 +46,8 @@ export const IMPORT_KINDS = {
     listHref: string;
     grant: Permission;
     help: string;
+    /** How the country, phone and address cells are written (FX9), shown under the column list. */
+    format: string;
   }
 >;
 export type ImportSlug = keyof typeof IMPORT_KINDS;
