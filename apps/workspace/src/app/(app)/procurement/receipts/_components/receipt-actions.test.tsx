@@ -114,10 +114,13 @@ it('groups the received quantity as it is typed, posts it plain and steps it wit
     const posted = () =>
       mounted.container.querySelector<HTMLInputElement>(`input[type="hidden"][name="${name}"]`);
     const label = [...mounted.container.querySelectorAll('label')].find((l) =>
-      l.textContent?.startsWith('Quantity received (kg)'),
+      l.textContent?.startsWith('Quantity received'),
     );
     const box = document.getElementById(label?.htmlFor ?? '');
     expect(box).toBeInstanceOf(HTMLInputElement);
+    // The unit is said once, by the box, not again in the label.
+    expect(label?.textContent).not.toContain('kg');
+    expect(box?.parentElement?.textContent).toContain('kg');
     expect(box?.getAttribute('name')).toBeNull();
 
     await fill(box, '1250000');
