@@ -1587,8 +1587,18 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     zitadel.onCall = async (op) => {
       if (op !== 'sendInviteCode' || started) return;
       started = true;
-      // The first invite is between ZITADEL and its write: a second invite of the same email reuses and commits it.
-      await users.invite(f.scope, adminActor(f.adminId), input);
+      // The first invite is between ZITADEL and its write: another writer commits a row for the same identity (a
+      // second invite cannot run here, the tenant lease holds it back).
+      await withTx(db, f.scope, systemActor('sync'), async (tx) => {
+        const uid = await store.insertUser(tx, f.scope, {
+          zitadelUserId: `z-new-${f.zitadelOrgId}-1`,
+          idpOrgId: f.idpOrgId,
+          email: input.email,
+          displayName: 'Twin Invite',
+          status: 'invited',
+        });
+        await store.ensureDefaultMembership(tx, f.scope.tenantId, f.scope.organizationId, uid);
+      });
       secondDone = true;
     };
 
@@ -1789,6 +1799,56 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
       .catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ForbiddenException);
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+    });
+  }, 60_000);
+
+  it('a deactivate that timed out after ZITADEL applied it closes the row, so a queued second deactivate cannot take the other Founder', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    const real = zitadel.deactivateUser.bind(zitadel);
+    vi.spyOn(zitadel, 'deactivateUser').mockImplementation(async (id: string) => {
+      await real(id);
+      throw new Error('timed out');
+    });
+    const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+
+    await expect(
+      status.apply(f.scope, adminActor(f.adminId), f.userId, 'deactivate'),
+    ).rejects.toBeDefined();
+
+    expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive' });
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'inactive' });
+  }, 60_000);
+
+  it('a sync that reopens the row between the reconcile write and the ZITADEL relock is closed again', async () => {
+    const f = await fixture('inactive', { lock: adminLock() });
+    const zitadel = zitadelFor(f, 'inactive', true);
+    const open = {
+      email: 'mina@techrida.test',
+      displayName: 'Mina Gurung',
+      status: 'active' as const,
+      lock: null,
+    };
+    let revoked = false;
+    zitadel.onCall = async (op) => {
+      if (op === 'unlock' && !revoked) {
+        await write(f, open);
+        revoked = true;
+      }
+      if (op === 'lock') await write(f, open);
+    };
+    const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+
+    await status
+      .apply(f.scope, adminActor(f.adminId), f.userId, 'unlock', () =>
+        revoked ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch(() => undefined);
+
+    expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive', locked: true });
     expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
       status: 'inactive',
       lockReason: 'admin',
