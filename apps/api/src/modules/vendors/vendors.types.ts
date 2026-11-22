@@ -2,14 +2,17 @@
 // the contact body live in @bos/contracts (vendors.ts); what that file does not define is local here: the list
 // query, the PATCH bodies, the lifecycle reason, the contact view and the account create body.
 import {
+  AddressLinesSchema,
+  CountryCodeSchema,
   CurrencySchema,
   EmailSchema,
   limitOffset,
   multi,
-  PhoneSchema,
+  PanVatNoSchema,
+  PartyPhoneSchema,
+  PartyPhonesSchema,
   searchParam,
   VendorKindSchema,
-  VendorPanSchema,
   VendorStatusSchema,
   type VendorDto,
 } from '@bos/contracts';
@@ -36,12 +39,14 @@ export interface VendorList {
 /**
  * PATCH /v1/vendors/:id. The kind and the country are fixed at create (the foreign rule ties them together), so
  * they are not here. `legalName` and `pan` also lock once the vendor is approved: a change of tax identity goes
- * through a new KYB review, not an edit.
+ * through a new KYB review, not an edit. The PAN has the loose shape here; the service holds a Nepal vendor to nine
+ * digits against its stored country (FX9). `address` replaces both lines and city, and `null` clears them.
  */
 export const UpdateVendorBodySchema = z.strictObject({
   expectedVersion: z.number().int().min(1),
   legalName: text(200).optional(),
-  pan: VendorPanSchema.optional(),
+  pan: PanVatNoSchema.optional(),
+  address: AddressLinesSchema.nullable().optional(),
   vatRegistered: z.boolean().optional(),
   ownerUserId: z.guid().optional(),
 });
@@ -84,25 +89,34 @@ export type VendorReviewReadiness = z.infer<typeof VendorReviewReadinessSchema>;
 export const VendorReasonBodySchema = z.strictObject({ reason: text(500) });
 export type VendorReasonBody = z.infer<typeof VendorReasonBodySchema>;
 
-/** A contact as the API returns it: the contract defines only the request body. */
+/**
+ * A contact as the API returns it: the contract defines only the request body. `phones` lists the primary first,
+ * then the rest in the order they were sent (FX9).
+ */
 export const VendorContactDtoSchema = z.strictObject({
   id: z.guid(),
   vendorPartyId: z.guid(),
   name: z.string(),
   email: z.string().nullable(),
-  phone: z.string().nullable(),
+  country: CountryCodeSchema,
+  phones: z.array(PartyPhoneSchema),
   role: z.string().nullable(),
   isPrimary: z.boolean(),
   version: z.number().int().min(1),
 });
 export type VendorContactDto = z.infer<typeof VendorContactDtoSchema>;
 
-/** PATCH /v1/vendors/:id/contacts/:contactId. Only the keys sent change; `null` clears an optional field. */
+/**
+ * PATCH /v1/vendors/:id/contacts/:contactId. Only the keys sent change; `null` clears an optional field. `phones`,
+ * when sent, replaces the contact's whole list (`[]` removes every number); it has no default, so an edit that
+ * leaves it out keeps the stored numbers.
+ */
 export const UpdateVendorContactBodySchema = z.strictObject({
   expectedVersion: z.number().int().min(1),
   name: text(120).optional(),
   email: EmailSchema.nullable().optional(),
-  phone: PhoneSchema.nullable().optional(),
+  country: CountryCodeSchema.optional(),
+  phones: PartyPhonesSchema.optional(),
   role: text(80).nullable().optional(),
   isPrimary: z.boolean().optional(),
 });

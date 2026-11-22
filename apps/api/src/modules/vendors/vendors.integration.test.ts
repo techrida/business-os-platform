@@ -725,7 +725,8 @@ describe('contacts', () => {
     const a = await post(`/v1/vendors/${v.id}/contacts`, {
       name: 'Sita Rai',
       email: 'Sita@Example.com',
-      phone: '+9779812345678',
+      country: 'NP',
+      phones: [{ country: 'NP', e164: '+9779812345678', isPrimary: true }],
       role: 'Accounts',
     });
     expect(a.status, JSON.stringify(a.body)).toBe(201);
@@ -735,11 +736,15 @@ describe('contacts', () => {
       role: 'Accounts',
       isPrimary: true,
     });
-    for (const phone of ['+9778123456789', '+97798123456789', '+977012345678']) {
-      const bad = await post(`/v1/vendors/${v.id}/contacts`, { name: 'Bad Phone', phone });
-      expect(bad.status, `${phone}: ${JSON.stringify(bad.body)}`).toBe(400);
+    for (const e164 of ['+9778123456789', '+97798123456789', '+977012345678']) {
+      const bad = await post(`/v1/vendors/${v.id}/contacts`, {
+        name: 'Bad Phone',
+        country: 'NP',
+        phones: [{ country: 'NP', e164, isPrimary: true }],
+      });
+      expect(bad.status, `${e164}: ${JSON.stringify(bad.body)}`).toBe(400);
     }
-    const b = await post(`/v1/vendors/${v.id}/contacts`, { name: 'Ram Karki' });
+    const b = await post(`/v1/vendors/${v.id}/contacts`, { name: 'Ram Karki', country: 'NP' });
     expect(b.body.isPrimary).toBe(false);
 
     const swap = await api()
@@ -810,5 +815,141 @@ describe('accounts per entity', () => {
       paymentTermId: randomUUID(),
     });
     expect(badTerm.status).toBe(400);
+  });
+});
+
+describe('address, country and phones (FX9)', () => {
+  it('round-trips a vendor address and a contact with two phones in different countries', async () => {
+    as('procurement', 'procurement');
+    const address = { line: 'Thamel Marg 12', city: 'Kathmandu' };
+    const created = await createVendor({ legalName: 'Address Traders', address });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(VendorDtoSchema.parse(created.body).address).toEqual(address);
+    const read = await api().get(`/v1/vendors/${created.body.id}`);
+    expect(VendorDtoSchema.parse(read.body)).toMatchObject({ country: 'NP', address });
+    const noAddress = await createVendor({ legalName: 'No Address Traders' });
+    expect(VendorDtoSchema.parse(noAddress.body).address).toBeNull();
+
+    const phones = [
+      { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false },
+      { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true },
+    ];
+    const contact = await post(`/v1/vendors/${created.body.id}/contacts`, {
+      name: 'Maya Gurung',
+      country: 'US',
+      phones,
+    });
+    expect(contact.status, JSON.stringify(contact.body)).toBe(201);
+    // Primary first, each number with its own country; the contact's country differs from the vendor's.
+    const expected = [phones[1], phones[0]];
+    expect(contact.body).toMatchObject({ country: 'US', phones: expected });
+    const list = await api().get(`/v1/vendors/${created.body.id}/contacts`);
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0]).toMatchObject({ country: 'US', phones: expected });
+    const stored = await rowOf<{ country: string; e164: string; sort_order: number }>(
+      'SELECT country, e164, sort_order FROM app.vendor_contact_phones WHERE contact_id = $1 ORDER BY sort_order',
+      [contact.body.id],
+    );
+    expect(stored).toEqual([
+      { country: 'US', e164: '+14155552671', sort_order: 0 },
+      { country: 'NP', e164: '+9779812345678', sort_order: 1 },
+    ]);
+
+    // An edit without `phones` keeps them; a sent list replaces the whole set; an empty list clears it.
+    const renamed = await api()
+      .patch(`/v1/vendors/${created.body.id}/contacts/${contact.body.id}`)
+      .send({ expectedVersion: 1, name: 'Maya G.' });
+    expect(renamed.status, JSON.stringify(renamed.body)).toBe(200);
+    expect(renamed.body.phones).toEqual(expected);
+    const replaced = await api()
+      .patch(`/v1/vendors/${created.body.id}/contacts/${contact.body.id}`)
+      .send({
+        expectedVersion: 2,
+        country: 'NP',
+        phones: [{ country: 'NP', e164: '+97714123456', label: 'landline', isPrimary: true }],
+      });
+    expect(replaced.status, JSON.stringify(replaced.body)).toBe(200);
+    expect(replaced.body).toMatchObject({
+      country: 'NP',
+      version: 3,
+      phones: [{ country: 'NP', e164: '+97714123456', label: 'landline', isPrimary: true }],
+    });
+    const cleared = await api()
+      .patch(`/v1/vendors/${created.body.id}/contacts/${contact.body.id}`)
+      .send({ expectedVersion: 3, phones: [] });
+    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
+    expect(cleared.body.phones).toEqual([]);
+    expect(
+      await rowOf('SELECT 1 FROM app.vendor_contact_phones WHERE contact_id = $1', [
+        contact.body.id,
+      ]),
+    ).toHaveLength(0);
+  });
+
+  it('refuses a phone list without exactly one primary, or a number of the wrong country', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    for (const phones of [
+      [{ country: 'NP', e164: '+9779812345678', isPrimary: false }],
+      [
+        { country: 'NP', e164: '+9779812345678', isPrimary: true },
+        { country: 'US', e164: '+14155552671', isPrimary: true },
+      ],
+      [{ country: 'NP', e164: '+14155552671', isPrimary: true }],
+    ]) {
+      const bad = await post(`/v1/vendors/${v.id}/contacts`, {
+        name: 'Bad',
+        country: 'NP',
+        phones,
+      });
+      expect(bad.status, JSON.stringify(bad.body)).toBe(400);
+    }
+  });
+
+  it('refuses an address with only a line, and sets or clears the address on edit', async () => {
+    const lineOnly = await createVendor({ address: { line: 'Thamel Marg 12' } });
+    expect(lineOnly.status, JSON.stringify(lineOnly.body)).toBe(400);
+
+    const v = await newVendor();
+    const address = { line: 'Lakeside Road 4', city: 'Pokhara' };
+    const set = await api()
+      .patch(`/v1/vendors/${v.id}`)
+      .send({ expectedVersion: v.version, address });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body.address).toEqual(address);
+    const halfEdit = await api()
+      .patch(`/v1/vendors/${v.id}`)
+      .send({ expectedVersion: set.body.version, address: { line: 'Only a line' } });
+    expect(halfEdit.status).toBe(400);
+    const cleared = await api()
+      .patch(`/v1/vendors/${v.id}`)
+      .send({ expectedVersion: set.body.version, address: null });
+    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
+    expect(cleared.body.address).toBeNull();
+  });
+
+  it('lets a foreign vendor keep a loose tax id on edit, and refuses a short PAN for a Nepal vendor', async () => {
+    const foreign = await createVendor({ kind: 'foreign', country: 'DE', pan: undefined });
+    expect(foreign.status, JSON.stringify(foreign.body)).toBe(201);
+    const taxId = await api()
+      .patch(`/v1/vendors/${foreign.body.id}`)
+      .send({ expectedVersion: foreign.body.version, pan: 'DE-81234567' });
+    expect(taxId.status, JSON.stringify(taxId.body)).toBe(200);
+    expect(taxId.body.pan).toBe('DE-81234567');
+
+    const domestic = await newVendor();
+    const short = await api()
+      .patch(`/v1/vendors/${domestic.id}`)
+      .send({ expectedVersion: domestic.version, pan: '12345' });
+    expect(short.status, JSON.stringify(short.body)).toBe(400);
+    expect((await createVendor({ country: 'NP', pan: '12345' })).status).toBe(400);
+  });
+
+  // Red until the contract's CreateVendorBodySchema takes the loose PanVatNoSchema with a Nepal-only refine
+  // (packages/contracts/src/vendors.ts: `pan: VendorPanSchema` is NepalPanSchema today, so the controller answers 400).
+  it('creates a foreign vendor with a loose tax id', async () => {
+    const res = await createVendor({ kind: 'foreign', country: 'US', pan: 'US-12-3456789' });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.pan).toBe('US-12-3456789');
   });
 });
