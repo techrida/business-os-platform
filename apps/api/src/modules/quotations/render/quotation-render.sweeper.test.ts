@@ -37,7 +37,8 @@ vi.mock('./quotation-html', async (importActual) => {
   return { ...actual, renderQuotationHtml: vi.fn(actual.renderQuotationHtml) };
 });
 
-const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+// The `entity.address` setting: street lines, city and the entity's own country (FX9).
+const address = { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
 const NOW = new Date('2026-11-09T06:00:00.000Z');
 const TX = { marker: 'tx' } as unknown as DbTransaction;
 
@@ -73,7 +74,13 @@ const source = (versionId: string, number = 'QT-2082-0042'): RenderSource => ({
     renderedSha256: null,
   },
   quotation: { number },
-  customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, address },
+  customer: {
+    legalName: 'Himal Traders Pvt. Ltd.',
+    panVatNo: null,
+    country: 'NP',
+    addressLine: '1 Durbar Marg',
+    addressCity: 'Kathmandu',
+  },
   contact: null,
   paymentTerm: null,
   lines: [

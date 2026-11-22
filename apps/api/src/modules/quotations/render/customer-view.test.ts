@@ -12,7 +12,18 @@ import {
   type CustomerViewInput,
 } from './customer-view.js';
 
-const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+// The street lines and city a party block carries; the country is its own field (FX9).
+const address = { line: '1 Durbar Marg', city: 'Kathmandu' };
+// The `entity.address` setting: the issuer's lines with its own country.
+const issuerAddress = { ...address, country: 'NP' };
+// The customer row's columns as the db names them.
+const customer = {
+  legalName: 'Himal Traders Pvt. Ltd.',
+  panVatNo: 'ABC-12345',
+  country: 'NP',
+  addressLine: address.line,
+  addressCity: address.city,
+};
 const versionId = '11111111-1111-4111-8111-111111111111';
 const documentId = '22222222-2222-4222-8222-222222222222';
 
@@ -54,7 +65,7 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
     contentSha256: Buffer.alloc(32, 1),
   } as CustomerViewInput['version'],
   quotation: { number: 'QT-2082-0042' },
-  customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: 'ABC-12345', address },
+  customer,
   contact: { fullName: 'Sita Rai', emailNorm: 'sita@himal.example' },
   paymentTerm: { name: 'Net 30' },
   lines: [
@@ -78,7 +89,7 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
     } as CustomerViewInput['lines'][number],
   ],
   taxSummary: [{ label: 'VAT', rate: '13.0000', base: '540000.00', tax: '70200.00' }],
-  issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', address },
+  issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', address: issuerAddress },
   display: {
     numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
     dateFormat: 'dd/MM/yyyy',
@@ -93,10 +104,16 @@ describe('toCustomerQuotationView', () => {
     expect(view.id).toBe(versionId);
     expect(view.number).toBe('QT-2082-0042');
     expect(view.revisionNo).toBe(2);
-    expect(view.issuer.legalName).toBe('Techrida Pvt. Ltd.');
+    expect(view.issuer).toEqual({
+      legalName: 'Techrida Pvt. Ltd.',
+      panVatNo: '301234567',
+      country: 'NP',
+      address,
+    });
     expect(view.customer).toEqual({
       legalName: 'Himal Traders Pvt. Ltd.',
       panVatNo: 'ABC-12345',
+      country: 'NP',
       address,
     });
     expect(view.contact).toEqual({ fullName: 'Sita Rai', email: 'sita@himal.example' });
@@ -317,7 +334,7 @@ describe('toCustomerQuotationView', () => {
       input({
         contact: null,
         paymentTerm: null,
-        customer: { legalName: 'Walk-in', panVatNo: null, address },
+        customer: { ...customer, legalName: 'Walk-in', panVatNo: null },
       }),
     );
     expect(view.contact).toBeNull();
@@ -328,7 +345,10 @@ describe('toCustomerQuotationView', () => {
   it('refuses malformed row data instead of passing it on', () => {
     const base = input();
     expect(() =>
-      toCustomerQuotationView({ ...base, customer: { ...base.customer, address: { bad: 1 } } }),
+      toCustomerQuotationView({ ...base, customer: { ...base.customer, addressLine: '   ' } }),
+    ).toThrow();
+    expect(() =>
+      toCustomerQuotationView({ ...base, customer: { ...base.customer, country: 'XX' } }),
     ).toThrow();
     expect(() =>
       toCustomerQuotationView({
@@ -339,5 +359,14 @@ describe('toCustomerQuotationView', () => {
     expect(() =>
       toCustomerQuotationView({ ...base, version: { ...base.version, total: 'NaN' } }),
     ).toThrow();
+  });
+
+  it('refuses an issuer address without a country', () => {
+    const base = input();
+    const withIssuerAddress = (raw: unknown) =>
+      toCustomerQuotationView({ ...base, issuer: { ...base.issuer, address: raw } });
+    // The same setting with its country is drawn, so only the missing country is refused.
+    expect(withIssuerAddress({ ...address, country: 'IN' }).issuer.country).toBe('IN');
+    expect(() => withIssuerAddress(address)).toThrow(/country/);
   });
 });
