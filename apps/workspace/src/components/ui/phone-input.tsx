@@ -88,7 +88,12 @@ const INTERNATIONAL_RULES: DigitRules = {
   },
   post: (digits) => (digits === '' ? '' : `+${digits}`),
   maxFor: () => E164_MAX,
-  cleanPaste: (pasted) => pasted.replace(NOISE, '').replace(/^\+/, '').replace(/^00/, ''),
+  cleanPaste: (pasted, whole) => {
+    const bare = pasted.replace(NOISE, '');
+    // The `+` or `00` dialling prefix is only dropped from a whole number; pasted into part of one,
+    // the digits are the user's own (a pasted `0012` keeps its zeros).
+    return whole ? bare.replace(/^\+/, '').replace(/^00/, '') : bare;
+  },
   refuseDigits: (digits) => (digits.startsWith('0') ? CODE_ZERO : null),
   tooLong: () => `A phone number has at most ${E164_MAX} digits, country code included.`,
   problem: (digits) => {
@@ -130,7 +135,18 @@ function fitsNepalBox(stored: string): boolean {
 }
 
 export function PhoneInput(props: PhoneInputProps) {
-  const { value, defaultValue, onValueChange, className, ...rest } = props;
+  const {
+    value,
+    defaultValue,
+    onValueChange,
+    className,
+    edited: editedProp,
+    onEditedChange,
+    ...rest
+  } = props;
+  // Whether the user has edited either box. The box remounts on a country switch, so the flag lives
+  // here: a short draft that comes back is still stopped at submit.
+  const [edited, setEdited] = useState(editedProp ?? false);
   const start = value ?? defaultValue ?? '';
   // A stored number the Nepal box cannot hold (a foreign number, or +977 with too many digits) opens
   // in the international box, where it is shown and posted whole.
@@ -166,6 +182,11 @@ export function PhoneInput(props: PhoneInputProps) {
         onValueChange={(posted) => {
           current.current = posted;
           onValueChange?.(posted);
+        }}
+        edited={edited}
+        onEditedChange={(next) => {
+          setEdited(next);
+          onEditedChange?.(next);
         }}
         rules={international ? INTERNATIONAL_RULES : NEPAL_RULES}
         prefix={international ? '+' : NEPAL_PREFIX}

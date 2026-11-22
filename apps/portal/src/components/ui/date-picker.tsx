@@ -73,6 +73,12 @@ export interface DatePickerProps {
   popoverContainer?: HTMLElement | undefined;
   /** Show the Nepali (BS) date under the field. On by default; a filter row turns it off. */
   showBs?: boolean | undefined;
+  /**
+   * `native` (default): a required, empty or out-of-range picker blocks a plain GET or POST form in the
+   * browser, as any native field does. `aria`: the browser does not block; use it in an action form
+   * that shows its own errors and keeps what the user picked after a refusal.
+   */
+  validation?: 'native' | 'aria' | undefined;
 }
 
 /**
@@ -108,6 +114,7 @@ export function DatePicker({
   className,
   popoverContainer,
   showBs = true,
+  validation = 'native',
   ...aria
 }: DatePickerProps) {
   const bsId = useId();
@@ -145,9 +152,7 @@ export function DatePicker({
     <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
       <AriaDatePicker
         {...optional}
-        // The forms that hold a picker show server errors in place and the hidden input is not what
-        // the browser should block a submit on, so React Aria sets no native validity message.
-        validationBehavior="aria"
+        validationBehavior={validation}
         onChange={(next) => {
           if (isResetting()) return;
           const iso = next ? next.toString() : '';

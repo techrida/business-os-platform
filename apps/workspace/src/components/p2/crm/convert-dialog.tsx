@@ -124,6 +124,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
   // The contract also takes the tax ids of customers abroad, so only a Nepal customer gets the
   // digits-only PAN box.
   const nepalCustomer = (values['country'] ?? '').trim().toUpperCase() === 'NP';
+  const [panEdited, setPanEdited] = useState(false);
   const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
 
   // Keep one key per decision, even when the dialog is closed and reopened. Only a definite
@@ -351,6 +352,8 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                         name="panVatNo"
                         value={values['panVatNo']}
                         onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
+                        edited={panEdited}
+                        onEditedChange={setPanEdited}
                         {...c}
                       />
                     ) : (

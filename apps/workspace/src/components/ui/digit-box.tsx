@@ -64,6 +64,12 @@ export interface DigitBoxProps {
   'aria-labelledby'?: string | undefined;
   'aria-label'?: string | undefined;
   className?: string | undefined;
+  /**
+   * Whether the user has edited the box. A box that remounts (a country switch) is handed the flag it
+   * had, so a short draft is still stopped at submit. Starts false; reported through `onEditedChange`.
+   */
+  edited?: boolean | undefined;
+  onEditedChange?: ((edited: boolean) => void) | undefined;
 }
 
 interface EngineProps extends DigitBoxProps {
@@ -89,6 +95,8 @@ export function DigitBox({
   'aria-labelledby': labelledBy,
   'aria-label': ariaLabel,
   className,
+  edited,
+  onEditedChange,
   rules,
   prefix,
 }: EngineProps) {
@@ -131,7 +139,7 @@ export function DigitBox({
   });
 
   // True once the user has edited the box. A stored value nobody touched is never blocked at submit.
-  const touched = useRef(false);
+  const touched = useRef(edited ?? false);
   const pendingCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -176,6 +184,7 @@ export function DigitBox({
   }
 
   function accept(next: string, caret: number | null) {
+    if (!touched.current) onEditedChange?.(true);
     touched.current = true;
     clearNotice();
     commit(next);
@@ -186,6 +195,7 @@ export function DigitBox({
   }
 
   useFormReset(rootRef, () => {
+    if (touched.current) onEditedChange?.(false);
     touched.current = false;
     clearNotice();
     const next = rules.parse(controlled ? value : (defaultValue ?? ''));

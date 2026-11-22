@@ -277,3 +277,51 @@ describe('PhoneInput, another country', () => {
     expect(phone.hidden()).toBe('+4915112345678');
   });
 });
+
+describe('PhoneInput, drafts and pastes that used to slip through', () => {
+  it('keeps the zeros of an international paste that replaces part of a number', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+12025550123" />,
+    );
+    phone.box().setSelectionRange(8, 12);
+    await paste(phone.box(), '0012');
+    expect(phone.box().value).toBe('12025550012');
+    expect(phone.hidden()).toBe('+12025550012');
+    // A whole number still loses its dialling prefix.
+    await fill(phone.box(), '');
+    await paste(phone.box(), '0014155550123');
+    expect(phone.box().value).toBe('14155550123');
+  });
+
+  it('still stops a short Nepal number after a switch to another country and back', async () => {
+    const phone = await mount(<PhoneInput aria-label="Phone" name="phone" />);
+    const reached = vi.fn();
+    phone.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await typeKeys(phone.box(), '981234567');
+    await phone.switchCountry();
+    await phone.switchCountry();
+    expect(phone.box().value).toBe('981234567');
+    await submit(phone.container);
+    expect(reached).toHaveBeenCalledWith(true);
+    expect(phone.status()).toBe('A mobile number has 10 digits; this has 9.');
+    expect(document.activeElement).toBe(phone.box());
+  });
+
+  it('lets a stored short number through untouched even after a switch and back', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="+977981234567" />,
+    );
+    const reached = vi.fn();
+    phone.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await phone.switchCountry();
+    await phone.switchCountry();
+    await submit(phone.container);
+    expect(reached).toHaveBeenCalledWith(false);
+  });
+});
