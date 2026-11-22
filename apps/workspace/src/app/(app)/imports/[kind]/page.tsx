@@ -143,7 +143,13 @@ export default async function ImportPage({
                         {batch.fileName}
                       </Link>
                     </Td>
-                    <Td>{batch.status === 'committed' ? 'Imported' : 'Not imported yet'}</Td>
+                    <Td>
+                      {batch.status === 'committed'
+                        ? 'Imported'
+                        : batch.status === 'expired'
+                          ? 'Expired'
+                          : 'Not imported yet'}
+                    </Td>
                     <Td align="end">{batch.rowCount}</Td>
                     <Td align="end">{batch.createdCount}</Td>
                   </tr>

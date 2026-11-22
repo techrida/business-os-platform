@@ -84,6 +84,7 @@ import {
 } from './documents.ports';
 import { isTenantWideImageOwner, TENANT_WIDE_IMAGE_OWNERS } from './image-scope';
 import { GENERATED_ENGINE, markVersionClean, stillQuarantined } from './mark-version-clean';
+import { ScanQueueDeferredError } from './scan-queue-deferred.error';
 import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
 import {
@@ -489,8 +490,8 @@ export class DocumentsService {
    * the owner's type and size rules; it commits before the receive, which opens its own transactions.
    * Returns the ids; the version is `quarantined` until the scan worker marks it clean.
    *
-   * If the receive fails after the create committed (wrong type: the version ends `rejected`; queue down: it is
-   * back to `awaiting_content`), the live document stays behind and the error is thrown without its ids.
+   * If the receive fails after the create committed (wrong type: the version ends `rejected`; queue down: it stays
+   * `quarantined` with its bytes for the sweeper), the live document stays behind and the error is thrown without its ids.
    */
   async createAndReceiveScanned(
     owner: { ownerType: string; ownerId: string },
@@ -503,13 +504,18 @@ export class DocumentsService {
     const created = await withTx(this.db, who.scope, who.actor, (tx) =>
       this.createGenerated(tx, owner, file),
     );
-    await this.receiveInternal(
-      created.versionId,
-      Readable.from(file.bytes),
-      file.bytes.length,
-      { documentId: created.documentId, who },
-      { skipScan: false },
-    );
+    try {
+      await this.receiveInternal(
+        created.versionId,
+        Readable.from(file.bytes),
+        file.bytes.length,
+        { documentId: created.documentId, who },
+        { skipScan: false },
+      );
+    } catch (error) {
+      // Received and kept: the sweeper queues its scan, so the document stands.
+      if (!(error instanceof ScanQueueDeferredError)) throw error;
+    }
     return created;
   }
 
@@ -559,6 +565,11 @@ export class DocumentsService {
           `upload of document ${created.documentId} failed and it could not be removed: ${describe(cleanup)}`,
         );
       }
+      // The picture is removed with its bytes and the sweeper skips removed documents, so no scan will follow.
+      if (error instanceof ScanQueueDeferredError)
+        throw new ServiceUnavailableException(
+          'The picture could not be queued for its virus scan and was not saved. Upload it again.',
+        );
       throw error;
     }
     return { documentId: created.documentId, versionId: created.versionId };
@@ -818,7 +829,8 @@ export class DocumentsService {
       }
       await tx
         .update(documentVersions)
-        .set({ status: 'quarantined', updatedAt: new Date() })
+        // A retry starts from nothing recorded: a validation marker is only ever written by this upload's own step 4.
+        .set({ status: 'quarantined', detectedMime: null, updatedAt: new Date() })
         .where(s.where(documentVersions, eq(documentVersions.id, versionId)));
       return found;
     });
@@ -869,7 +881,12 @@ export class DocumentsService {
           detectedMime: verdict.detectedMime,
           updatedAt: new Date(),
         })
-        .where(s.where(documentVersions, eq(documentVersions.id, versionId)))
+        .where(
+          s.where(
+            documentVersions,
+            and(eq(documentVersions.id, versionId), eq(documentVersions.status, 'quarantined')),
+          ),
+        )
         .returning();
       if (saved === undefined) throw new NotFoundException('Version not found');
       return saved;
@@ -892,13 +909,14 @@ export class DocumentsService {
         jobId: versionId,
       });
     } catch (error) {
-      // Without a job the file would sit in quarantine forever. Undo, so the client can simply retry.
-      this.logger.error(`could not queue the scan for version ${versionId}: ${describe(error)}`);
-      await this.storage.removeQuarantine(version.storageKey);
-      await this.reopen(who, version);
-      throw new ServiceUnavailableException(
-        'The virus scanner queue is unavailable. Try again shortly.',
+      // The bytes are stored and the version already holds their sha256 and `quarantined`, so the file is kept
+      // (round 5, FU11): undoing it could end as a quarantined version with a sha256 and no bytes if the undo itself
+      // half failed. The stuck-scan sweeper re-queues every version quarantined for over 15 minutes with no live
+      // job, so the scan still happens. Sending the content again is a 409, as the content was received.
+      this.logger.error(
+        `could not queue the scan for version ${versionId}, the sweeper will: ${describe(error)}`,
       );
+      throw new ScanQueueDeferredError(toVersionDto(updated));
     }
     return toVersionDto(updated);
   }

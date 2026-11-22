@@ -1,4 +1,4 @@
-// The Drizzle schema of 0176_party_import_batches (src/schema/party-imports.ts) must describe the SQL: the same
+// The Drizzle schema of 0176_party_import_batches and its 0185 expiry change (src/schema/party-imports.ts) must describe the SQL: the same
 // columns, foreign keys (name, columns, parent table and parent columns), unique keys and indexes (name and columns)
 // and checks (name only), and the status allow-list must equal the exported catalogue. No database needed.
 // Run with: pnpm --filter @bos/db exec vitest run src/party-imports-schema.test.ts
@@ -15,6 +15,11 @@ import {
 
 const SQL_TEXT = readFileSync(
   new URL('../migrations/0176_party_import_batches.sql', import.meta.url),
+  'utf8',
+);
+/** 0185 (round 5, FU11) adds the `expired` status: it re-creates two checks and adds one index. */
+const EXPIRY_SQL = readFileSync(
+  new URL('../migrations/0185_party_import_batches_expiry.sql', import.meta.url),
   'utf8',
 );
 
@@ -130,8 +135,17 @@ const sorted = (shape: Shape): Shape => ({
 
 const DRIZZLE: Record<string, PgTable> = { party_import_batches: partyImportBatches };
 
-describe('0176_party_import_batches and src/schema/party-imports.ts', () => {
+describe('0176_party_import_batches + 0185 and src/schema/party-imports.ts', () => {
   const parsed = parseSql(SQL_TEXT);
+  // Apply 0185 on top of 0176: a dropped constraint leaves, then what it adds is read like any other statement.
+  const expiry = parseSql(EXPIRY_SQL).get('party_import_batches') ?? empty();
+  const base = parsed.get('party_import_batches');
+  if (base !== undefined) {
+    const dropped = [...EXPIRY_SQL.matchAll(/DROP CONSTRAINT "(\w+)"/g)].map((m) => m[1]);
+    base.names.check = base.names.check.filter((n) => !dropped.includes(n));
+    for (const kind of Object.keys(expiry.names) as Kind[])
+      base.names[kind].push(...expiry.names[kind]);
+  }
 
   it('creates one table', () => {
     expect([...parsed.keys()]).toEqual(['party_import_batches']);
@@ -145,12 +159,16 @@ describe('0176_party_import_batches and src/schema/party-imports.ts', () => {
   });
 
   it('keeps the kind and status allow-lists equal to the exported catalogues', () => {
-    const list = (name: string) => {
-      const line = new RegExp(`CONSTRAINT "${name}" CHECK \\((.*)\\)[,;]?$`, 'm').exec(SQL_TEXT);
+    const listIn = (text: string, name: string) => {
+      const line = new RegExp(`CONSTRAINT "${name}" CHECK \\((.*)\\)[,;]?$`, 'm').exec(text);
       return [...(line?.[1] ?? '').matchAll(/'(\w+)'/g)].map((m) => m[1]);
     };
-    expect(list('party_import_batches_kind_check')).toEqual([...PARTY_IMPORT_BATCH_KINDS]);
-    expect(list('party_import_batches_status_check')).toEqual([...PARTY_IMPORT_BATCH_STATUSES]);
+    expect(listIn(SQL_TEXT, 'party_import_batches_kind_check')).toEqual([
+      ...PARTY_IMPORT_BATCH_KINDS,
+    ]);
+    expect(listIn(EXPIRY_SQL, 'party_import_batches_status_check')).toEqual([
+      ...PARTY_IMPORT_BATCH_STATUSES,
+    ]);
   });
 
   it('is audited with its uploaded rows redacted, and guarded against change after the commit', () => {

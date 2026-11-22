@@ -10,11 +10,20 @@
 // version's open approval request is cancelled first, with the same reason, so it leaves every inbox. An Approved
 // or Sent version is not cancelled here: it has been, or may be, shown to the customer.
 //
+// Lost opportunity: cancelOnLost() ends the opportunity's one live version per quotation inside the transaction that
+// marks the deal Lost (QuotationLostHandler, the OpportunityLostHandler the module registers at start). It reuses the
+// same write as the route (applyCancel: approval request, version, quotation row, history, audit) but, being a
+// consequence of the loss and not a user's Cancel, it also ends an Approved or Sent version (the customer must stop
+// being able to accept; QUOTATION_TRANSITIONS `cancel_on_lost`). Accepted, rejected, expired, superseded and
+// already-cancelled versions are final and stay as they are. No record-level authz runs: the user's right to mark
+// the deal Lost was checked by the opportunity route; the actor is that user. Any error rolls the loss back.
+//
 // Lock order: the tenant audit lock (withTx takes it first), then the quotation row, the approval request
 // (ApprovalsService.cancel) and the version (the final UPDATE). ApprovalsService.act also starts with the tenant audit
 // lock, so an approver deciding while the owner cancels waits for it instead of deadlocking on the request; whichever
 // commits second gets 409.
 import {
+  canCancelOnLost,
   canCancelQuotation,
   type CancelQuotationBody,
   type Permission,
@@ -109,6 +118,57 @@ export class CancelService {
     return versionVisibleTo(principal, dto);
   }
 
+  /**
+   * The Lost cascade: ends the live version of every quotation of `opportunityId` (see the header). Runs in the
+   * opportunity's transaction, as the user who marked it Lost. Returns the ids of the quotations it cancelled.
+   */
+  async cancelOnLost(
+    tx: DbTransaction,
+    scope: TxScope,
+    actor: Actor,
+    opportunityId: string,
+    lostReason: string,
+  ): Promise<string[]> {
+    const now = this.clock();
+    const reason =
+      lostReason.trim() === ''
+        ? 'Opportunity marked lost'
+        : `Opportunity marked lost: ${lostReason}`;
+    // In id order, so two cascades never take the rows in opposite orders.
+    const rows = await tx
+      .select()
+      .from(quotations)
+      .where(scoped(scope).where(quotations, eq(quotations.opportunityId, opportunityId)))
+      .orderBy(asc(quotations.id))
+      .for('update');
+    const cancelledIds: string[] = [];
+    for (const quotation of rows) {
+      if (quotation.currentVersionId === null) continue;
+      const [old] = await tx
+        .select()
+        .from(quotationVersions)
+        .where(
+          scoped(scope).where(
+            quotationVersions,
+            and(
+              eq(quotationVersions.id, quotation.currentVersionId),
+              eq(quotationVersions.quotationId, quotation.id),
+            ),
+          ),
+        );
+      if (old === undefined) {
+        throw new Error(`quotation ${quotation.number}: current version is missing`);
+      }
+      if (!canCancelOnLost(old.status)) continue;
+      await this.applyCancel(tx, scope, actor, quotation, old, reason, now, {
+        cause: 'opportunity_lost',
+        opportunityId,
+      });
+      cancelledIds.push(quotation.id);
+    }
+    return cancelledIds;
+  }
+
   private async cancelInTx(
     tx: DbTransaction,
     scope: TxScope,
@@ -151,7 +211,54 @@ export class CancelService {
         `A ${old.status} quotation cannot be cancelled; only a draft, returned or submitted one can`,
       );
     }
-    const reason = body.reason;
+    const { cancelled } = await this.applyCancel(
+      tx,
+      scope,
+      actor,
+      quotation,
+      old,
+      body.reason,
+      now,
+    );
+
+    const lines = await tx
+      .select()
+      .from(quotationLines)
+      .where(and(eq(quotationLines.tenantId, scope.tenantId), eq(quotationLines.versionId, old.id)))
+      .orderBy(asc(quotationLines.lineNo));
+    const taxSummary = await tx
+      .select()
+      .from(quotationTaxSummary)
+      .where(
+        and(
+          eq(quotationTaxSummary.tenantId, scope.tenantId),
+          eq(quotationTaxSummary.versionId, old.id),
+        ),
+      );
+    return toQuotationVersionDto({
+      quotation: { number: quotation.number, customerPartyId: quotation.customerPartyId },
+      version: cancelled,
+      lines,
+      taxSummary,
+      renderedScanStatus: null,
+    });
+  }
+
+  /**
+   * The one write of a cancel, shared by the route and the Lost cascade: the open approval request of a Submitted
+   * version, the version (guarded on the status and row version the caller read), the quotation row, one history
+   * row and one audit event. `meta` goes onto the audit event.
+   */
+  private async applyCancel(
+    tx: DbTransaction,
+    scope: TxScope,
+    actor: Actor,
+    quotation: typeof quotations.$inferSelect,
+    old: typeof quotationVersions.$inferSelect,
+    reason: string,
+    now: Date,
+    meta?: Record<string, unknown>,
+  ): Promise<{ cancelled: typeof quotationVersions.$inferSelect }> {
     const actorId = actor.kind === 'user' ? actor.id : null;
 
     // (1) A Submitted version's open approval request is cancelled with the same reason (it locks the request).
@@ -228,29 +335,9 @@ export class CancelService {
         reason,
         cancelledApprovalRequestId: cancelledRequestId,
       },
+      ...(meta === undefined ? {} : { meta }),
     });
-
-    const lines = await tx
-      .select()
-      .from(quotationLines)
-      .where(and(eq(quotationLines.tenantId, scope.tenantId), eq(quotationLines.versionId, old.id)))
-      .orderBy(asc(quotationLines.lineNo));
-    const taxSummary = await tx
-      .select()
-      .from(quotationTaxSummary)
-      .where(
-        and(
-          eq(quotationTaxSummary.tenantId, scope.tenantId),
-          eq(quotationTaxSummary.versionId, old.id),
-        ),
-      );
-    return toQuotationVersionDto({
-      quotation: { number: quotation.number, customerPartyId: quotation.customerPartyId },
-      version: cancelled,
-      lines,
-      taxSummary,
-      renderedScanStatus: null,
-    });
+    return { cancelled };
   }
 
   /**
