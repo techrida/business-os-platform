@@ -1,11 +1,10 @@
 'use client';
 
 import {
-  DecimalString,
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   ROLE_KEYS,
-  WORKFLOW_AMOUNT_ERROR,
   WorkflowSpecSchema,
+  workflowAmountIssue,
   type RoleKey,
   type StepKind,
 } from '@bos/contracts';
@@ -657,11 +656,10 @@ export function WorkflowEditor({
                             )}
                           </Field>
                           <Field
-                            label="Amount (NPR)"
+                            label="Amount"
                             error={
-                              issues.length > 0 &&
-                              !DecimalString.safeParse(rule.value.trim()).success
-                                ? WORKFLOW_AMOUNT_ERROR
+                              issues.length > 0
+                                ? (workflowAmountIssue(rule.value.trim()) ?? undefined)
                                 : undefined
                             }
                           >

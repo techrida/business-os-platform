@@ -196,9 +196,36 @@ describe('valuesFromDto', () => {
       description: 'd',
       specification: '',
       uom: 'kg',
-      quantity: '2.5000',
+      quantity: '2.5',
       estimatedUnitPrice: '10.00',
     });
     expect(emptyLine().quantity).toBe('');
+  });
+
+  it('starts the editor from a stored value without its extra zeros', () => {
+    const v = valuesFromDto({
+      requestType: 'goods',
+      departmentId: DEPT,
+      costCenterId: COST,
+      justification: 'x',
+      requiredBy: '2026-12-01',
+      deliveryLocation: null,
+      budgetCode: 'B',
+      projectId: null,
+      currency: 'NPR',
+      isEmergency: false,
+      emergencyReason: null,
+      lines: [
+        {
+          description: 'd',
+          specification: null,
+          uom: 'pcs',
+          quantity: '100000.000',
+          estimatedUnitPrice: '100000.000',
+        },
+      ],
+    });
+    expect(v.lines[0]?.quantity).toBe('100000');
+    expect(v.lines[0]?.estimatedUnitPrice).toBe('100000.00');
   });
 });

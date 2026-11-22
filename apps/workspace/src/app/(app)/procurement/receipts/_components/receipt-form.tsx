@@ -246,7 +246,7 @@ export function ReceiptForm({
                       {l.hasRoom ? (
                         <>
                           <Field
-                            label={lineLabel(`Quantity received (${l.uom})`)}
+                            label={lineLabel('Quantity received')}
                             error={errors[`${l.poLineId}.quantity`]}
                           >
                             {(c) => (

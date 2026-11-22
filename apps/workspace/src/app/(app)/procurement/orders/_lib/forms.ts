@@ -1,4 +1,7 @@
 import type { AmendPurchaseOrderBody } from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
+
+import { storedNumberText } from '../../_lib/stored-number';
 
 /**
  * Checks of the purchase order forms, before anything is sent. Pure. Amounts are compared as scaled
@@ -18,7 +21,6 @@ export function toScaled(value: string, scale: number): bigint | null {
 
 /** A number typed with a space inside (`10 50`), which toScaled refuses: the fix is to remove the space. */
 const SPACED = /\S\s+\S/;
-const REMOVE_SPACE = 'Remove the space inside the number.';
 
 export function parseReason(raw: string, max = 500): Parsed<string> {
   const reason = raw.trim();
@@ -64,7 +66,7 @@ export function parseAmend(
     let bad = false;
     if (q === null) {
       errors[`${line.id}.quantity`] = SPACED.test(quantity)
-        ? REMOVE_SPACE
+        ? NO_SPACES
         : 'Use a number with up to 4 decimal places.';
       bad = true;
     } else if (q === 0n) {
@@ -73,13 +75,13 @@ export function parseAmend(
     }
     if (p === null) {
       errors[`${line.id}.unitPrice`] = SPACED.test(unitPrice)
-        ? REMOVE_SPACE
+        ? NO_SPACES
         : 'Use an amount such as 1250.50, with up to 2 decimal places.';
       bad = true;
     }
     if (bad || q === null || p === null) continue;
-    const qChanged = q !== toScaled(line.orderedQuantity, 4);
-    const pChanged = p !== toScaled(line.unitPrice, 2);
+    const qChanged = q !== toScaled(storedNumberText(line.orderedQuantity, 4), 4);
+    const pChanged = p !== toScaled(storedNumberText(line.unitPrice, 2), 2);
     if (qChanged || pChanged) {
       lines.push({
         poLineId: line.id,
@@ -94,7 +96,7 @@ export function parseAmend(
   if (termsText !== '') {
     if (!/^\d{1,3}$/.test(termsText) || Number(termsText) > 365) {
       errors['paymentTermsDays'] = SPACED.test(termsText)
-        ? REMOVE_SPACE
+        ? NO_SPACES
         : 'Use a whole number of days from 0 to 365.';
     } else if (Number(termsText) !== currentTerms) {
       terms = Number(termsText);

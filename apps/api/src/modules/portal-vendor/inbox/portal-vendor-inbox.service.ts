@@ -82,6 +82,7 @@ import {
   RFQ_DEADLINE_PASSED,
   RFQ_DEADLINE_PASSED_MESSAGE,
 } from '../../procurement/sourcing/sourcing.rules';
+import { assertInvoiceDateByToday } from '../../payables/bills/vendor-bill.rules';
 import { VERIFICATION_OWNER_TYPE } from '../../verification/verification.types';
 import { stripAccountSpaces } from '../../vendors/bank/bank.rules';
 import { VendorBankService } from '../../vendors/bank/bank.service';
@@ -144,6 +145,9 @@ function invalid(what: string, error: z.ZodError): BadRequestException {
 /** File versions whose bytes arrived (scanning or scanned clean); anything else is not a submittable file. */
 const RECEIVED_STATUSES = ['quarantined', 'clean'] as const;
 
+/** Injection token for a test clock; production falls back to the system time. */
+export const VENDOR_PORTAL_INBOX_CLOCK = Symbol('VENDOR_PORTAL_INBOX_CLOCK');
+
 @Injectable()
 export class VendorPortalInboxService {
   constructor(
@@ -158,6 +162,9 @@ export class VendorPortalInboxService {
     private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(
       new SettingsService(db),
     ),
+    @Optional()
+    @Inject(VENDOR_PORTAL_INBOX_CLOCK)
+    private readonly clock: () => Date = () => new Date(),
   ) {}
 
   // ---------------------------------------------------------------------------------------------- KYC documents
@@ -440,6 +447,7 @@ export class VendorPortalInboxService {
     const parsed = VendorBillSubmissionBodySchema.safeParse(body);
     if (!parsed.success) throw invalid('bill submission', parsed.error);
     const b = parsed.data;
+    assertInvoiceDateByToday(b.invoiceDate, this.clock());
     const refusal = await this.currencyRefusal(who.scope, b.currency);
     const done = await withTx(this.db, who.scope, who.actor, (tx) =>
       withIdempotency(

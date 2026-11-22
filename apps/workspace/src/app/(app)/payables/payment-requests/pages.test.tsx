@@ -175,7 +175,7 @@ it('shows an empty state when all approved bill balances are claimed', async () 
   api.listPaymentRequestItems.mockResolvedValue([]);
   const html = renderToStaticMarkup(await NewPage());
   expect(html).toContain('No approved bill balances');
-  expect(html).not.toContain('Create draft request');
+  expect(html).not.toContain('Review request');
 });
 
 // U15b-Q6: a balance held back because the vendor has no verified bank account is named, with what to do.
@@ -209,7 +209,7 @@ it('says the vendor has no verified bank account, not that balances were claimed
   expect(text).not.toContain('Propose a bank account');
   expect(html).toContain(`href="/vendors/${otherVendor}"`);
   expect(text).not.toContain('claimed the remaining balances');
-  expect(html).not.toContain('Create draft request');
+  expect(html).not.toContain('Review request');
 });
 
 it('words the fix for a reader who may propose a bank account, and links vendors only for vendor readers', async () => {
@@ -247,7 +247,7 @@ it('explains a ?bill= of a vendor without a bank account while other bills stay 
   expect(text).toContain('This bill cannot be requested yet');
   expect(text).toContain('BILL-9 from Everest Traders cannot be requested yet');
   // The other vendor's balance is still offered.
-  expect(html).toContain('Create draft request');
+  expect(html).toContain('Review request');
   // No note for a bill that can be requested.
   const ok = plain(
     renderToStaticMarkup(await NewPage({ searchParams: Promise.resolve({ bill: id }) })),
@@ -458,14 +458,18 @@ it('pins Status and a View action to each row, named per row, with rows per page
   expect(html).toContain('aria-label="Rows per page"');
 });
 
-it('puts Cancel and Create draft request in the heading, submitting the form from outside it', async () => {
+it('puts Cancel and Review request in the heading, opening a review dialog before the form is sent', async () => {
   const html = renderToStaticMarkup(await NewPage());
   const formId = /<form id="([^"]+)"/.exec(html)?.[1];
   expect(formId).toBeTruthy();
+  // The heading button is the form's submit button (so Enter in a field reaches it); the submit opens the review
+  // and only its Confirm sends the form.
   expect(html).toMatch(
-    new RegExp(`<button type="submit"[^>]*form="${formId}"[^>]*>Create draft request<`),
+    new RegExp(
+      `<button type="submit"[^>]*form="${formId}"[^>]*aria-haspopup="dialog"[^>]*>Review request<`,
+    ),
   );
-  expect(html.indexOf('Create draft request')).toBeLessThan(html.indexOf(`<form id="${formId}"`));
+  expect(html.indexOf('Review request')).toBeLessThan(html.indexOf(`<form id="${formId}"`));
   expect(html.match(/<h1/g)).toHaveLength(1);
 });
 

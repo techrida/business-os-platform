@@ -879,3 +879,77 @@ describe('another entity', () => {
     expect(codeOf(err)).toBe('po_line_unknown');
   });
 });
+
+describe('receipt date (FX6 #6): today in Kathmandu at the latest', () => {
+  // Kathmandu is UTC+05:45, so its day turns at 18:15 UTC.
+  const lastSecondOfNov9 = new Date('2026-11-09T18:14:59Z');
+  const firstSecondOfNov10 = new Date('2026-11-09T18:15:00Z');
+  let at = lastSecondOfNov9;
+  const clocked = () =>
+    new ReceiptsService(
+      db,
+      authz as unknown as AuthzService,
+      new AuditService(db),
+      new NumberingService(),
+      caller,
+      () => at,
+    );
+  const dated = (po: Po, receivedAt: string): CreateReceiptBody => ({
+    ...draftBody(po, [{ poLineId: po.goods, quantity: '1' }]),
+    receivedAt,
+  });
+  const receiptsOf = (po: Po) =>
+    read((tx) => tx.select().from(receipts).where(eq(receipts.purchaseOrderId, po.id)));
+
+  it('takes today and refuses tomorrow on create, with 422 RECEIPT_DATE_IN_FUTURE, writing nothing', async () => {
+    const po = await newPo();
+    at = lastSecondOfNov9;
+    const svc = clocked();
+
+    const refused = await httpErrorOf(svc.create(dated(po, '2026-11-10'), randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'RECEIPT_DATE_IN_FUTURE',
+      details: { receivedAt: '2026-11-10', today: '2026-11-09' },
+    });
+    expect(await receiptsOf(po)).toEqual([]);
+
+    const ok = await svc.create(dated(po, '2026-11-09'), randomUUID());
+    expect(ok).toMatchObject({ status: 'draft', receivedAt: '2026-11-09' });
+  });
+
+  it('follows the Kathmandu day, not the UTC one, at its midnight', async () => {
+    const po = await newPo();
+    // 18:15 UTC on 9 November is already 10 November in Kathmandu.
+    at = firstSecondOfNov10;
+    const svc = clocked();
+    expect(await svc.create(dated(po, '2026-11-10'), randomUUID())).toMatchObject({
+      receivedAt: '2026-11-10',
+    });
+    expect(codeOf(await httpErrorOf(svc.create(dated(po, '2026-11-11'), randomUUID())))).toBe(
+      'RECEIPT_DATE_IN_FUTURE',
+    );
+  });
+
+  it('refuses to confirm a draft dated after the day it is confirmed, and confirms it once that day comes', async () => {
+    const po = await newPo();
+    at = lastSecondOfNov9;
+    const svc = clocked();
+    const draft = await svc.create(dated(po, '2026-11-09'), randomUUID());
+    // A draft saved before the rule, or edited outside the API, can carry a later date.
+    await ownerRun(
+      scopeA.organizationId,
+      `UPDATE app.receipts SET received_at = $1 WHERE id = $2`,
+      ['2026-11-10', draft.id],
+    );
+
+    const refused = await httpErrorOf(svc.confirm(draft.id, randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('RECEIPT_DATE_IN_FUTURE');
+    const [row] = await read((tx) => tx.select().from(receipts).where(eq(receipts.id, draft.id)));
+    expect(row).toMatchObject({ status: 'draft', confirmedAt: null });
+
+    at = firstSecondOfNov10;
+    expect(await svc.confirm(draft.id, randomUUID())).toMatchObject({ status: 'confirmed' });
+  });
+});

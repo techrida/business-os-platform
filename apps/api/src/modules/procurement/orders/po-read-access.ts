@@ -18,6 +18,7 @@ import {
   purchaseRequestRef,
   purchaseRequestScopeWhere,
 } from '../requests/purchase-requests.service';
+import { PO_VENDOR_CHANGE_DOCUMENT_TYPE } from './po-vendor-change.rules';
 import { PO_AMENDMENT_DOCUMENT_TYPE } from './purchase-order.rules';
 
 /** Issue, amend, short-close and cancel; also reads every order of the entity. */
@@ -96,8 +97,9 @@ export function poReadWhere(p: Principal): SQL | undefined {
 const STEP_DECISIONS = ['approve', 'return', 'reject'] as const;
 
 /**
- * May `p` open order `poId` as an approver of an approval about it (R4f Q1 b)? Read-only, the detail only. Two kinds
- * point at an order: an emergency review (document id = the order) and an amendment (the order is in its snapshot).
+ * May `p` open order `poId` as an approver of an approval about it (R4f Q1 b)? Read-only, the detail only. Three kinds
+ * point at an order, the ones whose approval context links it: an emergency review (document id = the order), an
+ * amendment and a vendor change (the order is in their snapshot).
  * True when `p` decided a step of one, themselves or as the person a delegate acted for, whatever the request's status
  * since (an approver may look back at what they decided), or when one waits in `p`'s inbox now. A step not yet
  * active grants nothing. `pendingInbox` is ApprovalsService.inbox(), whose rules pick who may decide now; it is only
@@ -132,6 +134,10 @@ export async function approvesPo(
           and(
             eq(approvalRequests.documentType, PO_AMENDMENT_DOCUMENT_TYPE),
             sql`lower(${approvalRequests.snapshot} -> 'amendment' ->> 'purchaseOrderId') = ${poId.toLowerCase()}`,
+          ),
+          and(
+            eq(approvalRequests.documentType, PO_VENDOR_CHANGE_DOCUMENT_TYPE),
+            sql`lower(${approvalRequests.snapshot} -> 'vendorChange' ->> 'purchaseOrderId') = ${poId.toLowerCase()}`,
           ),
         ),
       ),

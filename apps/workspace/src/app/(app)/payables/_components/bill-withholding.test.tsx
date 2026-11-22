@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
 vi.mock('../actions', () => ({ convertSubmissionAction: vi.fn(), createBillAction: vi.fn() }));
+import { withholdingOption } from '../_lib/forms';
 import { BillEntryForm } from './bill-entry-form';
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
@@ -49,6 +50,53 @@ describe('bill withholding selection', () => {
     expect(field().value).toBe('');
     expect(container.querySelector('[name="line:0:accountId"]')).not.toBeNull();
     expect(container.textContent).not.toContain('Withholding code ID');
+  });
+});
+
+describe('withholding options with their rate', () => {
+  it('shows each code with its rate and posts the picked code id', async () => {
+    const RENT = '66666666-6666-4666-8666-666666666666';
+    // The codes as the API sends them, labelled by the same helper the bill pages use.
+    const codes = [
+      {
+        id: RENT,
+        code: 'TDS-5',
+        name: 'Rent',
+        rateBp: 500,
+        effectiveFrom: '2026-07-17',
+        effectiveTo: null,
+      },
+      {
+        id: '77777777-7777-4777-8777-777777777777',
+        code: 'TDS-1.5',
+        name: 'Services',
+        rateBp: 150,
+        effectiveFrom: '2026-07-17',
+        effectiveTo: null,
+      },
+    ].map(withholdingOption);
+    mounted = await mountForm(
+      <BillEntryForm
+        idempotencyKey="key"
+        orderLines={[]}
+        taxCodes={[]}
+        withholdingCodes={codes}
+        cancelHref="/payables/bills"
+        reloadHref="/payables/bills/new"
+      />,
+    );
+    const { container } = mounted;
+    const field = () =>
+      container.querySelector<HTMLInputElement>('input[name="line:0:tdsCodeId"]')!;
+    await click(field().parentElement!.querySelector('button'));
+    const shown = Array.from(document.querySelectorAll('[role="option"]')).map((o) =>
+      o.textContent?.trim(),
+    );
+    expect(shown).toEqual(['No withholding', 'TDS-5 - Rent (5%)', 'TDS-1.5 - Services (1.5%)']);
+    await click(field().parentElement!.querySelector('button'));
+    await choose(container, 'line:0:tdsCodeId', 'TDS-5 - Rent (5%)');
+    expect(field().value).toBe(RENT);
+    expect(new FormData(container.querySelector('form')!).get('line:0:tdsCodeId')).toBe(RENT);
   });
 });
 

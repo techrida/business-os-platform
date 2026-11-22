@@ -1,8 +1,9 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { Field, Input, Textarea } from '@/components/ui/field';
@@ -227,6 +228,9 @@ export function DelegationForm({
 }) {
   const [state, formAction, pending] = useActionState(createDelegationAction, IDLE);
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
+  // Controlled, so the form reset React runs after every action keeps the times a refusal sent back.
+  const [startsAt, setStartsAt] = useState('');
+  const [endsAt, setEndsAt] = useState('');
   return (
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
@@ -246,23 +250,23 @@ export function DelegationForm({
       <div className={styles.formRow}>
         <Field label="Starts">
           {(control) => (
-            <Input
+            <DateTimePicker
               {...control}
-              type="datetime-local"
               name="startsAt"
+              value={startsAt}
+              onChange={setStartsAt}
               required
-              defaultValue={kept.startsAt ?? ''}
             />
           )}
         </Field>
         <Field label="Ends">
           {(control) => (
-            <Input
+            <DateTimePicker
               {...control}
-              type="datetime-local"
               name="endsAt"
+              value={endsAt}
+              onChange={setEndsAt}
               required
-              defaultValue={kept.endsAt ?? ''}
             />
           )}
         </Field>

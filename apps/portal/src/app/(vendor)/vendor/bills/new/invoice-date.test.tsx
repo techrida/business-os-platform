@@ -103,7 +103,8 @@ describe('portal bill invoice date default (TR-Q12a)', () => {
     vi.setSystemTime(new Date('2026-11-19T20:00:00Z'));
     const input = invoiceDateInput(await render());
     expect(attr(input, 'value')).toBe('2026-11-20');
-    expect(attr(input, 'max')).toBe('2026-11-20');
+    // The not-after-today limit lives in the DatePicker; bill-form.test.tsx types a later date.
+    expect(input).not.toMatch(/type="date"/);
   });
 
   it('stays editable: the field is neither read-only nor disabled', async () => {

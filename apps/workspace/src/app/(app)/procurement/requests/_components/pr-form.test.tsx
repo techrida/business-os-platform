@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { choose, click, fill, mountForm, submit, typeKeys } from '@/test/form-interactions';
-import { EMPTY_PR_VALUES, valuesFromForm } from '../_lib/forms';
+import { EMPTY_PR_VALUES, valuesFromDto, valuesFromForm } from '../_lib/forms';
 import { PrForm } from './pr-form';
 
 const PROJECT = '11111111-1111-4111-8111-111111111111';
@@ -259,6 +259,64 @@ describe('line items', () => {
     expect(
       mounted.container.querySelector<HTMLInputElement>('input[name="lines.0.description"]')!.value,
     ).toBe('Desk');
+    await submit(mounted.container);
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('editing a stored request', () => {
+  it('shows and posts a stored 100000.000 without the extra zeros, with the currency said once', async () => {
+    const action = vi.fn((_prev, form: FormData) => {
+      expect(form.get('lines.0.quantity')).toBe('100000');
+      expect(form.get('lines.0.estimatedUnitPrice')).toBe('100000.00');
+      return Promise.resolve({ key: PROJECT, errors: {} });
+    });
+    const initial = valuesFromDto({
+      requestType: 'goods',
+      departmentId: '',
+      costCenterId: PROJECT,
+      justification: 'Office chairs',
+      requiredBy: '2026-12-01',
+      deliveryLocation: null,
+      budgetCode: 'B',
+      projectId: null,
+      currency: 'NPR',
+      isEmergency: false,
+      emergencyReason: null,
+      lines: [
+        {
+          description: 'Chair',
+          specification: null,
+          uom: 'pcs',
+          quantity: '100000.000',
+          estimatedUnitPrice: '100000.000',
+        },
+      ],
+    });
+    mounted = await mountForm(
+      <PrForm
+        action={action}
+        departments={[]}
+        enabledCurrencies={['NPR']}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
+        initial={initial}
+        mode="edit"
+        idempotencyKey={PROJECT}
+        cancelHref="/"
+        reloadHref="/"
+      />,
+    );
+    const boxOf = (name: string) =>
+      mounted.container
+        .querySelector(`input[type="hidden"][name="${name}"]`)!
+        .parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
+    const qty = boxOf('lines.0.quantity');
+    const price = boxOf('lines.0.estimatedUnitPrice');
+    expect(qty.value).toBe('1,00,000');
+    expect(price.value).toBe('1,00,000.00');
+    const priceLabel = mounted.container.querySelector(`label[for="${price.id}"]`);
+    expect(priceLabel?.textContent).toBe('Estimated unit price');
+    expect(price.parentElement!.textContent).toContain('NPR');
     await submit(mounted.container);
     expect(action).toHaveBeenCalledTimes(1);
   });

@@ -115,7 +115,7 @@ const slaSpec = (): FieldSpec => ({
 
 const vatSpec = (): FieldSpec => ({
   key: 'tax.vat_rate',
-  label: 'Default VAT rate (%)',
+  label: 'Default VAT rate',
   kind: 'percent',
   current: { kind: 'text', value: '13' },
   defaultValue: { kind: 'text', value: '13' },
@@ -225,7 +225,7 @@ describe('SettingsForm typed fields', () => {
       </SettingsForm>,
     );
     expect(mounted.container.querySelector('input[type="number"]')).toBeNull();
-    const box = boxLabelled(mounted.container, 'Default VAT rate (%)');
+    const box = boxLabelled(mounted.container, 'Default VAT rate');
     const hidden = mounted.container.querySelector<HTMLInputElement>(
       'input[type="hidden"][name="v:tax.vat_rate"]',
     );

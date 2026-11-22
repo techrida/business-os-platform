@@ -27,7 +27,7 @@ import {
   scoped,
   vendors,
 } from '@bos/db';
-import { kathmanduDate } from '@bos/locale';
+import { kathmanduDate, kathmanduDateString } from '@bos/locale';
 import {
   ConflictException,
   ForbiddenException,
@@ -96,6 +96,17 @@ const invalidTransition = (message: string) =>
   new ConflictException({ code: 'invalid_transition', message });
 const unprocessable = (v: ReceiptViolation) =>
   new UnprocessableEntityException({ code: v.code, message: v.message });
+
+/** 422 RECEIPT_DATE_IN_FUTURE: goods cannot be received after today in Kathmandu (the client's `max` is advisory). */
+function assertReceivedByToday(receivedAt: string, now: Date): void {
+  const today = kathmanduDateString(now);
+  if (receivedAt <= today) return;
+  throw new UnprocessableEntityException({
+    code: 'RECEIPT_DATE_IN_FUTURE',
+    message: `The receipt date ${receivedAt} is after today (${today}); use today or an earlier date`,
+    details: { receivedAt, today },
+  });
+}
 
 type PoRow = typeof purchaseOrders.$inferSelect;
 type PoLineRow = typeof purchaseOrderLines.$inferSelect;
@@ -280,6 +291,7 @@ export class ReceiptsService {
   ): Promise<ReceiptDto> {
     const po = await this.lockPo(tx, scope, body.purchaseOrderId);
     this.assertMayReceive(body.kind, await this.requestOf(tx, scope, po));
+    assertReceivedByToday(body.receivedAt, now);
     if (po.status === 'fully_received') {
       // F1-Q39: more than was ordered needs an amendment first.
       throw invalidTransition(
@@ -440,6 +452,8 @@ export class ReceiptsService {
     if (receipt.status !== 'draft') {
       throw invalidTransition(`A ${receipt.status} receipt cannot be confirmed; only a draft can`);
     }
+    // A draft dated later than the day it is confirmed (or saved before this rule) is refused too.
+    assertReceivedByToday(receipt.receivedAt, now);
     if (!RECEIVING_PO_STATUSES.includes(po.status)) {
       throw invalidTransition(
         `A ${po.status} purchase order cannot take a receipt; it must be issued`,

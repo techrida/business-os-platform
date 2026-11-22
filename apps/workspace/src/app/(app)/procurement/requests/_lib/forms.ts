@@ -4,6 +4,9 @@ import {
   type Currency,
   type PrRequestType,
 } from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
+
+import { storedNumberText } from '../../_lib/stored-number';
 
 /**
  * Pure helpers for the purchase request form: read what was typed, check it with the contracts'
@@ -152,8 +155,8 @@ export function valuesFromDto(dto: {
             specification: l.specification ?? '',
             ...(l.requiresSerials ? { requiresSerials: true } : {}),
             uom: l.uom,
-            quantity: l.quantity,
-            estimatedUnitPrice: l.estimatedUnitPrice,
+            quantity: storedNumberText(l.quantity),
+            estimatedUnitPrice: storedNumberText(l.estimatedUnitPrice, 2),
           }))
         : [emptyLine()],
   };
@@ -226,7 +229,7 @@ export function parsePrValues(input: PrValues): ParsedPr {
       const typed = input.lines[index]?.[field as keyof LineValues];
       errors[`lines.${index}.${field}`] ??=
         NUMBER_FIELDS.has(field) && typeof typed === 'string' && SPACED_NUMBER.test(typed.trim())
-          ? 'Remove the space inside the number.'
+          ? NO_SPACES
           : field === 'quantity' && /above zero/.test(issue.message)
             ? 'The quantity must be above zero.'
             : (WORDS[field] ?? issue.message);

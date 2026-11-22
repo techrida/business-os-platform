@@ -1,8 +1,9 @@
 'use client';
 
 import { CURRENCIES, type CompanyBankAccount, type Currency } from '@bos/contracts';
+import { amountInWords } from '@bos/locale';
 import Link from 'next/link';
-import { useActionState, useId, useRef, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import {
   ActionDialog,
@@ -12,10 +13,11 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { MoneyInput } from '@/components/ui/number-input';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { PageHeader } from '@/components/ui/page';
-import { Panel } from '@/components/ui/panel';
+import { FactList, Panel } from '@/components/ui/panel';
 import { Field, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
 import { bankAccountOptions } from '@/lib/company-account-options';
@@ -28,7 +30,7 @@ import {
   createPaymentRequestAction,
   submitPaymentRequestAction,
 } from './actions';
-import { NEW_REQUEST_HEADING } from './model';
+import { NEW_REQUEST_HEADING, reviewPaymentRequest, type PaymentRequestReview } from './model';
 
 export function PaymentRequestEntry({
   idempotencyKey,
@@ -125,6 +127,37 @@ export function PaymentRequestEntry({
       </>
     ) : undefined;
   const formId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  // Set only by Confirm: every other submit, the opener and Enter in a field included, opens the review instead.
+  const confirmed = useRef(false);
+  const [review, setReview] = useState<PaymentRequestReview | null>(null);
+  const send = () => {
+    confirmed.current = true;
+    formRef.current?.requestSubmit();
+  };
+  const reviewOf = (form: HTMLFormElement) =>
+    reviewPaymentRequest(new FormData(form), {
+      vendor: (id) => vendors.find(([vendorId]) => vendorId === id)?.[1],
+      bankAccount: (id) => bankOptions.find((option) => option.id === id)?.label,
+      purchaseOrder: (id) => vendorOrders.find((o) => o.id === id)?.label,
+      bill: (openItemId) => {
+        const item = eligible.find((i) => i.openItemId === openItemId);
+        if (item === undefined) return undefined;
+        return item.billNumber === null
+          ? item.vendorInvoiceNo
+          : `${item.billNumber} · ${item.vendorInvoiceNo}`;
+      },
+    });
+  // The dialog has no Radix trigger (the opener is the form's submit button), so focus goes back to the opener here.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (review !== null) wasOpen.current = true;
+    else if (wasOpen.current) {
+      wasOpen.current = false;
+      opener.current?.focus();
+    }
+  }, [review]);
   return (
     <>
       <PageHeader
@@ -136,18 +169,67 @@ export function PaymentRequestEntry({
               Cancel
             </LinkButton>
             <Button
+              ref={opener}
               type="submit"
               form={formId}
               disabled={pending || eligible.length === 0}
               aria-busy={pending || undefined}
+              aria-haspopup="dialog"
             >
-              Create draft request
+              Review request
             </Button>
+            <Dialog
+              open={review !== null}
+              onOpenChange={(open) => {
+                if (!open) setReview(null);
+              }}
+              title="Review the payment request"
+              description="Check the payee and the amount. Create draft request saves it as a draft; it goes to approvers only when you submit it."
+              footer={
+                <>
+                  <DialogClose asChild>
+                    <Button variant="secondary">Back</Button>
+                  </DialogClose>
+                  <Button
+                    onClick={() => {
+                      if (review === null || pending) return;
+                      setReview(null);
+                      send();
+                    }}
+                  >
+                    Create draft request
+                  </Button>
+                </>
+              }
+            >
+              {review !== null ? <RequestReviewFacts review={review} /> : null}
+            </Dialog>
           </>
         }
       />
       <div ref={wrap}>
-        <form id={formId} action={action} noValidate className={styles.form}>
+        <form
+          ref={formRef}
+          id={formId}
+          action={action}
+          noValidate
+          className={styles.form}
+          onSubmit={(event) => {
+            if (confirmed.current) {
+              confirmed.current = false;
+              return;
+            }
+            if (pending || eligible.length === 0) {
+              event.preventDefault();
+              return;
+            }
+            const next = reviewOf(event.currentTarget);
+            // A request the contract refuses goes on to the server, which names each field to fix.
+            if (next === null) return;
+            event.preventDefault();
+            setReview(next);
+          }}
+        >
           <input type="hidden" name="idempotencyKey" value={state.key} />
           <input type="hidden" name="lineCount" value={rows.length} />
           {state.error ? (
@@ -365,6 +447,68 @@ export function PaymentRequestEntry({
         </form>
       </div>
     </>
+  );
+}
+
+/** The review step's facts: who is paid, from where, and the amount in figures and in words. */
+function RequestReviewFacts({ review }: { review: PaymentRequestReview }) {
+  const numberSystems = useNumberSystems();
+  const { currency } = review;
+  return (
+    <FactList
+      facts={[
+        { key: 'payee', label: 'Payee', value: review.payee },
+        { key: 'from', label: 'Pay from', value: review.payFrom },
+        { key: 'currency', label: 'Currency', value: currency },
+        {
+          key: 'date',
+          label: 'Request date',
+          value: (
+            <>
+              {review.requestDate}
+              <br />
+              <span className={styles.quiet}>The day the request is created</span>
+            </>
+          ),
+        },
+        {
+          key: 'order',
+          label: 'Purchase order',
+          value: review.purchaseOrder ?? 'No purchase order',
+        },
+        {
+          key: 'amount',
+          label: 'Amount',
+          wide: true,
+          value: (
+            <>
+              <span className={styles.numeric}>{money(review.total, currency, numberSystems)}</span>
+              <br />
+              <span className={styles.quiet}>
+                {amountInWords(review.total, currency, numberSystems[currency])}
+              </span>
+            </>
+          ),
+        },
+        {
+          key: 'bills',
+          label: review.lines.length === 1 ? 'Bill' : `Bills (${review.lines.length})`,
+          wide: true,
+          value: (
+            <ul className={styles.reviewLines}>
+              {review.lines.map((line, i) => (
+                <li key={i}>
+                  <span className={styles.long}>{line.reference}</span>{' '}
+                  <span className={styles.numeric}>
+                    {money(line.amount, currency, numberSystems)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ),
+        },
+      ]}
+    />
   );
 }
 

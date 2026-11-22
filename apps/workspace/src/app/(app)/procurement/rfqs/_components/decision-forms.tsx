@@ -4,6 +4,7 @@ import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { DecimalInput } from '@/components/ui/number-input';
@@ -453,13 +454,12 @@ export function ExtendDeadlineForm({
           error={state.errors.deadline}
         >
           {(control) => (
-            <Input
-              type="datetime-local"
+            <DateTimePicker
+              {...control}
               name="deadline"
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={setValue}
               required
-              {...control}
             />
           )}
         </Field>

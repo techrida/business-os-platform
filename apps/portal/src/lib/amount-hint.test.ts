@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasInnerSpace, REMOVE_THE_SPACE, spaceAware } from './amount-hint';
+import { hasInnerSpace, NO_SPACES, spaceAware } from './amount-hint';
 
 describe('spaceAware', () => {
   it('names a space inside a number, and only that', () => {
@@ -8,7 +8,7 @@ describe('spaceAware', () => {
     for (const raw of ['', '1050', ' 1050 ', '2 weeks', '10 a', 'abc']) {
       expect(hasInnerSpace(raw)).toBe(false);
     }
-    expect(spaceAware('10 50', 'generic')).toBe(REMOVE_THE_SPACE);
+    expect(spaceAware('10 50', 'generic')).toBe(NO_SPACES);
     expect(spaceAware('-5', 'generic')).toBe('generic');
   });
 });

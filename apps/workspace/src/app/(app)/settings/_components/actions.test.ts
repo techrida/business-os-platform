@@ -164,8 +164,8 @@ describe('saveSettingsPageAction', () => {
     expect(result.fieldErrors['procurement.match.qty_pct']).toBe(STALE_SETTING_MESSAGE);
     expect(result.staleKeys).toEqual(['procurement.match.qty_pct']);
     expect(result.message).toContain('Saved Quotes needed before a recommendation.');
-    expect(result.message).toContain('Could not save Quantity tolerance (%).');
-    expect(result.message).toContain('Price tolerance (%) was not saved.');
+    expect(result.message).toContain('Could not save Quantity tolerance.');
+    expect(result.message).toContain('Price tolerance was not saved.');
     expect(result.message).not.toContain('procurement.');
     expect(revalidatePath).toHaveBeenCalledWith('/settings/purchasing', undefined);
   });

@@ -21,7 +21,7 @@ const { SettingCard } = await import('./setting-card');
 
 const vat: FieldSpec = {
   key: 'tax.vat_rate',
-  label: 'Default VAT rate (%)',
+  label: 'Default VAT rate',
   kind: 'percent',
   current: { kind: 'text', value: '13' },
   defaultValue: { kind: 'text', value: '13' },
