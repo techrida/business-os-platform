@@ -1,4 +1,4 @@
-import type { InvoiceDetail, InvoiceKind } from '@bos/contracts';
+import { formatPhoneForPrint, type InvoiceDetail, type InvoiceKind } from '@bos/contracts';
 import { useId, type ReactNode } from 'react';
 
 import { money } from '@/lib/kernel-format';
@@ -109,7 +109,8 @@ export function InvoiceDocument({
     totalRows.push({ key: 'tax', label: 'VAT', value: amount(totals.taxAmount) });
   }
 
-  const phones = sellerContact?.phones.filter((p) => p.trim() !== '') ?? [];
+  const phones =
+    sellerContact?.phones.filter((p) => p.trim() !== '').map(formatPhoneForPrint) ?? [];
   const contact: { key: string; label: string; values: string[] }[] = [
     { key: 'phone', label: phones.length > 1 ? 'Phones' : 'Phone', values: phones },
     { key: 'address', label: 'Address', values: seller?.address ? [seller.address] : [] },

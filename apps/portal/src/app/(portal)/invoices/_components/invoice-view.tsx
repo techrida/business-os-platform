@@ -1,4 +1,4 @@
-import type { CustomerInvoiceView, PortalDisplay } from '@bos/contracts';
+import { formatPhoneForPrint, type CustomerInvoiceView, type PortalDisplay } from '@bos/contracts';
 import { amountInWords, bsLongOfDay, formatBsLong } from '@bos/locale';
 
 import { Alert } from '@/components/portal/alert';
@@ -318,7 +318,7 @@ function SellerFooter({
           <p className={styles.muted}>{phones.length === 1 ? 'Phone' : 'Phones'}</p>
           {phones.map((phone) => (
             <a key={phone} href={`tel:${phone.replace(/[^\d+]/g, '')}`}>
-              {phone}
+              {formatPhoneForPrint(phone)}
             </a>
           ))}
         </div>

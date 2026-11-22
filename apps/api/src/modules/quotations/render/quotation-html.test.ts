@@ -85,7 +85,7 @@ const LOGO =
 const PROFILE: SnapshotCompanyProfile = {
   displayName: 'Techrida',
   logoDataUrl: null,
-  phones: ['+977 1 4000000', '+977 9800000000'],
+  phones: ['+97714000000', '+9779800000000'],
   email: 'hello@techrida.example',
   website: 'techrida.example',
   panVatNo: '609876543',
@@ -485,7 +485,7 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     const html = render();
     const foot = withoutWbr(html.match(/<footer class="foot">([\s\S]*?)<\/footer>/)?.[1] ?? '');
     for (const text of [
-      '+977 1 4000000',
+      '+977 1-4000000',
       '+977 9800000000',
       'hello@techrida.example',
       'techrida.example',

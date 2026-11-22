@@ -7,9 +7,11 @@
 // stays null and the document snapshot falls back to `entity.pan_vat_no`.
 import {
   AddressSchema,
-  CompanyProfileSchema,
   EMPTY_COMPANY_PROFILE,
+  NepalPanSchema,
   PanVatNoSchema,
+  PhoneSchema,
+  StoredCompanyProfileSchema,
   imagePath,
   type Address,
   type CompanyProfile,
@@ -231,8 +233,8 @@ export function parseIdentity(
   const displayName = blank(draft.displayName);
   if (displayName !== null && displayName.length > 120) errors['displayName'] = tooLong(120);
   const panVatNo = blank(draft.panVatNo);
-  if (panVatNo !== null && !PanVatNoSchema.safeParse(panVatNo).success) {
-    errors['panVatNo'] = 'Use 5 to 20 letters, digits or hyphens.';
+  if (panVatNo !== null && !NepalPanSchema.safeParse(panVatNo).success) {
+    errors['panVatNo'] = 'A PAN is exactly 9 digits.';
   }
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return { ok: true, value: { profile: { displayName }, panVatNo } };
@@ -285,8 +287,11 @@ export function parseContact(draft: ContactDraft): Parsed<ProfilePatch> {
   const errors: FieldErrors = {};
   const phones = draft.phones.map((p) => p.trim()).filter(Boolean);
   if (phones.length > MAX_PHONES) errors['phones'] = `Add up to ${MAX_PHONES} phone numbers.`;
-  if (phones.some((p) => p.length > 40))
-    errors['phones'] = 'A phone number can have 40 characters.';
+  const badPhone = phones.find((p) => !PhoneSchema.safeParse(p).success);
+  if (badPhone !== undefined) {
+    errors['phones'] =
+      'Enter each phone as +977 and the number (a 10-digit mobile starting with 9, or a landline of 7 to 9 digits), or +, the country code and the number.';
+  }
   const email = blank(draft.email);
   if (email !== null && !z.email().max(200).safeParse(email).success) {
     errors['email'] = 'Enter an email address such as accounts@example.com.';
@@ -461,7 +466,8 @@ export function parseCompanySettings(raw: {
   address: unknown;
   panVatNo: unknown;
 }): { ok: true; data: CompanySettings } | { ok: false; message: string } {
-  const profile = CompanyProfileSchema.safeParse(raw.profile);
+  // Stored rows may still hold free-text phones or a loose PAN from before the strict contracts; they open as stored.
+  const profile = StoredCompanyProfileSchema.safeParse(raw.profile);
   if (!profile.success)
     return { ok: false, message: 'The saved company profile could not be read.' };
   const address = AddressSchema.nullable().safeParse(raw.address);
