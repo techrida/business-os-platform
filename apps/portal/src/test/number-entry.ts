@@ -83,3 +83,26 @@ export async function paste(box: HTMLInputElement, text: string) {
 export async function settle() {
   await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 }
+
+async function typeSegment(segment: Element, text: string) {
+  for (const data of text) {
+    const event = new InputEvent('beforeinput', {
+      data,
+      inputType: 'insertText',
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => Promise.resolve(segment.dispatchEvent(event)));
+  }
+}
+
+/** Types a `YYYY-MM-DD` date into the DatePicker whose hidden input posts `name`, a segment at a time. */
+export async function pickDate(container: ParentNode, name: string, value: string) {
+  const root = container.querySelector(`input[name="${name}"]`)?.parentElement;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!root || !match) throw new Error(`No date picker named ${name}, or a bad value: ${value}`);
+  const [, year, month, day] = match;
+  await typeSegment(root.querySelector('[data-type="month"]')!, String(Number(month)));
+  await typeSegment(root.querySelector('[data-type="day"]')!, String(Number(day)));
+  await typeSegment(root.querySelector('[data-type="year"]')!, year!);
+}

@@ -10,6 +10,7 @@ import {
 } from '@/app/(app)/leads/actions';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
@@ -200,7 +201,7 @@ export function ScheduleFollowUpDialog({
           {(c) => <Input name="subject" maxLength={200} {...c} />}
         </Field>
         <Field label="Due" hint="Kathmandu time." error={shown['dueAt']}>
-          {(c) => <Input name="dueAt" type="datetime-local" required {...c} />}
+          {(c) => <DateTimePicker name="dueAt" required {...c} />}
         </Field>
         <Field label="Assigned to" error={shown['assigneeUserId']}>
           {(c) => (
@@ -275,9 +276,8 @@ export function RescheduleFollowUpDialog({
         <FormAlert error={dialog.outcome.error} />
         <Field label="New due time" hint="Kathmandu time." error={err['dueAt']}>
           {(c) => (
-            <Input
+            <DateTimePicker
               name="dueAt"
-              type="datetime-local"
               defaultValue={toKathmanduLocal(item.dueAt)}
               required
               {...c}

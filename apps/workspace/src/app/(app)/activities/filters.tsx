@@ -35,6 +35,8 @@ function DueDay({
     <DatePicker
       name={name}
       aria-label={label}
+      // A filter bar holds a row of controls; a line under one would push it out of line.
+      showBs={false}
       value={day}
       min={min || undefined}
       max={max || undefined}
