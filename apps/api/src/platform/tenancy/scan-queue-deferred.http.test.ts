@@ -11,7 +11,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ScanQueueDeferredError } from '../documents/scan-queue-deferred.error';
 import { ErrorBodyFilter } from './error-body.filter';
 
-const version = { id: 'v1', status: 'quarantined', filename: 'proof.pdf' } as unknown as DocumentVersionDto;
+const version = {
+  id: 'v1',
+  status: 'quarantined',
+  filename: 'proof.pdf',
+} as unknown as DocumentVersionDto;
 
 @Controller('probe')
 class ProbeController {
@@ -29,11 +33,13 @@ class ProbeController {
 
 describe('ScanQueueDeferredError over HTTP', () => {
   let app: INestApplication;
+  let baseUrl: string;
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ controllers: [ProbeController] }).compile();
     app = moduleRef.createNestApplication({ logger: false });
     app.useGlobalFilters(new ErrorBodyFilter());
-    await app.init();
+    await app.listen(0, '127.0.0.1');
+    baseUrl = await app.getUrl();
   });
   afterAll(async () => {
     await app.close();
@@ -43,7 +49,7 @@ describe('ScanQueueDeferredError over HTTP', () => {
     ['PUT', '/probe/proof'],
     ['POST', '/probe/inbox'],
   ])('answers 202 with the quarantined version on %s %s', async (method, path) => {
-    const res = await (method === 'PUT' ? request(app.getHttpServer()).put(path) : request(app.getHttpServer()).post(path));
+    const res = await (method === 'PUT' ? request(baseUrl).put(path) : request(baseUrl).post(path));
     expect(res.status).toBe(202);
     expect(res.body).toEqual(version);
   });

@@ -299,10 +299,16 @@ describe('R7: the sweeper', () => {
     await sweeperFor(queue).sweep(long);
     expect(queue.added(s.versionId)).toHaveLength(0);
     const never = vi.fn();
-    expect(await processorFor({ scan: never } as unknown as ClamdClient).scanVersion(s.job, true)).toBe('skipped');
+    expect(
+      await processorFor({ scan: never } as unknown as ClamdClient).scanVersion(s.job, true),
+    ).toBe('skipped');
     expect(never).not.toHaveBeenCalled();
     // Still quarantined, with no verdict, and the document never points at it.
-    expect(await row(s.versionId)).toMatchObject({ status: 'quarantined', scan_engine: null, current_version_id: null });
+    expect(await row(s.versionId)).toMatchObject({
+      status: 'quarantined',
+      scan_engine: null,
+      current_version_id: null,
+    });
   });
 
   it('leaves alone a quarantined version younger than 15 minutes', async () => {
