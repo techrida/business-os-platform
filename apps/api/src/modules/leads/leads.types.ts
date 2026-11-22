@@ -8,6 +8,7 @@ import {
   type LeadStage,
   LeadStageSchema,
   multi,
+  type PartyPhone,
   searchParam,
   type UpdateLeadBody,
 } from '@bos/contracts';
@@ -57,10 +58,11 @@ export type LeadRow = typeof leads.$inferSelect;
 
 /** The edit body's fields, without the version. */
 type LeadEditFields = Omit<UpdateLeadBody, 'expectedVersion'>;
-type LeadField = keyof LeadEditFields;
+/** The fields stored on the lead row; `phones` are rows of their own (lead-phones.ts), diffed by the service. */
+type LeadField = Exclude<keyof LeadEditFields, 'phones'>;
 type LeadColumn = keyof typeof leads.$inferInsert;
 
-/** Body field to column. `email` and `phone` are stored normalised under other names. */
+/** Body field to column. `email` is stored normalised under another name. */
 const EDITABLE: Record<LeadField, LeadColumn> = {
   title: 'title',
   source: 'source',
@@ -68,8 +70,8 @@ const EDITABLE: Record<LeadField, LeadColumn> = {
   ownerUserId: 'ownerUserId',
   companyName: 'companyName',
   contactName: 'contactName',
+  country: 'country',
   email: 'emailNorm',
-  phone: 'phoneE164',
   requirement: 'requirement',
   expectedValue: 'expectedValue',
   currency: 'currency',
@@ -93,7 +95,10 @@ export interface LeadFieldChange {
  * The fields of an edit that differ from the row, in body terms (`field`, for the audit) and row terms (`column`,
  * for the update). A field left out of the body never changes; the email is normalised like create does.
  */
-export function changedLeadFields(row: LeadRow, body: LeadEditFields): LeadFieldChange[] {
+export function changedLeadFields(
+  row: LeadRow,
+  body: Omit<LeadEditFields, 'phones'>,
+): LeadFieldChange[] {
   const changes: LeadFieldChange[] = [];
   for (const field of Object.keys(EDITABLE) as LeadField[]) {
     const sent = body[field];
@@ -116,12 +121,14 @@ export function changedLeadFields(row: LeadRow, body: LeadEditFields): LeadField
  * neither written nor read. Required, so a caller that forgets the derived value does not compile.
  * `ownerName` is the owner's display name (D46), looked up by the caller under the lead's own read permission.
  * `lostReason` is the lost reason option's current label (D49); null unless the lead was lost with an option.
+ * `phones` are the lead person's numbers as `loadLeadPhones` returns them (primary first, then saved order).
  */
 export function toLeadDto(
   row: LeadRow,
   nextFollowUp: Date | null,
   ownerName: string | null,
   lostReason: LeadLostReasonRef | null,
+  phones: PartyPhone[],
   principal?: Principal,
 ): LeadDto {
   return {
@@ -134,8 +141,9 @@ export function toLeadDto(
     ownerName,
     companyName: row.companyName,
     contactName: row.contactName,
+    country: row.country as LeadDto['country'],
     email: row.emailNorm,
-    phone: row.phoneE164,
+    phones,
     customerId: row.customerId,
     contactId: row.contactId,
     requirement: row.requirement,

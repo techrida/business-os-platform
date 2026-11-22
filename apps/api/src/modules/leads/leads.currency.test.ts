@@ -49,8 +49,9 @@ function leadRow(over: Partial<LeadRow> = {}): LeadRow {
     ownerUserId: USER,
     companyName: 'Acme Pvt. Ltd.',
     contactName: 'Sita Rai',
-    emailNorm: null,
-    phoneE164: null,
+    country: 'NP',
+    emailNorm: 'sita@acme.example',
+    phonesSearch: null,
     customerId: null,
     contactId: null,
     requirement: null,
@@ -100,6 +101,8 @@ function serviceWith(saved: readonly string[] | null, stored: LeadRow = leadRow(
         };
       },
     }),
+    // replaceLeadPhones clears the lead's numbers before writing the new set.
+    delete: () => ({ where: () => Promise.resolve() }),
     update: () => ({
       set: (set: Record<string, unknown>) => {
         seen.updated.push(set);
@@ -110,12 +113,16 @@ function serviceWith(saved: readonly string[] | null, stored: LeadRow = leadRow(
         };
       },
     }),
-    // select() is the locked row read; select({ nextFollowUp }) is the derived follow-up, none planned here.
+    // select() is the locked row read; select({ nextFollowUp }) is the derived follow-up, none planned here; an
+    // ordered select is the lead's phone numbers, none stored here.
     select: (fields?: unknown) => ({
       from: () => ({
         where: () => {
           const rows = fields === undefined ? [stored] : [{ nextFollowUp: null }];
-          return Object.assign(Promise.resolve(rows), { for: () => Promise.resolve(rows) });
+          return Object.assign(Promise.resolve(rows), {
+            for: () => Promise.resolve(rows),
+            orderBy: () => Promise.resolve([]),
+          });
         },
       }),
     }),
@@ -173,6 +180,8 @@ const NEW_LEAD = {
   source: 'referral',
   companyName: 'Acme Pvt. Ltd.',
   contactName: 'Sita Rai',
+  country: 'NP',
+  email: 'sita@acme.example',
 };
 
 /** Runs `fn` and returns what it threw. */

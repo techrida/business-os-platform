@@ -72,6 +72,13 @@ import {
   storedAssignmentRule,
 } from './lead-assignee';
 import { decideAssignment, defaultSalesOwner } from './lead-assignment-rule';
+import {
+  loadLeadPhones,
+  loadPhonesOfLead,
+  phonesSearchText,
+  replaceLeadPhones,
+  sameLeadPhones,
+} from './lead-phones';
 import { LeadsCaller } from './leads.caller';
 import { LeadLostReasonsService, lostReasonRefs } from './lost-reasons.service';
 import {
@@ -119,16 +126,22 @@ const shownName = (displayName: string | null): string => displayName?.trim() ||
 const byName = (a: LeadOwnerOption, b: LeadOwnerOption): number =>
   a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId);
 
-/** Searchable text of a lead: what the table shows plus what a salesperson types from an inbound email or call. */
+/**
+ * Searchable text of a lead: what the table shows plus what a salesperson types from an inbound email or call. Every
+ * number of the lead is in `phones_search` (lead-phones.ts), so a call from its second number finds it too.
+ */
 const SEARCH_COLUMNS = [
   leads.title,
   leads.number,
   leads.companyName,
   leads.contactName,
   leads.emailNorm,
-  leads.phoneE164,
+  leads.phonesSearch,
   leads.campaign,
 ];
+
+/** The 400 an edit gets when it would leave the lead with no way to reach the person. */
+const CONTACT_WAY_MESSAGE = 'A lead needs an email or at least one phone number';
 
 /** FR-6 (D48): the 409 a move to contacted gets when the lead has no contact yet and the request logs none. */
 export const CONTACT_REQUIRED_MESSAGE =
@@ -202,6 +215,11 @@ export class LeadsService {
       scope.tenantId,
       rows.map((r) => r.lostReasonId),
     );
+    const phones = await loadLeadPhones(
+      this.db,
+      scope,
+      rows.map((r) => r.id),
+    );
     return {
       rows: rows.map(({ nextFollowUp, ...row }) =>
         toLeadDto(
@@ -209,6 +227,7 @@ export class LeadsService {
           nextFollowUp,
           nameIn(names, row.ownerUserId),
           refs.get(row.lostReasonId ?? '') ?? null,
+          phones.get(row.id) ?? [],
           principal,
         ),
       ),
@@ -262,6 +281,7 @@ export class LeadsService {
       nextFollowUp,
       await this.ownerNameOf(this.db, row),
       await this.lostReasonOf(this.db, row),
+      await loadPhonesOfLead(this.db, scope, row.id),
       principal,
     );
   }
@@ -330,8 +350,9 @@ export class LeadsService {
             ownerUserId,
             companyName: body.companyName,
             contactName: body.contactName,
+            country: body.country,
             emailNorm: body.email === undefined ? null : body.email.trim().toLowerCase(),
-            phoneE164: body.phone ?? null,
+            phonesSearch: phonesSearchText(body.phones),
             requirement: body.requirement ?? null,
             expectedValue: body.expectedValue ?? null,
             currency: body.currency,
@@ -350,12 +371,16 @@ export class LeadsService {
           entityId: row!.id,
           after: { number, stage: row!.stage, ownerUserId },
         });
+        await replaceLeadPhones(tx, { ...scope, leadId: row!.id, phones: body.phones });
+        // Read back, so every response maps the numbers the same way (primary first, label null when unset).
+        const phones = await loadPhonesOfLead(tx, scope, row!.id);
         if (ownerUserId !== principal.userId) {
           await this.notifyAssigned(tx, principal, row!);
           sent.notice = true;
         }
         const ownerName = await this.ownerNameOf(tx, row!);
-        if (followUp === undefined) return toLeadDto(row!, null, ownerName, null, principal);
+        if (followUp === undefined)
+          return toLeadDto(row!, null, ownerName, null, phones, principal);
         const dueAt = new Date(followUp.dueAt);
         const [planned] = await tx
           .insert(activities)
@@ -383,7 +408,7 @@ export class LeadsService {
           sent.notice = true;
         }
         // The only planned activity of a new lead, so it is the next follow-up.
-        return toLeadDto(row!, dueAt, ownerName, null, principal);
+        return toLeadDto(row!, dueAt, ownerName, null, phones, principal);
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -526,6 +551,7 @@ export class LeadsService {
         await this.nextFollowUpOf(tx, id),
         await this.ownerNameOf(tx, updated),
         await this.lostReasonOf(tx, updated),
+        await loadPhonesOfLead(tx, scope, id),
         principal,
       );
     });
@@ -549,7 +575,7 @@ export class LeadsService {
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const { expectedVersion, ...fields } = body;
+    const { expectedVersion, phones: sentPhones, ...fields } = body;
     const sent = { notice: false };
     const edited = await withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
@@ -567,12 +593,23 @@ export class LeadsService {
         });
       }
       const changes = changedLeadFields(row, fields);
-      if (changes.length === 0) {
+      const storedPhones = await loadPhonesOfLead(tx, scope, id);
+      const phonesChanged =
+        sentPhones !== undefined && !sameLeadPhones(storedPhones, row.phonesSearch, sentPhones);
+      if (changes.length === 0 && !phonesChanged) {
         throw new BadRequestException({ code: 'bad_request', message: 'Nothing to change' });
+      }
+      // The email cannot be cleared by an edit, so only the stored one and the numbers after the edit decide.
+      const emailAfter = fields.email ?? row.emailNorm;
+      const phonesAfter = phonesChanged ? sentPhones : storedPhones;
+      if (emailAfter === null && phonesAfter.length === 0) {
+        throw new BadRequestException({ code: 'bad_request', message: CONTACT_WAY_MESSAGE });
       }
       const set = Object.fromEntries(changes.map((c) => [c.column, c.after])) as Partial<
         typeof leads.$inferInsert
       >;
+      // Written with the versioned update, so the phones' own replace below finds the search text already in line.
+      if (phonesChanged) set.phonesSearch = phonesSearchText(sentPhones);
       const newOwner = set.ownerUserId;
       if (typeof newOwner === 'string') {
         await assertAssignable(
@@ -592,12 +629,21 @@ export class LeadsService {
         ...set,
         updatedAt: new Date(),
       });
+      if (phonesChanged) {
+        await replaceLeadPhones(tx, { ...scope, leadId: id, phones: sentPhones });
+      }
       await this.audit.record(tx, {
         action: 'lead.updated',
         entityType: AUDIT_ENTITY,
         entityId: id,
-        before: Object.fromEntries(changes.map((c) => [c.field, c.before])),
-        after: Object.fromEntries(changes.map((c) => [c.field, c.after])),
+        before: {
+          ...Object.fromEntries(changes.map((c) => [c.field, c.before])),
+          ...(phonesChanged ? { phones: storedPhones.map((p) => p.e164) } : {}),
+        },
+        after: {
+          ...Object.fromEntries(changes.map((c) => [c.field, c.after])),
+          ...(phonesChanged ? { phones: sentPhones.map((p) => p.e164) } : {}),
+        },
       });
       if (typeof newOwner === 'string') {
         await this.audit.record(tx, {
@@ -624,6 +670,7 @@ export class LeadsService {
         await this.nextFollowUpOf(tx, id),
         await this.ownerNameOf(tx, updated),
         await this.lostReasonOf(tx, updated),
+        phonesChanged ? await loadPhonesOfLead(tx, scope, id) : storedPhones,
         principal,
       );
     });

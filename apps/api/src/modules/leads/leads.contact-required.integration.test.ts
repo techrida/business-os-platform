@@ -78,6 +78,8 @@ const BODY = {
   source: 'referral',
   companyName: 'Acme Pvt. Ltd.',
   contactName: 'Sita Rai',
+  country: 'NP',
+  phones: [{ country: 'NP', e164: '+9779812345678', isPrimary: true }],
 };
 
 const dto = (body: unknown) => LeadDtoSchema.parse(body);
