@@ -17,7 +17,7 @@ import {
 } from './index.js';
 
 const id = () => crypto.randomUUID();
-const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const address = { line: '1 Durbar Marg', city: 'Kathmandu' };
 
 const view = () => ({
   id: id(),
@@ -27,8 +27,8 @@ const view = () => ({
   issueDate: '2026-11-08',
   validUntil: '2026-11-23',
   currency: 'USD',
-  issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', address },
-  customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, address },
+  issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', country: 'NP', address },
+  customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, country: 'US', address },
   contact: { fullName: 'Sita Rai', email: 'sita@himal.example' },
   scope: 'Supply and install 12 panels',
   assumptions: null,

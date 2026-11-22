@@ -3,9 +3,17 @@
 // stages move only along the transition table, Won is set by the system alone, and money is a string.
 import { z } from 'zod';
 
+import { AddressLinesSchema } from './addresses.js';
+import { CountryCodeSchema } from './countries.js';
 import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
-import { nepalPhoneProblem } from './phones.js';
+import {
+  nepalPhoneProblem,
+  PartyPhoneSchema,
+  PartyPhonesSchema,
+  phoneCountryFromE164,
+  phoneProblem,
+} from './phones.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const isoDate = z.iso.date();
@@ -18,7 +26,11 @@ const NonNegativeDecimal = DecimalString.refine((s) => !s.startsWith('-'), 'must
 
 const ProbabilitySchema = z.number().int().min(0).max(100);
 
-/** E.164: a plus sign, then 7 to 15 digits; a `+977` number must also be a Nepal mobile or landline. */
+/**
+ * E.164: a plus sign, then 7 to 15 digits; a `+977` number must also be a Nepal mobile or landline. A party's own
+ * numbers are `PartyPhonesSchema` rows, each with its country (FX9); this single string stays for the company
+ * profile's list. The website's one number is checked by `IngestPhoneSchema` (country read from the calling code).
+ */
 export const PhoneSchema = z
   .string()
   .regex(/^\+[1-9]\d{6,14}$/, 'must be an E.164 number such as +9779812345678')
@@ -59,22 +71,12 @@ export function nepalPanProblem(
   return NepalPanSchema.safeParse(pan).success ? null : 'a Nepal PAN is 9 digits';
 }
 
-export const AddressSchema = z.strictObject({
-  line1: text(200),
-  line2: text(200).optional(),
-  city: text(100),
-  district: text(100).optional(),
-  province: text(100).optional(),
-  postalCode: text(20).optional(),
-  /** ISO 3166-1 alpha-2. */
-  country: z.string().regex(/^[A-Z]{2}$/),
-});
-export type Address = z.infer<typeof AddressSchema>;
-
 /**
  * The fields of a customer record. A customer is a tenant-level party (ADR 0027, D17): no
  * organizationId here. Terms that differ per legal entity live in `PartyAccountDtoSchema`. Lead
  * conversion and the edit form use these fields alone; `POST /v1/customers` adds the first contact.
+ * The customer's country is its own field (FX9); the address holds only the street lines and city.
+ * Neither has a default, so a partial update never sends one it was not given.
  */
 export const CustomerFieldsSchema = z.strictObject({
   legalName: text(200),
@@ -83,21 +85,32 @@ export const CustomerFieldsSchema = z.strictObject({
   relationship: CustomerRelationshipSchema.default('prospect'),
   ownerUserId: z.guid().optional(),
   defaultCurrency: CurrencySchema.optional(),
-  address: AddressSchema,
+  country: CountryCodeSchema,
+  address: AddressLinesSchema,
 });
 export type CustomerFields = z.infer<typeof CustomerFieldsSchema>;
 
 /**
- * A Nepal customer (address country NP) has a 9-digit PAN. Sent together, the two are checked here; an update that
- * sends only one of them is checked by the service against the stored other (`CustomersService.update`).
+ * A Nepal customer (country NP) has a 9-digit PAN; a foreign one keeps the loose `PanVatNoSchema`. Sent together,
+ * the two are checked here; an update that sends only one of them (a PAN without the country, or a new country
+ * without the PAN) is checked by the service against the stored other (`CustomersService.update`).
  */
 function refineNepalPan(
-  body: { panVatNo?: string | undefined; address?: { country: string } | undefined },
+  body: { panVatNo?: string | undefined; country?: string | undefined },
   ctx: z.RefinementCtx,
 ): void {
-  const problem = nepalPanProblem(body.address?.country, body.panVatNo);
+  const problem = nepalPanProblem(body.country, body.panVatNo);
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem, path: ['panVatNo'] });
 }
+
+/**
+ * A person's country and phone numbers (FX9). The country may differ from its company's; each phone carries its own
+ * country. The create bodies default the phones to none (`PartyPhonesSchema` checks one primary and no repeats).
+ */
+const personPartyFields = {
+  country: CountryCodeSchema,
+  phones: PartyPhonesSchema.default([]),
+};
 
 /**
  * A contact that carries an email. A quotation is sent by email, so a customer must always have at
@@ -106,7 +119,7 @@ function refineNepalPan(
 export const ContactWithEmailBodySchema = z.strictObject({
   fullName: text(200),
   email: EmailSchema,
-  phone: PhoneSchema.optional(),
+  ...personPartyFields,
   title: text(100).optional(),
   isPrimary: z.boolean().default(false),
 });
@@ -152,7 +165,8 @@ export const CustomerDtoSchema = z.object({
    */
   ownerName: z.string().nullable().optional(),
   defaultCurrency: CurrencySchema.nullable(),
-  address: AddressSchema,
+  country: CountryCodeSchema,
+  address: AddressLinesSchema,
   /** The customer's logo (`app.customers.logo_document_id`); null or absent shows initials. */
   logoDocumentId: z.guid().nullable().optional(),
   /** Set when this record was merged into another; the target is the live one. */
@@ -214,7 +228,7 @@ export type UpdateCustomerTermsBody = z.infer<typeof UpdateCustomerTermsBodySche
 export const CreateContactBodySchema = z.strictObject({
   fullName: text(200),
   email: EmailSchema.optional(),
-  phone: PhoneSchema.optional(),
+  ...personPartyFields,
   title: text(100).optional(),
   isPrimary: z.boolean().default(false),
 });
@@ -225,7 +239,9 @@ export const ContactDtoSchema = z.object({
   customerId: z.guid(),
   fullName: z.string(),
   email: z.string().nullable(),
-  phone: z.string().nullable(),
+  country: CountryCodeSchema,
+  /** The contact's numbers, primary first, then in their saved order. */
+  phones: z.array(PartyPhoneSchema),
   title: z.string().nullable(),
   isPrimary: z.boolean(),
   version: z.number().int().min(1),
@@ -744,8 +760,11 @@ const LeadFieldsSchema = z.strictObject({
   /** Free text until conversion creates or links a customer. */
   companyName: text(200),
   contactName: text(200),
+  /** The lead's country (FX9). A lead has no address; conversion asks for the customer's. */
+  country: CountryCodeSchema,
   email: EmailSchema.optional(),
-  phone: PhoneSchema.optional(),
+  /** The lead person's numbers, each with its own country. No default here, so an edit never clears them unasked. */
+  phones: PartyPhonesSchema.optional(),
   requirement: text(5000).optional(),
   expectedValue: NonNegativeDecimal.optional(),
   currency: CurrencySchema.optional(),
@@ -756,19 +775,30 @@ const LeadFieldsSchema = z.strictObject({
 
 /**
  * `followUp` plans the first follow-up. `nextFollowUpAt` is the pre-D39 spelling of the same thing, kept so old
- * callers still work: it plans a call named "Follow up". Send one or the other.
+ * callers still work: it plans a call named "Follow up". Send one or the other. A lead needs a way to reach the
+ * person: an email or at least one phone.
  */
 export const CreateLeadBodySchema = LeadFieldsSchema.extend({
   currency: CurrencySchema.default('NPR'),
+  phones: PartyPhonesSchema.default([]),
   followUp: LeadFollowUpSchema.optional(),
   nextFollowUpAt: isoDateTime.optional(),
-}).refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
-  path: ['followUp'],
-  message: 'Send followUp or nextFollowUpAt, not both',
-});
+})
+  .refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
+    path: ['followUp'],
+    message: 'Send followUp or nextFollowUpAt, not both',
+  })
+  .refine((b) => b.email !== undefined || b.phones.length > 0, {
+    path: ['email'],
+    message: 'an email or at least one phone number is required',
+  });
 export type CreateLeadBody = z.infer<typeof CreateLeadBodySchema>;
 
-/** Follow-ups are activities, so an edit changes the lead's own fields (owner included), not the next follow-up. */
+/**
+ * Follow-ups are activities, so an edit changes the lead's own fields (owner included), not the next follow-up.
+ * `phones`, when sent, replaces the whole list. An edit that would leave the lead with neither an email nor a phone
+ * is refused by the API against the stored lead: this body alone cannot see what it keeps.
+ */
 export const UpdateLeadBodySchema = LeadFieldsSchema.partial().extend({
   expectedVersion: z.number().int().min(1),
 });
@@ -804,8 +834,10 @@ export const LeadDtoSchema = z.object({
   ownerName: z.string().nullable(),
   companyName: z.string(),
   contactName: z.string(),
+  country: CountryCodeSchema,
   email: z.string().nullable(),
-  phone: z.string().nullable(),
+  /** The lead person's numbers, primary first, then in their saved order. A list shows the first. */
+  phones: z.array(PartyPhoneSchema),
   customerId: z.guid().nullable(),
   contactId: z.guid().nullable(),
   requirement: z.string().nullable(),
@@ -1263,6 +1295,20 @@ export type ReviewVerificationBody = z.infer<typeof ReviewVerificationBodySchema
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * One number the website posts, in E.164. The website has no country picker, so the country is read from the
+ * calling code (`phoneCountryFromE164`) and the number must be valid for it (`phoneProblem`); the API stores it as
+ * the lead's one primary phone with that country. A number whose country cannot be told is refused.
+ */
+const IngestPhoneSchema = z.string().superRefine((phone, ctx) => {
+  const country = phoneCountryFromE164(phone);
+  const problem =
+    country === null
+      ? 'must be an E.164 number such as +9779812345678'
+      : phoneProblem(country, phone);
+  if (problem !== null) ctx.addIssue({ code: 'custom', message: problem });
+});
+
+/**
  * What the public website posts. Strict and bounded: the website may not set the stage, owner,
  * probability, source or tenant; the server sets stage New and source `website`.
  */
@@ -1271,7 +1317,7 @@ export const LeadIngestBodySchema = z
     companyName: text(200),
     contactName: text(200),
     email: EmailSchema.optional(),
-    phone: PhoneSchema.optional(),
+    phone: IngestPhoneSchema.optional(),
     message: text(5000).optional(),
     /** UTM campaign, when the page carried one. */
     campaign: text(100).optional(),

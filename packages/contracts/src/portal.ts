@@ -3,7 +3,9 @@
 // API are given. It has no unit cost, margin, FX rate, NPR equivalent, approval or editor data.
 import { z } from 'zod';
 
-import { AddressSchema, PanVatNoSchema } from './crm.js';
+import { AddressLinesSchema } from './addresses.js';
+import { CountryCodeSchema } from './countries.js';
+import { PanVatNoSchema } from './crm.js';
 import {
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
@@ -57,7 +59,9 @@ export const CUSTOMER_VIEW_FORBIDDEN_WORDS: readonly string[] = [
 const PartyBlock = z.strictObject({
   legalName: z.string(),
   panVatNo: PanVatNoSchema.nullable(),
-  address: AddressSchema,
+  /** The party's country (FX9); the address carries only the street lines and city. */
+  country: CountryCodeSchema,
+  address: AddressLinesSchema,
 });
 
 /** How the selling company writes numbers and dates; the portal draws every amount and date with it (D30, D27). */
