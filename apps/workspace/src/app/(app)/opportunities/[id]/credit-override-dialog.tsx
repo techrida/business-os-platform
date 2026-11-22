@@ -19,11 +19,16 @@ const REASON_REQUIRED = 'Say why this deal may go ahead, up to 500 characters.';
  * with its actions in the fixed footer (UIP-DLG-001). Success closes with a toast; a refusal keeps
  * the reason and moves focus to it, so a screen reader reads the error with the field. `position` shows what the
  * hold is made of (limit, receivables, orders not yet invoiced, this order), so the person overrides knowingly.
+ *
+ * The override covers one quotation version at one order value (R5 FU10): the request always names both, and the
+ * API refuses it without them. With no pending version (`quotationVersionId` null) or no position to take the order
+ * value from, the dialog says why and offers no Override, instead of a submit the API would refuse.
  */
 export function CreditOverrideDialog({
   opportunityId,
   number,
   quotation,
+  quotationVersionId,
   position,
   successMessage,
   onOverridden,
@@ -36,6 +41,11 @@ export function CreditOverrideDialog({
    * for someone who cannot read the deal's number, and ties the override to the quotation in front of them.
    */
   quotation?: string | undefined;
+  /**
+   * The quotation version the override is for: the deal's pending one (`CreditHoldDto.pendingQuotationVersionId`),
+   * or the one a refused confirm named. Null when the deal has no accepted quotation waiting.
+   */
+  quotationVersionId: string | null;
   /** The customer's position against the limit, when it could be read. */
   position?: CreditPositionView | undefined;
   /** The toast after a save. Default: names the deal and says it can go to a sales order. */
@@ -48,6 +58,12 @@ export function CreditOverrideDialog({
     quotation === undefined
       ? deal
       : `The deal of quotation ${quotation}${number === null ? '' : ` (${number})`}`;
+  const blocked =
+    quotationVersionId === null
+      ? `${subject} has no accepted quotation waiting to become a sales order, so there is no order to override the hold for.`
+      : position === undefined
+        ? 'The credit position of this opportunity could not be read, so the order value the override covers is unknown. Reload to try again.'
+        : undefined;
   const formId = useId();
   const [open, setOpenState] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -112,62 +128,73 @@ export function CreditOverrideDialog({
       open={open}
       onOpenChange={setOpen}
       title="Override the credit hold?"
-      description={`${subject} can then be confirmed as a sales order although, with its receivables, its orders not yet invoiced and this order, the customer is over its credit limit. The override covers an order of this value; a bigger one needs a new override.`}
+      description={`${subject} can then be confirmed as a sales order although, with its receivables, its orders not yet invoiced and this order, the customer is over its credit limit. The override covers this quotation version at this order value only; another order on this deal, a new version or a different value needs a new override.`}
       locked={pending}
       closeOnOutsideClick={false}
       footer={
-        <>
+        blocked !== undefined ? (
           <DialogClose asChild>
-            <Button variant="secondary" disabled={pending}>
-              Cancel
-            </Button>
+            <Button variant="secondary">Close</Button>
           </DialogClose>
-          <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
-            {pending ? 'Saving' : 'Override hold'}
-          </Button>
-        </>
+        ) : (
+          <>
+            <DialogClose asChild>
+              <Button variant="secondary" disabled={pending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
+              {pending ? 'Saving' : 'Override hold'}
+            </Button>
+          </>
+        )
       }
     >
-      <form
-        ref={formRef}
-        key={round}
-        id={formId}
-        noValidate
-        onSubmit={onSubmit}
-        className={styles.overrideForm}
-      >
-        <input type="hidden" name="opportunityId" value={opportunityId} />
-        {position ? <input type="hidden" name="orderValue" value={position.orderValue} /> : null}
-        {position ? (
-          <div>
-            <dl className={styles.overridePosition}>
-              {position.rows.map((row) => (
-                <div key={row.label}>
-                  <dt>{row.label}</dt>
-                  <dd>{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-            {position.note ? <p>{position.note}</p> : null}
-          </div>
-        ) : null}
-        <Field
-          label="Reason"
-          hint="Recorded with your name on the deal and in the audit log."
-          error={error}
+      {blocked !== undefined ? (
+        <p role="status">{blocked}</p>
+      ) : (
+        <form
+          ref={formRef}
+          key={round}
+          id={formId}
+          noValidate
+          onSubmit={onSubmit}
+          className={styles.overrideForm}
         >
-          {(control) => (
-            <Textarea
-              name="reason"
-              rows={4}
-              maxLength={REASON_MAX}
-              required
-              onChange={() => setError(undefined)}
-              {...control}
-            />
-          )}
-        </Field>
-      </form>
+          <input type="hidden" name="opportunityId" value={opportunityId} />
+          <input type="hidden" name="quotationVersionId" value={quotationVersionId ?? ''} />
+          <input type="hidden" name="orderValue" value={position?.orderValue ?? ''} />
+          {position ? (
+            <div>
+              <dl className={styles.overridePosition}>
+                {position.rows.map((row) => (
+                  <div key={row.label}>
+                    <dt>{row.label}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {position.note ? <p>{position.note}</p> : null}
+            </div>
+          ) : null}
+          <Field
+            label="Reason"
+            hint="Recorded with your name on the deal and in the audit log."
+            error={error}
+          >
+            {(control) => (
+              <Textarea
+                name="reason"
+                rows={4}
+                maxLength={REASON_MAX}
+                required
+                onChange={() => setError(undefined)}
+                {...control}
+              />
+            )}
+          </Field>
+        </form>
+      )}
     </Dialog>
   );
 }
