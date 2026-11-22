@@ -12,10 +12,17 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { ErrorBodySchema, LeadDtoSchema, OpportunityDtoSchema } from '@bos/contracts';
-import { activities, customerContacts, customers, leads, opportunities } from '@bos/db';
+import {
+  activities,
+  customerContactPhones,
+  customerContacts,
+  customers,
+  leads,
+  opportunities,
+} from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -107,11 +114,15 @@ beforeEach(() => {
 
 const tag = () => randomUUID().replace(/-/g, '').slice(0, 8);
 const phone = () => `+97798${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+const usPhone = () => `+1415555${String(Math.floor(Math.random() * 1e4)).padStart(4, '0')}`;
+/** One phone row as the contact and lead forms send it (FX9). */
+const phoneRow = (e164: string, country = 'NP', isPrimary = true) => ({ country, e164, isPrimary });
 /** A Nepal PAN: nine digits. */
 const panOf = () => String(100_000_000 + Math.floor(Math.random() * 899_999_999));
-const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const ADDRESS = { line: '1 Durbar Marg', city: 'Kathmandu' };
 const customerBody = (extra: Record<string, unknown> = {}) => ({
   legalName: `Convert${tag()} Traders Pvt. Ltd.`,
+  country: 'NP',
   address: ADDRESS,
   ...extra,
 });
@@ -130,6 +141,8 @@ async function qualifiedLead(extra: Record<string, unknown> = {}) {
       source: 'referral',
       companyName: 'Acme Pvt. Ltd.',
       contactName: 'Sita Rai',
+      country: 'NP',
+      email: `lead.${tag()}@convert.example`,
       expectedValue: '150000.00',
       currency: 'USD',
       probability: 60,
@@ -156,7 +169,7 @@ const convert = (leadId: string, body: Record<string, unknown>, key: string = ra
 /** A new contact with its own email: a conversion always names a contact that can receive a quotation. */
 const newContact = () => ({
   mode: 'create',
-  contact: { fullName: 'Buyer', email: `buyer.${tag()}@convert.example` },
+  contact: { fullName: 'Buyer', email: `buyer.${tag()}@convert.example`, country: 'NP' },
 });
 const createCustomerBody = (customer: Record<string, unknown> = customerBody(), extra = {}) => ({
   customer: { mode: 'create', customer },
@@ -178,13 +191,32 @@ const customerRow = async (id: string) => {
   const [r] = await h.db.select().from(customers).where(eq(customers.id, id));
   return r!;
 };
+/** The only contact of a customer, with its numbers in their saved order. */
+const contactOf = async (customerId: string) => {
+  const rows = await h.db
+    .select()
+    .from(customerContacts)
+    .where(eq(customerContacts.customerId, customerId));
+  expect(rows).toHaveLength(1);
+  const phones = await h.db
+    .select({
+      country: customerContactPhones.country,
+      e164: customerContactPhones.e164,
+      isPrimary: customerContactPhones.isPrimary,
+      sortOrder: customerContactPhones.sortOrder,
+    })
+    .from(customerContactPhones)
+    .where(eq(customerContactPhones.contactId, rows[0]!.id))
+    .orderBy(asc(customerContactPhones.sortOrder));
+  return { ...rows[0]!, phones };
+};
 
 describe('POST /v1/leads/:id/convert', () => {
   it('refuses a short PAN for a Nepal customer and keeps a foreign tax id loose (FX8)', async () => {
     const lead = await qualifiedLead();
     const contact = {
       mode: 'create',
-      contact: { fullName: 'Sita Rai', email: `s.${tag()}@convert.example` },
+      contact: { fullName: 'Sita Rai', email: `s.${tag()}@convert.example`, country: 'NP' },
     };
     const short = await convert(
       lead.id,
@@ -200,7 +232,8 @@ describe('POST /v1/leads/:id/convert', () => {
           contact: {
             fullName: 'Sita Rai',
             email: `s.${tag()}@convert.example`,
-            phone: '+9778123456789',
+            country: 'NP',
+            phones: [phoneRow('+9778123456789')],
           },
         },
       }),
@@ -211,7 +244,8 @@ describe('POST /v1/leads/:id/convert', () => {
       createCustomerBody(
         customerBody({
           panVatNo: `AAACH${tag()}C`,
-          address: { line1: 'MG Road', city: 'Bengaluru', country: 'IN' },
+          country: 'IN',
+          address: { line: 'MG Road', city: 'Bengaluru' },
         }),
         { contact },
       ),
@@ -225,7 +259,10 @@ describe('POST /v1/leads/:id/convert', () => {
     const res = await convert(
       lead.id,
       createCustomerBody(customerBody({ panVatNo: panOf() }), {
-        contact: { mode: 'create', contact: { fullName: 'Sita Rai', email, phone: phone() } },
+        contact: {
+          mode: 'create',
+          contact: { fullName: 'Sita Rai', email, country: 'NP', phones: [phoneRow(phone())] },
+        },
       }),
     );
     expect(res.status, JSON.stringify(res.body)).toBe(201);
@@ -273,13 +310,119 @@ describe('POST /v1/leads/:id/convert', () => {
     expect(converted[0]).toMatchObject({ kind: 'stage_change', createdByUserId: h.users.salesA });
   });
 
+  it('copies the lead’s numbers, each with its country, to a new contact sent without any (FX9)', async () => {
+    const mobile = phone();
+    const abroad = usPhone();
+    const lead = await qualifiedLead({
+      phones: [phoneRow(mobile), phoneRow(abroad, 'US', false)],
+    });
+    const res = await convert(
+      lead.id,
+      createCustomerBody(customerBody({ panVatNo: panOf() }), {
+        contact: {
+          mode: 'create',
+          contact: { fullName: 'Sita Rai', email: `copy.${tag()}@convert.example`, country: 'NP' },
+        },
+      }),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { customerId } = res.body as { customerId: string };
+    expect((await customerRow(customerId)).country).toBe('NP');
+    const contact = await contactOf(customerId);
+    expect(contact.country).toBe('NP');
+    expect(contact.phones).toEqual([
+      { country: 'NP', e164: mobile, isPrimary: true, sortOrder: 0 },
+      { country: 'US', e164: abroad, isPrimary: false, sortOrder: 1 },
+    ]);
+  });
+
+  it('converts a lead abroad: customer and contact keep its country, and no Nepal PAN is asked (FX9)', async () => {
+    const abroad = usPhone();
+    const lead = await qualifiedLead({ country: 'US', phones: [phoneRow(abroad, 'US')] });
+    expect(lead.country).toBe('US');
+    const email = `us.${tag()}@convert.example`;
+    // A US tax id: not nine digits, which a Nepal customer would need.
+    const taxId = `EIN-${tag()}`.toUpperCase();
+    const body = (country: string) =>
+      createCustomerBody(
+        customerBody({
+          country,
+          address: { line: '1 Market St', city: 'San Francisco' },
+          panVatNo: taxId,
+        }),
+        { contact: { mode: 'create', contact: { fullName: 'Jane Doe', email, country } } },
+      );
+    // The same tax id on a Nepal customer is refused: the 9-digit rule follows the country.
+    const asNepal = await convert(lead.id, body('NP'));
+    expect(asNepal.status, JSON.stringify(asNepal.body)).toBe(400);
+    expect(errorOf(asNepal.body).message).toContain('PAN');
+
+    const res = await convert(lead.id, body('US'));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { customerId } = res.body as { customerId: string };
+    expect(await customerRow(customerId)).toMatchObject({
+      country: 'US',
+      panVatNo: taxId,
+      addressLine: '1 Market St',
+      addressCity: 'San Francisco',
+    });
+    const contact = await contactOf(customerId);
+    expect(contact.country).toBe('US');
+    expect(contact.phones).toEqual([
+      { country: 'US', e164: abroad, isPrimary: true, sortOrder: 0 },
+    ]);
+  });
+
+  it('warns when a number copied from the lead is another contact’s second number (FX9)', async () => {
+    const customerId = await h.seedCustomer();
+    const second = phone();
+    const first = await qualifiedLead();
+    const ok = await convert(first.id, {
+      customer: { mode: 'existing', customerId },
+      contact: {
+        mode: 'create',
+        contact: {
+          fullName: 'Two Numbers',
+          email: `two.${tag()}@convert.example`,
+          country: 'NP',
+          phones: [phoneRow(phone()), phoneRow(second, 'NP', false)],
+        },
+      },
+      opportunityName: 'First',
+      expectedVersion: 3,
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    const contactId = (await leadRow(first.id)).contactId;
+
+    const lead = await qualifiedLead({ phones: [phoneRow(second)] });
+    const res = await convert(lead.id, {
+      customer: { mode: 'existing', customerId },
+      contact: {
+        mode: 'create',
+        contact: {
+          fullName: 'Someone Else',
+          email: `else.${tag()}@convert.example`,
+          country: 'NP',
+        },
+      },
+      opportunityName: 'Second',
+      expectedVersion: 3,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    const wire = res.body as { error: { code: string; duplicates: unknown[] } };
+    expect(wire.error.code).toBe('duplicate_found');
+    expect(wire.error.duplicates).toEqual([
+      expect.objectContaining({ kind: 'contact', id: contactId, customerId, matchedOn: 'phone' }),
+    ]);
+  });
+
   it('links an existing customer and a new contact, and numbers deals one after the other', async () => {
     const customerId = await h.seedCustomer();
     const first = await qualifiedLead();
     const second = await qualifiedLead();
     const body = (email: string) => ({
       customer: { mode: 'existing', customerId },
-      contact: { mode: 'create', contact: { fullName: 'Hari Shah', email } },
+      contact: { mode: 'create', contact: { fullName: 'Hari Shah', email, country: 'NP' } },
       opportunityName: 'Existing customer deal',
       expectedVersion: 3,
     });
@@ -309,7 +452,10 @@ describe('POST /v1/leads/:id/convert', () => {
     const noEmail = await convert(lead.id, {
       ...base,
       opportunityName: 'No email',
-      contact: { mode: 'create', contact: { fullName: 'Phone Only', phone: phone() } },
+      contact: {
+        mode: 'create',
+        contact: { fullName: 'Phone Only', country: 'NP', phones: [phoneRow(phone())] },
+      },
     });
     expect(noEmail.status, JSON.stringify(noEmail.body)).toBe(400);
     const newCustomerNoContact = await convert(lead.id, {
@@ -391,7 +537,10 @@ describe('POST /v1/leads/:id/convert', () => {
     const first = await qualifiedLead();
     const ok = await convert(first.id, {
       customer: { mode: 'existing', customerId },
-      contact: { mode: 'create', contact: { fullName: 'Gita Rai', email, phone: mobile } },
+      contact: {
+        mode: 'create',
+        contact: { fullName: 'Gita Rai', email, country: 'NP', phones: [phoneRow(mobile)] },
+      },
       opportunityName: 'First',
       expectedVersion: 3,
     });
@@ -404,7 +553,12 @@ describe('POST /v1/leads/:id/convert', () => {
       // Same e-mail in capitals and the same phone: one entry that says both.
       contact: {
         mode: 'create',
-        contact: { fullName: 'Gita R.', email: email.toUpperCase(), phone: mobile },
+        contact: {
+          fullName: 'Gita R.',
+          email: email.toUpperCase(),
+          country: 'NP',
+          phones: [phoneRow(mobile)],
+        },
       },
       opportunityName: 'Second',
       expectedVersion: 3,
@@ -513,7 +667,14 @@ describe('POST /v1/leads/:id/convert', () => {
     const customerId = await h.seedCustomer();
     const fresh = await request(baseUrl)
       .post('/v1/leads')
-      .send({ title: 'Early', source: 'website', companyName: 'Early Co', contactName: 'Ram' });
+      .send({
+        title: 'Early',
+        source: 'website',
+        companyName: 'Early Co',
+        contactName: 'Ram',
+        country: 'NP',
+        email: `early.${tag()}@convert.example`,
+      });
     const early = LeadDtoSchema.parse(fresh.body);
     const body = {
       customer: { mode: 'existing', customerId },
@@ -675,13 +836,17 @@ describe('the lead creator on the opportunity (FX-Q1)', () => {
 
     // PMO enters the lead for a Sales owner (D50) ...
     await h.actAs(pmo);
-    const created = await request(baseUrl).post('/v1/leads').send({
-      title: 'PMO referral',
-      source: 'referral',
-      companyName: 'Acme Pvt. Ltd.',
-      contactName: 'Sita Rai',
-      ownerUserId: salesStaff,
-    });
+    const created = await request(baseUrl)
+      .post('/v1/leads')
+      .send({
+        title: 'PMO referral',
+        source: 'referral',
+        companyName: 'Acme Pvt. Ltd.',
+        contactName: 'Sita Rai',
+        country: 'NP',
+        email: `pmo.${tag()}@convert.example`,
+        ownerUserId: salesStaff,
+      });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const lead = LeadDtoSchema.parse(created.body);
     // ... and reaches no deal it did not originate.

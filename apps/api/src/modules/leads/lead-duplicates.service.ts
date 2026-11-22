@@ -7,7 +7,8 @@
 //   customerRef(...)) that GET /v1/customers/:id decides with then re-checks each row. A record the caller may not
 //   read is dropped before anything about it (id, name, count, rank) leaves this service.
 // - Tenant-scoped always: every query filters the caller's tenant (and, for leads, the acting entity).
-// Matching: email lower-cased and trimmed, equal; phone by its last 7 to 10 digits (E.164 stores digits after '+');
+// Matching: email lower-cased and trimmed, equal; phone by its last 7 to 10 digits against ANY of the person's numbers
+// (FX9: a lead's rows in lead_phones, a customer contact's in customer_contact_phones; E.164 stores digits after '+');
 // company and person by pg_trgm word similarity (the `<%` operator the 0059/0060 trigram indexes serve, at
 // searchPage's threshold) or a case-insensitive prefix. Ranking: an exact email or phone first, then an exact
 // (case-insensitive) company or person, then the higher word similarity.
@@ -19,7 +20,14 @@ import {
   type LeadDuplicateMatch,
   type LeadDuplicatesQuery,
 } from '@bos/contracts';
-import { customerContacts, customers, leads, scoped } from '@bos/db';
+import {
+  customerContactPhones,
+  customerContacts,
+  customers,
+  leadPhones,
+  leads,
+  scoped,
+} from '@bos/db';
 import { HttpException, Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -68,6 +76,24 @@ const similar = (q: string, column: AnyPgColumn): SQL =>
 /** The stored E.164 number ends in the typed digits (only digits follow its '+'). */
 const phoneEndsWith = (tail: string, column: AnyPgColumn): SQL =>
   sql`right(${column}, ${tail.length}) = ${tail}`;
+
+/** One of the lead's own numbers (any row, not only the primary) ends in the typed digits. */
+const leadPhoneEndsWith = (tail: string): SQL =>
+  sql`EXISTS (SELECT 1 FROM ${leadPhones} WHERE ${leadPhones.tenantId} = ${leads.tenantId} AND ${
+    leadPhones.organizationId
+  } = ${leads.organizationId} AND ${leadPhones.leadId} = ${leads.id} AND ${phoneEndsWith(
+    tail,
+    leadPhones.e164,
+  )})`;
+
+/** One of the contact's numbers (any row, not only the primary) ends in the typed digits. */
+const contactPhoneEndsWith = (tail: string): SQL =>
+  sql`EXISTS (SELECT 1 FROM ${customerContactPhones} WHERE ${customerContactPhones.tenantId} = ${
+    customerContacts.tenantId
+  } AND ${customerContactPhones.contactId} = ${customerContacts.id} AND ${phoneEndsWith(
+    tail,
+    customerContactPhones.e164,
+  )})`;
 
 /** The column equals the typed text, ignoring case. */
 const sameText = (q: string, column: AnyPgColumn): SQL => sql`lower(${column}) = lower(${q}::text)`;
@@ -132,7 +158,7 @@ export class LeadDuplicatesService {
     const company = flag(p.company, (v) => similar(v, leads.companyName));
     const name = flag(p.name, (v) => similar(v, leads.contactName));
     const email = flag(p.email, (v) => sql`${leads.emailNorm} = ${v}`);
-    const phone = flag(p.phoneTail, (v) => phoneEndsWith(v, leads.phoneE164));
+    const phone = flag(p.phoneTail, leadPhoneEndsWith);
     const exact = sql<boolean>`(${flag(p.company, (v) => sameText(v, leads.companyName))} OR ${flag(
       p.name,
       (v) => sameText(v, leads.contactName),
@@ -186,7 +212,7 @@ export class LeadDuplicatesService {
     const company = flag(p.company, (v) => similar(v, customers.legalName));
     const name = flag(p.name, (v) => similar(v, customerContacts.fullName));
     const email = flag(p.email, (v) => sql`${customerContacts.emailNorm} = ${v}`);
-    const phone = flag(p.phoneTail, (v) => phoneEndsWith(v, customerContacts.phoneE164));
+    const phone = flag(p.phoneTail, contactPhoneEndsWith);
     // Grouped by customer: the legal name is per row, the contact terms aggregate over its contacts.
     const exact = sql<boolean>`(${flag(p.company, (v) => sameText(v, customers.legalName))} OR bool_or(${flag(
       p.name,

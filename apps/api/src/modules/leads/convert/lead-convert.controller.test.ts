@@ -16,7 +16,10 @@ const ID = '4f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
 const CUSTOMER_ID = '9b1c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
 const EXISTING = {
   customer: { mode: 'existing', customerId: CUSTOMER_ID },
-  contact: { mode: 'create', contact: { fullName: 'Sita Rai', email: 'sita@acme.example' } },
+  contact: {
+    mode: 'create',
+    contact: { fullName: 'Sita Rai', email: 'sita@acme.example', country: 'NP' },
+  },
   opportunityName: 'Acme website',
   expectedVersion: 3,
 };
@@ -50,7 +53,11 @@ describe('LeadConvertController', () => {
       ID,
       {
         ...EXISTING,
-        contact: { mode: 'create', contact: { ...EXISTING.contact.contact, isPrimary: false } },
+        // The schema's defaults: not the main contact, and no numbers (the service then copies the lead's).
+        contact: {
+          mode: 'create',
+          contact: { ...EXISTING.contact.contact, phones: [], isPrimary: false },
+        },
       },
       'key-1',
     );

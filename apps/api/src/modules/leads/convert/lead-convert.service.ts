@@ -10,14 +10,26 @@
 // - "authorization is deny-by-default": a lead outside the caller's entity or scope is a 404; creating a customer
 //   needs customer.write and linking an existing one needs customer.read, checked on the record.
 // A possible duplicate is a 409 the caller can override with a reason, except a PAN/VAT match, which never can.
+// Countries and phones (FX9): the new customer and contact carry the country the body names (the form fills it from
+// the lead, whose country is explicit, so nothing is guessed here). A new contact sent without phone numbers gets
+// copies of the lead's numbers, each with its own country; those copies are checked for duplicates like typed ones.
 import {
   type ConvertLeadBody,
   type ContactDto,
   type CreateContactBody,
   type CustomerFields,
+  type PartyPhoneInput,
   type Permission,
 } from '@bos/contracts';
-import { activities, customerContacts, customers, leads, opportunities, scoped } from '@bos/db';
+import {
+  activities,
+  customerContactPhones,
+  customerContacts,
+  customers,
+  leads,
+  opportunities,
+  scoped,
+} from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -26,7 +38,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, isNull, or, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
@@ -45,6 +57,7 @@ import {
 import { carryOpenFollowUps } from '../../activities/follow-ups';
 import { normalizeEmail, normalizeName, normalizePan } from '../../customers/customers.normalize';
 import { loadAssignmentParties, partyHolds } from '../lead-assignee';
+import { loadPhonesOfLead } from '../lead-phones';
 import { LeadsCaller } from '../leads.caller';
 import { type LeadRow } from '../leads.types';
 import { leadRef } from '../leads.service';
@@ -141,16 +154,16 @@ export class LeadConvertService {
     if (contactChoice.mode === 'existing' && existing !== undefined) {
       await this.assertContactBelongs(tx, scope, existing.id, contactChoice.contactId);
     }
+    // A new contact without numbers takes copies of the lead's (primary first, then their saved order).
+    const newContact: CreateContactBody | undefined =
+      contactChoice.mode === 'create'
+        ? await this.withLeadPhones(tx, scope, lead.id, contactChoice.contact)
+        : undefined;
 
     // 3. Duplicates. A PAN/VAT match is refused first and whatever the override says; the rest is a warning.
     if (choice.mode === 'create') await this.assertPanFree(tx, scope, choice.customer);
     if (body.duplicateOverride === undefined) {
-      const duplicates = await this.findDuplicates(
-        tx,
-        scope,
-        choice,
-        contactChoice.mode === 'create' ? contactChoice.contact : undefined,
-      );
+      const duplicates = await this.findDuplicates(tx, scope, choice, newContact);
       if (duplicates.length > 0) {
         throw new ConflictException({
           code: 'duplicate_found',
@@ -168,12 +181,12 @@ export class LeadConvertService {
     let contactId: string | null = null;
     let createdContact: ContactDto | undefined;
     if (contactChoice.mode === 'existing') contactId = contactChoice.contactId;
-    if (contactChoice.mode === 'create') {
+    if (newContact !== undefined) {
       createdContact = await this.customersService.createContactInTx(
         tx,
         scope,
         customerId,
-        contactChoice.contact,
+        newContact,
         now,
       );
       contactId = createdContact.id;
@@ -372,6 +385,26 @@ export class LeadConvertService {
     if (row.emailNorm === null) throw contactEmailRequired();
   }
 
+  /**
+   * The new contact as it will be written: unchanged when it names phone numbers, otherwise with copies of the
+   * lead's numbers (country, number, label and primary mark; the contact's own rows get their own sort order).
+   */
+  private async withLeadPhones(
+    tx: DbTransaction,
+    scope: TxScope,
+    leadId: string,
+    contact: CreateContactBody,
+  ): Promise<CreateContactBody> {
+    if (contact.phones.length > 0) return contact;
+    const phones: PartyPhoneInput[] = (await loadPhonesOfLead(tx, scope, leadId)).map((phone) => ({
+      country: phone.country,
+      e164: phone.e164,
+      label: phone.label ?? null,
+      isPrimary: phone.isPrimary,
+    }));
+    return phones.length === 0 ? contact : { ...contact, phones };
+  }
+
   /** 409 `duplicate_pan_vat`, whatever the override says: the unique index would refuse the insert anyway. */
   private async assertPanFree(
     tx: DbTransaction,
@@ -390,7 +423,9 @@ export class LeadConvertService {
 
   /**
    * The customers with the same normalised name (only for a new customer; merged ones are not live records) and
-   * the contacts with the same e-mail or phone (only for a new contact), across the tenant.
+   * the contacts with the same e-mail or with any number equal to any of the new contact's numbers (only for a new
+   * contact), across the tenant. A phone match is one EXISTS per contact, so a contact sharing two numbers is still
+   * one row of the limit.
    */
   private async findDuplicates(
     tx: DbTransaction,
@@ -423,10 +458,19 @@ export class LeadConvertService {
     }
     if (contact !== undefined) {
       const email = contact.email === undefined ? undefined : normalizeEmail(contact.email);
-      const phone = contact.phone;
+      const numbers = [...new Set(contact.phones.map((p) => p.e164))];
+      const samePhone =
+        numbers.length === 0
+          ? undefined
+          : sql`EXISTS (SELECT 1 FROM ${customerContactPhones} WHERE ${customerContactPhones.tenantId} = ${
+              customerContacts.tenantId
+            } AND ${customerContactPhones.contactId} = ${customerContacts.id} AND ${inArray(
+              customerContactPhones.e164,
+              numbers,
+            )})`;
       const matches: SQL[] = [];
       if (email !== undefined) matches.push(eq(customerContacts.emailNorm, email));
-      if (phone !== undefined) matches.push(eq(customerContacts.phoneE164, phone));
+      if (samePhone !== undefined) matches.push(samePhone);
       if (matches.length > 0) {
         const rows = await tx
           .select({
@@ -434,7 +478,10 @@ export class LeadConvertService {
             customerId: customerContacts.customerId,
             fullName: customerContacts.fullName,
             emailNorm: customerContacts.emailNorm,
-            phoneE164: customerContacts.phoneE164,
+            phoneMatch:
+              samePhone === undefined
+                ? sql<boolean>`false`
+                : sql<boolean>`coalesce(${samePhone}, false)`,
             legalName: customers.legalName,
           })
           .from(customerContacts)
@@ -458,7 +505,7 @@ export class LeadConvertService {
           if (email !== undefined && r.emailNorm === email) {
             found.push({ ...base, matchedOn: 'email' });
           }
-          if (phone !== undefined && r.phoneE164 === phone) {
+          if (r.phoneMatch) {
             found.push({ ...base, matchedOn: 'phone' });
           }
         }
