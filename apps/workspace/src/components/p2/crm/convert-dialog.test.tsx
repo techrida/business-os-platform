@@ -227,6 +227,65 @@ it('keeps refused customer searches empty and does not issue blank or oversized 
   expect(api.listCustomers).not.toHaveBeenCalled();
 });
 
+async function mountNewCustomer() {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  mounted = await mountForm(
+    <ConvertDialog
+      lead={{
+        id: LEAD,
+        version: 1,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'New Supplies',
+        contactName: 'Mina',
+        email: 'mina@newsupplies.example',
+        phone: '',
+      }}
+      action={async (prev, form) => {
+        submitted.push(form);
+        return convertLeadAction(prev, form);
+      }}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  await fill(dialog().querySelector('[name="line1"]'), 'Balaju');
+  await fill(dialog().querySelector('[name="city"]'), 'Kathmandu');
+}
+
+/** The visible text box of a digit input, found from its posted hidden input. */
+function digitBox(name: string): HTMLInputElement | null {
+  return (
+    dialog()
+      .querySelector(`input[type="hidden"][name="${name}"]`)
+      ?.parentElement?.querySelector<HTMLInputElement>('input[type="text"]') ?? null
+  );
+}
+
+it('keeps a short new-contact phone blocked after switching to an existing contact and back', async () => {
+  await mountNewCustomer();
+  await fill(digitBox('contactPhone'), '981234567');
+  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(dialog().querySelector('input[name="contactMode"][value="create"]'));
+  expect(digitBox('contactPhone')?.value).toBe('981234567');
+  await submit(dialog());
+  expect(submitted).toHaveLength(0);
+  expect(api.convertLead).not.toHaveBeenCalled();
+  expect(dialog().textContent).toContain('A mobile number has 10 digits; this has 9.');
+});
+
+it('flags a short tax id typed for a foreign customer once the country becomes NP', async () => {
+  await mountNewCustomer();
+  await fill(dialog().querySelector('[name="country"]'), 'IN');
+  await fill(dialog().querySelector('[name="panVatNo"]'), '12345');
+  await fill(dialog().querySelector('[name="country"]'), 'NP');
+  expect(digitBox('panVatNo')?.value).toBe('12345');
+  await submit(dialog());
+  expect(submitted).toHaveLength(0);
+  expect(api.convertLead).not.toHaveBeenCalled();
+  expect(dialog().textContent).toContain('A PAN is 9 digits; this has 5.');
+  expect(digitBox('panVatNo')?.getAttribute('aria-invalid')).toBe('true');
+});
+
 it('creates a new customer and contact through the real action', async () => {
   api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
   mounted = await mountForm(
