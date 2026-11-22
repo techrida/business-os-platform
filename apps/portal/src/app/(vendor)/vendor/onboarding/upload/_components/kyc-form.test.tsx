@@ -11,9 +11,13 @@ vi.mock('next/navigation', () => ({ redirect: vi.fn(), notFound: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('../actions', () => ({
   // A refusal: the form is reset by React 19 after the action, so the date must be kept by the form.
-  submitKycDocumentAction: async (prev: { key: string }, form: FormData) => {
+  submitKycDocumentAction: (prev: { key: string }, form: FormData) => {
     sent.forms.push(form);
-    return { key: prev.key, error: 'Add the document.', fieldErrors: { file: 'Add the document.' } };
+    return Promise.resolve({
+      key: prev.key,
+      error: 'Add the document.',
+      fieldErrors: { file: 'Add the document.' },
+    });
   },
 }));
 
