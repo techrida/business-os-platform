@@ -91,7 +91,8 @@ export function useUnfinishedMessage(active: boolean) {
 }
 
 /**
- * Keeps a native-validated form from submitting a partly typed date, as a native date input does.
+ * Keeps a form from submitting a partly typed date, as a native date input does: through the
+ * browser's own validation, or (`hold`) by stopping the submit itself, for a `noValidate` form.
  * Nameless, so it posts nothing. The browser cannot point at a hidden field, so its bubble is
  * cancelled: the message shows beside the field instead and the empty segment takes the focus.
  */
@@ -102,7 +103,9 @@ export function UnfinishedBlocker({
   messageId,
   shown,
   onBlocked,
+  hold = false,
 }: {
+  hold?: boolean | undefined;
   message: string;
   root: RefObject<HTMLElement | null>;
   disabled?: boolean | undefined;
@@ -114,6 +117,22 @@ export function UnfinishedBlocker({
   useLayoutEffect(() => {
     ref.current?.setCustomValidity(message);
   }, [message]);
+  // A `noValidate` form (one that shows its own errors after a server action) never asks the browser
+  // to validate, so the invalid event above would not come. `hold` stops the submit here instead: with
+  // the action not running, the form is not reset, so the typed segments stay as they are. Stopped
+  // before React's own submit handling, which would otherwise run the form's onSubmit and its action.
+  useEffect(() => {
+    const form = ref.current?.form;
+    if (!hold || disabled === true || !form) return;
+    const stop = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      flushSync(onBlocked);
+      root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
+    };
+    form.addEventListener('submit', stop);
+    return () => form.removeEventListener('submit', stop);
+  }, [hold, disabled, onBlocked, root]);
   return (
     <>
       <input
@@ -174,9 +193,12 @@ export interface DatePickerProps {
   /**
    * `native` (default): a required, empty or out-of-range picker blocks a plain GET or POST form in the
    * browser, as any native field does. `aria`: the browser does not block; use it in an action form
-   * that shows its own errors and keeps what the user picked after a refusal.
+   * that shows its own errors and keeps what the user picked after a refusal. `hold`: as `native`, and
+   * also stops the submit of a `noValidate` action form while the date is partly typed, so the form is
+   * not reset by the action: the typed segments stay, "Finish the date" shows and the empty segment
+   * takes the focus.
    */
-  validation?: 'native' | 'aria' | undefined;
+  validation?: 'native' | 'aria' | 'hold' | undefined;
 }
 
 /**
@@ -261,7 +283,7 @@ export function DatePicker({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `refills` forces a new object.
   const fedDate = useMemo(() => toCalendarDate(fed), [fed, refills]);
   const bs = showBs ? bsLongOfDay(chosen) : null;
-  const unfinishedMessage = useUnfinishedMessage(validation === 'native' && unfinished);
+  const unfinishedMessage = useUnfinishedMessage(validation !== 'aria' && unfinished);
   const describedBy =
     [
       aria['aria-describedby'],
@@ -307,7 +329,7 @@ export function DatePicker({
     <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
       <AriaDatePicker
         {...optional}
-        validationBehavior={validation}
+        validationBehavior={validation === 'aria' ? 'aria' : 'native'}
         onChange={(next) => {
           if (isResetting()) return;
           const iso = next ? next.toString() : '';
@@ -422,8 +444,9 @@ export function DatePicker({
       {incomplete && name !== undefined ? (
         <input type="hidden" name={name} value="" disabled={disabled} />
       ) : null}
-      {validation === 'native' && unfinished ? (
+      {validation !== 'aria' && unfinished ? (
         <UnfinishedBlocker
+          hold={validation === 'hold'}
           message="Finish the date"
           root={rootRef}
           disabled={disabled}
