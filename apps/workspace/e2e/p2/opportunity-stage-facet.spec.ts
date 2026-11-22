@@ -37,6 +37,15 @@ async function moveStage(page: Page, value: string, label: string) {
     ).toBeVisible();
     return;
   }
+  if (value === 'requirement_received') {
+    // The deal page has no stage select: its primary move is a button that opens a confirm dialog.
+    await page.getByRole('button', { name: 'Requirement received', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Mark requirement received?' });
+    await dialog.getByRole('button', { name: 'Move to Requirement Received', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();
+    return;
+  }
   await chooseOption(selectByName(page, 'stage'), value);
   await page.getByRole('button', { name: 'Move', exact: true }).click();
   await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();

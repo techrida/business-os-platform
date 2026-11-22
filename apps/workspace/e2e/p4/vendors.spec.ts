@@ -59,7 +59,8 @@ test('a vendor goes from draft to KYB review, and its maker-checker refusals rea
       await page.goto('/vendors/new');
       await page.getByLabel('Legal name').fill(name);
       await chooseOption(selectByName(page, 'kind'), 'foreign');
-      await expect(page.getByLabel('PAN')).toHaveCount(0);
+      // Exact role match: the Kind control's option text ("Company (registered, with a PAN)") also contains "PAN".
+      await expect(page.getByRole('textbox', { name: 'PAN', exact: true })).toHaveCount(0);
       // The vendor's country is the Address panel's Country picker.
       await pickCountry(
         page.getByRole('combobox', { name: 'Country', exact: true }),
