@@ -14,7 +14,7 @@
 // procurement-15 is the VAT register, so the guide never asks for the approval. The refusal when the
 // requester is the only Finance person is covered by the API unit tests, not by this run.
 /* global document -- referenced inside page.evaluate callbacks, which run in the browser */
-import { escapeRe, uniqueValues } from '../lib/config.mjs';
+import { escapeRe, runMatch, uniqueValues } from '../lib/config.mjs';
 import { realLogin, StepFailure } from '../lib/session.mjs';
 import { demoFile, isPdf, pdfText } from '../lib/support.mjs';
 
@@ -35,11 +35,6 @@ const GRN = /GRN-\d{4}\/\d{2}-\d{5}/;
 const BILL = /BILL-\d{4}\/\d{2}-\d{5}/;
 const UUID = '[0-9a-f-]{36}';
 const VENDOR = 'Dev Vendor Co';
-// The demo account of the chart of accounts (guide procurement-11): there is no account picker yet.
-const ACCOUNT_ID = '74d53859-bdfb-49af-9fc3-784915e96a10';
-// The paying entity's bank account: a raw GUID field with no list to pick from (ISSUES I-40, open).
-// The seeded payment requests use this placeholder; nothing is paid from it.
-const PAYING_ACCOUNT_ID = '6200d257-61ec-4e6b-a9a9-7686511b5838';
 
 /** "NPR 1,13,000.00" and "113000.00" both contain 113000.00 once separators are removed. */
 const hasAmount = (text, amount) => text.replace(/,/g, '').includes(Number(amount).toFixed(2));
@@ -183,8 +178,82 @@ export function workflow(cfg) {
       .first()
       .isVisible()
       .catch(() => false);
+  /**
+   * A segmented date picker (react-aria, round 5): a group named after the field whose month, day and
+   * year are typed one by one. `iso` is YYYY-MM-DD.
+   */
+  const dateGroup = (p, label) => p.getByRole('group', { name: label, exact: true }).first();
+  const fillDate = async (s, label, iso, page = s.page) => {
+    const [, year, month, day, hh, mm] =
+      /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(iso) ?? [];
+    if (!year) throw new StepFailure(`Invalid ISO date "${iso}"`);
+    const group = dateGroup(page, label);
+    await s.hydrated(group.locator('[data-type="year"]'));
+    for (const [segment, digits] of [
+      ['year', year],
+      ['month', month],
+      ['day', day],
+    ]) {
+      const seg = group.locator(`[data-type="${segment}"]`).first();
+      await seg.click();
+      await seg.pressSequentially(digits);
+    }
+    const got = await readDate(group);
+    s.expect(got === iso.slice(0, 10), `${label} is ${iso.slice(0, 10)}`, got);
+    if (hh) {
+      // A date and time picker has a second group, "<label> Time", beside the date: hour and minute
+      // (plus AM/PM on a 12-hour clock). Segments are typed by data-type, so the order does not matter.
+      const time = page.getByRole('group', { name: `${label} Time`, exact: true }).first();
+      await s.hydrated(time.locator('[data-type="hour"]'));
+      const twelve = (await time.locator('[data-type="dayPeriod"]').count()) > 0;
+      const hour = twelve ? String(((Number(hh) + 11) % 12) + 1).padStart(2, '0') : hh;
+      const clock = [
+        ['hour', hour],
+        ['minute', mm],
+        ...(twelve ? [['dayPeriod', Number(hh) >= 12 ? 'P' : 'A']] : []),
+      ];
+      for (const [segment, digits] of clock) {
+        const seg = time.locator(`[data-type="${segment}"]`).first();
+        await seg.click();
+        await seg.pressSequentially(digits);
+      }
+      const shown = (await time.innerText()).replace(/\s+/g, ' ');
+      s.expect(
+        new RegExp(`${hour}\\s*:\\s*${mm}`).test(shown),
+        `${label} time is ${hh}:${mm}`,
+        shown,
+      );
+    }
+  };
+  /** The YYYY-MM-DD a segmented date picker shows ('' while a segment is empty). */
+  const readDate = async (group) => {
+    const part = async (t) =>
+      (await group.locator(`[data-type="${t}"]`).first().innerText()).trim();
+    const [y, m, d] = [await part('year'), await part('month'), await part('day')];
+    return /^\d+$/.test(y + m + d)
+      ? `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+      : '';
+  };
+
+  /**
+   * The route steps of an Approval or Commitment approval panel. Round 5 added a "Who acted" list
+   * (its own section) inside the panel; its entries are not steps.
+   */
+  const approvalSteps = (region) =>
+    region.locator(
+      'xpath=.//li[not(ancestor::section[@aria-labelledby="approval-actions-title"])]',
+    );
+  // A bill's own heading ("Invoice <no>" while a draft, then its BILL number); the route's loading
+  // skeleton also has a plain h1 ("Payables").
+  const billReady = (p) => p.getByRole('heading', { level: 1, name: /^(Invoice |BILL-)/ });
   const openUrl = (s, key, ready) => s.goto(s.need(key), ready);
   const headingNumber = async (s, re) => {
+    // Round 5: a route shows a loading skeleton with a plain h1 first; wait for the numbered heading.
+    await s.page
+      .getByRole('heading', { level: 1, name: re })
+      .first()
+      .waitFor({ state: 'visible', timeout: 60000 })
+      .catch(() => {});
     const m = re.exec(await s.page.getByRole('heading', { level: 1 }).first().innerText());
     if (!m) throw new StepFailure(`The page heading has no ${re.source} number`);
     return m[0];
@@ -223,19 +292,51 @@ export function workflow(cfg) {
    * since the confirm button often has the same name), the confirm inside the dialog, then the
    * dialog's Done, which reloads the page to the new status. The confirm is clicked once.
    */
-  const actionDialog = async (s, trigger, dialogName, confirm, timeout = 120000) => {
+  const actionDialog = async (s, trigger, dialogName, confirm, timeout = 120000, onOpen) => {
     await s.click(
-      s.page.getByRole('main').getByRole('button', { name: trigger, exact: true }),
+      // The header actions of some pages (the bill) sit outside <main>; the dialog is portalled after
+      // them, so the first button of that name is the trigger.
+      s.page.getByRole('button', { name: trigger, exact: true }).first(),
       trigger,
     );
     const d = s.page.getByRole('dialog', { name: dialogName });
     await s.see(d, `the "${trigger}" dialog`);
+    if (onOpen) await onOpen(d);
     await s.pause(400);
     await d.getByRole('button', { name: confirm, exact: true }).click();
     const done = d.getByRole('button', { name: 'Done', exact: true });
-    await s.see(done, `${trigger} succeeded (Done)`, timeout);
-    await s.pause(600);
-    await Promise.all([s.page.waitForEvent('load', { timeout: cfg.navTimeout }), done.click()]);
+    // Round 5: once the action lands, the page behind can re-render with the new status and take the
+    // dialog (and its Done) with it. Either ending is a success; the page is reloaded to the new status.
+    // The last text the dialog showed, kept for the note when it closes by itself.
+    let lastText = '';
+    const watching = setInterval(() => {
+      d.innerText({ timeout: 500 })
+        .then((x) => {
+          lastText = x.replace(/\s+/g, ' ').slice(0, 300);
+        })
+        .catch(() => {});
+    }, 500);
+    const ended = await Promise.race([
+      done
+        .waitFor({ state: 'visible', timeout })
+        .then(() => 'done')
+        .catch(() => 'timeout'),
+      d
+        .waitFor({ state: 'detached', timeout })
+        .then(() => 'closed')
+        .catch(() => 'timeout'),
+    ]);
+    clearInterval(watching);
+    if (ended === 'timeout') await s.see(done, `${trigger} succeeded (Done)`, 1000);
+    if (ended === 'done') {
+      await s.pause(600);
+      await Promise.all([s.page.waitForEvent('load', { timeout: cfg.navTimeout }), done.click()]);
+    } else {
+      s.checks.push(
+        `note: the ${trigger} dialog closed by itself (it last read: ${lastText}); reloading to the new status`,
+      );
+      await s.page.reload({ waitUntil: 'load', timeout: cfg.navTimeout });
+    }
     s.checks.push(`confirmed ${trigger}`);
   };
 
@@ -247,11 +348,12 @@ export function workflow(cfg) {
   const approve = async (s, persona, match, comment, isDone) => {
     await as(s, persona);
     await s.caption(`${step(s)} — ${persona}: Inbox → approve`);
-    await s.goto('/inbox', (p) => p.getByRole('heading', { name: 'Inbox', exact: true }));
-    const row = s.page
-      .getByRole('table', { name: 'Waiting approvals' })
-      .getByRole('row')
-      .filter({ hasText: match });
+    // Round 5: the inbox is a searchable list of links (the "Waiting approvals" table is gone), as in sales.mjs.
+    const q = (match.match(/[A-Z]{2,3}-\d{4}\/\d{2}-\d{5}/) ?? [match])[0];
+    await s.goto(`/inbox?q=${encodeURIComponent(q)}`, (p) =>
+      p.getByRole('heading', { name: 'Inbox', exact: true }),
+    );
+    const row = s.page.locator('main a[href^="/inbox/"]').filter({ hasText: runMatch(match) });
     for (let i = 0; i < 8 && !(await visible(row)); i++) {
       await s.page.waitForTimeout(5000);
       await s.page.reload({ waitUntil: 'domcontentloaded' });
@@ -274,7 +376,7 @@ export function workflow(cfg) {
       `${await row.count()}`,
     );
     await s.see(row, `${persona}'s inbox row for ${match}`);
-    await s.click(row.first().getByRole('link').first(), 'the inbox row');
+    await s.click(row.first(), 'the inbox row');
     await s.page.waitForURL(new RegExp(`/inbox/${UUID}`));
     await s.pause();
     const dialog = s.page.getByRole('dialog', { name: 'Approve request' });
@@ -373,26 +475,47 @@ export function workflow(cfg) {
     await vp.waitForURL((u) => new URL(u).pathname === href, { timeout: cfg.navTimeout });
   };
 
-  /** The PR's draft or issued purchase order, from its "Purchase orders of this request" table. */
+  /** Every purchase order on the Purchase orders list (first page, newest first): number, id, row text. */
+  const listedOrders = async (s) => {
+    await s.goto('/procurement/orders?rows=100', (p) => h1(p, 'Purchase orders'));
+    const rows = s.page.locator('main tbody tr');
+    await s.see(rows.first(), 'the purchase orders list loaded');
+    return (
+      await rows.evaluateAll((trs) =>
+        trs.map((tr) => ({
+          text: tr.innerText.replace(/\s+/g, ' ').trim(),
+          href: tr.querySelector('a[href^="/procurement/orders/"]')?.getAttribute('href') ?? '',
+        })),
+      )
+    )
+      .map((r) => ({ ...r, number: PO.exec(r.text)?.[0], id: r.href.split('/').pop() }))
+      .filter((r) => r.number && r.id);
+  };
+
+  /**
+   * The draft purchase order the commitment approval created. Round 5: the request's page lists
+   * only orders that are no longer drafts (the API leaves drafts out), and the order does not link
+   * its request, so the order is the one on the Purchase orders list that was not there before the
+   * approvals (`poBaseline`, taken by procurement-7). Without a baseline (a resumed run), it is the
+   * only Draft of this vendor at the approved total. Anything else fails rather than guess.
+   */
   const orderOfRequest = async (s) => {
-    await openUrl(s, 'prUrl', (p) => h1(p, s.state.prNumber ?? PR));
-    const table = s.page.getByRole('table', { name: 'Purchase orders of this request' });
-    if (!(await reloadUntil(s, table, 6, 5000))) return null;
-    const rows = await table.locator('tbody tr').evaluateAll((trs) =>
-      trs.map((tr) => ({
-        text: tr.textContent.replace(/\s+/g, ' ').trim(),
-        href: tr.querySelector('a[href]')?.getAttribute('href') ?? '',
-      })),
-    );
-    if (rows.length !== 1)
+    const rows = await listedOrders(s);
+    const baseline = s.state.poBaseline;
+    const mine = baseline
+      ? rows.filter((r) => !baseline.includes(r.number))
+      : rows.filter(
+          (r) => /\bDraft\b/.test(r.text) && r.text.includes(VENDOR) && hasAmount(r.text, 113000),
+        );
+    if (mine.length !== 1)
       throw new StepFailure(
-        `Expected one purchase order for ${s.state.prNumber}, found ${rows.length}`,
+        `Expected one new purchase order for ${s.state.prNumber}, found ${mine.length}` +
+          (mine.length ? `: ${mine.map((r) => r.number).join(', ')}` : '') +
+          `; check the Purchase orders list by hand (listed: ${
+            rows.map((r) => `${r.number} ${r.text.slice(0, 90)}`).join(' | ') || 'none'
+          }; baseline: ${baseline ? baseline.join(', ') : 'none'})`,
       );
-    const number = PO.exec(rows[0].text)?.[0];
-    const id = new URL(rows[0].href, cfg.appUrl).searchParams.get('po');
-    if (!number || !id)
-      throw new StepFailure(`The purchase order row is unreadable: ${rows[0].text}`);
-    return { number, id, text: rows[0].text };
+    return { number: mine[0].number, id: mine[0].id, text: mine[0].text };
   };
 
   return {
@@ -414,7 +537,7 @@ export function workflow(cfg) {
             await s.goto('/procurement/requests/new', (p) => h1(p, 'New purchase request'));
             await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
             await s.caption('procurement-1 — fill the request (Emergency stays off)');
-            await s.fill('Needed by', '2030-12-31');
+            await fillDate(s, 'Needed by', '2030-12-31');
             await s.choose(s.select('departmentId', { byName: true }), 'Operations');
             await s.choose(s.select('costCenterId', { byName: true }), /^GENERAL\s*·\s*General$/);
             await s.fill('Budget code', v.budgetCode);
@@ -428,8 +551,8 @@ export function workflow(cfg) {
               'Demo device; serial number required at receipt.',
             );
             await s.fill('Unit', 'pcs');
-            await s.fill('Quantity', '2');
-            await s.fill('Estimated unit price (NPR)', '60000.00');
+            await s.fill(s.page.getByLabel('Quantity', { exact: true }).filter({ visible: true }), '2');
+            await s.fill('Estimated unit price', '60000.00');
             const serials = s.page.getByRole('checkbox', {
               name: 'Record serial numbers at receipt',
               exact: true,
@@ -469,7 +592,10 @@ export function workflow(cfg) {
             await s.page.waitForURL(/\/edit$/, { timeout: cfg.navTimeout });
             await s.see(s.field('Budget code'), 'the edit form');
             const val = (label) => s.field(label).first().inputValue();
-            s.expect((await val('Needed by')) === '2030-12-31', 'Needed by is 2030-12-31');
+            s.expect(
+              (await readDate(dateGroup(s.page, 'Needed by'))) === '2030-12-31',
+              'Needed by is 2030-12-31',
+            );
             s.expect((await val('Budget code')) === v.budgetCode, `Budget code is ${v.budgetCode}`);
             s.expect(
               (await val('Delivery location')) === 'Demo office, Kathmandu',
@@ -488,12 +614,22 @@ export function workflow(cfg) {
             );
             await openUrl(s, 'prUrl', (p) => p.getByRole('heading', { level: 1 }));
             await s.caption('procurement-1 — Submit for approval');
-            await s.click(s.button('Submit for approval'), 'Submit for approval');
+            await s.click(
+              s.page
+                .getByRole('main')
+                .getByRole('button', { name: 'Submit for approval', exact: true }),
+              'Submit for approval',
+            );
+            // Round 5: Submit asks "Submit for approval?" first; the confirm shares the opener's name.
+            const confirm = s.page.getByRole('dialog', { name: 'Submit for approval?' });
+            await s.see(confirm, 'the Submit for approval? dialog');
+            await s.pause(400);
+            await confirm.getByRole('button', { name: 'Submit for approval', exact: true }).click();
           } else s.checks.push('note: the request was submitted by an earlier attempt');
           await s.see(status(s.page, 'Awaiting approval'), 'status Awaiting approval', 90000);
-          const steps = s.page
-            .getByRole('region', { name: 'Approval', exact: true })
-            .getByRole('listitem');
+          const steps = approvalSteps(
+            s.page.getByRole('region', { name: 'Approval', exact: true }),
+          );
           s.expect(
             (await steps.count()) === 1,
             'exactly one approval step',
@@ -559,10 +695,10 @@ export function workflow(cfg) {
               s.checks.push('note: adopting the RFQ an earlier attempt opened');
             } else {
               await s.goto(`/procurement/rfqs/new?pr=${idOf(s.state.prUrl)}`, (p) =>
-                p.getByLabel('Quotation deadline'),
+                dateGroup(p, 'Quotation deadline'),
               );
               await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-              await s.fill('Quotation deadline', '2030-12-01T17:00');
+              await fillDate(s, 'Quotation deadline', '2030-12-01T17:00');
               const vendor = s.page
                 .getByRole('group', { name: /Invited vendors/ })
                 .getByRole('checkbox', { name: VENDOR, exact: true });
@@ -639,11 +775,25 @@ export function workflow(cfg) {
           const file = vp.getByLabel('Your quotation', { exact: true });
           await s.hydrated(file);
           await file.setInputFiles(demoFile(cfg, 'vendor-quotation.pdf'));
-          await s.see(
-            vp.getByRole('list', { name: 'Uploaded file' }).getByText('vendor-quotation.pdf'),
-            'vendor-quotation.pdf uploaded',
-            90000,
-          );
+          await s
+            .see(
+              vp.getByRole('list', { name: 'Uploaded file' }).getByText('vendor-quotation.pdf'),
+              'vendor-quotation.pdf uploaded',
+              90000,
+            )
+            .catch(async (e) => {
+              // The failure screenshot is of the staff window; keep the vendor window's too.
+              const alert = await vp
+                .getByRole('alert')
+                .first()
+                .innerText({ timeout: 2000 })
+                .catch(() => '(no alert)');
+              await vp.screenshot({
+                path: `${s.dirs.shots}/procurement-4-VENDOR.png`,
+                fullPage: true,
+              });
+              throw new StepFailure(`${e.message} Vendor window alert: ${alert}`);
+            });
           const currency = s.select('currency', { scope: vp, byName: true });
           if ((await currency.count()) && !/NPR/.test(await currency.first().innerText()))
             await s.choose(currency, 'NPR', { scope: vp });
@@ -711,7 +861,7 @@ export function workflow(cfg) {
             await s.hydrated(include);
             if (!(await include.isChecked())) await include.check();
             await s.fill('Quantity (line 1)', '2');
-            await s.fill('Unit price (NPR) (line 1)', '50000.00');
+            await s.fill('Unit price (line 1)', '50000.00');
             await s.choose(s.select('lines.0.taxCodeId', { byName: true }), /VAT\s*13/);
             await s.pause();
             await s.click(s.button('Convert to quotation'), 'Convert to quotation');
@@ -822,7 +972,7 @@ export function workflow(cfg) {
             await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
             await s.see(commitment, 'the Commitment approval panel', 90000);
           } else s.checks.push('note: the commitment was submitted by an earlier attempt');
-          const items = commitment.getByRole('listitem');
+          const items = approvalSteps(commitment);
           s.expect((await items.count()) === 3, 'three commitment steps', `${await items.count()}`);
           const texts = await items.allInnerTexts();
           s.expect(
@@ -854,6 +1004,12 @@ export function workflow(cfg) {
               ),
             );
           };
+          // The new order is told from the older ones by the list as it was before the approvals.
+          if (!s.state.poBaseline && !(s.state.commitApprovals ?? []).length)
+            s.record(
+              'poBaseline',
+              (await listedOrders(s)).map((r) => r.number),
+            );
           // The inbox row reads "Commitment RFQ-… (PR-…)": matched by this run's RFQ number.
           const approvers = [
             ['Dev Accountant', 'Demo sourcing and quote arithmetic checked.'],
@@ -877,7 +1033,7 @@ export function workflow(cfg) {
             exact: true,
           });
           await s.see(commitment.getByText(/Approval approved/), 'the commitment is approved');
-          const items = await commitment.getByRole('listitem').allInnerTexts();
+          const items = await approvalSteps(commitment).allInnerTexts();
           s.expect(
             items.length === 3 && items.every((t) => /Approved/.test(t)),
             'all three steps Approved, no Founder step',
@@ -927,7 +1083,10 @@ export function workflow(cfg) {
           // The Ordered cell reads "<quantity> <unit>" (qtyText), e.g. "2 pcs".
           s.expect(/\b2(\.0+)? pcs\b/.test(lines), 'the line orders 2 pcs', lines);
           await s.caption('procurement-8 — wait for the version 1 PDF, then open it');
-          const download = s.page.getByRole('link', { name: 'Download of version 1', exact: true });
+          // Round 5: the version row's Download is a button (named "Download of version 1").
+          const download = s.page
+            .getByRole('button', { name: 'Download of version 1', exact: true })
+            .or(s.page.getByRole('link', { name: 'Download of version 1', exact: true }));
           s.expect(
             await reloadUntil(s, download, 18, 10000),
             'version 1 has its PDF (Download of version 1)',
@@ -969,7 +1128,10 @@ export function workflow(cfg) {
           );
           await s.see(status(vp, 'Issued'), 'the vendor sees it Issued');
           const vendorFile = await s.download(
-            vp.getByRole('link', { name: 'Download', exact: true }),
+            vp
+              .getByRole('link', { name: /^Download/ })
+              .or(vp.getByRole('button', { name: /^Download/ }))
+              .first(),
             s.dirs.files,
           );
           s.expect(isPdf(vendorFile.bytes), 'the vendor download is a PDF');
@@ -1031,14 +1193,14 @@ export function workflow(cfg) {
             await s.click(add, `New receipt for ${po}`);
             await s.see(h1(s.page, 'New receipt'), 'the New receipt form');
             await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-            const on = await s.field('Received on').inputValue();
+            const on = await readDate(dateGroup(s.page, 'Received on'));
             s.expect(/^\d{4}-\d{2}-\d{2}$/.test(on), 'Received on has its default date', on);
             await s.caption('procurement-9 — Save draft receipt with no quantities first');
             await s.click(s.button('Save draft receipt'), 'Save draft receipt (empty)');
             await s.seeText('Enter a quantity on at least one line.', 'the validation message');
             s.expect(/\/procurement\/receipts\/new/.test(s.page.url()), 'nothing was saved');
             await s.caption('procurement-9 — 2 pcs, two serials, Demo shelf A');
-            await s.fill('Quantity received (pcs) (line 1)', '2');
+            await s.fill('Quantity received (line 1)', '2');
             await s.fill('Serial numbers (line 1)', v.serials.join('\n'));
             await s.fill('Location', 'Demo shelf A');
             await s.pause();
@@ -1127,18 +1289,32 @@ export function workflow(cfg) {
           const file = vp.getByLabel('Your bill', { exact: true });
           await s.hydrated(file);
           await file.setInputFiles(demoFile(cfg, 'vendor-invoice.pdf'));
-          await s.see(
-            vp.getByRole('list', { name: 'Uploaded file' }).getByText('vendor-invoice.pdf'),
-            'vendor-invoice.pdf uploaded',
-            90000,
-          );
+          await s
+            .see(
+              vp.getByRole('list', { name: 'Uploaded file' }).getByText('vendor-invoice.pdf'),
+              'vendor-invoice.pdf uploaded',
+              90000,
+            )
+            .catch(async (e) => {
+              const alert = await vp
+                .getByRole('alert')
+                .first()
+                .innerText({ timeout: 2000 })
+                .catch(() => '(no alert)');
+              await vp.screenshot({
+                path: `${s.dirs.shots}/procurement-10-VENDOR.png`,
+                fullPage: true,
+              });
+              throw new StepFailure(`${e.message} Vendor window alert: ${alert}`);
+            });
           await s.fill(vp.getByLabel('Your invoice number'), v.invoiceNo);
           // Run 2: the date is empty, not "supplied". Today in UTC is never ahead of Nepal's date.
-          const date = vp.getByLabel('Invoice date', { exact: true });
-          if (!(await date.inputValue())) {
+          // Round 5 (FX6): a segmented picker; a future date is refused, and today in UTC is never ahead.
+          const shown = await readDate(dateGroup(vp, 'Invoice date'));
+          if (!shown) {
             s.checks.push('note: Invoice date was empty; entering today');
-            await s.fill(date, new Date().toISOString().slice(0, 10));
-          }
+            await fillDate(s, 'Invoice date', new Date().toISOString().slice(0, 10), vp);
+          } else s.checks.push(`note: Invoice date was already ${shown}`);
           await s.fill(vp.getByLabel('Total on your invoice'), '113000.00');
           await s.pause();
           await s.click(
@@ -1200,11 +1376,23 @@ export function workflow(cfg) {
             const form = await main(s);
             s.expect(form.includes(po), `the submission's order ${po} is linked`);
             s.expect(form.includes(VENDOR), `the vendor ${VENDOR} is kept`);
-            await s.fill('Quantity', '2');
-            await s.fill('Unit price (NPR)', '50000.00');
+            await s.fill(s.page.getByLabel('Quantity', { exact: true }).filter({ visible: true }), '2');
+            await s.fill('Unit price', '50000.00');
             // The guide's "Tax code VAT13" is the "VAT" field, option "VAT 13%".
             await s.choose(s.select('line:0:taxCodeId', { byName: true }), /VAT\s*13/);
-            await s.fill('Account ID', ACCOUNT_ID);
+            // Round 5: the expense account is a searchable combobox of the company's expense accounts
+            // (no raw account id). The first listed account is taken; its name goes into the checks.
+            const account = s.page.getByRole('combobox', { name: 'Expense account', exact: true });
+            await s.hydrated(account);
+            await account.click();
+            const option = s.page.getByRole('option').first();
+            await option.waitFor({ state: 'visible', timeout: 20000 });
+            s.checks.push(`chose the expense account: ${(await option.innerText()).trim()}`);
+            await option.click({ delay: 120 });
+            s.expect(
+              (await account.inputValue()) !== '',
+              'the Expense account box shows the chosen account',
+            );
             await s.pause();
             await s.click(s.button('Create bill'), 'Create bill');
             await s.page.waitForURL(new RegExp(`/payables/bills/${UUID}\\?created=1`), {
@@ -1214,7 +1402,7 @@ export function workflow(cfg) {
             await s.seeText('The bill was created.');
           } else {
             s.checks.push('note: reusing the bill an earlier attempt created');
-            await openUrl(s, 'billUrl', (p) => p.getByRole('heading', { level: 1 }));
+            await openUrl(s, 'billUrl', billReady);
           }
           const text = await main(s);
           s.expect(hasAmount(text, 113000), 'the payable is NPR 113,000');
@@ -1231,13 +1419,9 @@ export function workflow(cfg) {
           await s.see(s.page.locator('main a[href^="/vendors/"]'), 'the vendor link');
           await s.click(poLink, 'the order link');
           await s.see(h1(s.page, po), `the link opens ${po}`);
-          await openUrl(s, 'billUrl', (p) => p.getByRole('heading', { level: 1 }));
+          await openUrl(s, 'billUrl', billReady);
           if (
-            await visible(
-              s.page
-                .getByRole('main')
-                .getByRole('button', { name: 'Submit for approval', exact: true }),
-            )
+            await visible(s.page.getByRole('button', { name: 'Submit for approval', exact: true }))
           ) {
             await s.caption('procurement-11 — Submit for approval');
             await actionDialog(s, 'Submit for approval', /^Submit /, 'Submit for approval');
@@ -1265,7 +1449,7 @@ export function workflow(cfg) {
           s.need('billUrl');
           const approved = async (x) => {
             await as(x, 'Dev Founder');
-            await openUrl(x, 'billUrl', (p) => p.getByRole('heading', { level: 1 }));
+            await openUrl(x, 'billUrl', billReady);
             return visible(status(x.page, 'Approved'));
           };
           // The inbox row reads "Vendor bill <invoice number> — BILL-…".
@@ -1285,7 +1469,7 @@ export function workflow(cfg) {
             'Demo payable approved.',
             approved,
           );
-          await openUrl(s, 'billUrl', (p) => p.getByRole('heading', { level: 1 }));
+          await openUrl(s, 'billUrl', billReady);
           await s.see(status(s.page, 'Approved'), 'the bill is Approved');
           s.expect(
             /Payable\s*NPR 1,?13,?000\.00/.test(await main(s)),
@@ -1427,15 +1611,33 @@ export function workflow(cfg) {
             await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
             await s.caption(`procurement-14 — ${VENDOR}, ${bill}, NPR 113,000.00`);
             await s.choose(s.select('vendorPartyId', { byName: true }), VENDOR);
-            // Not in the guide (ISSUES I-40): a raw GUID; the seed's placeholder is used.
-            await s.fill('Paying entity bank account ID', PAYING_ACCOUNT_ID);
             await s.choose(
               s.select('allocation:0:openItemId', { byName: true }),
               new RegExp(`^${escapeRe(`${bill} · ${v.invoiceNo} · `)}`),
             );
+            // Round 5: the paying account is a searchable combobox of the company's bank accounts (no raw
+            // id, ISSUES I-40 closed). It lists accounts in the bill's currency once that is set; the first
+            // listed account is taken and named in the checks.
+            const bank = s.page.getByRole('combobox', {
+              name: 'Pay from bank account',
+              exact: true,
+            });
+            await s.hydrated(bank);
+            await bank.click();
+            const option = s.page.getByRole('option').first();
+            await option.waitFor({ state: 'visible', timeout: 20000 });
+            s.checks.push(`chose the paying account: ${(await option.innerText()).trim()}`);
+            await option.click({ delay: 120 });
             await s.fill('Amount 1', '113000.00');
             await s.pause();
-            await s.click(s.button('Create draft request'), 'Create draft request');
+            // Round 5: "Review request" opens a review dialog (Back / Create draft request); the draft
+            // is saved only by that confirm, which is clicked once.
+            await s.click(s.button('Review request'), 'Review request');
+            const review = s.page.getByRole('dialog', { name: 'Review the payment request' });
+            await s.see(review, 'the Review the payment request dialog');
+            await s.see(review.getByText(VENDOR), `the review names ${VENDOR}`);
+            await s.pause(400);
+            await review.getByRole('button', { name: 'Create draft request', exact: true }).click();
             await s.page.waitForURL(new RegExp(`/payables/payment-requests/${UUID}$`), {
               timeout: cfg.navTimeout,
             });
@@ -1451,25 +1653,18 @@ export function workflow(cfg) {
           if (await visible(status(s.page, 'Draft'))) {
             s.expect(items.includes(v.invoiceNo), `the items list ${v.invoiceNo}`);
             await s.caption('procurement-14 — Submit for approval (approval does not send money)');
-            await s.click(
-              s.page
-                .getByRole('main')
-                .getByRole('button', { name: 'Submit for approval', exact: true }),
+            await actionDialog(
+              s,
               'Submit for approval',
+              'Submit for approval',
+              'Submit for approval',
+              90000,
+              (dialog) =>
+                s.see(
+                  dialog.getByText(/Approval does not send money\./),
+                  'the dialog says approval does not send money',
+                ),
             );
-            const dialog = s.page.getByRole('dialog', { name: 'Submit for approval', exact: true });
-            await s.see(
-              dialog.getByText(/Approval does not send money\./),
-              'the dialog says approval does not send money',
-            );
-            await s.pause(400);
-            await dialog.getByRole('button', { name: 'Submit for approval', exact: true }).click();
-            const done = dialog.getByRole('button', { name: 'Done', exact: true });
-            await s.see(done, 'the submission is accepted (Done)', 90000);
-            await Promise.all([
-              s.page.waitForEvent('load', { timeout: cfg.navTimeout }),
-              done.click(),
-            ]);
           } else s.checks.push('note: the request was submitted by an earlier attempt');
           // TR-Q1: no refusal is expected; Dev Finance Two is an eligible independent approver.
           await s.see(
