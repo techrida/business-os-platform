@@ -198,6 +198,36 @@ describe('GET settings/display', () => {
     });
   });
 
+  it('returns the profile phones in print form, international for a foreign number (FX9)', async () => {
+    const { documentSettings } = build([], {
+      profile: {
+        phones: [
+          { country: 'US', e164: '+14155552671', label: 'work' },
+          { country: 'NP', e164: '+97714123456' },
+        ],
+        email: 'hello@techrida.test',
+        signatoryName: 'Asha Rai',
+      },
+    });
+    const { sellerContact } = await documentSettings.display();
+    expect(sellerContact).toEqual({
+      phones: ['+1 415 555 2671', '+977 1-4123456'],
+      email: 'hello@techrida.test',
+      signatoryName: 'Asha Rai',
+      signatoryTitle: null,
+    });
+  });
+
+  it('answers an empty contact block, not a failure, for a profile that does not validate', async () => {
+    const { documentSettings } = build([], {
+      profile: { phones: ['01-4123456'] as unknown as CompanyProfile['phones'], email: 'a@b.test' },
+    });
+    await expect(documentSettings.display()).resolves.toMatchObject({
+      dateFormat: DEFAULT_DATE_FORMAT,
+      sellerContact: { phones: [], email: null, signatoryName: null, signatoryTitle: null },
+    });
+  });
+
   it('reads format.number_systems and format.date in the caller entity scope', async () => {
     currentPrincipal = principalOf('sales');
     const { documentSettings, service } = build();

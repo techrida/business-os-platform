@@ -45,7 +45,6 @@ export interface QuotationFixture {
   ownerUserId: string;
 }
 
-const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
 /** The issue date of the golden body; every tax code above is in force on it. */
 export const GOLDEN_ISSUE_DATE = '2026-11-09';
 
@@ -74,9 +73,10 @@ export async function seedQuotationFixture(db: QuotationFixtureDb): Promise<Quot
   const { partyId: customerPartyId } = await createParty(pool, { tenantId, kind: 'customer' });
   await withTx(db, scopeA, actor, (tx) =>
     tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, country,
+                                     address_line, address_city)
           VALUES (${customerPartyId}, ${tenantId}, ${`CUS-${customerPartyId.slice(0, 8)}`},
-                  'Acme Pvt. Ltd.', 'acme', ${ADDRESS}::jsonb)`,
+                  'Acme Pvt. Ltd.', 'acme', 'NP', '1 Durbar Marg', 'Kathmandu')`,
     ),
   );
 

@@ -6,7 +6,7 @@
 // Same rules as the quotation's resolveSnapshotLogo (quotations/render/issuer.ts, not exported): the referenced
 // document's bytes, else the not-yet-migrated legacy data URL, else none. A resolver failure for a referenced logo is
 // DocumentLogoUnavailableError, so the render fails and retries instead of printing a logo-less document.
-import { LogoDataUrlSchema, StoredCompanyProfileSchema } from '@bos/contracts';
+import { CompanyProfileSchema, LogoDataUrlSchema } from '@bos/contracts';
 
 import type { TxScope } from '../../../platform/db/tx';
 import { DocumentLogoUnavailableError } from '../../quotations/render/issuer';
@@ -21,7 +21,7 @@ export async function freezeEntityLogo(
   logos: RenderLogos,
   scope: TxScope,
 ): Promise<string | null> {
-  const profile = StoredCompanyProfileSchema.safeParse(await settings.get(scope, 'entity.profile'));
+  const profile = CompanyProfileSchema.safeParse(await settings.get(scope, 'entity.profile'));
   if (!profile.success) return null;
   const legacy = profile.data.legacyLogoDataUrl ?? null;
   if (profile.data.logoDocumentId === null) return legacy;

@@ -10,7 +10,12 @@
 //   needs, opens and allocates the receivable credit and, on a full credit, gives the schedule line back.
 // Serves the NFRs "an issued invoice never changes" (one UPDATE sets every issue field at once: invoices_guard freezes
 // the row afterwards) and "no gaps in a numbered series" (NumberingService.issue is the last row lock).
-import { AddressSchema, type IssueInvoiceBody, type IssueInvoiceResult } from '@bos/contracts';
+import {
+  CountryCodeSchema,
+  type IssueInvoiceBody,
+  type IssueInvoiceResult,
+  PrintAddressSchema,
+} from '@bos/contracts';
 import {
   billingScheduleLines,
   customers,
@@ -510,7 +515,9 @@ export class InvoiceIssueService {
             .select({
               legalName: customers.legalName,
               panVatNo: customers.panVatNo,
-              address: customers.address,
+              country: customers.country,
+              addressLine: customers.addressLine,
+              addressCity: customers.addressCity,
             })
             .from(customers)
             .where(
@@ -522,6 +529,14 @@ export class InvoiceIssueService {
             .limit(1);
     if (customer === undefined) throw new Error('the invoice has no customer record');
     const nprIsBooks = invoice.currency === 'NPR';
+    // Both snapshots print the address as the PDF does: the country is left out when it is the entity's own.
+    const sellerAddress = PrintAddressSchema.parse(issuer.address);
+    const ownCountry = sellerAddress.country;
+    const buyerAddress = {
+      line: customer.addressLine,
+      city: customer.addressCity,
+      country: CountryCodeSchema.parse(customer.country),
+    };
     return {
       fxRate: fx.rate,
       fxSource: nprIsBooks ? null : fx.rateSource,
@@ -530,12 +545,12 @@ export class InvoiceIssueService {
       sellerSnapshot: {
         legalName: issuer.legalName,
         panVatNo: issuer.panVatNo,
-        address: formatAddress(AddressSchema.parse(issuer.address)),
+        address: formatAddress(sellerAddress, ownCountry),
       },
       buyerSnapshot: {
         legalName: customer.legalName,
         panVatNo: customer.panVatNo,
-        address: formatAddress(AddressSchema.parse(customer.address)),
+        address: formatAddress(buyerAddress, ownCountry),
       },
     };
   }

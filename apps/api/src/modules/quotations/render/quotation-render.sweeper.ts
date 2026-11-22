@@ -580,7 +580,9 @@ export function drizzleRenderStore(db: Db): RenderStore {
         .select({
           legalName: customers.legalName,
           panVatNo: customers.panVatNo,
-          address: customers.address,
+          country: customers.country,
+          addressLine: customers.addressLine,
+          addressCity: customers.addressCity,
         })
         .from(customers)
         .where(and(eq(customers.tenantId, c.tenantId), eq(customers.id, quotation.customerPartyId)))

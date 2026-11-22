@@ -17,13 +17,7 @@ import { describe, expect, it } from 'vitest';
 import { NEUTRALS } from './layouts/shared.js';
 import { renderQuotationHtml } from './quotation-html.js';
 
-const address = {
-  line1: '1 Durbar Marg',
-  city: 'Kathmandu',
-  district: 'Kathmandu',
-  postalCode: '44600',
-  country: 'NP',
-};
+const address = { line: '1 Durbar Marg', city: 'Kathmandu' };
 
 const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = {}) =>
   CustomerQuotationViewSchema.parse({
@@ -35,8 +29,13 @@ const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = 
     issueDate: '2026-11-08',
     validUntil: '2026-11-23',
     currency,
-    issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', address },
-    customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: 'ABC-12345', address },
+    issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', country: 'NP', address },
+    customer: {
+      legalName: 'Himal Traders Pvt. Ltd.',
+      panVatNo: 'ABC-12345',
+      country: 'NP',
+      address,
+    },
     contact: { fullName: 'Sita Rai', email: 'sita@himal.example' },
     scope: 'Supply and install 12 panels\nIncludes commissioning',
     assumptions: 'Site access is available',
@@ -288,12 +287,12 @@ describe('renderQuotationHtml', () => {
 
   it('escapes markup in every text field', () => {
     const evil = '<b>x</b>';
-    const addr = { ...address, line1: evil, city: evil };
+    const addr = { line: evil, city: evil };
     const html = renderQuotationHtml(
       sample('USD', {
         number: 'QT-<b>x</b>',
-        issuer: { legalName: evil, panVatNo: '301234567', address: addr },
-        customer: { legalName: evil, panVatNo: 'ABC-12345', address: addr },
+        issuer: { legalName: evil, panVatNo: '301234567', country: 'NP', address: addr },
+        customer: { legalName: evil, panVatNo: 'ABC-12345', country: 'NP', address: addr },
         contact: { fullName: evil, email: evil },
         scope: evil,
         assumptions: evil,
@@ -499,6 +498,53 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     expect(html).toContain('<span class="wordmark">Techrida</span>');
   });
 
+  // FX9: the customer's address prints as line, city, country; the country is left out when it is the issuing
+  // entity's own (the issuer's country, not a fixed one). The issuer's own address keeps its country.
+  describe('the customer address', () => {
+    const pokhara = { line: 'Lakeside', city: 'Pokhara' };
+    const mumbai = { line: 'Bandra West', city: 'Mumbai' };
+    const withParties = (issuerCountry: 'NP' | 'IN', customer: CustomerQuotationView['customer']) =>
+      withoutWbr(
+        render(
+          sample('NPR', {
+            issuer: { ...sample('NPR').issuer, country: issuerCountry },
+            customer,
+          }),
+        ),
+      );
+    const customer = (country: 'NP' | 'IN', a: { line: string; city: string }) => ({
+      ...sample('NPR').customer,
+      country,
+      address: a,
+    });
+
+    it('prints line and city without the country for a customer in the entity own country', () => {
+      const html = withParties('NP', customer('NP', pokhara));
+      expect(html).toContain('<div>Lakeside</div><div>Pokhara</div>');
+      expect(html).not.toContain('<div>Pokhara</div><div>');
+    });
+
+    it('prints the country name for a foreign customer', () => {
+      const html = withParties('NP', customer('IN', mumbai));
+      expect(html).toContain('<div>Bandra West</div><div>Mumbai</div><div>India</div>');
+    });
+
+    it('measures "foreign" from the issuing entity country', () => {
+      expect(withParties('IN', customer('NP', pokhara))).toContain(
+        '<div>Lakeside</div><div>Pokhara</div><div>Nepal</div>',
+      );
+      const domestic = withParties('IN', customer('IN', mumbai));
+      expect(domestic).toContain('<div>Bandra West</div><div>Mumbai</div>');
+      expect(domestic).not.toContain('<div>Mumbai</div><div>');
+    });
+
+    it('keeps the country in the issuer address', () => {
+      const html = withParties('NP', customer('NP', pokhara));
+      const foot = html.match(/<footer class="foot">([\s\S]*?)<\/footer>/)?.[1] ?? '';
+      expect(foot).toContain('1 Durbar Marg, Kathmandu, Nepal');
+    });
+  });
+
   it('breaks an email or website only after @ or before a dot or hyphen, never inside a word', () => {
     const view = sample('NPR', {
       contact: { fullName: 'Sita Rai', email: 'accounts@himalayanbuild.example' },
@@ -564,7 +610,12 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     const evil = `<script>alert("x")</script>'"`;
     const html = render(
       sample('NPR', {
-        customer: { legalName: evil, panVatNo: null, address: { ...address, line1: evil } },
+        customer: {
+          legalName: evil,
+          panVatNo: null,
+          country: 'NP',
+          address: { ...address, line: evil },
+        },
         contact: { fullName: evil, email: null },
         lines: [
           {

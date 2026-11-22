@@ -2,11 +2,12 @@
 // run down their left edge.
 import {
   NEUTRALS as N,
-  addressLines,
   brandMark,
   breakableAddress,
+  customerAddressLines,
   detailRows,
   esc,
+  issuerAddressLines,
   itemsTable,
   kvTable,
   statusBadge,
@@ -26,11 +27,11 @@ function cards(ctx: RenderContext): string {
   const { issuer, customer, contact } = ctx.view;
   const by = labelled([
     ['Quotation by', `<span class="legal">${esc(issuer.legalName)}</span>`],
-    ['Address', addressLines(issuer.address)],
+    ['Address', issuerAddressLines(ctx)],
   ]);
   const to = labelled([
     ['Quotation to', `<span class="legal">${esc(customer.legalName)}</span>`],
-    ['Address', addressLines(customer.address)],
+    ['Address', customerAddressLines(ctx)],
     ['PAN/VAT', esc(customer.panVatNo)],
     ['Attention', contact ? esc(contact.fullName) : ''],
     [

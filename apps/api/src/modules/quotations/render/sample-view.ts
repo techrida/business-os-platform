@@ -26,17 +26,14 @@ export function sampleQuotationView(): CustomerQuotationView {
     issuer: {
       legalName: 'Your Company Pvt. Ltd.',
       panVatNo: '123456789',
-      address: {
-        line1: 'Ward 3, Main Road',
-        city: 'Kathmandu',
-        district: 'Kathmandu',
-        country: 'NP',
-      },
+      country: 'NP',
+      address: { line: 'Ward 3, Main Road', city: 'Kathmandu' },
     },
     customer: {
       legalName: 'Sample Customer Pvt. Ltd.',
       panVatNo: '987654321',
-      address: { line1: 'Industrial Area', city: 'Lalitpur', district: 'Lalitpur', country: 'NP' },
+      country: 'NP',
+      address: { line: 'Industrial Area', city: 'Lalitpur' },
     },
     contact: { fullName: 'Sunita Shrestha', email: 'sunita@example.com' },
     scope: 'Deliver and configure the platform and train your team.',

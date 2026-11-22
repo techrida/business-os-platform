@@ -282,7 +282,10 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       .select({
         legalName: customers.legalName,
         panVatNo: customers.panVatNo,
-        address: customers.address,
+        // FX9: the party's country and the address's street lines and city; the view maps them to its party block.
+        country: customers.country,
+        addressLine: customers.addressLine,
+        addressCity: customers.addressCity,
       })
       .from(customers)
       .where(and(eq(customers.tenantId, tenantId), eq(customers.id, customerPartyId)))
