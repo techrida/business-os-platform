@@ -8,9 +8,10 @@
 --     PDF renders until an admin sets it again). A null or an already-converted value is left alone.
 --   * app.settings `entity.profile`: when the latest version's `phones` holds strings (FX8 E.164), the next version
 --     holds [{country, e164, label: null}], the country read from the calling code with the same short list as
---     0193 (a +977 number only when it passes FX8's Nepal rules). A string that is not E.164 once spaces, dots,
---     hyphens and brackets are removed, or whose code is not on the list, is dropped (Kuu: dev data may be cleared,
---     nothing is kept unconverted). Elements that are already objects are kept as they are.
+--     0193 and the same national-part pre-filter (a +977 number only when it passes FX8's Nepal rules). A string
+--     that is not E.164 once spaces, dots, hyphens and brackets are removed, whose code is not on the list, or whose
+--     national part fails its country's check, is dropped (Kuu: dev data may be cleared, nothing is kept
+--     unconverted). Elements that are already objects are kept as they are.
 --   * Both are written the way SettingsService.set writes a version (per-key advisory lock, version = max(version)
 --     + 1, created_by NULL; same lock text as 0187); older versions stay as history.
 --   * app.party_import_batches: every `previewed` batch holds rows parsed with the old CSV shape (address line1/city
@@ -32,7 +33,8 @@ SELECT
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
 
--- Same as 0193's (pg_temp functions last only for the session, so each migration defines its own).
+-- Same as 0193's (pg_temp functions last only for the session, so each migration defines its own). A conservative
+-- pre-filter: the app's libphonenumber check is the authority, and a number this keeps may still be refused there.
 CREATE OR REPLACE FUNCTION pg_temp.fx9_phone_country(e164 text) RETURNS char(2)
 LANGUAGE sql IMMUTABLE AS $$
 	SELECT CASE
@@ -40,13 +42,24 @@ LANGUAGE sql IMMUTABLE AS $$
 		WHEN e164 LIKE '+977%' THEN
 			CASE WHEN substr(e164, 5) ~ '^(9[0-9]{9}|[1-9][0-9]{6,8})$' THEN 'NP' END
 		ELSE (
-			SELECT m.country
+			-- The longest matching code wins first; a national part that breaks its pattern then gives NULL rather
+			-- than falling through to a shorter code.
+			SELECT CASE WHEN substr(e164, 2 + length(m.code)) ~ m.national THEN m.country END
 			  FROM (VALUES
-				('880', 'BD'), ('971', 'AE'),
-				('91', 'IN'), ('44', 'GB'), ('86', 'CN'), ('61', 'AU'), ('92', 'PK'), ('94', 'LK'),
-				('49', 'DE'), ('33', 'FR'), ('81', 'JP'), ('65', 'SG'),
-				('1', 'US')
-			  ) AS m(code, country)
+				('880', 'BD', '^(1[0-9]{9}|[2-9][0-9]{7,8})$'),
+				('971', 'AE', '^[2-9][0-9]{7,8}$'),
+				('91', 'IN', '^[6-9][0-9]{9}$'),
+				('44', 'GB', '^[1-9][0-9]{9}$'),
+				('86', 'CN', '^(1[0-9]{10}|[2-9][0-9]{8,9})$'),
+				('61', 'AU', '^[2-478][0-9]{8}$'),
+				('92', 'PK', '^[2-9][0-9]{9}$'),
+				('94', 'LK', '^[1-9][0-9]{8}$'),
+				('49', 'DE', '^[1-9][0-9]{9,10}$'),
+				('33', 'FR', '^[1-9][0-9]{8}$'),
+				('81', 'JP', '^[1-9][0-9]{8,9}$'),
+				('65', 'SG', '^[3689][0-9]{7}$'),
+				('1', 'US', '^[2-9][0-9]{2}[2-9][0-9]{6}$')
+			  ) AS m(code, country, national)
 			 WHERE substr(e164, 2) LIKE m.code || '%'
 			 ORDER BY length(m.code) DESC
 			 LIMIT 1)

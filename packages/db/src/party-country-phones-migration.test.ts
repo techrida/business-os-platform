@@ -2,7 +2,8 @@
 //   * 0191: a customer's jsonb address becomes address_line (line1 + ', ' + line2) and address_city, its country
 //     comes from the address, contacts take their parent's country; written as system:migration-0191.
 //   * 0192/0193: each old phone_e164 becomes its owner's one primary phone row, the country read from the calling
-//     code (+977 only under FX8's Nepal rules); a code not on the list is dropped; leads.phones_search is filled.
+//     code (+977 only under FX8's Nepal rules); a code not on the list, or a national part implausible for its
+//     country (a short or non-NANP +1 number), is dropped; leads.phones_search is filled.
 //   * 0194: the old phone_e164 columns are gone.
 //   * 0195: the latest entity.address and entity.profile get a next version in the new shapes; a previewed import
 //     batch is expired.
@@ -56,10 +57,16 @@ const ids = {
   usContact: '',
   unmappableContact: '',
   inContact: '',
+  shortUsContact: '',
+  badAreaUsContact: '',
+  badExchangeUsContact: '',
   vendor: '',
   vendorContact: '',
   lead: '',
   badNepalLead: '',
+  usLead: '',
+  shortUsLead: '',
+  badAreaUsLead: '',
   batch: '',
 };
 
@@ -232,6 +239,11 @@ beforeAll(async () => {
   ids.usContact = await customerContact(ids.npCustomer, 'John', '+14155552671');
   ids.unmappableContact = await customerContact(ids.inCustomer, 'Ola', '+4790000000');
   ids.inContact = await customerContact(ids.inCustomer, 'Ravi', null);
+  // +1 numbers the old CHECK let in but the app's libphonenumber check refuses: too short, an area code starting
+  // with 1, an exchange starting with 1. Not copied.
+  ids.shortUsContact = await customerContact(ids.inCustomer, 'Short', '+1234567');
+  ids.badAreaUsContact = await customerContact(ids.inCustomer, 'Area', '+11235550123');
+  ids.badExchangeUsContact = await customerContact(ids.inCustomer, 'Exchange', '+14151234567');
 
   const vendorParty = await createParty(pool, { tenantId: org.tenantId, kind: 'vendor' });
   ids.vendor = vendorParty.partyId;
@@ -249,6 +261,9 @@ beforeAll(async () => {
   ids.lead = await lead('+919812345678');
   // A +977 number whose national part breaks FX8's Nepal rules (5 digits): not copied.
   ids.badNepalLead = await lead('+97712345');
+  ids.usLead = await lead('+14155552671');
+  ids.shortUsLead = await lead('+1234567');
+  ids.badAreaUsLead = await lead('+11235550123');
 
   await setting('entity.address', 1, { line1: 'Old Road', city: 'Patan', country: 'NP' });
   await setting('entity.address', 2, {
@@ -262,7 +277,7 @@ beforeAll(async () => {
   await setting('entity.profile', 1, {
     displayName: 'Acme',
     logoDocumentId: null,
-    phones: ['+9779812345678', '+14155552671', '+4790000000'],
+    phones: ['+9779812345678', '+14155552671', '+4790000000', '+1234567', '+11235550123'],
     email: null,
     website: null,
     panVatNo: null,
@@ -364,6 +379,9 @@ describe('0192-0194 phones', () => {
     });
     expect(byContact.get(ids.usContact)).toMatchObject({ country: 'US', e164: '+14155552671' });
     expect(byContact.has(ids.unmappableContact)).toBe(false);
+    expect(byContact.has(ids.shortUsContact)).toBe(false);
+    expect(byContact.has(ids.badAreaUsContact)).toBe(false);
+    expect(byContact.has(ids.badExchangeUsContact)).toBe(false);
     expect(rows).toHaveLength(2);
 
     const vendor = await pool.query<{ country: string; e164: string; is_primary: boolean }>(
@@ -373,10 +391,13 @@ describe('0192-0194 phones', () => {
     expect(vendor.rows).toEqual([{ country: 'US', e164: '+14155550100', is_primary: true }]);
 
     const leadRows = await pool.query<{ lead_id: string; country: string; e164: string }>(
-      'SELECT lead_id, country, e164 FROM app.lead_phones WHERE tenant_id = $1',
+      'SELECT lead_id, country, e164 FROM app.lead_phones WHERE tenant_id = $1 ORDER BY e164',
       [org.tenantId],
     );
-    expect(leadRows.rows).toEqual([{ lead_id: ids.lead, country: 'IN', e164: '+919812345678' }]);
+    expect(leadRows.rows).toEqual([
+      { lead_id: ids.usLead, country: 'US', e164: '+14155552671' },
+      { lead_id: ids.lead, country: 'IN', e164: '+919812345678' },
+    ]);
   });
 
   it('audits every copied phone as system:migration-0193', async () => {
@@ -386,7 +407,7 @@ describe('0192-0194 phones', () => {
        UNION ALL SELECT id FROM app.lead_phones WHERE tenant_id = $1`,
       [org.tenantId],
     );
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     for (const row of rows) expect(await auditedBy('system:migration-0193', row.id)).toBe('1');
   });
 
@@ -397,6 +418,14 @@ describe('0192-0194 phones', () => {
     expect(
       await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [ids.badNepalLead]),
     ).toBe('null');
+    expect(
+      await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [ids.usLead]),
+    ).toBe('+14155552671');
+    for (const id of [ids.shortUsLead, ids.badAreaUsLead]) {
+      expect(await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [id])).toBe(
+        'null',
+      );
+    }
   });
 
   it('refuses a second primary phone for one owner', async () => {
@@ -440,7 +469,7 @@ describe('0195 entity settings and import previews', () => {
     });
   });
 
-  it('writes the next entity.profile version with per-number countries', async () => {
+  it('writes the next entity.profile version with per-number countries, dropping implausible ones', async () => {
     const row = await latest('entity.profile');
     expect(row?.version).toBe(2);
     expect((row?.value as { phones: unknown }).phones).toEqual([
