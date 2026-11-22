@@ -202,6 +202,9 @@ export class IdentityReconciler {
       );
       if (decision.closeZitadel !== null) {
         await this.closeInZitadel(target.zitadelUserId, decision.closeZitadel);
+        // A sync can copy the still-open ZITADEL state into the row between the write above and this close; the row
+        // follows the closed side again.
+        await this.settleRowClosed(scope, actor, target.id, decision.closeZitadel === 'lock');
       }
       if (decision.differed !== null) {
         await this.recordReconciled(scope, actor, 'users', target.id, decision.differed);
@@ -211,6 +214,32 @@ export class IdentityReconciler {
         `users.reconcile: could not reconcile ${target.id} after a failed change (kind=${errorName(error)}); the next sync mirrors what ZITADEL holds`,
       );
     }
+  }
+
+  private async settleRowClosed(
+    scope: TxScope,
+    actor: Actor,
+    userId: string,
+    locked: boolean,
+  ): Promise<void> {
+    await withTx(
+      this.db,
+      scope,
+      systemActor('identity-reconcile', actor.correlationId),
+      async (tx) => {
+        await lockAccessRevision(tx, scope.tenantId);
+        const row = await this.store.findById(tx, scope, userId, true);
+        if (!row || isRowShutOut(row)) return;
+        await this.store.updateUser(tx, row.id, {
+          email: row.email,
+          displayName: row.displayName,
+          status: 'inactive',
+          lock: locked ? adminLock() : null,
+        });
+        await this.store.bumpAuthzVersion(tx, scope);
+      },
+      AFTER_ACCESS_LOCK,
+    );
   }
 
   /**
@@ -280,8 +309,14 @@ export class IdentityReconciler {
         });
       }
       if (decided === null) return;
+      let grantsError: unknown = null;
       if (decided.removed.length > 0) {
-        await this.zitadel.setGrants(p.zitadelUserId, p.zitadelOrgId, decided.target);
+        // The audit below records the local removal even when ZITADEL refuses the smaller set.
+        await this.zitadel
+          .setGrants(p.zitadelUserId, p.zitadelOrgId, decided.target)
+          .catch((e: unknown) => {
+            grantsError = e;
+          });
       }
       if (note.audited) {
         await this.recordReconciled(
@@ -295,6 +330,7 @@ export class IdentityReconciler {
           },
         );
       }
+      if (grantsError !== null) throw grantsError;
     } catch (error) {
       this.logger.error(
         `users.reconcile: could not reconcile the roles of ${p.zitadelUserId} after a failed change (kind=${errorName(error)}); the next sync mirrors what ZITADEL holds`,

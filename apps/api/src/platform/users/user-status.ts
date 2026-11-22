@@ -338,7 +338,13 @@ export class UserStatusService {
       } catch (error) {
         // A plan that opened the person first (unlock, then deactivate) may have changed ZITADEL even when its first
         // call failed (a timeout that was applied); a sync may already have copied that. Close them whatever the row says.
-        if (index > 0 || plan.steps.length > 1) {
+        if (plan.removesAccess && plan.steps.length === 1) {
+          // A closing call that failed (a timeout can have been applied in ZITADEL) must not leave the row open while
+          // ZITADEL is closed: the row follows ZITADEL, or the call when ZITADEL cannot be read.
+          await this.reconciler.reconcileStatus(scope, actor, target, null, {
+            lock: (plan.lock ?? null) !== null,
+          });
+        } else if (index > 0 || plan.steps.length > 1) {
           await this.reconciler.reconcileStatus(scope, actor, target, {
             lock: (target.lockReason ?? null) !== null,
           });

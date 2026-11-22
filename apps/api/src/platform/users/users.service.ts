@@ -20,6 +20,7 @@ import { AuditService } from '../audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
 import { type InvitedUser, type InviteInput, type ResolvedUser, UserMirror } from './user-mirror';
+import { withFounderRemovalLease } from './identity-reconcile';
 import { type IdpOrgRow, type ListedUsers, UsersStore } from './users.store';
 import { ZitadelAdminClient, ZitadelHttpError, type ZitadelUser } from './zitadel-admin.client';
 
@@ -155,6 +156,20 @@ export class UsersService extends UserDirectory {
     actor: Actor,
     b: InviteInput,
     placement: InvitePlacement | null = null,
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
+  ): Promise<InvitedUser> {
+    // One invite or role change at a time per tenant: a failed invite's reconcile replaces the whole grant set in
+    // ZITADEL, so it must not interleave with another writer of the same person's grants.
+    return withFounderRemovalLease(this.store, scope.tenantId, () =>
+      this.inviteOnce(scope, actor, b, placement, assertAccess),
+    );
+  }
+
+  private async inviteOnce(
+    scope: TxScope,
+    actor: Actor,
+    b: InviteInput,
+    placement: InvitePlacement | null,
     assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<InvitedUser> {
     const assignsAccess = b.roles.length > 0 || placement !== null;
