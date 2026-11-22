@@ -480,7 +480,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       await settings.set(tx, 'entity.profile', {
         displayName: 'Techrida',
         logoDocumentId: null,
-        phones: ['+977 1 5550100'],
+        phones: ['+97715550100'],
         email: 'billing@techrida.example',
         website: 'https://techrida.example',
         panVatNo: null,
@@ -534,7 +534,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       format,
       // Only the four contact keys: no display name, logo or website.
       sellerContact: {
-        phones: ['+977 1 5550100'],
+        phones: ['+97715550100'],
         email: 'billing@techrida.example',
         signatoryName: 'Asha Shrestha',
         signatoryTitle: 'Director',
