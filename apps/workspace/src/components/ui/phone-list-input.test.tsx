@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { PartyPhonesSchema, type PartyPhoneInput } from '@bos/contracts';
-import { act } from 'react';
+import { PartyPhonesSchema, type CountryCode, type PartyPhoneInput } from '@bos/contracts';
+import { act, useState } from 'react';
 import { hydrateRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -96,6 +96,29 @@ describe('PhoneListInput, country from a typed code', () => {
     expect(list.number(1).value).toBe('4155552671');
     expect(list.posted('0.number')).toBe('+14155552671');
     expect(document.activeElement).toBe(list.number(1));
+  });
+
+  it('leaves the full-number box when the same country is picked again', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '+');
+    await pickCountry(list.country(1), 'nepal');
+    // Back in Nepal's own box: the digits are the national number, not a calling code.
+    await typeKeys(list.number(1), '9812345678');
+    expect(list.posted('0.country')).toBe('NP');
+    expect(list.posted('0.number')).toBe('+9779812345678');
+  });
+
+  it('keeps the typed number when the same country is picked again from the full-number box', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '+');
+    await typeKeys(list.number(1), '9779812345678');
+    expect(list.posted('0.country')).toBe('NP');
+    await pickCountry(list.country(1), 'nepal');
+    expect(list.number(1).value).toBe('9812345678');
+    expect(list.posted('0.number')).toBe('+9779812345678');
+    expect(list.last()).toEqual([
+      { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
+    ]);
   });
 });
 
@@ -367,5 +390,121 @@ describe('PhoneListInput duplicate rows block the submit', () => {
     await click(list.button('Remove phone 2'));
     await act(() => Promise.resolve(list.container.querySelector('form')!.requestSubmit()));
     expect(submitted).toBe(1);
+  });
+});
+
+/** A party form whose country the test can change, the way the lead and customer forms change it. */
+function PartyCountryForm({ start }: { start: CountryCode }) {
+  const [country, setCountry] = useState<CountryCode>(start);
+  return (
+    <form>
+      {(['NP', 'US', 'IN'] as const).map((code) => (
+        <button key={code} type="button" data-party={code} onClick={() => setCountry(code)} />
+      ))}
+      <PhoneListInput name="phones" defaultCountry={country} />
+    </form>
+  );
+}
+
+async function mountParty(start: CountryCode = 'NP') {
+  mounted = await mountForm(<PartyCountryForm start={start} />);
+  const { container } = mounted;
+  return {
+    container,
+    party: (code: CountryCode) => click(container.querySelector(`button[data-party="${code}"]`)),
+    number: (n: number) =>
+      container.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} number"]`)!,
+    country: (n: number) =>
+      container.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} country"]`)!,
+    posted: (field: string) =>
+      container.querySelector<HTMLInputElement>(`input[name="phones.${field}"]`)?.value,
+    add: () => click(container.querySelector('button[data-action="add"]')),
+  };
+}
+
+describe('PhoneListInput follows a changed party country', () => {
+  it('moves an untouched blank row to the new country', async () => {
+    const list = await mountParty('NP');
+    await list.add();
+    await list.party('US');
+    expect(list.country(1).value).toBe('+1');
+    expect(list.country(2).value).toBe('+1');
+    expect(list.posted('0.country')).toBe('US');
+    expect(list.posted('1.country')).toBe('US');
+  });
+
+  it('keeps a row the user typed in, or whose country the user picked', async () => {
+    const list = await mountParty('NP');
+    await typeKeys(list.number(1), '98123');
+    await list.add();
+    await pickCountry(list.country(2), 'india');
+    expect(list.posted('1.country')).toBe('IN');
+    await list.add();
+    await list.party('US');
+    expect(list.posted('0.country')).toBe('NP');
+    expect(list.posted('0.number')).toBe('+97798123');
+    expect(list.posted('1.country')).toBe('IN');
+    expect(list.posted('2.country')).toBe('US');
+  });
+});
+
+describe('PhoneListInput for screen readers', () => {
+  it('describes the group by the caller hint and the list error', async () => {
+    const list = await mount({
+      'aria-labelledby': 'phones-label',
+      'aria-describedby': 'phones-hint',
+      error: 'Mark one number as primary.',
+    });
+    const group = list.container.querySelector('[role="group"]')!;
+    expect(group.getAttribute('aria-labelledby')).toBe('phones-label');
+    const described = group.getAttribute('aria-describedby')!.split(' ');
+    expect(described).toContain('phones-hint');
+    const errorId = described.find((id) => id !== 'phones-hint')!;
+    expect(document.getElementById(errorId)?.textContent).toBe('Mark one number as primary.');
+  });
+
+  it('announces a moved row politely', async () => {
+    const list = await mount({
+      defaultValue: [
+        { country: 'NP', e164: '+9779812345678', isPrimary: true },
+        { country: 'US', e164: '+14155552671', isPrimary: false },
+      ],
+    });
+    const live = list.container.querySelector('[aria-live="polite"]')!;
+    expect(live).not.toBeNull();
+    expect(live.textContent).toBe('');
+    await click(list.button('Move phone 2 up'));
+    expect(live.textContent).toBe('Phone 2 moved to position 1.');
+    await click(list.button('Move phone 1 down'));
+    expect(live.textContent).toBe('Phone 1 moved to position 2.');
+  });
+});
+
+describe('PhoneListInput server errors follow their row', () => {
+  const two: PartyPhoneInput[] = [
+    { country: 'NP', e164: '+9779812345678', isPrimary: true },
+    { country: 'NP', e164: '+9779812345679', isPrimary: false },
+  ];
+
+  it('keeps the error on its number after a move', async () => {
+    const list = await mount({
+      rowErrors: [undefined, 'Already used by another contact.'],
+      defaultValue: two,
+    });
+    await click(list.button('Move phone 2 up'));
+    expect(list.posted('0.number')).toBe('+9779812345679');
+    expect(list.number(1).getAttribute('aria-invalid')).toBe('true');
+    expect(list.number(2).getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('keeps the error on its number after the row above is removed', async () => {
+    const list = await mount({
+      rowErrors: [undefined, 'Already used by another contact.'],
+      defaultValue: two,
+    });
+    await click(list.button('Remove phone 1'));
+    expect(list.posted('0.number')).toBe('+9779812345679');
+    expect(list.number(1).getAttribute('aria-invalid')).toBe('true');
+    expect(list.container.textContent).toContain('Already used by another contact.');
   });
 });

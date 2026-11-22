@@ -133,12 +133,12 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.getByRole('button', { name: 'Convert to opportunity' }).click();
       const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });
       // Keep the lead's company, contact and email, then provide the required address. The customer's
-      // Country (the first of the two: the contact has its own) starts at the lead's country, Nepal.
+      // Country (the contact's own is "Contact country") starts at the lead's country, Nepal.
       await dialog.getByLabel('Address', { exact: true }).fill('1 Durbar Marg');
       await dialog.getByLabel('City', { exact: true }).fill('Kathmandu');
-      await expect(
-        dialog.getByRole('combobox', { name: 'Country', exact: true }).first(),
-      ).toHaveValue('Nepal');
+      await expect(dialog.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue(
+        'Nepal',
+      );
       await expect(dialog.getByLabel('Email', { exact: true })).toHaveValue(email);
       await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
       await page.waitForURL(/\/opportunities\/[0-9a-f-]{36}$/, { timeout: 30_000 });
