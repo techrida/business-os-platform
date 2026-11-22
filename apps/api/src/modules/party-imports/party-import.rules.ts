@@ -2,15 +2,14 @@
 // in-file duplicate marking. No database and no Nest, so a test can pin each rule. What the existing records hold is
 // the service's business (party-imports.service.ts); this file never sees it.
 import {
+  checkPartyImportPlace,
   EmailSchema,
+  isCountryCode,
   PanVatNoSchema,
   PARTY_IMPORT_COLUMNS,
   PARTY_IMPORT_MAX_ROWS,
   PARTY_IMPORT_REQUIRED,
-  PhoneSchema,
-  nepalPanProblem,
   VENDOR_KINDS,
-  VendorPanSchema,
   type PartyImportIssue,
   type PartyImportKind,
   type PartyImportRow,
@@ -22,7 +21,7 @@ import {
   normalizePan,
   panMatchKey,
 } from '../customers/customers.normalize';
-import { kindCountryProblem } from '../vendors/vendors.rules';
+import { kindCountryProblem, vendorPanProblem } from '../vendors/vendors.rules';
 
 /** A file-level refusal: the whole upload is unusable (400), not one line. */
 export class PartyImportFileError extends Error {}
@@ -97,8 +96,14 @@ export function parseCsv(input: string): string[][] {
 /** A cell a spreadsheet would run as a formula when the value is opened: it starts with = + - @, a tab or a CR. */
 export const startsLikeFormula = (value: string): boolean => /^[=+\-@\t\r]/.test(value);
 
-/** Columns where a leading + is a number (an E.164 phone) rather than a formula, or the value is a fixed word. */
+/**
+ * Columns where a leading + is a number (an E.164 phone) rather than a formula, or the value is a fixed word. The
+ * phones cells are read by `parsePhonesCell` (contracts), which refuses anything but +, digits, spaces, hyphens and
+ * brackets, so they never pass through the text guard.
+ */
 const FORMULA_EXEMPT = new Set([
+  'contact_phones',
+  'contact_country',
   'contact_phone',
   'kind',
   'vat_registered',
@@ -162,6 +167,11 @@ export function clip(value: string, max: number): string {
 }
 
 const issue = (column: string | null, message: string): PartyImportIssue => ({ column, message });
+const formulaIssue = (column: string): PartyImportIssue =>
+  issue(
+    column,
+    `${column.replaceAll('_', ' ')} starts with =, +, - or @, which a spreadsheet would run as a formula`,
+  );
 const upper = (v: string) => v.toUpperCase();
 
 const YES = new Set(['yes', 'y', 'true', '1']);
@@ -178,7 +188,10 @@ export interface CheckedLine {
   values?: Record<string, string>;
 }
 
-/** Checks one data line. Every problem of the line is listed, not only the first. */
+/**
+ * Checks one data line. Every problem of the line is listed, not only the first. The address, the countries, the
+ * phones and the Nepal PAN rule are `checkPartyImportPlace`'s (contracts, FX9), so the import and the forms agree.
+ */
 export function checkLine(kind: PartyImportKind, cells: Record<string, string>): CheckedLine {
   const issues: PartyImportIssue[] = [];
   const get = (column: string): string => cells[column] ?? '';
@@ -192,13 +205,13 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     if (value.length > max)
       issues.push(issue(column, `${label(column)} is longer than ${max} characters`));
     else if (!FORMULA_EXEMPT.has(column) && startsLikeFormula(value))
-      issues.push(
-        issue(
-          column,
-          `${label(column)} starts with =, +, - or @, which a spreadsheet would run as a formula`,
-        ),
-      );
+      issues.push(formulaIssue(column));
     return value;
+  };
+  /** The formula guard alone, for a cell whose presence and length the place check judges. */
+  const guardFormula = (column: string): void => {
+    if (!FORMULA_EXEMPT.has(column) && startsLikeFormula(get(column)))
+      issues.push(formulaIssue(column));
   };
 
   const legalName = text('legal_name', 200, true);
@@ -218,20 +231,6 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     }
     return normalizeEmail(raw);
   };
-  const phone = (): string => {
-    const raw = get('contact_phone');
-    if (raw === '') return '';
-    if (!PhoneSchema.safeParse(raw).success) {
-      issues.push(
-        issue(
-          'contact_phone',
-          'contact phone must be an E.164 number such as +9779812345678 (a +977 number is a 10-digit mobile starting with 9, or a landline of 7 to 9 digits)',
-        ),
-      );
-      return '';
-    }
-    return raw;
-  };
 
   let pan: string | null = null;
   if (kind === 'customer') {
@@ -245,17 +244,8 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     }
     out.pan_vat_no = pan ?? '';
     out.industry = text('industry', 100, false);
-    out.address_line1 = text('address_line1', 200, true);
-    out.address_city = text('address_city', 100, true);
-    const country = upper(get('address_country') || 'NP');
-    if (!/^[A-Z]{2}$/.test(country))
-      issues.push(issue('address_country', 'address country must be a 2-letter code such as NP'));
-    out.address_country = country;
-    if (pan !== null && nepalPanProblem(country, pan) !== null)
-      issues.push(issue('pan_vat_no', 'a PAN for a customer in Nepal must be exactly 9 digits'));
     out.contact_email = email(true);
     out.contact_name = text('contact_name', 200, false) || legalName;
-    out.contact_phone = phone();
   } else {
     const rawKind = (get('kind') || 'company').toLowerCase();
     const vendorKind = VENDOR_KINDS.find((k) => k === rawKind);
@@ -264,7 +254,7 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     out.kind = vendorKind ?? rawKind;
     const rawCountry = upper(get('country'));
     const country = rawCountry === '' ? (vendorKind === 'foreign' ? '' : 'NP') : rawCountry;
-    if (!/^[A-Z]{2}$/.test(country))
+    if (!isCountryCode(country))
       issues.push(
         issue(
           'country',
@@ -280,9 +270,13 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     out.country = country;
     const rawPan = get('pan');
     if (rawPan !== '') {
-      if (!VendorPanSchema.safeParse(rawPan).success)
+      // As the vendors service judges it (FX9): a Nepal vendor's PAN is nine digits, a foreign vendor's tax id keeps
+      // the loose shape, stored upper-case as the column CHECK wants.
+      if (vendorPanProblem(country, rawPan) !== undefined)
         issues.push(issue('pan', 'PAN must be 9 digits'));
-      else pan = rawPan;
+      else if (!PanVatNoSchema.safeParse(rawPan).success || !/[A-Za-z0-9]/.test(rawPan))
+        issues.push(issue('pan', 'tax id must be 5 to 20 letters, digits or hyphens'));
+      else pan = upper(rawPan);
     } else if (vendorKind !== 'foreign' && vendorKind !== undefined) {
       issues.push(issue('pan', 'PAN is required unless the vendor is foreign'));
     }
@@ -292,11 +286,22 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
       issues.push(issue('vat_registered', 'VAT registered must be yes or no'));
     out.vat_registered = YES.has(vat) ? 'yes' : 'no';
     out.contact_email = email(false);
-    out.contact_phone = phone();
-    const hasContact = out.contact_email !== '' || out.contact_phone !== '';
+    const hasContact = out.contact_email !== '' || get('contact_phone') !== '';
     const contactName = text('contact_name', 120, false);
     out.contact_name = contactName !== '' ? contactName : hasContact ? clip(legalName, 120) : '';
   }
+  // The address cells are free text a spreadsheet opens, so they keep the formula guard; whether they are present
+  // and short enough is the place check's.
+  guardFormula('address_line');
+  guardFormula('address_city');
+  // The PAN goes to the Nepal rule as it will be stored, and only when its shape passed above ('' otherwise), so a
+  // malformed PAN is reported once.
+  const place = checkPartyImportPlace(
+    kind,
+    kind === 'customer' ? { ...cells, pan_vat_no: out.pan_vat_no ?? '' } : cells,
+  );
+  issues.push(...place.issues);
+  Object.assign(out, place.values);
   return issues.length === 0
     ? {
         name: legalName,
