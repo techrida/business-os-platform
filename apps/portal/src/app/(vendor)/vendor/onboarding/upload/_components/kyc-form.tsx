@@ -4,9 +4,10 @@ import type { VendorKycDocType } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/portal/alert';
-import { Field, Input } from '@/components/portal/field';
+import { Field } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Select } from '@/components/ui/select';
 
 import { FileUpload } from '../../../_upload/file-upload';
@@ -93,13 +94,13 @@ export function KycForm({
           error={fe.validUntil}
         >
           {(control) => (
-            <Input
-              type="date"
+            <DatePicker
               name="validUntil"
+              validation="aria"
               required
               min={today}
               value={validUntil}
-              onChange={(e) => setValidUntil(e.target.value)}
+              onChange={setValidUntil}
               {...control}
             />
           )}

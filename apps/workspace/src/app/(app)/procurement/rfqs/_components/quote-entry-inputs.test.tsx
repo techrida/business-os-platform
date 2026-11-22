@@ -68,7 +68,7 @@ describe('quotation entry boxes', () => {
       (input) => input.form === panel,
     );
     expect(posted).toHaveLength(1);
-    expect(posted[0]!.hidden).toBe(true);
+    expect(posted[0]!.type === 'hidden' || posted[0]!.hidden).toBe(true);
     expect(new FormData(panel).get('validUntil')).toBe('');
   });
 

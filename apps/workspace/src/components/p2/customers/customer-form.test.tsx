@@ -43,8 +43,11 @@ describe('customer form', () => {
     expect(inputTag(html, 'contactName')).toContain('required=""');
     expect(inputTag(html, 'contactEmail')).toContain('type="email"');
     expect(inputTag(html, 'contactEmail')).toContain('required=""');
-    expect(inputTag(html, 'contactPhone')).toContain('type="tel"');
+    // The phone is a PhoneInput: +977 shown as a fixed prefix, a numeric keypad, E.164 posted by a hidden input.
+    expect(inputTag(html, 'contactPhone')).toContain('type="hidden"');
     expect(inputTag(html, 'contactPhone')).not.toContain('required');
+    expect(html).toContain('>+977<');
+    expect(html).toContain('inputMode="numeric"');
   });
 
   it('does not ask for a contact when editing the customer', () => {
