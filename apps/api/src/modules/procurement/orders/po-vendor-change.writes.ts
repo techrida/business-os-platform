@@ -16,7 +16,7 @@ import {
   approvalRequests,
 } from '@bos/db';
 import Decimal from 'decimal.js';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
@@ -313,7 +313,7 @@ export async function pendingVendorChangeOf(
         approvalRequests,
         and(
           eq(approvalRequests.documentType, PO_VENDOR_CHANGE_DOCUMENT_TYPE),
-          eq(approvalRequests.status, 'pending'),
+          inArray(approvalRequests.status, ['pending', 'blocked']),
           sql`${approvalRequests.snapshot} -> 'vendorChange' ->> 'purchaseOrderId' = ${poId}`,
         ),
       ),
