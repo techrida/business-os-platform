@@ -182,6 +182,10 @@ export type ParsedPr =
 
 const trim = (s: string): string => s.trim();
 
+/** A number typed with a space inside (`10 50`): the schema refuses it, and the fix is to remove the space. */
+const SPACED_NUMBER = /\S\s+\S/;
+const NUMBER_FIELDS: ReadonlySet<string> = new Set(['quantity', 'estimatedUnitPrice']);
+
 export function parsePrValues(input: PrValues): ParsedPr {
   const emergency = input.isEmergency === true;
   const candidate = {
@@ -219,10 +223,13 @@ export function parsePrValues(input: PrValues): ParsedPr {
     if (head === 'lines' && index === undefined) {
       errors.lines ??= 'Add at least one line.';
     } else if (head === 'lines' && typeof index === 'number' && typeof field === 'string') {
+      const typed = input.lines[index]?.[field as keyof LineValues];
       errors[`lines.${index}.${field}`] ??=
-        field === 'quantity' && /above zero/.test(issue.message)
-          ? 'The quantity must be above zero.'
-          : (WORDS[field] ?? issue.message);
+        NUMBER_FIELDS.has(field) && typeof typed === 'string' && SPACED_NUMBER.test(typed.trim())
+          ? 'Remove the space inside the number.'
+          : field === 'quantity' && /above zero/.test(issue.message)
+            ? 'The quantity must be above zero.'
+            : (WORDS[field] ?? issue.message);
     } else if (typeof head === 'string') {
       errors[head] ??= WORDS[head] ?? issue.message;
     }

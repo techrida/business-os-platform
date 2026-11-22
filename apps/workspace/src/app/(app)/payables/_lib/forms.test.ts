@@ -74,6 +74,28 @@ describe('parseBillLines', () => {
     expect(Object.keys(out.errors).some((k) => k.startsWith('0.'))).toBe(false);
   });
 
+  it('says to remove the space when a quantity or price has one inside, and keeps the other messages', () => {
+    // Fails on the old code: "10 50" got the generic format message, which does not say what is wrong.
+    const spaced = parseBillLines([row({ quantity: '1 5', unitPrice: '10 50' })]);
+    expect(spaced.ok).toBe(false);
+    if (spaced.ok) return;
+    expect(spaced.errors['0.quantity']).toBe('Remove the space inside the number.');
+    expect(spaced.errors['0.unitPrice']).toBe('Remove the space inside the number.');
+
+    const other = parseBillLines([row({ quantity: '1.23456', unitPrice: '12.345' })]);
+    expect(other.ok).toBe(false);
+    if (other.ok) return;
+    expect(other.errors['0.quantity']).toBe('Use a number with up to 4 decimal places.');
+    expect(other.errors['0.unitPrice']).toBe(
+      'Use an amount such as 1250.50, with up to 2 decimal places.',
+    );
+  });
+
+  it('accepts the plain amount a grouped price box posts', () => {
+    const out = parseBillLines([row({ quantity: '1250000', unitPrice: '1250000.00' })]);
+    expect(out.ok && out.lines[0]).toMatchObject({ quantity: '1250000', unitPrice: '1250000.00' });
+  });
+
   it('refuses a price with a sign, an exponent or too many digits, and more than 200 lines', () => {
     for (const unitPrice of ['-1', '1e3', '12345678901234567', '']) {
       const out = parseBillLines([row({ unitPrice })]);
