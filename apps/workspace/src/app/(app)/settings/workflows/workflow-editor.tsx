@@ -22,6 +22,7 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { DecimalInput, MoneyInput } from '@/components/ui/number-input';
 import { SuggestInput } from '@/components/ui/suggest-input';
 
 import { IDLE, type ActionState } from '../action-state';
@@ -58,6 +59,12 @@ interface Initial {
 
 // CSS-module lookups are `string | undefined` under noUncheckedIndexedAccess; Field wants a string.
 const SPAN = styles.span ?? '';
+
+/**
+ * Reminder and escalation hours are whole numbers. The SLA schema sets no maximum; 9 digits matches
+ * the default-times card, so a saved default always fits this box.
+ */
+const HOURS_DIGITS = 9;
 
 const pretty = (value: unknown): string => JSON.stringify(value, null, 2);
 
@@ -659,12 +666,11 @@ export function WorkflowEditor({
                             }
                           >
                             {(control) => (
-                              <Input
+                              <MoneyInput
                                 {...control}
+                                currency="NPR"
                                 value={rule.value}
-                                inputMode="decimal"
-                                autoComplete="off"
-                                onChange={(e) => updateRule(i, { value: e.target.value })}
+                                onValueChange={(value) => updateRule(i, { value })}
                               />
                             )}
                           </Field>
@@ -731,21 +737,23 @@ export function WorkflowEditor({
             <div className={styles.grid}>
               <Field label="Remind after (hours)">
                 {(control) => (
-                  <Input
+                  <DecimalInput
                     {...control}
-                    inputMode="numeric"
+                    intDigits={HOURS_DIGITS}
+                    scale={0}
                     value={form.remindAfterHours}
-                    onChange={(e) => patch({ remindAfterHours: e.target.value })}
+                    onValueChange={(remindAfterHours) => patch({ remindAfterHours })}
                   />
                 )}
               </Field>
               <Field label="Escalate after (hours)">
                 {(control) => (
-                  <Input
+                  <DecimalInput
                     {...control}
-                    inputMode="numeric"
+                    intDigits={HOURS_DIGITS}
+                    scale={0}
                     value={form.escalateAfterHours}
-                    onChange={(e) => patch({ escalateAfterHours: e.target.value })}
+                    onValueChange={(escalateAfterHours) => patch({ escalateAfterHours })}
                   />
                 )}
               </Field>

@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 // The issue guard end to end in the browser half: the dialog submits the row version the page showed, the real
 // action passes it on, and the real API helper puts it in the POST body.
+import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { click, mountForm } from '@/test/form-interactions';
+import { click, mountForm, typeKeys } from '@/test/form-interactions';
 
-import { IssueDialog } from './order-actions';
+import { AmendDialog, IssueDialog } from './order-actions';
 
-const api = vi.hoisted(() => ({ issuePurchaseOrder: vi.fn() }));
+const api = vi.hoisted(() => ({
+  issuePurchaseOrder: vi.fn(),
+  getPurchaseOrder: vi.fn(),
+  amendPurchaseOrder: vi.fn(),
+}));
 const apiFetch = vi.hoisted(() => vi.fn());
 
 vi.mock('server-only', () => ({}));
@@ -83,4 +88,89 @@ it('puts expectedVersion in the issue body, and sends no body without one', asyn
   expect(JSON.parse(withVersion[2].body as string)).toEqual({ expectedVersion: 3 });
   expect(withVersion[2].headers).toMatchObject({ 'idempotency-key': KEY });
   expect(without[2].body).toBeUndefined();
+});
+
+it('amends through formatted quantity, money and whole-day terms boxes that post plain values', async () => {
+  const LINE = '44444444-4444-4444-8444-444444444444';
+  api.getPurchaseOrder.mockResolvedValue({
+    paymentTermsDays: 30,
+    lines: [{ id: LINE, orderedQuantity: '10.0000', unitPrice: '1000.00' }],
+  });
+  api.amendPurchaseOrder.mockResolvedValue({
+    outcome: 'pending_approval',
+    purchaseOrder: { currentVersion: 1 },
+  });
+  const mounted = await mountForm(
+    <AmendDialog
+      purchaseOrderId={PO}
+      number="PO-2082-0001"
+      idempotencyKey={KEY}
+      reloadHref={`/procurement/orders/${PO}`}
+      currency="NPR"
+      paymentTermsDays={30}
+      lines={[
+        {
+          id: LINE,
+          lineNo: 1,
+          description: 'Chair',
+          uom: 'pcs',
+          orderedQuantity: '10.0000',
+          unitPrice: '1000.00',
+          received: '0.0000',
+          cancelledQuantity: '0.0000',
+        },
+      ]}
+    />,
+  );
+  try {
+    await click(mounted.container.querySelector('button'));
+    const boxOf = (name: string) =>
+      document
+        .querySelector(`input[type="hidden"][name="${name}"]`)!
+        .parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
+    const qty = boxOf(`qty:${LINE}`);
+    expect(qty.getAttribute('role')).toBe('spinbutton');
+    expect(
+      qty.parentElement!.querySelector('button[aria-label="Increase quantity"]'),
+    ).not.toBeNull();
+    expect(
+      qty.parentElement!.querySelector('button[aria-label="Decrease quantity"]'),
+    ).not.toBeNull();
+    await typeKeys(qty, '{Backspace}{Backspace}1250000');
+    expect(qty.value).toBe('12,50,000');
+
+    const price = boxOf(`price:${LINE}`);
+    expect(price.parentElement!.textContent).toContain('NPR');
+
+    const terms = boxOf('paymentTerms');
+    expect(terms.getAttribute('inputmode')).toBe('numeric');
+    await typeKeys(terms, '{Backspace}{Backspace}400');
+    // 400 is past the 365-day limit, so the last keystroke is refused.
+    expect(terms.value).toBe('40');
+    await typeKeys(terms, '{Backspace}5');
+    expect(terms.value).toBe('45');
+
+    const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="reason"]')!;
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        reason,
+        'Vendor revised the order',
+      );
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+      return Promise.resolve();
+    });
+    await click(document.querySelector<HTMLButtonElement>('footer button[type="submit"]'));
+    expect(api.amendPurchaseOrder).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      PO,
+      {
+        reason: 'Vendor revised the order',
+        paymentTermsDays: 45,
+        lines: [{ poLineId: LINE, quantity: '1250000' }],
+      },
+      KEY,
+    );
+  } finally {
+    await mounted.unmount();
+  }
 });
