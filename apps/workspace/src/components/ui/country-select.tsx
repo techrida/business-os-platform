@@ -31,6 +31,11 @@ export interface CountrySelectProps {
   /** The chosen country. A country is always chosen: clearing the text and leaving puts it back. */
   value: CountryCode;
   onChange: (code: CountryCode) => void;
+  /**
+   * Called instead of `onChange` when the chosen country is picked again. Optional: without it a re-pick only closes
+   * the list. The phone row uses it to leave the full-number box for the country's own box.
+   */
+  onReselect?: ((code: CountryCode) => void) | undefined;
   /** `Field` passes its control id here, so its `<label for>` names the box. */
   id?: string | undefined;
   /** Posts the ISO code through a hidden input. */
@@ -62,6 +67,7 @@ export interface CountrySelectProps {
 export function CountrySelect({
   value,
   onChange,
+  onReselect,
   id,
   name,
   'aria-label': ariaLabel,
@@ -110,6 +116,7 @@ export function CountrySelect({
   };
   const choose = (code: CountryCode) => {
     if (code !== value) onChange(code);
+    else onReselect?.(code);
     close();
   };
   const openList = (nextActive: CountryCode | null) => {

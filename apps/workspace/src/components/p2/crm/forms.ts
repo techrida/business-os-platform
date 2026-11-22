@@ -28,6 +28,8 @@ import {
 import { NO_SPACES, hasInnerSpace, plainAmount } from '@bos/locale';
 import type { ZodType } from 'zod';
 
+import { rawPhoneRows } from '@/components/ui/phone-rows';
+
 /**
  * Turns submitted forms into the contracts' request bodies, or into one plain sentence per field.
  * The browser's checks are a courtesy; these run on the server in every action. Pure functions on
@@ -222,22 +224,14 @@ export function formPhones(
   form: FormData,
   name: string,
 ): { phones: PartyPhoneInput[]; rowOf: number[] } {
-  const phones: PartyPhoneInput[] = [];
-  const rowOf: number[] = [];
-  for (let row = 0; row < PHONE_ROWS_READ; row += 1) {
-    const at = `${name}.${row}`;
-    if (!form.has(`${at}.number`)) break;
-    const e164 = field(form, `${at}.number`);
-    if (e164 === undefined) continue;
-    const label = field(form, `${at}.label`);
-    phones.push({
-      country: (field(form, `${at}.country`) ?? '') as PartyPhoneInput['country'],
-      e164,
-      ...(label === undefined ? {} : { label: label as NonNullable<PartyPhoneInput['label']> }),
-      isPrimary: field(form, `${at}.isPrimary`) === 'true',
-    });
-    rowOf.push(row);
-  }
+  const rows = rawPhoneRows(form, name, { limit: PHONE_ROWS_READ });
+  const phones: PartyPhoneInput[] = rows.map(({ country, number, label, isPrimary }) => ({
+    country: country as PartyPhoneInput['country'],
+    e164: number,
+    ...(label === '' ? {} : { label: label as NonNullable<PartyPhoneInput['label']> }),
+    isPrimary,
+  }));
+  const rowOf = rows.map(({ row }) => row);
   if (phones.length > 0 && !phones.some((phone) => phone.isPrimary)) phones[0]!.isPrimary = true;
   return { phones, rowOf };
 }

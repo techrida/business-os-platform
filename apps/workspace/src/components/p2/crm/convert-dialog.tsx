@@ -468,7 +468,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       />
                     )}
                   </Field>
-                  <Field label="Country" error={err['contactCountry']}>
+                  <Field label="Contact country" error={err['contactCountry']}>
                     {(c) => (
                       <CountrySelect
                         id={c.id}
@@ -492,6 +492,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       key={`${lead.id}-${lead.version}`}
                       name="contactPhones"
                       aria-labelledby={c['aria-labelledby']}
+                      aria-describedby={c['aria-describedby']}
                       defaultValue={phones}
                       defaultCountry={contactCountry}
                       onChange={setPhones}
