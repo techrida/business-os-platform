@@ -294,6 +294,7 @@ describe('changeVendorAction', () => {
     api.changePurchaseOrderVendor.mockRejectedValueOnce(apiError(409, 'VENDOR_NOT_VAT_REGISTERED'));
     const warned = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
     expect(warned.errors?.['acknowledgeVatWarning']).toMatch(/not VAT registered/i);
+    expect(warned.errors?.['acknowledgeVatWarningVendor']).toBe(NEW_VENDOR);
     expect(warned.error).toBeUndefined();
     api.changePurchaseOrderVendor.mockResolvedValue({ ...currentOrder, vendorId: NEW_VENDOR });
     const out = await changeVendorAction(

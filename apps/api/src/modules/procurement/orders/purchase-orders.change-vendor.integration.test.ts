@@ -812,6 +812,14 @@ describe('changeVendor approval flow (different total)', () => {
       code: 'PO_VENDOR_CHANGE_PENDING',
     });
 
+    // A request that went blocked (an approver became ineligible) is still open: the order stays locked.
+    await exec(scopeA, sql`UPDATE app.approval_requests SET status = 'blocked' WHERE id = ${requestId!}`);
+    expect(codeOf(await httpErrorOf(service.issue(draft.id, randomUUID())))).toBe('PO_VENDOR_CHANGE_PENDING');
+    expect(
+      codeOf(await httpErrorOf(service.changeVendor(draft.id, { vendorId: thirdVendor }, randomUUID()))),
+    ).toBe('PO_VENDOR_CHANGE_PENDING');
+    await exec(scopeA, sql`UPDATE app.approval_requests SET status = 'pending' WHERE id = ${requestId!}`);
+
     // After Accountant approves, Finance still has to decide; the PO stays untouched.
     await approve(U.acct, 'accountant', requestId!);
     expect(await poRow(draft.id)).toEqual(draft);
