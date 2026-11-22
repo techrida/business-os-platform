@@ -45,6 +45,7 @@ import {
   FounderLeaseLostError,
   IdentityReconciler,
   isDefiniteRefusal,
+  recordedFounderRemovalOf,
   recordFounderRemoval,
   withFounderRemovalLease,
 } from './identity-reconcile';
@@ -320,10 +321,13 @@ export class UserStatusService {
         AFTER_ACCESS_LOCK,
       );
     } catch (error) {
-      // The lease was taken over: the new holder settles the recorded removal, this one changes nothing more.
-      if (error instanceof FounderLeaseLostError) throw error;
-      // Phase B already changed ZITADEL: whatever failed here, the person is closed and flagged, never reopened.
-      await this.deny(scope, actor, target, action, 'phase_c_failed');
+      const leaseLost = error instanceof FounderLeaseLostError;
+      // The lease was taken over after this holder recorded a Founder removal: the new holder settles it, this one
+      // changes nothing more.
+      if (leaseLost && recordedFounderRemovalOf(target.id)) throw error;
+      // Phase B already changed ZITADEL: whatever failed here, the person is closed and flagged, never reopened. With
+      // the lease lost, only in the database (no ZITADEL call starts past the lease fence).
+      await this.deny(scope, actor, target, action, 'phase_c_failed', leaseLost);
       throw error;
     }
   }
@@ -395,6 +399,7 @@ export class UserStatusService {
     target: UserRow,
     action: UserStatusAction,
     reason: string,
+    localOnly = false,
   ): Promise<void> {
     const lock = action === 'lock' || (target.lockReason ?? null) !== null;
     return this.reconciler.denyAfterFailure(scope, actor, {
@@ -402,6 +407,7 @@ export class UserStatusService {
       userId: target.id,
       zitadelUserId: target.zitadelUserId,
       close: lock ? 'lock' : 'deactivate',
+      localOnly,
     });
   }
 

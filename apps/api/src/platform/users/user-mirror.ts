@@ -36,6 +36,7 @@ import {
   FounderLeaseLostError,
   IdentityReconciler,
   isDefiniteRefusal,
+  recordedFounderRemovalOf,
   recordFounderRemoval,
   type SettleOutstandingRemoval,
   withFounderRemovalLease,
@@ -545,8 +546,11 @@ export class UserMirror {
         LOCKS_USER_ROW,
       );
     } catch (error) {
-      // The new holder settles the recorded removal; this one changes nothing more.
-      if (error instanceof FounderLeaseLostError) throw error;
+      // The lease was taken over after this holder recorded a Founder removal: the new holder settles it. Otherwise
+      // the person is flagged here as after any failed role set (no ZITADEL call either way).
+      if (error instanceof FounderLeaseLostError && recordedFounderRemovalOf(plan.user.id)) {
+        throw error;
+      }
       await this.reconciler.denyAfterFailure(scope, actor, {
         reason: 'users.set_roles:phase_c_failed',
         userId: plan.user.id,
