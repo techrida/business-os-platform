@@ -792,6 +792,41 @@
       "when": 1783000000158,
       "tag": "0187_company_contacts_strict",
       "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1783000000159,
+      "tag": "0191_party_country_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1783000000160,
+      "tag": "0192_party_phones",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1783000000161,
+      "tag": "0193_party_phones_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1783000000162,
+      "tag": "0194_drop_owner_phone_e164",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1783000000163,
+      "tag": "0195_entity_settings_address_phones",
+      "breakpoints": true
     }
   ]
 }

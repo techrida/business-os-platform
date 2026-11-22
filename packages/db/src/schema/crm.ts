@@ -118,8 +118,12 @@ export const customers = appSchema.table(
       .default('prospect'),
     ownerUserId: uuid('owner_user_id'),
     defaultCurrency: char('default_currency', { length: 3 }),
-    /** The Address object of @bos/contracts. */
-    address: jsonb('address').notNull(),
+    /** ISO 3166-1 alpha-2 (0191, CHECK); also the address's country. */
+    country: char('country', { length: 2 }).notNull().default('NP'),
+    /** The street lines of the address, one free-text field (0191; not blank, CHECK). */
+    addressLine: text('address_line').notNull(),
+    /** The address's city (0191; not blank, CHECK). */
+    addressCity: text('address_city').notNull(),
     /** Set when this record was merged into another; the target is the live one. */
     mergedIntoId: uuid('merged_into_id'),
     /**
@@ -159,7 +163,9 @@ export const customers = appSchema.table(
     ),
     check('customers_default_currency_check', sql`${t.defaultCurrency} in ('NPR', 'INR', 'USD')`),
     check('customers_pan_vat_no_check', sql`${t.panVatNo} ~ '^[A-Z0-9-]{5,20}$'`),
-    check('customers_address_check', sql`jsonb_typeof(${t.address}) = 'object'`),
+    check('customers_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
+    check('customers_address_line_check', sql`btrim(${t.addressLine}) <> ''`),
+    check('customers_address_city_check', sql`btrim(${t.addressCity}) <> ''`),
     check('customers_merged_into_check', sql`${t.mergedIntoId} <> ${t.id}`),
     check('customers_version_check', sql`${t.version} >= 1`),
   ],
@@ -177,8 +183,8 @@ export const customerContacts = appSchema.table(
     fullName: text('full_name').notNull(),
     /** Lower-cased and trimmed (CHECK). */
     emailNorm: text('email_norm'),
-    /** E.164 (CHECK). */
-    phoneE164: text('phone_e164'),
+    /** ISO 3166-1 alpha-2 (0191, CHECK); may differ from the customer's. Phones: customerContactPhones. */
+    country: char('country', { length: 2 }).notNull().default('NP'),
     title: text('title'),
     isPrimary: boolean('is_primary').notNull().default(false),
     version: integer('version').notNull().default(1),
@@ -197,10 +203,53 @@ export const customerContacts = appSchema.table(
       .on(t.tenantId, t.customerId)
       .where(sql`${t.isPrimary}`),
     index('customer_contacts_tenant_email_norm_idx').on(t.tenantId, t.emailNorm),
-    index('customer_contacts_tenant_phone_e164_idx').on(t.tenantId, t.phoneE164),
     check('customer_contacts_email_norm_check', sql`${t.emailNorm} = lower(btrim(${t.emailNorm}))`),
-    check('customer_contacts_phone_e164_check', sql`${t.phoneE164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check('customer_contacts_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
     check('customer_contacts_version_check', sql`${t.version} >= 1`),
+  ],
+);
+
+/** Mirrors PhoneLabel of @bos/contracts (0192). */
+export const PHONE_LABELS = ['mobile', 'work', 'home', 'landline'] as const;
+
+/**
+ * A phone number of a customer contact (0192). Tenant-level, like the contact; deleted with it. `country` is the
+ * number's country (ISO-2), `e164` the number (CHECK). One number per contact once, at most one primary.
+ * A row is replaced, never edited, so there is no version.
+ */
+export const customerContactPhones = appSchema.table(
+  'customer_contact_phones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    contactId: uuid('contact_id').notNull(),
+    country: char('country', { length: 2 }).notNull(),
+    e164: text('e164').notNull(),
+    label: text('label', { enum: PHONE_LABELS }),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('customer_contact_phones_owner_e164_unique').on(t.tenantId, t.contactId, t.e164),
+    foreignKey({
+      name: 'customer_contact_phones_contact_fk',
+      columns: [t.tenantId, t.contactId],
+      foreignColumns: [customerContacts.tenantId, customerContacts.id],
+    }).onDelete('cascade'),
+    uniqueIndex('customer_contact_phones_owner_primary_unique')
+      .on(t.tenantId, t.contactId)
+      .where(sql`${t.isPrimary}`),
+    index('customer_contact_phones_tenant_e164_idx').on(t.tenantId, t.e164),
+    check('customer_contact_phones_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
+    check('customer_contact_phones_e164_check', sql`${t.e164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check(
+      'customer_contact_phones_label_check',
+      sql`${t.label} in ('mobile', 'work', 'home', 'landline')`,
+    ),
+    check('customer_contact_phones_sort_order_check', sql`${t.sortOrder} >= 0`),
   ],
 );
 
@@ -383,7 +432,13 @@ export const leads = appSchema.table(
     companyName: text('company_name').notNull(),
     contactName: text('contact_name').notNull(),
     emailNorm: text('email_norm'),
-    phoneE164: text('phone_e164'),
+    /** ISO 3166-1 alpha-2 (0191, CHECK). */
+    country: char('country', { length: 2 }).notNull().default('NP'),
+    /**
+     * The lead's numbers (leadPhones) as E.164, space-separated in sort order; NULL when it has none (0192). The API
+     * writes it with the phones; the list search reads it through leads_phones_search_trgm_idx.
+     */
+    phonesSearch: text('phones_search'),
     customerId: uuid('customer_id'),
     /** Must belong to customerId (leads_contact_fk, leads_contact_customer_check). */
     contactId: uuid('contact_id'),
@@ -458,7 +513,7 @@ export const leads = appSchema.table(
     index('leads_tenant_org_stage_idx').on(t.tenantId, t.organizationId, t.stage),
     index('leads_tenant_customer_idx').on(t.tenantId, t.customerId),
     index('leads_tenant_email_norm_idx').on(t.tenantId, t.emailNorm),
-    index('leads_tenant_phone_e164_idx').on(t.tenantId, t.phoneE164),
+    index('leads_phones_search_trgm_idx').using('gin', t.phonesSearch.op('gin_trgm_ops')),
     check(
       'leads_stage_check',
       sql`${t.stage} in ('new', 'contacted', 'qualified', 'converted', 'lost', 'on_hold')`,
@@ -475,7 +530,7 @@ export const leads = appSchema.table(
     check('leads_expected_value_check', sql`${t.expectedValue} >= 0`),
     check('leads_probability_check', sql`${t.probability} BETWEEN 0 AND 100`),
     check('leads_email_norm_check', sql`${t.emailNorm} = lower(btrim(${t.emailNorm}))`),
-    check('leads_phone_e164_check', sql`${t.phoneE164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check('leads_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
     check(
       'leads_contact_customer_check',
       sql`${t.contactId} IS NULL OR ${t.customerId} IS NOT NULL`,
@@ -493,6 +548,49 @@ export const leads = appSchema.table(
       sql`${t.stage} <> 'converted' OR ${t.customerId} IS NOT NULL`,
     ),
     check('leads_version_check', sql`${t.version} >= 1`),
+  ],
+);
+
+/**
+ * A phone number of a lead's person (0192). Entity-owned, like the lead; deleted with it. Same columns and rules
+ * as customerContactPhones. Writing a lead's phones also rewrites leads.phones_search.
+ */
+export const leadPhones = appSchema.table(
+  'lead_phones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    organizationId: uuid('organization_id').notNull(),
+    leadId: uuid('lead_id').notNull(),
+    country: char('country', { length: 2 }).notNull(),
+    e164: text('e164').notNull(),
+    label: text('label', { enum: PHONE_LABELS }),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('lead_phones_owner_e164_unique').on(t.tenantId, t.organizationId, t.leadId, t.e164),
+    foreignKey({
+      name: 'lead_phones_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'lead_phones_lead_fk',
+      columns: [t.tenantId, t.organizationId, t.leadId],
+      foreignColumns: [leads.tenantId, leads.organizationId, leads.id],
+    }).onDelete('cascade'),
+    uniqueIndex('lead_phones_owner_primary_unique')
+      .on(t.tenantId, t.organizationId, t.leadId)
+      .where(sql`${t.isPrimary}`),
+    index('lead_phones_tenant_e164_idx').on(t.tenantId, t.e164),
+    check('lead_phones_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
+    check('lead_phones_e164_check', sql`${t.e164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check('lead_phones_label_check', sql`${t.label} in ('mobile', 'work', 'home', 'landline')`),
+    check('lead_phones_sort_order_check', sql`${t.sortOrder} >= 0`),
   ],
 );
 

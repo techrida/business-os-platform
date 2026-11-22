@@ -79,6 +79,10 @@ export const TENANT_SCOPED: readonly string[] = [
   'app.vendors',
   'app.vendor_contacts',
   'app.vendor_bank_accounts',
+  // FX9 (migration 0192): the phone numbers of customer and vendor contacts, tenant-level like their contacts.
+  // app.lead_phones is entity-owned, like leads, so it is not listed.
+  'app.customer_contact_phones',
+  'app.vendor_contact_phones',
 ];
 
 /**
