@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { minimalPdf } from '../../../workspace/e2e/helpers/pdf-fixture';
 import { signInAs, type Signed } from '../../../workspace/e2e/helpers/memo-flow';
+import { fillDateField } from '../helpers/date-fields';
 
 /**
  * Journey 11 portal checkpoints on a disposable real stack, explicitly enabled by
@@ -103,9 +104,10 @@ test('vendor quotation and invoice uploads reach the actual workspace inboxes wi
       );
       await page.getByLabel('Your invoice number').fill(reference);
       // Use the form's Kathmandu "today" limit rather than a date that will eventually be future.
-      const today = await page.getByLabel('Invoice date').getAttribute('max');
-      expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      await page.getByLabel('Invoice date').fill(today ?? '');
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kathmandu' }).format(
+        new Date(),
+      );
+      await fillDateField(page, 'Invoice date', today);
       await page.getByLabel('Total on your invoice').fill('1,20,000.00');
       await page.getByRole('button', { name: 'Submit bill', exact: true }).click();
       await expect(

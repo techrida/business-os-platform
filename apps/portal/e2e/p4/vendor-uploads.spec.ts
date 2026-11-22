@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { minimalPdf } from '../../../workspace/e2e/helpers/pdf-fixture';
+import { fillDateField } from '../helpers/date-fields';
 
 /**
  * Vendor portal uploads, end to end: a KYC document, a bill, and a bank-account change request.
@@ -62,7 +63,7 @@ test('submits a bill: the total is the vendor’s own text, and the answer says 
   await page.getByLabel('Your bill').setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('scan.pdf');
   await page.getByLabel('Your invoice number').fill(`E2E-${stamp()}`);
-  await page.getByLabel('Invoice date').fill('2026-11-01');
+  await fillDateField(page, 'Invoice date', '2026-11-01');
   await page.getByLabel('Total on your invoice').fill('20,18,180.00');
   await page.getByRole('button', { name: 'Submit bill' }).click();
   const done = page.getByRole('status').filter({ hasText: 'We received your bill' });
@@ -76,7 +77,7 @@ test('a bill with a bad total names the field and keeps what was typed', async (
   await page.getByLabel('Your bill').setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toBeVisible();
   await page.getByLabel('Your invoice number').fill('E2E-BAD');
-  await page.getByLabel('Invoice date').fill('2026-11-01');
+  await fillDateField(page, 'Invoice date', '2026-11-01');
   await page.getByLabel('Total on your invoice').fill('twelve');
   await page.getByRole('button', { name: 'Submit bill' }).click();
   await expect(page.getByText(/Enter the total on your invoice/)).toBeVisible();

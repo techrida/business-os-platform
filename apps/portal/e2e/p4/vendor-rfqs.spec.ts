@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { minimalPdf } from '../../../workspace/e2e/helpers/pdf-fixture';
+import { fillDateField } from '../helpers/date-fields';
 
 /**
  * Vendor portal requests for quotation, end to end: the list, one request, and a quotation sent
@@ -81,7 +82,7 @@ test('submits a quotation: the total is the vendor’s own text, and the answer 
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('quotation.pdf');
   await page.getByLabel('Total of your quotation').fill('20,18,180.00');
   await page.getByLabel('Your reference (optional)').fill(`E2E-${stamp()}`);
-  await page.getByLabel('Prices valid until (optional)').fill('2999-12-31');
+  await fillDateField(page, 'Prices valid until (optional)', '2999-12-31');
   await page.getByLabel('Delivery time in days (optional)').fill('14');
   await page.getByRole('button', { name: 'Submit quotation' }).click();
   await expect(page).toHaveURL(new RegExp(`/vendor/rfqs/${rfqId}/quote\\?sent=1$`));

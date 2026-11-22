@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { chooseOption, selectByName } from '../helpers/select';
+import { fillDateField } from '../helpers/date-fields';
 
 /**
  * Journey 11 browser checkpoints against the real, disposable P4 stack. No API is mocked.
@@ -99,7 +100,7 @@ test('procurement raises a PR, its department head alone approves, then three ve
     await test.step('procurement opens the RFQ for precisely those three vendors', async () => {
       await page.getByRole('link', { name: 'Start RFQ', exact: true }).click();
       await page.waitForLoadState('networkidle');
-      await page.getByLabel('Quotation deadline').fill('2030-12-01T17:00');
+      await fillDateField(page, 'Quotation deadline', '2030-12-01', '17:00');
       for (const id of vendorIds)
         await page.locator(`input[name="vendorIds"][value="${id}"]`).check();
       await page.getByRole('button', { name: 'Open RFQ', exact: true }).click();
