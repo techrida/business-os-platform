@@ -77,9 +77,7 @@ describe('createPrAction', () => {
         departmentId: DEPT,
         costCenterId: COST,
         isEmergency: false,
-        lines: [
-          { description: 'Chair', uom: 'pcs', quantity: '10', estimatedUnitPrice: '4500' },
-        ],
+        lines: [{ description: 'Chair', uom: 'pcs', quantity: '10', estimatedUnitPrice: '4500' }],
       }),
       KEY,
     );
