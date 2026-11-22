@@ -449,7 +449,11 @@ export function PhoneListInput({
     const from = rows.findIndex((row) => row.key === key);
     const to = from + step;
     if (from !== -1 && to >= 0 && to < rows.length) {
-      setAnnouncement(`${noun} ${from + 1} moved to position ${to + 1}.`);
+      // An identical message would not change the live region, so it would not be read again.
+      setAnnouncement((previous) => {
+        const text = `${noun} ${from + 1} moved to position ${to + 1}.`;
+        return previous === text ? `${text}\u00a0` : text;
+      });
     }
     setRows((current) => {
       const from = current.findIndex((row) => row.key === key);
