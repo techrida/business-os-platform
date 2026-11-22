@@ -13,6 +13,7 @@
 --     (a local Kathmandu number, or another country's), so it is left as it is.
 --   * A PAN converts when it is nine digits once spaces and hyphens are removed. The profile's own panVatNo (no screen
 --     edits it) is set to null when it does not, and reported; `entity.pan_vat_no` is left as stored.
+--   * An unseparated 977 followed by 7 digits or fewer is ambiguous (country code or a mobile) and is left as stored.
 --   * A number written 00 and another country's code is not a Nepal trunk 0 and is left as stored.
 --   * A value that does not convert is left exactly as stored and reported in a NOTICE naming the tenant, the
 --     entity and the value. A profile with some convertible phones gets those converted and keeps the rest.
@@ -41,7 +42,9 @@ $$;
 CREATE OR REPLACE FUNCTION pg_temp.fx8_phone(raw text) RETURNS text
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE
-	t text := regexp_replace(raw, '[[:space:]().-]', '', 'g');
+	-- `977 1 412345`: the country code is recognised while the separator after it is still there.
+	t text := regexp_replace(
+		regexp_replace(raw, '^[[:space:]]*977(?=[[:space:].()-])', '+977'), '[[:space:]().-]', '', 'g');
 	nat_no text;
 BEGIN
 	IF t ~ '^\+[1-9][0-9]{6,14}$' AND (t NOT LIKE '+977%' OR pg_temp.fx8_nepal_national_ok(substr(t, 5))) THEN
@@ -54,7 +57,7 @@ BEGIN
 		nat_no := substr(t, 4);
 	ELSIF t ~ '^0[1-9][0-9]+$' THEN
 		nat_no := substr(t, 2);
-	ELSIF t ~ '^9[0-9]{9}$' THEN
+	ELSIF t ~ '^9[0-9]{9}$' AND t NOT LIKE '977%' THEN
 		nat_no := t;
 	ELSE
 		RETURN NULL;
