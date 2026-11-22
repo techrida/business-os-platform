@@ -20,6 +20,15 @@ const STYLES = `
   font: 12px/16px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: #f9fafb;
 }
+/* Beside the app's sidebar, never over it: at 12px from the left the chip covered the rail's
+   Settings link on a tablet. The shell's sizes are custom properties, which reach the shadow root
+   by inheritance (all: initial leaves them alone). Below 768px the sidebar is a drawer. */
+@media (min-width: 768px) {
+  .root { left: calc(var(--bos-rail-width, 108px) + 12px); }
+}
+@media (min-width: 1024px) {
+  .root { left: calc(var(--bos-sidebar-width, 220px) + 12px); }
+}
 button {
   position: relative;
   margin: 0;

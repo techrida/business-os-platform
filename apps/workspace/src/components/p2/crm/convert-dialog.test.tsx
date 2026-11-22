@@ -318,6 +318,19 @@ it("starts the customer and the contact in the lead's country, with one Country 
   expect(dialog().textContent).not.toContain('Country code');
 });
 
+it("names the address country and the contact's country apart", async () => {
+  await mountNewCustomer({ country: 'IN' });
+  const labelFor = (name: string) => {
+    const box = dialog().querySelector<HTMLInputElement>(`[name="${name}"]`)!;
+    const control = box.parentElement!.querySelector('[role="combobox"]')!;
+    return document.getElementById(control.getAttribute('aria-labelledby')!)?.textContent;
+  };
+  expect(labelFor('address.country')).toBe('Country');
+  expect(labelFor('contactCountry')).toBe('Contact country');
+  const labels = [...dialog().querySelectorAll('label')].map((label) => label.textContent);
+  expect(labels.filter((text) => text === 'Country')).toHaveLength(1);
+});
+
 it('converts a foreign lead without a PAN', async () => {
   await mountNewCustomer({ country: 'IN' });
   await fillAddress('Connaught Place', 'New Delhi');

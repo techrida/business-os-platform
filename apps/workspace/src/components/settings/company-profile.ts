@@ -25,6 +25,8 @@ import {
 } from '@bos/contracts';
 import { z } from 'zod';
 
+import { rawPhoneRows } from '@/components/ui/phone-rows';
+
 // ---------------------------------------------------------------------------------------------
 // Logo
 // ---------------------------------------------------------------------------------------------
@@ -350,21 +352,14 @@ const PHONE_ROWS_READ = 20;
 
 /** The rows a `PhoneListInput` named `phones` posted (`phones.<i>.number`, `.country`, `.label`), blank ones left out. */
 export function postedPhones(form: FormLike): PostedPhone[] {
-  const phones: PostedPhone[] = [];
-  for (let row = 0; row < PHONE_ROWS_READ; row += 1) {
-    const number = form.get(`phones.${row}.number`);
-    if (typeof number !== 'string') break;
-    const e164 = number.trim();
-    if (e164 === '') continue;
-    const label = str(form, `phones.${row}.label`).trim();
-    phones.push({
+  return rawPhoneRows(form, 'phones', { limit: PHONE_ROWS_READ }).map(
+    ({ row, country, number, label }) => ({
       row,
-      country: str(form, `phones.${row}.country`).trim(),
-      e164,
+      country,
+      e164: number,
       label: label === '' ? null : label,
-    });
-  }
-  return phones;
+    }),
+  );
 }
 
 /** Reads one card's fields from the submitted form. `fields` echoes what was typed, for an error reply. */

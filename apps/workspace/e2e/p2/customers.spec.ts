@@ -70,7 +70,7 @@ test('a US customer without a PAN keeps its country and a contact number typed w
     await page.getByLabel('Organization legal name').fill(name);
 
     // The address's Country comes first: the contact's country and each new phone row follow it.
-    // The form has two Country pickers (the organization's and the contact's), so each is scoped.
+    // The organization's picker is "Country" and the contact's "Contact country"; each is still scoped.
     const address = page.getByRole('region', { name: 'Business Address' });
     await address.getByLabel('Address', { exact: true }).fill('1 Market Street');
     await address.getByLabel('City', { exact: true }).fill('San Francisco');
@@ -83,9 +83,9 @@ test('a US customer without a PAN keeps its country and a contact number typed w
     const contact = page.getByRole('region', { name: 'Primary Contact' });
     await contact.getByLabel('Full name').fill('Jordan Lee');
     await contact.getByLabel('Email', { exact: true }).fill(`jordan.${stamp}@example.test`);
-    await expect(contact.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue(
-      'United States',
-    );
+    await expect(
+      contact.getByRole('combobox', { name: 'Contact country', exact: true }),
+    ).toHaveValue('United States');
 
     // Typing + and the code switches the row's country: the box remounts and keeps the focus.
     const first = contact.getByLabel('Phone 1 number', { exact: true });
