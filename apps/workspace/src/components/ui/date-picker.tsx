@@ -123,7 +123,7 @@ export function UnfinishedBlocker({
   // before React's own submit handling, which would otherwise run the form's onSubmit and its action.
   useEffect(() => {
     const form = ref.current?.form;
-    if (!hold || !form) return;
+    if (!hold || disabled === true || !form) return;
     const stop = (event: Event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -132,7 +132,7 @@ export function UnfinishedBlocker({
     };
     form.addEventListener('submit', stop);
     return () => form.removeEventListener('submit', stop);
-  }, [hold, onBlocked, root]);
+  }, [hold, disabled, onBlocked, root]);
   return (
     <>
       <input
