@@ -129,8 +129,18 @@ async function pressEnter(field: HTMLInputElement) {
     await Promise.resolve();
   });
 }
-const amountField = () =>
-  form().querySelector<HTMLInputElement>('input[name="allocation:0:amount"]')!;
+/** The visible text box a field's label names (role textbox), never the hidden input that posts the value. */
+function textboxByLabel(name: string): HTMLInputElement {
+  const label = [...form().querySelectorAll('label')].find(
+    (element) => element.textContent?.trim() === name,
+  );
+  const box = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+  if (!(box instanceof HTMLInputElement) || box.type !== 'text') {
+    throw new Error(`No text box labelled "${name}"`);
+  }
+  return box;
+}
+const amountField = () => textboxByLabel('Amount 1');
 
 /** A form started from the bill's "Request payment" link, with the paying account picked. */
 async function filledForm() {

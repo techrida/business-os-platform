@@ -31,7 +31,6 @@ function sources(dir: string): string[] {
 const DEFERRED = [
   'apps/portal/src/app/(portal)/payments/_components/payment-form.tsx',
   'apps/workspace/src/app/(app)/invoices/_components/invoice-filters.tsx',
-  'apps/workspace/src/app/(app)/settings/workflows/panels.tsx',
   'apps/workspace/src/components/p2/crm/lead-form.tsx',
 ];
 
