@@ -1999,6 +1999,163 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     await store.releaseFounderLease(tenant, 'holder-c');
   }, 60_000);
 
+  describe('a stalled holder past the lease TTL (outstanding Founder removal)', () => {
+    /** Two Founders (Admin, Mina), a non-Founder actor, and ZITADEL holding both Founders active. */
+    async function twoFounders() {
+      const f = await fixture('active', { roles: ['founder'] });
+      const tenant = f.scope.tenantId;
+      const opsId = await withTx(db, f.scope, systemActor('test'), async (tx) => {
+        const id = await store.insertUser(tx, f.scope, {
+          zitadelUserId: `ops-${tenant}`,
+          idpOrgId: f.idpOrgId,
+          email: 'ops@techrida.test',
+          displayName: 'Ops Admin',
+          status: 'active',
+        });
+        await store.ensureDefaultMembership(tx, tenant, f.scope.organizationId, id);
+        return id;
+      });
+      const adminZ = `admin-${tenant}`;
+      const zitadel = zitadelFor(f, 'active');
+      zitadel.users.set(adminZ, zUser(adminZ, { orgId: f.zitadelOrgId, status: 'active' }));
+      const leaseName = `users.founder-lease:${tenant}`;
+      const ageLease = (seconds: number) =>
+        adminPool.query(
+          `UPDATE ops.sync_cursors SET updated_at = now() - make_interval(secs => $2) WHERE name = $1`,
+          [leaseName, seconds],
+        );
+      const leaseCursor = async () =>
+        (
+          await adminPool.query<{ cursor: string }>(
+            `SELECT cursor FROM ops.sync_cursors WHERE name = $1`,
+            [leaseName],
+          )
+        ).rows[0]?.cursor;
+      return { f, opsId, adminZ, zitadel, ageLease, leaseCursor };
+    }
+
+    it('H1 closed Founder A in ZITADEL and stalled; H2 takes the lease over and is refused removing Founder B; H1 resumes and changes nothing', async () => {
+      const { f, opsId, adminZ, zitadel, ageLease, leaseCursor } = await twoFounders();
+      let resume!: () => void;
+      const stalled = new Promise<void>((r) => {
+        resume = r;
+      });
+      let reached!: () => void;
+      const atStall = new Promise<void>((r) => {
+        reached = r;
+      });
+      // ZITADEL applies H1's deactivate of Mina (Founder A); H1 then stalls before its local write.
+      zitadel.onCall = async (op, zId) => {
+        if (op === 'deactivate' && zId === f.zitadelUserId) {
+          reached();
+          await stalled;
+        }
+      };
+      const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+      const h1 = status.apply(f.scope, adminActor(opsId), f.userId, 'deactivate').then(
+        () => 'done' as const,
+        (error: unknown) => error,
+      );
+      // Fails fast when H1 ends before it reaches the stall.
+      await Promise.race([
+        atStall,
+        h1.then((outcome) => {
+          throw new Error(`H1 ended before the stall: ${String(outcome)}`);
+        }),
+      ]);
+      expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive' });
+      zitadel.onCall = null;
+
+      // H1 stays stalled past the TTL; H2 takes the lease over and tries to deactivate Admin (Founder B).
+      await ageLease(301);
+      const refused = await status
+        .apply(f.scope, adminActor(opsId), f.adminId, 'deactivate')
+        .catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(ConflictException);
+      expect((refused as ConflictException).getResponse()).toMatchObject({ code: 'last_founder' });
+      expect(zitadel.calls).not.toContain(`deactivate:${adminZ}`);
+      expect(zitadel.users.get(adminZ)).toMatchObject({ status: 'active' });
+      // H2 settled the outstanding removal: Mina is closed and flagged for review, the lease carries nothing.
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+        status: 'inactive',
+        identityReviewRequired: true,
+      });
+      expect(await leaseCursor()).toBe('free');
+
+      // H1 resumes: its lease was taken over, so it writes nothing and calls ZITADEL no more.
+      const before = zitadel.calls.length;
+      resume();
+      const outcome = await h1;
+      expect(outcome).toBeInstanceOf(ServiceUnavailableException);
+      expect(zitadel.calls.slice(before).filter((c) => !c.startsWith('getUser'))).toEqual([]);
+      expect(await store.findById(db, f.scope, f.adminId)).toMatchObject({ status: 'active' });
+      expect(zitadel.users.get(adminZ)).toMatchObject({ status: 'active' });
+    }, 60_000);
+
+    it('a removal whose holder could not write it down passes to the next holder with the lease, also without a TTL takeover', async () => {
+      const { f, opsId, adminZ, zitadel, leaseCursor } = await twoFounders();
+      // ZITADEL closes Mina but answers 503; the local flag write fails as well, so the removal stays recorded.
+      zitadel.onCall = (op, zId) =>
+        op === 'deactivate' && zId === f.zitadelUserId
+          ? Promise.reject(new ZitadelHttpError('/v2/users/deactivate', 503, 'unavailable'))
+          : Promise.resolve();
+      vi.spyOn(store, 'flagIdentityReview').mockRejectedValueOnce(new Error('flag write boom'));
+      const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+      await expect(
+        status.apply(f.scope, adminActor(opsId), f.userId, 'deactivate'),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      zitadel.onCall = null;
+      expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive' });
+      // Mina's row still reads active, and the free lease still carries her removal.
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'active' });
+      expect(await leaseCursor()).toMatch(/^free\|/);
+
+      const refused = await status
+        .apply(f.scope, adminActor(opsId), f.adminId, 'deactivate')
+        .catch((e: unknown) => e);
+      expect((refused as ConflictException).getResponse()).toMatchObject({ code: 'last_founder' });
+      expect(zitadel.calls).not.toContain(`deactivate:${adminZ}`);
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+        status: 'inactive',
+        identityReviewRequired: true,
+      });
+      expect(await leaseCursor()).toBe('free');
+    }, 60_000);
+
+    it('a Founder removal that finishes clears its record: the lease is plain free again', async () => {
+      const { f, opsId, zitadel, leaseCursor } = await twoFounders();
+      const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+      await status.apply(f.scope, adminActor(opsId), f.userId, 'deactivate');
+      expect(await leaseCursor()).toBe('free');
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+        status: 'inactive',
+        identityReviewRequired: false,
+      });
+    }, 60_000);
+
+    it('the store carries the record across release and takeover, and a taken-over holder can neither record nor clear', async () => {
+      const { f, leaseCursor, ageLease } = await twoFounders();
+      const tenant = f.scope.tenantId;
+      const removal = { userId: f.userId, zitadelUserId: f.zitadelUserId, intent: 'deactivate' };
+      expect(await store.claimFounderLease(tenant, 'holder-a', 300, 1000)).toBe(true);
+      expect(await store.recordFounderRemoval(tenant, 'holder-a', removal)).toBe(true);
+      await store.releaseFounderLease(tenant, 'holder-a');
+      expect(await leaseCursor()).toBe(`free|${JSON.stringify(removal)}`);
+      expect(await store.claimFounderLease(tenant, 'holder-b', 300, 1000)).toBe(true);
+      expect(await store.outstandingFounderRemoval(tenant, 'holder-b')).toEqual(removal);
+      // Past the TTL holder-c takes over with the record; holder-b is fenced out.
+      await ageLease(301);
+      expect(await store.claimFounderLease(tenant, 'holder-c', 300, 1000)).toBe(true);
+      expect(await store.outstandingFounderRemoval(tenant, 'holder-c')).toEqual(removal);
+      expect(await store.settleFounderRemoval(tenant, 'holder-b')).toBe(false);
+      expect(await store.recordFounderRemoval(tenant, 'holder-b', removal)).toBe(false);
+      expect(await store.settleFounderRemoval(tenant, 'holder-c')).toBe(true);
+      expect(await leaseCursor()).toBe('holder-c');
+      await store.releaseFounderLease(tenant, 'holder-c');
+      expect(await leaseCursor()).toBe('free');
+    }, 60_000);
+  });
+
   it('two real concurrent invites of one email serialise on the lease: one identity, no delete', async () => {
     const f = await fixture('active');
     const zitadel = new RecordingZitadel();

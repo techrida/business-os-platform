@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CoreConfig } from '../config/config';
-import { runWithOperationDeadline } from './operation-deadline';
+import { runOutsideOperationDeadline, runWithOperationDeadline } from './operation-deadline';
 import {
   PORTAL_LOGIN_POLICY,
   ZITADEL_ENDPOINTS,
@@ -484,6 +484,31 @@ describe('operation deadline (round 4)', () => {
       await expect(past(call)).rejects.toMatchObject({ status: 503 });
     }
     expect(calls).toEqual([]);
+  });
+
+  it('keeps the lease fence for the best-effort close: past it no close starts, before it the close goes out', async () => {
+    const c = client();
+    // Past the fence (the lease may already belong to another holder): the close outside the deadline still stops.
+    await expect(
+      runWithOperationDeadline(
+        60_000,
+        () => runOutsideOperationDeadline(() => c.lockUser('u-1')),
+        Date.now() - 1,
+      ),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(calls).toEqual([]);
+
+    // Past the deadline but inside the fence: the close is sent.
+    answers.push({ status: 200, body: {} });
+    await runWithOperationDeadline(
+      5,
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await runOutsideOperationDeadline(() => c.lockUser('u-1'));
+      },
+      Date.now() + 60_000,
+    );
+    expect(calls).toHaveLength(1);
   });
 
   it('checks the deadline after resolving the project id, right before createAuthorization (round 5)', async () => {
