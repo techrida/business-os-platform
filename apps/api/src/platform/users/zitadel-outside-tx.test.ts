@@ -2136,4 +2136,60 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     expect(row).toMatchObject({ identityReviewRequired: true });
     expect(row!.status).not.toBe('active');
   }, 60_000);
+
+  it('resolve answers 503 and keeps the flag when the confirmation read of ZITADEL fails (round 5)', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    const { users } = services(zitadel);
+    await timedOutDeactivate(f, zitadel);
+    zitadel.users.get(f.zitadelUserId)!.status = 'active'; // differs from the closed row: the status is re-read
+    const real = zitadel.getUser.bind(zitadel);
+    let reads = 0;
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) =>
+      ++reads === 1 ? real(id) : Promise.reject(new Error('ZITADEL down')),
+    );
+
+    const error = await users
+      .resolveIdentityReview(f.scope, adminActor(f.adminId), f.userId)
+      .catch((e: unknown) => e);
+
+    expect(reads).toBeGreaterThan(1);
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    const row = await store.findById(db, f.scope, f.userId);
+    expect(row).toMatchObject({ identityReviewRequired: true });
+    expect(row!.status).not.toBe('active');
+  }, 60_000);
+
+  it('sync and reconcile never admit an invite that never committed, even when the remote close failed (round 5)', async () => {
+    const f = await fixture('active');
+    const zitadel = new RecordingZitadel();
+    const { users, mirror } = services(zitadel);
+    const insert = vi.spyOn(store, 'insertUser').mockRejectedValue(new Error('db down'));
+    vi.spyOn(zitadel, 'lockUser').mockRejectedValue(new Error('ZITADEL down'));
+    vi.spyOn(zitadel, 'deactivateUser').mockRejectedValue(new Error('ZITADEL down'));
+
+    await expect(
+      users.invite(f.scope, adminActor(f.adminId), {
+        email: 'ghost2@techrida.test',
+        givenName: 'Ghost',
+        familyName: 'Two',
+        roles: ['sales'],
+      }),
+    ).rejects.toThrow('db down');
+    insert.mockRestore();
+
+    // The remote close failed, so ZITADEL reports the person active after they finished the invite.
+    const zId = `z-new-${f.zitadelOrgId}-1`;
+    zitadel.users.get(zId)!.status = 'active';
+
+    await mirror.syncUser(zId);
+    await mirror.reconcile();
+
+    const row = await store.findByZitadelId(db, zId);
+    expect(row === null || row.status !== 'active').toBe(true);
+    await expect(
+      mirror.resolve({ zitadelUserId: zId, tenantId: f.scope.tenantId, idpOrgId: f.idpOrgId }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(await store.findByZitadelId(db, zId)).toBeNull();
+  }, 60_000);
 });
