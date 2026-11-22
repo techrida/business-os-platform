@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
+import { nepalPhoneProblem } from './phones.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const isoDate = z.iso.date();
@@ -16,25 +17,6 @@ const text = (max: number) => z.string().trim().min(1).max(max);
 const NonNegativeDecimal = DecimalString.refine((s) => !s.startsWith('-'), 'must not be negative');
 
 const ProbabilitySchema = z.number().int().min(0).max(100);
-
-/** Nepal's country code. */
-const NEPAL_CODE = '+977';
-
-/**
- * Why a Nepal (`+977`) number is not one, or null. A mobile is ten national digits starting with 9; a landline is 7
- * to 9 national digits that do not start with 0 (the trunk 0 is not part of E.164). A number from another country
- * is not judged here: the generic E.164 rule covers it.
- */
-export function nepalPhoneProblem(phone: string): string | null {
-  if (!phone.startsWith(NEPAL_CODE)) return null;
-  const national = phone.slice(NEPAL_CODE.length);
-  if (national.startsWith('0')) return 'leave out the leading 0 of a Nepal number';
-  if (national.length === 10) {
-    return national.startsWith('9') ? null : 'a Nepal mobile number starts with 9';
-  }
-  if (national.length >= 7 && national.length <= 9) return null;
-  return 'a Nepal number is a 10-digit mobile starting with 9 or a 7 to 9 digit landline';
-}
 
 /** E.164: a plus sign, then 7 to 15 digits; a `+977` number must also be a Nepal mobile or landline. */
 export const PhoneSchema = z
