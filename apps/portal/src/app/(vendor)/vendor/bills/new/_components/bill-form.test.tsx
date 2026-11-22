@@ -38,7 +38,7 @@ describe('BillForm total', () => {
     const box = boxOf(container, 'Total on your invoice');
     await paste(box, '12,50,000.00');
     expect(box.value).toBe('12,50,000.00');
-    expect(posted(container, 'claimedTotal')).toBe('1250000.00');
+    expect(posted(container, 'claimedTotal')).toBe('1250000');
   });
 
   it('groups what is typed and shows the amount in words', async () => {
@@ -79,6 +79,6 @@ describe('BillForm total', () => {
     await settle();
     expect(prefix()).toContain('USD');
     expect(box.value).toBe('1,250,000.00');
-    expect(posted(container, 'claimedTotal')).toBe('1250000.00');
+    expect(posted(container, 'claimedTotal')).toBe('1250000');
   });
 });

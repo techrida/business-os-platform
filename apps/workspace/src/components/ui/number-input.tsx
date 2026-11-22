@@ -25,6 +25,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
@@ -36,17 +37,21 @@ import { useNumberSystems } from './number-system-context';
 import { useFormReset } from './use-form-reset';
 import styles from './number-input.module.css';
 
-// One piece of state, `text`, is exactly what the box shows. The hidden input posts that text with
-// the grouping commas and a bare trailing point taken out, and onValueChange reports the same
-// string, so the box can never show one amount and send another. Padding (`100.00`) is part of the
-// text and is posted with it. Text typed before hydration is not in the hidden input, which renders
-// the server value: the same exposure as every controlled input.
+// One piece of state, `text`, is exactly what the box shows. The hidden input posts that number as a
+// plain string: no grouping commas, no bare trailing point and no trailing fractional zeros, and
+// onValueChange reports the same string. Padding (`100.00`) is only in the box, so blur never
+// changes what is sent: a retry after a lost response posts the same body. Until the page's script
+// has run, the visible box carries the name instead, so text typed before hydration is what posts
+// (grouped, as shown: `12,50,000.00`).
 
 /** Props every number input takes. Values are plain decimal strings (`"1250000.5"`), `""` when empty. */
 export interface NumberInputCommonProps {
   /** `Field` passes its control id here, so its `<label for>` names the visible box. */
   id?: string | undefined;
-  /** Posted by a hidden input as the plain decimal string. The visible box has no name. */
+  /**
+   * Posted by a hidden input as the plain decimal string. Before hydration the visible box carries
+   * the name and posts its text as shown.
+   */
   name?: string | undefined;
   /** Controlled value. */
   value?: string | undefined;
@@ -88,6 +93,8 @@ interface EngineProps extends NumberInputCommonProps {
   describe: (plain: string) => string;
   spin?: Spin | undefined;
   words?: ((plain: string) => string) | undefined;
+  /** The field's currency. A paste or drop that names a different one is refused. */
+  currencyCode?: Currency | undefined;
 }
 
 /** A blur-time problem. `zero` is the positive-quantity rule, which the locale package does not name. */
@@ -102,8 +109,28 @@ const LOWER_BOUND = new Set<Problem['reason']>(['below_min', 'zero']);
 
 const DIGITS = /^\d*\.?\d*$/;
 const ungroup = (text: string) => text.replaceAll(',', '');
-/** What the hidden input posts for typed text: the grouping commas and a bare trailing point go. */
+/** Typed text without its grouping commas and a bare trailing point, padding kept (`1250.00`). */
 const plainOf = (text: string) => ungroup(text).replace(/\.$/, '');
+/** `1250.50` is `1250.5` and `1250.00` is `1250`; a whole number is left alone. */
+const withoutTrailingZeros = (plain: string) =>
+  plain.includes('.') ? plain.replace(/0+$/, '').replace(/\.$/, '') : plain;
+/** What the hidden input posts for typed text: the plain number, the same before and after padding. */
+const canonicalOf = (text: string) => withoutTrailingZeros(plainOf(text));
+
+// A three-letter code at either end of pasted text (`USD 100.00`, `100.00 USD`).
+const CURRENCY_CODE = /^([a-z]{3})(?=[\s\d.,])|[\s\d.,]([a-z]{3})$/i;
+
+/** The currency code pasted text names when it is not the field's own, or null. */
+function otherCurrency(text: string, field: Currency | undefined): string | null {
+  if (!field) return null;
+  const match = CURRENCY_CODE.exec(text.trim());
+  const code = (match?.[1] ?? match?.[2])?.toUpperCase();
+  return code && code !== field ? code : null;
+}
+
+const noSubscription = () => () => {};
+const onClient = () => true;
+const onServer = () => false;
 
 const isDecimal = (text: string) => /^(\d+\.?\d*|\.\d+)$/.test(text);
 
@@ -159,7 +186,8 @@ function regroup(plain: string, grouping: NumberSystem | null): string | null {
  * A value from outside (default, controlled value, reset) as the box shows it. Commas are taken out
  * only when they are valid grouping (`12,50,000`); `1,5` is a decimal comma and stays. Zero-only
  * decimals past the field's scale are dropped (`12.5000` is `12.50` in a 2-decimal field), because
- * the server sends numeric columns at full scale. A value the field cannot hold (`-1250.50`, `1,5`,
+ * the server sends numeric columns at full scale. A field that does not pad drops all trailing
+ * zero decimals (`60.0000` is `60`), as typing would show it. A value the field cannot hold (`-1250.50`, `1,5`,
  * `12.5555` in a 2-decimal field) is shown exactly as given, so what posts is what the user sees.
  */
 function fromValue(
@@ -179,7 +207,10 @@ function fromValue(
   }
   const check = withinLimits(trimmed, limits);
   if (!check.ok) return value;
-  return display(padTo === undefined ? check.value : new Dec(check.value).toFixed(padTo), grouping);
+  return display(
+    padTo === undefined ? withoutTrailingZeros(check.value) : new Dec(check.value).toFixed(padTo),
+    grouping,
+  );
 }
 
 /** Why typed or inserted text is refused before it reaches the box, or null when it may go in. */
@@ -261,6 +292,7 @@ function NumberBox({
   describe,
   spin,
   words,
+  currencyCode,
 }: EngineProps) {
   const base = useId();
   const prefixId = `${base}-prefix`;
@@ -269,6 +301,8 @@ function NumberBox({
   const statusId = `${base}-status`;
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // False on the server and during hydration, so the server HTML and the first client render agree.
+  const hydrated = useSyncExternalStore(noSubscription, onClient, onServer);
 
   const controlled = value !== undefined;
   const hasMin = min !== undefined && min !== '';
@@ -289,8 +323,13 @@ function NumberBox({
     return text.includes(',') && regroup(plain, grouping) !== text;
   }
 
-  /** What the hidden input posts: typed text without its grouping, a foreign text exactly as shown. */
+  /** What the hidden input posts: typed text as its plain number, a foreign text exactly as shown. */
   function postedOf(text: string): string {
+    return foreign(text) ? text : canonicalOf(text);
+  }
+
+  /** The text as shown without its grouping, padding kept: the source for words and aria values. */
+  function shownPlainOf(text: string): string {
     return foreign(text) ? text : plainOf(text);
   }
 
@@ -372,7 +411,11 @@ function NumberBox({
   }
 
   function refuse(reason: NumberRefusal) {
-    const message = refusalMessage(reason, limits, bounds);
+    say(refusalMessage(reason, limits, bounds));
+  }
+
+  /** Shows a refusal in the status line; a repeat is a new node, so it is announced again. */
+  function say(message: string) {
     setNotice((last) => ({ text: message, seq: last.seq + 1 }));
   }
 
@@ -581,6 +624,11 @@ function NumberBox({
   // selection, as a browser would, and the whole result is judged.
   function insertText(inserted: string, start: number, end: number) {
     if (disabled || readOnly || inserted === '') return;
+    const other = otherCurrency(inserted, currencyCode);
+    if (other) {
+      say(`This amount is in ${other}, but this field is ${currencyCode}.`);
+      return;
+    }
     const shown = textRef.current;
     const replaceAll = shown === '' || (start === 0 && end === shown.length);
     if (replaceAll) {
@@ -638,10 +686,10 @@ function NumberBox({
     // Typed text is tidied (`12.` is 12, a lone point is empty) and padded. A value the field cannot
     // hold is left as it is and reported, never replaced with something the user did not see.
     if (!foreign(current)) {
-      const posted = postedOf(current);
-      const check = withinLimits(posted, limits);
+      const shownPlain = shownPlainOf(current);
+      const check = withinLimits(shownPlain, limits);
       let next = current;
-      if (posted === '') next = '';
+      if (shownPlain === '') next = '';
       else if (check.ok) {
         const padded = padTo === undefined ? check.value : new Dec(check.value).toFixed(padTo);
         next = display(padded, grouping);
@@ -670,7 +718,7 @@ function NumberBox({
     inputRef.current?.setCustomValidity(validityMessage);
   }, [validityMessage]);
 
-  const finished = withinLimits(postedOf(text), limits);
+  const finished = withinLimits(shownPlainOf(text), limits);
   const plain = finished.ok ? finished.value : '';
   const wordsText = words && plain !== '' ? words(plain) : '';
   const status = notice.text || error?.message || '';
@@ -714,6 +762,7 @@ function NumberBox({
           onDrop={onDrop}
           onBlur={onBlur}
           {...(id === undefined ? {} : { id })}
+          {...(name && !hydrated ? { name } : {})}
           {...(placeholder === undefined ? {} : { placeholder })}
           {...(ariaLabel === undefined ? {} : { 'aria-label': ariaLabel })}
           {...(labelledBy === undefined ? {} : { 'aria-labelledby': labelledBy })}
@@ -792,7 +841,7 @@ function NumberBox({
           </span>
         ) : null}
       </div>
-      {name ? (
+      {name && hydrated ? (
         <input type="hidden" name={name} value={postedOf(text)} disabled={disabled === true} />
       ) : null}
       {wordsText ? (
@@ -831,7 +880,8 @@ export interface MoneyInputProps extends NumberInputCommonProps {
 /**
  * An amount in one currency: 16 whole digits, 2 decimals, no negatives. Groups live in the
  * tenant's number system for the currency (`12,50,000` for NPR by default) and shows the currency
- * code inside the box. Pads to 2 decimals on blur and posts what it shows (`1250.00`).
+ * code inside the box. Pads to 2 decimals on blur but posts the plain number (`1,250.00` posts
+ * `1250`). A paste that names another currency (`USD 100.00` in an NPR field) is refused.
  *
  *   <Field label="Amount">{(control) => <MoneyInput {...control} name="amount" currency="NPR" />}</Field>
  */
@@ -845,6 +895,7 @@ export function MoneyInput({ currency, showWords, numberSystem, ...rest }: Money
       limits={MONEY_LIMITS}
       grouping={system}
       prefix={currency}
+      currencyCode={currency}
       padTo={2}
       describe={(amount) => formatMoney(amount, currency, { numberSystems })}
       words={showWords ? (amount) => amountInWords(amount, currency, system) : undefined}
