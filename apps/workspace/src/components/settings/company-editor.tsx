@@ -335,6 +335,8 @@ export function CompanyEditor({
                 <PhoneListInput
                   key={phoneListKey}
                   name="phones"
+                  showPrimary={false}
+                  maxRows={MAX_PHONES}
                   aria-labelledby={phonesLegendId}
                   defaultValue={phoneListDefault(contact.phones)}
                   onChange={(phones) => setContact({ phones: profilePhones(phones) })}
