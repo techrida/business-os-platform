@@ -41,8 +41,10 @@ import {
   QuotationVersionDtoSchema,
   SalesOrderDetailSchema,
   SignedLinkDtoSchema,
+  type AddressLines,
   type InvoiceDetail,
   type InvoiceSettlement,
+  type PrintAddress,
   type SalesOrderDetail,
 } from '@bos/contracts';
 import Decimal from 'decimal.js';
@@ -58,7 +60,10 @@ import { startWorker, type TestWorker } from './support/worker';
 
 const e2e = inject('e2e');
 
-const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+// The entity's address prints with its country; a customer's address holds only the lines, its country is its own
+// field (FX9).
+const ENTITY_ADDRESS: PrintAddress = { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const CUSTOMER_ADDRESS: AddressLines = { line: '1 Durbar Marg', city: 'Kathmandu' };
 const BUYER_EMAIL = 'buyer@annapurna-retail.test';
 // Done check 1's golden order: 4,465,000.00 + VAT 13% = 5,045,450.00, split 60/20/20 by the default schedule.
 const LINE_PRICE = '4465000.00';
@@ -304,7 +309,7 @@ describe('P3 exit: quote to cash over HTTP', () => {
       .http()
       .put('/v1/admin/settings/entity.address')
       .set('authorization', await auth('founder'))
-      .send({ value: ADDRESS });
+      .send({ value: ENTITY_ADDRESS });
     expect([200, 204], show(res)).toContain(res.status);
   });
 
@@ -315,6 +320,7 @@ describe('P3 exit: quote to cash over HTTP', () => {
       source: 'referral',
       companyName: 'Annapurna Retail Pvt. Ltd.',
       contactName: 'Hari Gurung',
+      country: 'NP',
       email: BUYER_EMAIL,
     });
     expect(created.status, show(created)).toBe(201);
@@ -342,9 +348,16 @@ describe('P3 exit: quote to cash over HTTP', () => {
       .send({
         customer: {
           mode: 'create',
-          customer: { legalName: 'Annapurna Retail Pvt. Ltd.', address: ADDRESS },
+          customer: {
+            legalName: 'Annapurna Retail Pvt. Ltd.',
+            country: 'NP',
+            address: CUSTOMER_ADDRESS,
+          },
         },
-        contact: { mode: 'create', contact: { fullName: 'Hari Gurung', email: BUYER_EMAIL } },
+        contact: {
+          mode: 'create',
+          contact: { fullName: 'Hari Gurung', email: BUYER_EMAIL, country: 'NP' },
+        },
         opportunityName: 'Annapurna store platform',
         expectedVersion: lead.version,
       });

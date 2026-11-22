@@ -196,9 +196,9 @@ async function seedOtherCustomerContact(): Promise<string> {
   const { partyId } = await createParty(appPool, { tenantId: f.tenantId, kind: 'customer' });
   return withTx(db, scopeA, systemActor('test'), async (tx) => {
     await tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
           VALUES (${partyId}, ${f.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Other Ltd.', 'other',
-                  ${JSON.stringify({ line1: '2 New Road', city: 'Kathmandu', country: 'NP' })}::jsonb)`,
+                  '2 New Road', 'Kathmandu')`,
     );
     const { rows } = await tx.execute<{ id: string }>(
       sql`INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm)
@@ -1249,10 +1249,10 @@ async function seedCustomerWithOpportunity(
   const { partyId } = await createParty(appPool, { tenantId: f.tenantId, kind: 'customer' });
   return withTx(db, scope, systemActor('test'), async (tx) => {
     await tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
           VALUES (${partyId}, ${f.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, ${legalName},
                   ${legalName.toLowerCase()},
-                  ${JSON.stringify({ line1: '3 Lazimpat', city: 'Kathmandu', country: 'NP' })}::jsonb)`,
+                  '3 Lazimpat', 'Kathmandu')`,
     );
     const [row] = await tx
       .insert(opportunities)

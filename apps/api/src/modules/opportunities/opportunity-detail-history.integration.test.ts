@@ -36,8 +36,6 @@ import { ListOpportunitiesQuerySchema } from './opportunities.types';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
-
 type TenantScope = { tenantId: string; organizationId: string };
 
 let testDb: TestDatabase;
@@ -159,9 +157,10 @@ async function seedCustomer(inScope: TenantScope) {
   const { partyId } = await createParty(appPool, { tenantId: inScope.tenantId, kind: 'customer' });
   await withTx(db, inScope, systemActor('test'), (tx) =>
     tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      sql`INSERT INTO app.customers
+              (id, tenant_id, number, legal_name, name_norm, country, address_line, address_city)
           VALUES (${partyId}, ${inScope.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.',
-                  'acme pvt. ltd.', ${ADDRESS}::jsonb)`,
+                  'acme pvt. ltd.', 'NP', '1 Durbar Marg', 'Kathmandu')`,
     ),
   );
   return partyId;

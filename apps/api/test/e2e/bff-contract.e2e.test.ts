@@ -41,9 +41,11 @@ import {
   QuotationVersionDtoSchema,
   SalesOrderDetailSchema,
   SignedLinkDtoSchema,
+  type AddressLines,
   type ApprovalRequestDto,
   type InvoiceDetail,
   type InvoiceSettlement,
+  type PrintAddress,
   type QuotationVersionDto,
 } from '@bos/contracts';
 import Decimal from 'decimal.js';
@@ -68,7 +70,10 @@ import { startWorker, type TestWorker } from './support/worker';
 
 const e2e = inject('e2e');
 
-const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+// The entity's address prints with its country; a customer's address holds only the lines, its country is its own
+// field (FX9).
+const ENTITY_ADDRESS: PrintAddress = { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const CUSTOMER_ADDRESS: AddressLines = { line: '1 Durbar Marg', city: 'Kathmandu' };
 const BUYER_EMAIL = 'buyer@contract-traders.test';
 
 let t: TestApp;
@@ -214,7 +219,7 @@ describe('BFF contract: workspace clients against the real API', () => {
       .http()
       .put('/v1/admin/settings/entity.address')
       .set('authorization', await bearer('founder'))
-      .send({ value: ADDRESS });
+      .send({ value: ENTITY_ADDRESS });
     expect([200, 204], show(res)).toContain(res.status);
   });
 
@@ -228,7 +233,9 @@ describe('BFF contract: workspace clients against the real API', () => {
           currency: 'NPR',
           companyName: 'Contract Traders Pvt. Ltd.',
           contactName: 'Rina Shrestha',
+          country: 'NP',
           email: BUYER_EMAIL,
+          phones: [],
         },
         randomUUID(),
       ),
@@ -283,12 +290,19 @@ describe('BFF contract: workspace clients against the real API', () => {
             customer: {
               legalName: 'Contract Traders Pvt. Ltd.',
               relationship: 'prospect',
-              address: ADDRESS,
+              country: 'NP',
+              address: CUSTOMER_ADDRESS,
             },
           },
           contact: {
             mode: 'create',
-            contact: { fullName: 'Rina Shrestha', email: BUYER_EMAIL, isPrimary: true },
+            contact: {
+              fullName: 'Rina Shrestha',
+              email: BUYER_EMAIL,
+              country: 'NP',
+              phones: [],
+              isPrimary: true,
+            },
           },
           opportunityName: 'Contract Traders website',
           expectedVersion: lead.version,
@@ -773,6 +787,7 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
       source: 'referral',
       companyName: 'Contract Retail Pvt. Ltd.',
       contactName: 'Hari Gurung',
+      country: 'NP',
       email: 'hari@contract-retail.test',
     });
     expect(created.status, show(created)).toBe(201);
@@ -801,11 +816,15 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
       .send({
         customer: {
           mode: 'create',
-          customer: { legalName: 'Contract Retail Pvt. Ltd.', address: ADDRESS },
+          customer: {
+            legalName: 'Contract Retail Pvt. Ltd.',
+            country: 'NP',
+            address: CUSTOMER_ADDRESS,
+          },
         },
         contact: {
           mode: 'create',
-          contact: { fullName: 'Hari Gurung', email: 'hari@contract-retail.test' },
+          contact: { fullName: 'Hari Gurung', email: 'hari@contract-retail.test', country: 'NP' },
         },
         opportunityName: 'Contract Retail store platform',
         expectedVersion: version,

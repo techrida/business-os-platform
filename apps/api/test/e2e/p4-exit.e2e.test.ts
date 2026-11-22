@@ -328,7 +328,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       .http()
       .put('/v1/admin/settings/entity.address')
       .set('authorization', await auth('founder'))
-      .send({ value: { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' } })
+      .send({ value: { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' } })
       .expect(200);
     const procurement = await auth('procurement');
     const codes = await get<{ id: string; code: string }[]>('/v1/tax-codes', procurement);

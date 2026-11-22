@@ -104,7 +104,9 @@ const leadOf = async (owner: string) => {
       source: 'referral',
       companyName: 'Acme Pvt. Ltd.',
       contactName: 'Sita Rai',
+      country: 'NP',
       currency: 'NPR',
+      phones: [{ country: 'NP', e164: '+9779812345678', isPrimary: true }],
     }),
   );
 };

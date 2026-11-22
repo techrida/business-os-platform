@@ -59,12 +59,6 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
 const VENDOR_REQUIRED = ['pan_certificate', 'tax_clearance', 'bank_proof'] as const;
 const TAX_CLEARANCE_EXPIRY = '2027-07-15';
-const CUSTOMER_ADDRESS = JSON.stringify({
-  line1: 'Durbar Marg 1',
-  city: 'Kathmandu',
-  country: 'NP',
-});
-
 let testDb: TestDatabase;
 let ownerPool: Pool;
 let appPool: Pool;
@@ -289,9 +283,10 @@ const newCustomer = async (ownerUserId: string | null) => {
   const partyId = await newCustomerParty();
   await withTx(db, scope, systemActor('test'), (tx) =>
     tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, owner_user_id, address)
+      sql`INSERT INTO app.customers
+              (id, tenant_id, number, legal_name, name_norm, owner_user_id, country, address_line, address_city)
           VALUES (${partyId}, ${scope.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
-                  ${ownerUserId}, ${CUSTOMER_ADDRESS}::jsonb)`,
+                  ${ownerUserId}, 'NP', 'Durbar Marg 1', 'Kathmandu')`,
     ),
   );
   return partyId;

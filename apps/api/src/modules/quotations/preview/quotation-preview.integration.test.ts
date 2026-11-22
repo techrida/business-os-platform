@@ -59,7 +59,7 @@ import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
+const ADDRESS = { line: '1 Durbar Marg', city: 'Kathmandu' };
 
 // The quotation_version workflow, written the way the seed writes it. One management step serves both rules: a
 // workflow may not repeat a step id, and distinctApprovers would otherwise need two management people.
@@ -214,8 +214,8 @@ beforeAll(async () => {
   await withTx(db, scopeA, systemActor('test'), async (tx) => {
     await tx.update(users).set({ displayName: 'Sita Sharma' }).where(eq(users.id, U.acc));
     await tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-          VALUES (${customerA}, ${tenantId}, ${`CUS-${customerA.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme', ${ADDRESS}::jsonb)`,
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
+          VALUES (${customerA}, ${tenantId}, ${`CUS-${customerA.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme', ${ADDRESS.line}, ${ADDRESS.city})`,
     );
     const code = await tx.execute<{ id: string }>(
       sql`INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)

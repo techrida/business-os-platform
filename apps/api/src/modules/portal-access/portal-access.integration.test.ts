@@ -44,7 +44,7 @@ import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
+const ADDRESS = { line: 'Durbar Marg 1', city: 'Kathmandu' };
 
 /** In-memory ZITADEL with the calls PortalAccessService makes. */
 class FakeZitadel {
@@ -194,9 +194,9 @@ async function newCustomer(
           VALUES (${partyId}, ${s.tenantId}, 'customer', ${`P-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.')`,
     );
     await tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address, owner_user_id)
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city, owner_user_id)
           VALUES (${partyId}, ${s.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
-                  ${ADDRESS}::jsonb, ${owner})`,
+                  ${ADDRESS.line}, ${ADDRESS.city}, ${owner})`,
     );
     await tx.execute(
       sql`INSERT INTO app.customer_contacts (id, tenant_id, customer_id, full_name, email_norm)

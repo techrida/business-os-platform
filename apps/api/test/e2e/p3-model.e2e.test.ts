@@ -39,6 +39,8 @@ import {
   ArAgingReportSchema,
   InvoiceDetailSchema,
   LeadDtoSchema,
+  type AddressLines,
+  type PrintAddress,
 } from '@bos/contracts';
 import Decimal from 'decimal.js';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -57,7 +59,10 @@ const e2e = inject('e2e');
 
 const SEED = Number(process.env.P3_MODEL_SEED ?? '20261109');
 const STEPS = Number(process.env.P3_MODEL_STEPS ?? '200');
-const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+// The entity's address prints with its country; a customer's address holds only the lines, its country is its own
+// field (FX9).
+const ENTITY_ADDRESS: PrintAddress = { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const CUSTOMER_ADDRESS: AddressLines = { line: '1 Durbar Marg', city: 'Kathmandu' };
 
 let t: TestApp;
 let clamd: FakeClamd;
@@ -218,6 +223,7 @@ async function createCustomer(n: number): Promise<string> {
       source: 'referral',
       companyName: `Model Customer ${n} Pvt. Ltd.`,
       contactName: `Buyer ${n}`,
+      country: 'NP',
       email: `buyer${n}@e2e-p3-model.test`,
     });
   expect(created.status, show(created)).toBe(201);
@@ -243,11 +249,15 @@ async function createCustomer(n: number): Promise<string> {
     .send({
       customer: {
         mode: 'create',
-        customer: { legalName: `Model Customer ${n} Pvt. Ltd.`, address: ADDRESS },
+        customer: {
+          legalName: `Model Customer ${n} Pvt. Ltd.`,
+          country: 'NP',
+          address: CUSTOMER_ADDRESS,
+        },
       },
       contact: {
         mode: 'create',
-        contact: { fullName: `Buyer ${n}`, email: `buyer${n}@e2e-p3-model.test` },
+        contact: { fullName: `Buyer ${n}`, email: `buyer${n}@e2e-p3-model.test`, country: 'NP' },
       },
       opportunityName: `Model opportunity ${n}`,
       expectedVersion: lead.version,
@@ -893,7 +903,7 @@ describe('P3 model: a seeded walk of money commands keeps the receivables invari
       .http()
       .put('/v1/admin/settings/entity.address')
       .set('authorization', await auth('founder'))
-      .send({ value: ADDRESS });
+      .send({ value: ENTITY_ADDRESS });
     expect([200, 204], show(res)).toContain(res.status);
 
     customers.push(await createCustomer(1), await createCustomer(2));

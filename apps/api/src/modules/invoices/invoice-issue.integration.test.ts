@@ -198,7 +198,7 @@ const settings = {
   get: (_scope: unknown, key: string) =>
     Promise.resolve(
       key === 'entity.address'
-        ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+        ? { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
         : key === 'entity.pan_vat_no'
           ? '301234567'
           : null,

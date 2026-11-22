@@ -873,22 +873,26 @@ describe('quotation approval: terms and conditions', () => {
     ).toBe(false);
 
     // The customer view built from the stored row prints it.
-    const address = {
-      line1: '1 Durbar Marg',
-      city: 'Kathmandu',
-      district: 'Kathmandu',
-      country: 'NP',
-    };
     const view = toCustomerQuotationView(
       {
         version: { ...row, status: 'approved' },
         quotation: { number: 'QT-2082-0001' },
-        customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, address },
+        customer: {
+          legalName: 'Himal Traders Pvt. Ltd.',
+          panVatNo: null,
+          country: 'NP',
+          addressLine: '1 Durbar Marg',
+          addressCity: 'Kathmandu',
+        },
         contact: null,
         paymentTerm: null,
         lines,
         taxSummary,
-        issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: null, address },
+        issuer: {
+          legalName: 'Techrida Pvt. Ltd.',
+          panVatNo: null,
+          address: { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' },
+        },
         display: defaultPortalDisplay(),
       },
       { purpose: 'render' },

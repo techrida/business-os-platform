@@ -138,7 +138,7 @@ const settings = {
   get: (_scope: unknown, k: string) =>
     Promise.resolve(
       k === 'entity.address'
-        ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+        ? { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
         : k === 'entity.pan_vat_no'
           ? '301234567'
           : null,
@@ -626,7 +626,7 @@ describe('credit-note issue: credited in full means every line (U12D)', () => {
 
   it('issue rechecks the line cap: a note that reached line 1 past the draft check is refused, and the original is not marked though the totals match', async () => {
     const original = await issuedTwoLineInvoice();
-    const [line1] = await db
+    const [firstLine] = await db
       .select({ id: invoiceLines.id })
       .from(invoiceLines)
       .where(and(eq(invoiceLines.invoiceId, original), eq(invoiceLines.lineNo, 1)));
@@ -646,7 +646,7 @@ describe('credit-note issue: credited in full means every line (U12D)', () => {
     const rogue = drafted.invoice.id;
     await withTx(db, scopeA, systemActor('cn-fixture'), (tx) =>
       tx.execute(
-        sql`UPDATE app.invoice_lines SET original_line_id = ${line1!.id} WHERE invoice_id = ${rogue}`,
+        sql`UPDATE app.invoice_lines SET original_line_id = ${firstLine!.id} WHERE invoice_id = ${rogue}`,
       ),
     );
     await forceApproved(rogue);

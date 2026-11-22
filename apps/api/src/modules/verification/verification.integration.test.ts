@@ -59,7 +59,6 @@ import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
 const REQUIRED_KEYS = [
   'registration_certificate',
   'pan_vat_certificate',
@@ -211,9 +210,10 @@ async function newCustomer(
   const { partyId } = await createParty(appPool, { tenantId: s.tenantId, kind: 'customer' });
   await withTx(db, s, systemActor('test'), (tx) =>
     tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, owner_user_id, address)
+      sql`INSERT INTO app.customers
+              (id, tenant_id, number, legal_name, name_norm, owner_user_id, country, address_line, address_city)
           VALUES (${partyId}, ${s.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
-                  ${ownerUserId}, ${ADDRESS}::jsonb)`,
+                  ${ownerUserId}, 'NP', 'Durbar Marg 1', 'Kathmandu')`,
     ),
   );
   return partyId;
@@ -384,9 +384,15 @@ describe('POST /v1/verification-cases', () => {
     const customer = await customers.create(
       {
         legalName: 'Normal form customer',
-        contact: { fullName: 'Test contact', email: 'review@example.test' },
+        contact: {
+          fullName: 'Test contact',
+          email: 'review@example.test',
+          country: 'NP',
+          phones: [],
+        },
         relationship: 'prospect',
-        address: { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' },
+        country: 'NP',
+        address: { line: 'Durbar Marg 1', city: 'Kathmandu' },
       },
       randomUUID(),
     );
@@ -1639,9 +1645,10 @@ describe('the own-scope case list is scoped in SQL, before its limit (audit #9)'
           FROM generate_series(1, 501) g
           RETURNING id
         ), c AS (
-          INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, owner_user_id, address)
+          INSERT INTO app.customers
+              (id, tenant_id, number, legal_name, name_norm, owner_user_id, country, address_line, address_city)
           SELECT id, ${scope.tenantId}, 'CUS-' || id::text, 'Bulk Pvt. Ltd.', 'bulk', ${U.salesB}::uuid,
-                 ${ADDRESS}::jsonb
+                 'NP', 'Durbar Marg 1', 'Kathmandu'
           FROM p
           RETURNING id
         )

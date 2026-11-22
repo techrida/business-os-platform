@@ -29,7 +29,8 @@ const ENTITY = '0a000000-0000-4000-8000-000000000002';
 const PARTY = '0a000000-0000-4000-8000-000000000003';
 const OTHER_PARTY = '0a000000-0000-4000-8000-000000000004';
 const DOC = '0a000000-0000-4000-8000-000000000005';
-const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+/** The entity address setting (`entity.address`): the lines, city and country together. */
+const address = { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' } as const;
 
 const vid = (n: number) => `1b000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const qid = (n: number) => `2c000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -99,7 +100,13 @@ function sourceOf(s: Seed): PortalViewSource {
       marginPct: '25.9259',
     } as PortalViewSource['version'],
     quotation: { number: s.number },
-    customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: 'ABC-12345', address },
+    customer: {
+      legalName: 'Himal Traders Pvt. Ltd.',
+      panVatNo: 'ABC-12345',
+      country: 'NP',
+      addressLine: address.line,
+      addressCity: address.city,
+    },
     contact: { fullName: 'Sita Rai', emailNorm: 'sita@himal.example' },
     paymentTerm: { name: 'Net 30' },
     lines: [
@@ -388,10 +395,12 @@ describe('PortalService.get', () => {
     const { service } = setup([SENT]);
     const view = await service.get(SENT.versionId);
     expect(view).toMatchObject({ id: vid(1), number: 'QT-1', status: 'sent', file: null });
+    // The view's party block keeps the country beside the street lines and city.
     expect(view.issuer).toEqual({
       legalName: 'Techrida Pvt. Ltd.',
       panVatNo: '301234567',
-      address,
+      country: 'NP',
+      address: { line: address.line, city: address.city },
     });
     const json = JSON.stringify(view);
     // `display` is left out of the scan: its NPR/INR/USD keys are currency codes for formatting, not an NPR equivalent.

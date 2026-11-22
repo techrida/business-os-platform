@@ -209,9 +209,9 @@ beforeAll(async () => {
   }));
   await withTx(db, { tenantId: f.tenantId, organizationId: f.entityId }, seedActor, (tx) =>
     tx.execute(sql`
-      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
       VALUES (${otherCustomer}, ${f.tenantId}, ${`CUS-${otherCustomer.slice(0, 8)}`}, 'Other Buyer',
-              ${`other-${otherCustomer}`}, '{"line1":"Ring Road","city":"Kathmandu","country":"NP"}'::jsonb)`),
+              ${`other-${otherCustomer}`}, 'Ring Road', 'Kathmandu')`),
   );
 
   const confirmed = await seedOrder(f, f.entityId, f.opportunityId, 'confirmed', SCHEDULE);
