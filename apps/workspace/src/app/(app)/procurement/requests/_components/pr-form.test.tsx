@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { choose, click, fill, mountForm, submit } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, submit, typeKeys } from '@/test/form-interactions';
 import { EMPTY_PR_VALUES, valuesFromForm } from '../_lib/forms';
 import { PrForm } from './pr-form';
 
@@ -191,9 +191,11 @@ describe('line items', () => {
 
   it('names each line as a group with labelled fields, keeps the submitted names and has no remove on one line', async () => {
     mounted = await mount();
-    const qty = mounted.container.querySelector<HTMLInputElement>(
-      'input[name="lines.0.quantity"]',
+    // The posted name sits on a hidden input; the label names the visible box beside it.
+    const posted = mounted.container.querySelector<HTMLInputElement>(
+      'input[type="hidden"][name="lines.0.quantity"]',
     )!;
+    const qty = posted.parentElement!.querySelector<HTMLInputElement>('input[role="spinbutton"]')!;
     expect(mounted.container.querySelector(`label[for="${qty.id}"]`)?.textContent).toBe('Quantity');
     const group = qty.closest('[role="group"]')!;
     expect(
@@ -207,6 +209,40 @@ describe('line items', () => {
       );
       expect(el).toBeDefined();
     }
+  });
+
+  it('the quantity groups as typed, steps with both buttons and posts the plain number', async () => {
+    const action = vi.fn((_prev, form: FormData) => {
+      expect(form.get('lines.0.quantity')).toBe('1250001');
+      expect(form.get('lines.0.estimatedUnitPrice')).toBe('4500');
+      return Promise.resolve({ key: PROJECT, errors: {} });
+    });
+    mounted = await mount(action);
+    await fill(mounted.container.querySelector('input[name="lines.0.uom"]'), 'pcs');
+    const posted = mounted.container.querySelector<HTMLInputElement>(
+      'input[type="hidden"][name="lines.0.quantity"]',
+    )!;
+    const root = posted.parentElement!;
+    const box = root.querySelector<HTMLInputElement>('input[role="spinbutton"]')!;
+    await typeKeys(box, '1250000');
+    expect(box.value).toBe('12,50,000');
+    expect(box.hasAttribute('name')).toBe(false);
+    expect(posted.value).toBe('1250000');
+    expect(root.textContent).toContain('pcs');
+    const decrease = root.querySelector('button[aria-label="Decrease quantity"]');
+    const increase = root.querySelector('button[aria-label="Increase quantity"]');
+    expect(decrease).not.toBeNull();
+    expect(increase).not.toBeNull();
+    await click(increase);
+    await click(increase);
+    await click(decrease);
+    expect(box.value).toBe('12,50,001');
+    const price = mounted.container
+      .querySelector('input[type="hidden"][name="lines.0.estimatedUnitPrice"]')!
+      .parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
+    await typeKeys(price, '4500');
+    await submit(mounted.container);
+    expect(action).toHaveBeenCalledTimes(1);
   });
 
   it('Add items adds a row; removing the first keeps what was typed in the second', async () => {
@@ -223,6 +259,34 @@ describe('line items', () => {
     expect(
       mounted.container.querySelector<HTMLInputElement>('input[name="lines.0.description"]')!.value,
     ).toBe('Desk');
+    await submit(mounted.container);
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('needed by', () => {
+  it('is a date picker with a calendar button that posts the ISO date', async () => {
+    const action = vi.fn((_prev, form: FormData) => {
+      expect(form.get('requiredBy')).toBe('2026-12-01');
+      return Promise.resolve({ key: PROJECT, errors: {} });
+    });
+    mounted = await mountForm(
+      <PrForm
+        action={action}
+        departments={[]}
+        enabledCurrencies={['NPR']}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
+        initial={{ ...EMPTY_PR_VALUES, requiredBy: '2026-12-01' }}
+        mode="create"
+        idempotencyKey={PROJECT}
+        cancelHref="/"
+        reloadHref="/"
+      />,
+    );
+    const field = mounted.container.querySelector<HTMLInputElement>('input[name="requiredBy"]')!;
+    expect(mounted.container.querySelector('button[aria-label="Calendar"]')).not.toBeNull();
+    // The visible field is segmented; the posted value stays ISO whatever the display locale.
+    expect(field.value).toBe('2026-12-01');
     await submit(mounted.container);
     expect(action).toHaveBeenCalledTimes(1);
   });

@@ -1,6 +1,6 @@
 'use client';
 
-import type { TaxCode } from '@bos/contracts';
+import type { Currency, TaxCode } from '@bos/contracts';
 import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import {
@@ -12,7 +12,8 @@ import { LinesEditor, useLines } from '@/app/(app)/invoices/new/lines-editor';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { Field, Textarea } from '@/components/ui/field';
+import { QuantityInput } from '@/components/ui/number-input';
 import { toast } from '@/components/ui/toast';
 import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 
@@ -242,14 +243,15 @@ function CreditQuantity({
       className={styles.creditField ?? ''}
     >
       {(control) => (
-        <Input
-          inputMode="decimal"
-          autoComplete="off"
+        // Blank or 0 leaves the line out of the note, so zero is a valid entry here.
+        <QuantityInput
+          {...control}
+          min="0"
           placeholder="0"
           className={styles.numeric ?? ''}
+          uom={line.uom}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          {...control}
+          onValueChange={onChange}
         />
       )}
     </Field>
@@ -265,7 +267,7 @@ export function DebitNoteDialog({
   currency,
   taxCodes,
   ...rest
-}: NoteProps & { currency: string; taxCodes: readonly TaxCode[] | null }) {
+}: NoteProps & { currency: Currency; taxCodes: readonly TaxCode[] | null }) {
   const { lines, setLine, add, remove } = useLines(1);
   return (
     <NoteForm

@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { PositiveDecimalString } from '@bos/contracts';
+import { NO_SPACES, hasInnerSpace } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 
 import { allocatePayment, deallocate } from '@/lib/api-receivables';
@@ -88,7 +89,8 @@ export async function allocateAction(prev: AllocateState, form: FormData): Promi
     const amount = value.trim();
     if (amount === '') continue;
     if (PositiveDecimalString.safeParse(amount).success) lines.push({ invoiceId, amount });
-    else wrong[invoiceId] = AMOUNT_WORDS;
+    // "10 50" is not 1050; the digits look fine to the person, so name the space.
+    else wrong[invoiceId] = hasInnerSpace(amount) ? NO_SPACES : AMOUNT_WORDS;
   }
 
   const session = await requireStaffSession(`/payments/${paymentId}`);

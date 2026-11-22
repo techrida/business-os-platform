@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
-import { click, mountForm } from '@/test/form-interactions';
+import { click, mountForm, submit } from '@/test/form-interactions';
 import { DatePicker } from './date-picker';
 import { Dialog } from './dialog';
 
@@ -31,4 +32,25 @@ it('portals its calendar into an enclosing Dialog automatically via PopoverConta
   const grid = document.querySelector('[role="grid"]')!;
   expect(grid).not.toBeNull();
   expect(dialog.contains(grid)).toBe(true);
+});
+
+it('keeps a controlled date after the form action resets the form', async () => {
+  function Form() {
+    const [date, setDate] = useState('2026-12-01');
+    return (
+      <form action={async () => {}}>
+        <DatePicker aria-label="Needed by" name="d" value={date} onChange={setDate} />
+        <button type="button" onClick={() => setDate('2026-12-05')}>
+          pick
+        </button>
+      </form>
+    );
+  }
+  mounted = await mountForm(<Form />);
+  await click(mounted.container.querySelector('button:not([aria-label])'));
+  await submit(mounted.container);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect((mounted.container.querySelector('input[name="d"]') as HTMLInputElement).value).toBe(
+    '2026-12-05',
+  );
 });

@@ -1,6 +1,12 @@
 'use client';
 
-import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
+import {
+  CURRENCIES,
+  type Currency,
+  MONEY_LIMITS,
+  PAYMENT_METHODS,
+  type PaymentMethod,
+} from '@bos/contracts';
 import { type ReactNode, useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -8,6 +14,11 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Icon } from '@/components/ui/icon';
+import {
+  DecimalInput,
+  MoneyInput,
+  type NumberInputCommonProps,
+} from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { toast } from '@/components/ui/toast';
@@ -109,6 +120,19 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
       </span>
       {children}
     </>
+  );
+}
+
+/**
+ * An amount in the form's currency. Until a currency is chosen there is no code to show or grouping
+ * to follow, so the box takes the same digits ungrouped; choosing one regroups what was typed.
+ */
+function AmountInput({ currency, ...rest }: NumberInputCommonProps & { currency: string }) {
+  const chosen = CURRENCIES.find((c) => c === currency);
+  return chosen === undefined ? (
+    <DecimalInput {...rest} intDigits={MONEY_LIMITS.intDigits} scale={MONEY_LIMITS.scale} />
+  ) : (
+    <MoneyInput {...rest} currency={chosen} />
   );
 }
 
@@ -415,15 +439,14 @@ export function PaymentForm({
               </Field>
               <Field label="Amount received" hint={amountHint} error={fe.amount}>
                 {(control) => (
-                  <Input
-                    name="amount"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    required
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className={styles.numeric}
+                  <AmountInput
                     {...control}
+                    currency={currency}
+                    name="amount"
+                    required
+                    min="0.01"
+                    value={amount}
+                    onValueChange={setAmount}
                   />
                 )}
               </Field>
@@ -487,15 +510,13 @@ export function PaymentForm({
                   error={fe.tdsWithheld}
                 >
                   {(control) => (
-                    <Input
+                    <AmountInput
+                      {...control}
+                      currency={currency}
                       name="tdsWithheld"
-                      inputMode="decimal"
-                      autoComplete="off"
                       placeholder="0.00"
                       value={tds}
-                      onChange={(e) => setTds(e.target.value)}
-                      className={styles.numeric}
-                      {...control}
+                      onValueChange={setTds}
                     />
                   )}
                 </Field>

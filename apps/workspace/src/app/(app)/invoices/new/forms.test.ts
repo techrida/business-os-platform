@@ -1,4 +1,5 @@
 import { CreateManualInvoiceBodySchema, CreditNoteBodySchema } from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CUSTOMER, ID, TAX } from '../_lib/test-fixtures';
@@ -176,12 +177,15 @@ describe('parseDiscount: a decimal comma is never grouping', () => {
 });
 
 describe('parseDiscount', () => {
-  it.each(['1 5', '1 0.5'])(
-    'refuses the percentage %j: a space inside is not grouping',
-    (typed) => {
-      expect(parseDiscount('pct', typed).ok).toBe(false);
-    },
-  );
+  // Fails on the old code: the percent path stripped the space ("1 5" became 15), then gave the generic message.
+  it.each([
+    ['pct', '1 5'],
+    ['pct', '1 0.5'],
+    ['amount', '10 50'],
+    ['amount', '1 250.5'],
+  ])('refuses %s %j and says to remove the space, never joining it', (mode, typed) => {
+    expect(parseDiscount(mode, typed)).toEqual({ ok: false, error: NO_SPACES });
+  });
 
   it.each<[string | undefined, string | undefined, unknown]>([
     [undefined, undefined, undefined],
