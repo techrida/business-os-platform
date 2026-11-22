@@ -67,7 +67,7 @@ test('Sales replaces rejected evidence and the reviewer approves the new round',
     await create.waitForLoadState('networkidle');
     const customer = `Verification review ${Date.now()}`;
     await create.getByLabel('Organization legal name').fill(customer);
-    await create.getByLabel('Address line 1').fill('Fixture road');
+    await create.getByLabel('Address', { exact: true }).fill('Fixture road');
     await create.getByLabel('City', { exact: true }).fill('Kathmandu');
     await create.getByLabel('Full name').fill('Sales Contact');
     await create.getByLabel('Email', { exact: true }).fill('contact@example.test');

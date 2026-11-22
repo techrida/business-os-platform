@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { pickCountry } from '../helpers/country';
 import { minimalPdf } from '../helpers/pdf-fixture';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { searchBox } from '../helpers/multi-select';
@@ -59,7 +60,12 @@ test('a vendor goes from draft to KYB review, and its maker-checker refusals rea
       await page.getByLabel('Legal name').fill(name);
       await chooseOption(selectByName(page, 'kind'), 'foreign');
       await expect(page.getByLabel('PAN')).toHaveCount(0);
-      await page.getByLabel('Country code').fill('IN');
+      // The vendor's country is the Address panel's Country picker.
+      await pickCountry(
+        page.getByRole('combobox', { name: 'Country', exact: true }),
+        'india',
+        'India',
+      );
       await page.getByRole('button', { name: 'Add vendor' }).click();
       await expect(page).toHaveURL(/\/vendors\/[0-9a-f-]{36}\?created=1/);
       await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();

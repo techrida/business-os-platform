@@ -39,6 +39,10 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill('Binford Ltd.');
       await page.getByLabel('Contact person').fill('Sunita Shrestha');
+      // A lead needs an email or at least one phone number.
+      await page
+        .getByRole('textbox', { name: 'Email', exact: true })
+        .fill(`sunita.${Date.now()}@example.test`);
       await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     });
@@ -100,6 +104,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
   // The company name is unique per run because Convert refuses a customer with the same normalised name.
   const stamp = Date.now();
   const title = `CRM e2e opportunity ${stamp}`;
+  const email = `board-test-${stamp}@example.test`;
   try {
     await test.step('convert a qualified lead into an opportunity', async () => {
       await page.goto('/leads/new');
@@ -110,6 +115,8 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill(`Board Test ${stamp} Pvt. Ltd.`);
       await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
+      // A lead needs an email or at least one phone number.
+      await page.getByRole('textbox', { name: 'Email', exact: true }).fill(email);
       await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
       await page.waitForLoadState('networkidle');
@@ -125,10 +132,14 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
 
       await page.getByRole('button', { name: 'Convert to opportunity' }).click();
       const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });
-      // Keep the lead's company and contact, then provide the required address and contact email.
+      // Keep the lead's company, contact and email, then provide the required address. The customer's
+      // Country (the first of the two: the contact has its own) starts at the lead's country, Nepal.
       await dialog.getByLabel('Address', { exact: true }).fill('1 Durbar Marg');
       await dialog.getByLabel('City', { exact: true }).fill('Kathmandu');
-      await dialog.getByLabel('Email', { exact: true }).fill(`board-test-${stamp}@example.test`);
+      await expect(
+        dialog.getByRole('combobox', { name: 'Country', exact: true }).first(),
+      ).toHaveValue('Nepal');
+      await expect(dialog.getByLabel('Email', { exact: true })).toHaveValue(email);
       await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
       await page.waitForURL(/\/opportunities\/[0-9a-f-]{36}$/, { timeout: 30_000 });
     });

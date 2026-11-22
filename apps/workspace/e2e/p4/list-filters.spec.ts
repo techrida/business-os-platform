@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -72,8 +73,12 @@ async function createLead(
     .getByRole('textbox', { name: 'Company or organization', exact: true })
     .fill(lead.company);
   await page.getByLabel('Contact person').fill(lead.contact);
+  // A lead needs an email or at least one phone number.
+  await page
+    .getByRole('textbox', { name: 'Email', exact: true })
+    .fill(`${randomUUID()}@example.test`);
   await expect(title).toHaveValue(lead.title);
-  await page.getByRole('button', { name: 'Save lead' }).click();
+  await page.getByRole('button', { name: 'Create lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name: lead.title })).toBeVisible();
 }
 
