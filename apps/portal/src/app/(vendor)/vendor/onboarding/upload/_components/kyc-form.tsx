@@ -96,6 +96,7 @@ export function KycForm({
           {(control) => (
             <DatePicker
               name="validUntil"
+              validation="aria"
               required
               min={today}
               value={validUntil}

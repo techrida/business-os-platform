@@ -103,6 +103,9 @@ export function CustomerForm({
   // A Nepal customer's PAN or VAT number is nine digits. The contract also takes the tax ids of
   // customers abroad (letters, digits, hyphens), so only a Nepal customer gets the digits-only box.
   const nepalCustomer = values.country.trim().toUpperCase() === 'NP';
+  // The PAN box leaves the page when the country is not Nepal; whether it was edited stays here, so a
+  // short PAN that comes back is still stopped at submit.
+  const [panEdited, setPanEdited] = useState(false);
   const set =
     (field: CustomerField) =>
     (e: { target: { value: string } }): void =>
@@ -537,6 +540,8 @@ export function CustomerForm({
                   name="panVatNo"
                   value={values.panVatNo}
                   onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
+                  edited={panEdited}
+                  onEditedChange={setPanEdited}
                   {...control}
                 />
               ) : (

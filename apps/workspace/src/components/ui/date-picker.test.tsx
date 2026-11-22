@@ -162,3 +162,20 @@ it('keeps a controlled date after the form action resets the form', async () => 
     '2026-12-05',
   );
 });
+
+it('lets the browser block an empty required picker in a plain form, unless the form opts into aria validation', async () => {
+  mounted = await mountForm(
+    <>
+      <form id="filter" method="get">
+        <DatePicker aria-label="From" name="from" required />
+      </form>
+      <form id="action" action={async () => {}}>
+        <DatePicker aria-label="Until" name="until" required validation="aria" />
+      </form>
+    </>,
+  );
+  const filter = document.querySelector<HTMLFormElement>('#filter')!;
+  const action = document.querySelector<HTMLFormElement>('#action')!;
+  expect(filter.checkValidity()).toBe(false);
+  expect(action.checkValidity()).toBe(true);
+});
