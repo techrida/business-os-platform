@@ -12,14 +12,18 @@
 // write takes (access_revisions -> user row -> audit chain). `denyAfterFailure` never throws: the caller rethrows its own
 // error.
 import { randomUUID } from 'node:crypto';
-import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { ConflictException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 
 import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import type { AuditService } from '../audit/audit.service';
 import type { Db, DbTransaction } from '../db/db.module';
 import { type Actor, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
+import {
+  OPERATION_DEADLINE_MS,
+  runOutsideOperationDeadline,
+  runWithOperationDeadline,
+} from './operation-deadline';
 import type { UserLock, UsersStore } from './users.store';
 import {
   type ZitadelAdminClient,
@@ -138,7 +142,11 @@ export class IdentityReconciler {
     }
 
     const remote =
-      spec.close === null ? null : await this.closeInZitadel(spec.zitadelUserId, spec.close);
+      spec.close === null
+        ? null
+        : await runOutsideOperationDeadline(() =>
+            this.closeInZitadel(spec.zitadelUserId, spec.close!),
+          );
 
     if (local) {
       await this.record(scope, actor, IDENTITY_REVIEW_REQUIRED, local.id, {
@@ -225,21 +233,7 @@ const LEASE_POLL_MS = 150;
  * deadline plus the slowest in-flight provider call and the best-effort close, so a live holder is never overtaken.
  */
 const LEASE_TTL_SECONDS = 300;
-/** After this long a guarded operation starts no more provider mutations (a best-effort close is still allowed). */
-export const OPERATION_DEADLINE_MS = 60_000;
-
-const operation = new AsyncLocalStorage<{ startedAt: number; deadlineMs: number }>();
-
-/**
- * Call before every provider mutation of a guarded operation: throws 503 once the operation has run past its hard
- * deadline, so nothing new starts while the lease could be about to be taken over.
- */
-export function assertWithinOperationDeadline(): void {
-  const current = operation.getStore();
-  if (current && Date.now() - current.startedAt > current.deadlineMs) {
-    throw new ServiceUnavailableException('This change took too long. Try again.');
-  }
-}
+export { assertWithinOperationDeadline, OPERATION_DEADLINE_MS } from './operation-deadline';
 
 /**
  * Runs `fn` while holding the tenant's identity lease, so two actions that change who can sign in (deactivate, lock,
@@ -273,7 +267,7 @@ export async function withFounderRemovalLease<T>(
     await new Promise((resolve) => setTimeout(resolve, LEASE_POLL_MS));
   }
   try {
-    return await operation.run({ startedAt: Date.now(), deadlineMs }, fn);
+    return await runWithOperationDeadline(deadlineMs, fn);
   } finally {
     await store.releaseFounderLease(tenantId, leaseId).catch(() => undefined);
   }

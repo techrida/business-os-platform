@@ -13,6 +13,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
 import { CoreConfig } from '../config/config';
+import { assertWithinOperationDeadline } from './operation-deadline';
 
 /** Connect-protocol paths (`POST /zitadel.<pkg>.v2.<Service>/<Method>`), as in the seed. */
 export const ZITADEL_ENDPOINTS = {
@@ -388,6 +389,7 @@ export class ZitadelAdminClient {
 
   /** Creates a human with an unverified email and no password; returns the ZITADEL user id. */
   async createHuman(zitadelOrgId: string, input: CreateHumanInput): Promise<string> {
+    assertWithinOperationDeadline();
     const res = parse(
       IdOnly,
       await this.post(ZITADEL_ENDPOINTS.createUser, {
@@ -417,6 +419,8 @@ export class ZitadelAdminClient {
       (a) => (a.organization?.id ?? a.organizationId) === zitadelOrgId,
     );
     const roleKeys = [...new Set(roles)].sort();
+    // The read above can take a while: the deadline is checked again right before the write.
+    if (existing || roleKeys.length > 0) assertWithinOperationDeadline();
     if (existing && roleKeys.length === 0) {
       await this.post(ZITADEL_ENDPOINTS.deleteAuthorization, { id: existing.id });
     } else if (existing) {
@@ -542,26 +546,31 @@ export class ZitadelAdminClient {
 
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
   async sendInviteCode(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
   }
 
   /** Shuts the user out of every sign-in (state INACTIVE) until reactivated. */
   async deactivateUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.deactivateUser, { userId: zitadelUserId });
   }
 
   /** Lets a deactivated user sign in again (state ACTIVE). */
   async reactivateUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.reactivateUser, { userId: zitadelUserId });
   }
 
   /** Shuts the user out of every sign-in (state LOCKED) until unlocked. */
   async lockUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.lockUser, { userId: zitadelUserId });
   }
 
   /** Lets a locked user sign in again (state ACTIVE) and resets their failed attempts. */
   async unlockUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.unlockUser, { userId: zitadelUserId });
   }
 
