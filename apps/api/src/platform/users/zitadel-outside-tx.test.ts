@@ -2206,6 +2206,60 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
       expect(await h1).toBeInstanceOf(ServiceUnavailableException);
     }, 60_000);
 
+    it('a non-Founder lock fenced out after a takeover is still closed and flagged here, with the admin lock pinned', async () => {
+      const { f, opsId, zitadel, ageLease } = await twoFounders();
+      const tenant = f.scope.tenantId;
+      const opsZ = `ops-${tenant}`;
+      zitadel.users.set(opsZ, zUser(opsZ, { orgId: f.zitadelOrgId, status: 'active' }));
+      await store.setCursor(
+        lockoutPinnedCursor(f.zitadelOrgId),
+        new Date(Date.now() - 3_600_000).toISOString(),
+      );
+      const stall = stallPoint();
+      zitadel.onCall = async (op, zId) => {
+        if (op === 'lock' && zId === opsZ) {
+          zitadel.users.get(zId)!.changedAt = new Date();
+          stall.reached();
+          await stall.stalled;
+        }
+      };
+      const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+      // H1 locks Ops (no Founder, so nothing is recorded); ZITADEL applies the lock, then H1 stalls.
+      const h1 = status.apply(f.scope, adminActor(f.adminId), opsId, 'lock').then(
+        () => 'done' as const,
+        (error: unknown) => error,
+      );
+      await reach(stall.atStall, h1);
+
+      // A sync mirrors the fresh lock as a timed lock the expiry job would lift.
+      const mirror = new UserMirror(
+        db,
+        store,
+        zitadel.asClient(),
+        fakeQueue() as unknown as Queue<UsersSyncData>,
+      );
+      await mirror.syncUser(opsZ);
+      expect(await store.findById(db, f.scope, opsId)).toMatchObject({
+        lockReason: 'failed_sign_ins',
+      });
+
+      // Another holder takes the lease over and finishes.
+      await ageLease(301);
+      expect(await store.claimFounderLease(tenant, 'holder-x', 300, 1000)).toBe(true);
+      await store.releaseFounderLease(tenant, 'holder-x');
+
+      // H1 resumes: fenced out of its write, it still closes and flags Ops here, and calls ZITADEL no more.
+      const before = zitadel.calls.length;
+      stall.resume();
+      expect(await h1).toBeInstanceOf(ServiceUnavailableException);
+      expect(zitadel.calls.slice(before).filter((c) => !c.startsWith('getUser'))).toEqual([]);
+      expect(await store.findById(db, f.scope, opsId)).toMatchObject({
+        status: 'inactive',
+        lockReason: 'admin',
+        identityReviewRequired: true,
+      });
+    }, 60_000);
+
     it('a stalled role set that granted Founder writes nothing after a takeover, also when the successor is a local no-op', async () => {
       const { f, opsId, zitadel, ageLease } = await twoFounders();
       const opsZ = `ops-${f.scope.tenantId}`;
@@ -2236,6 +2290,10 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
       stall.resume();
       expect(await h1).toBeInstanceOf(ServiceUnavailableException);
       expect(await store.rolesOf(db, f.scope.tenantId, opsId)).toEqual([]);
+      // ... and the person whose grants it may have changed is flagged for review.
+      expect(await store.findById(db, f.scope, opsId)).toMatchObject({
+        identityReviewRequired: true,
+      });
     }, 60_000);
 
     it('the store carries the record across release and takeover, and a taken-over holder can neither record nor clear', async () => {

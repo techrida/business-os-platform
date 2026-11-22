@@ -74,6 +74,11 @@ export interface DenySpec {
   createRow?: (tx: DbTransaction) => Promise<string>;
   /** The best-effort remote close, or null for none (role sets and invites are denied locally only). */
   close: 'lock' | 'deactivate' | null;
+  /**
+   * The lease was lost: the row is still closed and flagged (with the admin lock `close: 'lock'` asks for), but no
+   * ZITADEL call is made, since past the lease fence it could not start anyway.
+   */
+  localOnly?: boolean;
 }
 
 export class IdentityReconciler {
@@ -159,7 +164,7 @@ export class IdentityReconciler {
     }
 
     const remote =
-      spec.close === null
+      spec.close === null || spec.localOnly === true
         ? null
         : await runOutsideOperationDeadline(() =>
             this.closeInZitadel(spec.zitadelUserId, spec.close!),
@@ -370,6 +375,11 @@ export async function settleOwnFounderRemoval(
   return (await holder.store.settleFounderRemoval(holder.tenantId, holder.leaseId, tx))
     ? 'held'
     : 'lost';
+}
+
+/** Whether this holder recorded a Founder removal of `userId` on its lease (then a successor settles it). */
+export function recordedFounderRemovalOf(userId: string): boolean {
+  return lease.getStore()?.removalOf === userId;
 }
 
 /**
