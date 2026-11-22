@@ -136,6 +136,47 @@ describe('getMe', () => {
     warn.mockRestore();
   });
 
+  it('drops a known permission with an unknown scope and warns with a string label', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...validMe,
+        permissions: [{ permission: 'customer.read', scope: 'galaxy' }],
+      }),
+    );
+    expect((await getMe({ accessToken: TOKEN })).permissions).toEqual([]);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('customer.read@galaxy');
+    warn.mockRestore();
+  });
+
+  it.each([
+    ['null', null],
+    ['an empty object', {}],
+    ['a string', 'junk'],
+    ['a row without a scope', { permission: 'customer.read' }],
+    ['a non-string scope', { permission: 'customer.read', scope: { toString: null } }],
+  ])('throws ApiError 502 for a malformed grant row (%s)', async (_name, row) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const known = { permission: 'customer.read', scope: 'own' };
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...validMe,
+        permissions: [known, { permission: 'vat.sales.read.v2', scope: 'all' }, row],
+      }),
+    );
+    const err = await getMe({ accessToken: TOKEN }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
+    warn.mockRestore();
+  });
+
+  it('throws ApiError 502 when permissions is not a list', async () => {
+    fetchMock.mockResolvedValue(Response.json({ ...validMe, permissions: 'customer.read' }));
+    const err = await getMe({ accessToken: TOKEN }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
+  });
+
   it('throws ApiError with the status and body on a non-2xx response', async () => {
     const body = { statusCode: 401, error: 'unauthorized' };
     fetchMock.mockResolvedValue(Response.json(body, { status: 401 }));

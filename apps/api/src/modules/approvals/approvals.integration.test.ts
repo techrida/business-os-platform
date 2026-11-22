@@ -1044,7 +1044,7 @@ describe('admin: the small-team rule for publishing a workflow (F1-Q11 a)', () =
       publishSoleEligible: false,
     });
 
-    // A locked user cannot publish, so they do not count (0125: a locked person is inactive).
+    // An admin-locked user does not count (0125: a locked person is inactive); a failed-sign-in lock would.
     await withTx(db, callerScope, systemActor('test-seed'), (tx) =>
       tx.execute(
         sql`UPDATE app.users SET status = 'inactive', lock_reason = 'admin', locked_at = now()
@@ -1057,6 +1057,27 @@ describe('admin: the small-team rule for publishing a workflow (F1-Q11 a)', () =
     await expect(
       svc.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Only one left' }),
     ).resolves.toMatchObject({ status: 'published', publishedBy: first });
+  });
+
+  it('keeps refusing the Founder while the second Management member is only locked out after failed sign-ins', async () => {
+    const { rest, svc, draft } = await smallTeam(['founder'], ['management']);
+    const [second] = rest;
+    // A timed lock ends by itself, so the second person still counts.
+    await withTx(db, callerScope, systemActor('test-seed'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.users SET status = 'inactive', lock_reason = 'failed_sign_ins', locked_at = now(),
+                   locked_until = now() + interval '15 minutes'
+             WHERE id = ${second!}`,
+      ),
+    );
+    expect((await draft())?.versions[0]).toMatchObject({
+      savedByCaller: true,
+      publishSoleEligible: false,
+    });
+    await expect(
+      svc.publish('small_team', 1, SKIP_LIVE_PUBLISHER_CHECK, { reason: 'Second one is away' }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'separation_of_duties' } });
+    expect((await draft())?.versions[0]?.status).toBe('draft');
   });
 
   it('never applies to a non-Founder, however small the team', async () => {
