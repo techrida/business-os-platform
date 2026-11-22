@@ -39,6 +39,7 @@ import { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
 import type { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
@@ -393,6 +394,26 @@ async function lockUser(userId: string): Promise<void> {
     tx.execute(
       sql`UPDATE app.users SET status = 'inactive', lock_reason = 'admin', locked_at = now()
            WHERE tenant_id = ${f.tenantId} AND id = ${userId}`,
+    ),
+  );
+}
+
+/** A timed lock after too many failed sign-ins (0125): status 'inactive', lock_reason 'failed_sign_ins'. */
+async function lockAfterFailedSignIns(userId: string): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`UPDATE app.users SET status = 'inactive', lock_reason = 'failed_sign_ins', locked_at = now(),
+                 locked_until = now() + interval '15 minutes'
+           WHERE tenant_id = ${f.tenantId} AND id = ${userId}`,
+    ),
+  );
+}
+
+/** A deactivated user: status 'inactive' with no lock. `resetTeam` does not undo it; use a fresh user. */
+async function deactivateUser(userId: string): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`UPDATE app.users SET status = 'inactive' WHERE tenant_id = ${f.tenantId} AND id = ${userId}`,
     ),
   );
 }
@@ -806,7 +827,7 @@ describe('releaseDelivery: the small-team rule (F1-Q11 a)', () => {
     }
   });
 
-  it('counts a locked second person as absent', async () => {
+  it('counts an admin-locked second person as absent', async () => {
     await setThreshold(AMOUNT_NPR);
     const finance = await seedOtherStaffUser(db, f);
     await giveRoles(finance, ['finance']);
@@ -819,6 +840,44 @@ describe('releaseDelivery: the small-team rule (F1-Q11 a)', () => {
     expect((await anyReleaseAudits(orderId))[0]!.action).toBe(
       'sales_order.delivery_released_sole_eligible',
     );
+  });
+
+  it('counts a releaser locked out after failed sign-ins as present, but an admin-locked or deactivated one as absent', async () => {
+    await setThreshold(AMOUNT_NPR);
+    const timedOut = await seedOtherStaffUser(db, f);
+    await giveRoles(timedOut, ['finance']);
+    await lockAfterFailedSignIns(timedOut);
+    const refused = await confirmedOrder();
+
+    // The lock ends by itself, so the Founder may not act alone in the meantime.
+    as('founder');
+    expect((await detailOf(refused)).can).toMatchObject({
+      releaseDelivery: false,
+      releaseDeliveryBlockedBy: 'requester',
+      releaseSoleEligible: false,
+    });
+    expect(await refusal(release(refused, SOLE_REASON))).toEqual({
+      status: 403,
+      code: 'forbidden',
+      reason: 'requester_cannot_release',
+    });
+    expect(await releaseRows(refused)).toHaveLength(0);
+    expect(await anyReleaseAudits(refused)).toHaveLength(0);
+
+    for (const shutOut of [lockUser, deactivateUser]) {
+      await resetTeam();
+      await giveRoles(f.ownerUserId, ['founder']);
+      const finance = await seedOtherStaffUser(db, f);
+      await giveRoles(finance, ['finance']);
+      await shutOut(finance);
+      const orderId = await confirmedOrder();
+      as('founder');
+      expect((await detailOf(orderId)).can?.releaseSoleEligible).toBe(true);
+      expect(parsed(await release(orderId, SOLE_REASON)).deliveryReleased).toBe(true);
+      expect((await anyReleaseAudits(orderId))[0]!.action).toBe(
+        'sales_order.delivery_released_sole_eligible',
+      );
+    }
   });
 
   it('never applies to a creator who is not a Founder', async () => {
@@ -882,5 +941,31 @@ describe('releaseDelivery: the small-team rule (F1-Q11 a)', () => {
       releaseDeliveryBlockedBy: 'requester',
       releaseSoleEligible: false,
     });
+  });
+
+  it('reads the role table once per detail load, however many distinct role sets the other members hold', async () => {
+    await setThreshold(AMOUNT_NPR);
+    // Three releasers with three distinct role sets: the old helper read the role table once for each.
+    const sets: readonly (readonly RoleKey[])[] = [['finance'], ['finance', 'sales'], ['founder']];
+    for (const roles of sets) await giveRoles(await seedOtherStaffUser(db, f), roles);
+    const orderId = await confirmedOrder();
+
+    as('founder');
+    const readRows = vi.spyOn(
+      RoleCache.prototype as unknown as { readRows: (...args: unknown[]) => Promise<unknown> },
+      'readRows',
+    );
+    try {
+      expect((await detailOf(orderId)).can).toMatchObject({
+        releaseDeliveryBlockedBy: 'requester',
+        releaseSoleEligible: false,
+      });
+      expect(readRows).toHaveBeenCalledTimes(1);
+      // A second load reads again: nothing is kept across requests.
+      await detailOf(orderId);
+      expect(readRows).toHaveBeenCalledTimes(2);
+    } finally {
+      readRows.mockRestore();
+    }
   });
 });

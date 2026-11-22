@@ -16,7 +16,8 @@ import styles from './sales-orders.module.css';
  *
  * The refusal is about the quotation version that was submitted. Once the form selects another
  * one (`selectedVersionId`), nothing is offered: an Override here would release the hold of a deal
- * that is no longer the one being confirmed. `quotationNumber` names that quotation in the override.
+ * that is no longer the one being confirmed. `quotationNumber` names that quotation in the override,
+ * and the override is given for that version (R5 FU10), at the order value of `hold.position`.
  */
 export function CreditHoldHelp({
   hold,
@@ -40,6 +41,7 @@ export function CreditHoldHelp({
           opportunityId={hold.opportunityId}
           number={hold.number}
           quotation={quotationNumber}
+          quotationVersionId={hold.quotationVersionId}
           position={hold.position}
           successMessage="Credit hold overridden. Confirm the order again."
           onOverridden={() => setOverridden(hold.opportunityId)}

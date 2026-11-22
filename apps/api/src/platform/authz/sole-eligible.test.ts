@@ -75,7 +75,7 @@ describe('otherEligibleUsers and isSoleEligible', () => {
     expect(isSoleEligible(['founder'], found)).toBe(false);
   });
 
-  it('an inactive or locked second user does not count', async () => {
+  it('an admin-locked, deactivated or invited second user does not count', async () => {
     const found = await others([
       candidate(ME),
       candidate(TWO, { status: 'inactive', lockReason: 'admin' }),
@@ -83,8 +83,25 @@ describe('otherEligibleUsers and isSoleEligible', () => {
     ]);
     expect(found).toEqual([]);
     expect(isSoleEligible(['founder'], found)).toBe(true);
-    // A lock read on a row whose status still says active also excludes it.
-    expect(await others([candidate(TWO, { lockReason: 'failed_sign_ins' })])).toEqual([]);
+    // A deactivated user: inactive with no lock.
+    expect(await others([candidate(TWO, { status: 'inactive' })])).toEqual([]);
+    // An admin lock read on a row whose status still says active also excludes it.
+    expect(await others([candidate(TWO, { lockReason: 'admin' })])).toEqual([]);
+  });
+
+  it('a second user locked out only after failed sign-ins still counts, so the Founder is not sole', async () => {
+    const found = await others([
+      candidate(ME),
+      candidate(TWO, { status: 'inactive', lockReason: 'failed_sign_ins' }),
+    ]);
+    expect(found).toEqual([TWO]);
+    expect(isSoleEligible(['founder'], found)).toBe(false);
+    // The same lock read on a row whose status still says active.
+    expect(await others([candidate(TWO, { lockReason: 'failed_sign_ins' })])).toEqual([TWO]);
+    // An invited user never finished signing up, so a lock does not make them present.
+    expect(
+      await others([candidate(TWO, { status: 'invited', lockReason: 'failed_sign_ins' })]),
+    ).toEqual([]);
   });
 
   it('a second user whose roles do not grant the permission does not count', async () => {

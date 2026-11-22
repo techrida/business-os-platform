@@ -10,6 +10,8 @@ import {
   CreateActivityBodySchema,
   CreateContactBodySchema,
   CreateCustomerBodySchema,
+  CreditHoldDtoSchema,
+  CreditOverrideBodySchema,
   CustomerFieldsSchema,
   CreateLeadBodySchema,
   LEAD_STAGES,
@@ -770,6 +772,84 @@ describe('LeadIngestBodySchema (website, untrusted)', () => {
     );
     expect(LeadIngestBodySchema.parse({ ...ok, externalRef: 'wp-form-123' }).externalRef).toBe(
       'wp-form-123',
+    );
+  });
+});
+
+describe('credit override tied to one quotation version (R5 FU10)', () => {
+  const versionId = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
+  const body = {
+    reason: 'Director approved',
+    quotationVersionId: versionId,
+    orderValue: '113000.00',
+  };
+
+  it('takes the reason, the quotation version and the order value', () => {
+    expect(CreditOverrideBodySchema.parse(body)).toEqual(body);
+  });
+
+  it('requires the order value and the quotation version (a 400 when missing)', () => {
+    const { orderValue: _value, ...noValue } = body;
+    const { quotationVersionId: _version, ...noVersion } = body;
+    expect(CreditOverrideBodySchema.safeParse(noValue).success).toBe(false);
+    expect(CreditOverrideBodySchema.safeParse(noVersion).success).toBe(false);
+  });
+
+  it('refuses an order value that is not two decimals, a version that is not an id, and unknown fields', () => {
+    expect(CreditOverrideBodySchema.safeParse({ ...body, orderValue: '113000' }).success).toBe(
+      false,
+    );
+    expect(CreditOverrideBodySchema.safeParse({ ...body, orderValue: '113000.001' }).success).toBe(
+      false,
+    );
+    expect(CreditOverrideBodySchema.safeParse({ ...body, quotationVersionId: 'v1' }).success).toBe(
+      false,
+    );
+    expect(CreditOverrideBodySchema.safeParse({ ...body, extra: true }).success).toBe(false);
+  });
+
+  const hold = {
+    opportunityId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+    customerId: 'b1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+    currency: 'NPR',
+    creditLimit: '100000.00',
+    exposure: '20000.00',
+    uninvoiced: '0.00',
+    orderValue: '113000.00',
+    pendingQuotationVersionId: versionId,
+    exposureWithOrder: '133000.00',
+    held: true,
+    override: {
+      reason: 'Director approved',
+      byUserId: 'c1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+      byName: 'Founder',
+      at: '2026-11-22T10:00:00+05:45',
+      orderValue: '113000.00',
+      quotationVersionId: versionId,
+    },
+    overrideCovers: true,
+  };
+
+  it('carries the pending version and the version the override was given for', () => {
+    expect(CreditHoldDtoSchema.parse(hold)).toEqual(hold);
+  });
+
+  it('allows no pending version and a legacy override without a version', () => {
+    const legacy = {
+      ...hold,
+      pendingQuotationVersionId: null,
+      override: { ...hold.override, quotationVersionId: null, orderValue: null },
+      overrideCovers: false,
+    };
+    expect(CreditHoldDtoSchema.parse(legacy)).toEqual(legacy);
+  });
+
+  it('requires both version fields to be present', () => {
+    const { pendingQuotationVersionId: _pending, ...noPending } = hold;
+    const { quotationVersionId: _given, ...overrideWithout } = hold.override;
+    expect(CreditHoldDtoSchema.safeParse(noPending).success).toBe(false);
+    expect(CreditHoldDtoSchema.safeParse({ ...hold, override: overrideWithout }).success).toBe(
+      false,
     );
   });
 });

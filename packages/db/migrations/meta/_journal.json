@@ -750,6 +750,13 @@
       "when": 1783000000152,
       "tag": "0166_approval_actions_idempotency_entity_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1783000000153,
+      "tag": "0183_credit_override_quotation_version",
+      "breakpoints": true
     }
   ]
 }

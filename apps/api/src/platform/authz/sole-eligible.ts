@@ -3,9 +3,12 @@
 // it alone, with a reason (`sole_eligible_reason_required`). This file answers the two questions that rule needs:
 // who else could do the step right now, and whether the caller is the sole eligible person.
 //
-// "Could do it" is read the way `live-grants.ts` reads one caller: an active, unlocked user whose mirror roles,
-// narrowed by their membership in the acting entity, grant the permission in the role cache. Only the roles come
-// from the database; the role -> permission table is the role cache's.
+// "Could do it" means a present user whose mirror roles, narrowed by their membership in the acting entity, grant
+// the permission in the role cache. Only the roles come from the database; the role -> permission table is the role
+// cache's. Present (`isPresent`) is wider than the live check on one caller in `live-grants.ts`: a user locked out
+// only after failed sign-ins cannot act this minute, but the lock ends by itself, so they still count and the
+// Founder may not act alone in the meantime. Only an admin lock, a deactivation or an unfinished invitation makes
+// someone absent.
 import type { Permission, RoleKey } from '@bos/contracts';
 import { type SQL, sql } from 'drizzle-orm';
 
@@ -18,7 +21,11 @@ import type { LiveGrantTable } from './live-grants';
 export interface EligibilityCandidate {
   userId: string;
   status: UserRow['status'];
-  /** `users.lock_reason` (0125); null = not locked. A locked user's status is 'inactive'. */
+  /**
+   * `users.lock_reason` (0125): null = not locked, 'failed_sign_ins' = a timed lock after too many failed sign-ins
+   * (still present), 'admin' = locked by an administrator (absent). A locked user's status is 'inactive'; a
+   * deactivated user is 'inactive' with no lock.
+   */
   lockReason: string | null;
   /** Mirror roles (`app.user_roles`), not narrowed. */
   roles: readonly RoleKey[];
@@ -57,8 +64,18 @@ async function rows<T extends Record<string, unknown>>(q: DbTransaction, query: 
 }
 
 /**
- * The real source: the tenant's active, unlocked users with their membership in the acting entity (one query), and
- * the tenant's role rows (a second query), joined here. The status and lock filters are repeated by the caller.
+ * Whether the user counts as there for the rule: active and unlocked, or under only a failed-sign-in lock (which ends
+ * by itself) on an account past its invitation. An admin lock, a deactivation (inactive, no lock) or an unfinished
+ * invitation counts as absent. `sqlCandidateSource` filters with the same test in SQL.
+ */
+export function isPresent(c: Pick<EligibilityCandidate, 'status' | 'lockReason'>): boolean {
+  if (c.lockReason === null) return c.status === 'active';
+  return c.lockReason === 'failed_sign_ins' && c.status !== 'invited';
+}
+
+/**
+ * The real source: the tenant's present users (`isPresent`) with their membership in the acting entity (one query),
+ * and the tenant's role rows (a second query), joined here. The caller applies `isPresent` again.
  */
 export const sqlCandidateSource: EligibilityCandidateSource = {
   async candidates(q, scope) {
@@ -76,7 +93,9 @@ export const sqlCandidateSource: EligibilityCandidateSource = {
           FROM app.users u
           LEFT JOIN app.user_entities ue ON ue.tenant_id = u.tenant_id AND ue.user_id = u.id
             AND ue.organization_id = ${scope.organizationId}
-          WHERE u.tenant_id = ${scope.tenantId} AND u.status = 'active' AND u.lock_reason IS NULL
+          WHERE u.tenant_id = ${scope.tenantId}
+            AND ((u.status = 'active' AND u.lock_reason IS NULL)
+              OR (u.status <> 'invited' AND u.lock_reason = 'failed_sign_ins'))
           ORDER BY u.id`,
     );
     if (users.length === 0) return [];
@@ -102,7 +121,8 @@ export const sqlCandidateSource: EligibilityCandidateSource = {
 };
 
 /**
- * The users other than `excludeUserIds` who could do the step guarded by `permission` in `scope` right now, sorted.
+ * The present users (`isPresent`) other than `excludeUserIds` who could do the step guarded by `permission` in
+ * `scope`, sorted. A user under a failed-sign-in lock counts even though they cannot act until it ends.
  * Call it inside the step's transaction. Grants are read at the base (staff) level: a level only widens the scope of
  * a grant the role already has, never adds a permission. The role table is read once per distinct role set.
  */
@@ -120,7 +140,7 @@ export async function otherEligibleUsers(
   const out: string[] = [];
   for (const c of candidates) {
     if (excluded.has(c.userId.toLowerCase())) continue;
-    if (c.status !== 'active' || c.lockReason !== null) continue;
+    if (!isPresent(c)) continue;
     let roles: readonly RoleKey[];
     if (opts.entityScoped) {
       if (c.membership === null) continue;
