@@ -29,7 +29,8 @@ const isMobile = (digits: string) => digits.startsWith('9');
 const LEADING_ZERO = `Leave out the leading 0. ${NEPAL_PREFIX} is already there.`;
 const CODE_ZERO = 'A country code does not start with 0.';
 
-const NEPAL_RULES: DigitRules = {
+/** FX8's Nepal box: `+977` is a fixed prefix; a mobile is ten digits starting with 9, a landline 7 to 9. */
+export const NEPAL_RULES: DigitRules = {
   noun: 'phone number',
   // The stored form is E.164, `+9779812345678`. Anything else is shown as given and flagged.
   parse: (posted) => {
@@ -79,7 +80,8 @@ const NEPAL_RULES: DigitRules = {
   },
 };
 
-const INTERNATIONAL_RULES: DigitRules = {
+/** A box that takes the whole number after a fixed `+`, country code first. */
+export const INTERNATIONAL_RULES: DigitRules = {
   noun: 'phone number',
   keepsStored: (stored) => !stored.startsWith('+'),
   parse: (posted) => {
@@ -125,7 +127,7 @@ export type PhoneInputProps = DigitBoxProps;
  *   <Field label="Phone">{(control) => <PhoneInput {...control} name="phone" />}</Field>
  */
 /** A stored number the Nepal box can show as typed: +977, then digits it would let a user type. */
-function fitsNepalBox(stored: string): boolean {
+export function fitsNepalBox(stored: string): boolean {
   if (!stored.startsWith(NEPAL_PREFIX)) return false;
   const national = NEPAL_RULES.parse(stored);
   return (

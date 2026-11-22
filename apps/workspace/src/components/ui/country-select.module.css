@@ -1,0 +1,127 @@
+/* CountrySelect. The box carries the field look from field.module.css (as DigitBox does), so the flag and ISO code
+   sit inside it before the bare search input. The list reuses the Combobox and Select popover styles. */
+
+.root {
+  position: relative;
+  min-width: 0;
+}
+
+.box {
+  composes: control from './field.module.css';
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: text;
+}
+
+.box:hover:not([data-disabled]) {
+  border-color: var(--input-hover-border);
+}
+
+.box:focus-within {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
+}
+
+.box[data-invalid] {
+  border-color: var(--input-error-border);
+}
+
+.box[data-invalid]:focus-within {
+  box-shadow: var(--bos-field-focus-shadow-error);
+}
+
+.box[data-disabled],
+.box[data-disabled]:hover {
+  border-color: var(--input-border);
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Above the global field-focus rule (0,3,1): the box shows focus, not the input inside it. */
+.box .input,
+.box .input:focus:not(:disabled),
+.box .input[aria-invalid='true']:focus:not(:disabled) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+}
+
+.box .input:disabled {
+  cursor: not-allowed;
+}
+
+.chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.flag {
+  flex: none;
+  /* Emoji flags render at their own metrics; keep them on the text line. */
+  font-size: 1.125em;
+  line-height: 1;
+}
+
+.code {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* The phone-row form: just wide enough for flag, code and the longest calling code (+1 684). */
+.compact {
+  flex: none;
+  width: 9.5rem;
+}
+
+.compact .input {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Country names run long ("South Georgia & South Sandwich Islands"); give the list room beyond a narrow box. */
+.popover {
+  width: max(var(--trigger-width), 18rem);
+  max-width: calc(100vw - 16px);
+}
+
+.optionMeta {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .box {
+    min-height: 44px;
+  }
+
+  .box .input {
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}
+
+@media (forced-colors: active) {
+  .box:focus-within {
+    outline: 2px solid Highlight;
+  }
+}
