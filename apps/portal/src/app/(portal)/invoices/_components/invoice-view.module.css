@@ -439,6 +439,7 @@
 
 /* A safety net: a table that still does not fit scrolls inside the sheet, never the page. */
 .itemsFrame {
+  position: relative;
   min-width: 0;
   overflow-x: auto;
 }
