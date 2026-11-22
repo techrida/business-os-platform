@@ -52,7 +52,7 @@ describe('GET /v1/customers', () => {
 
 describe('POST /v1/customers', () => {
   const contact = { fullName: 'Sita Rai', email: 'sita@acme.example' };
-  const body = { legalName: 'Acme Pvt. Ltd.', panVatNo: 'ab-123456', address, contact };
+  const body = { legalName: 'Acme Pvt. Ltd.', panVatNo: '123456789', address, contact };
 
   it('is a 400 without an Idempotency-Key, before the service is called', () => {
     const { service, controller } = setup();

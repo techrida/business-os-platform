@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
-import { AddressSchema, PanVatNoSchema } from './crm.js';
+import { AddressSchema, NepalPanSchema, PanVatNoSchema } from './crm.js';
 import {
   CompanyProfileSchema,
   DEFAULT_DOCUMENT_STYLE,
@@ -72,6 +72,9 @@ export const DELIVERY_HOLD_SETTINGS = {
   'sales.delivery_hold.management_npr': NonNegativeDecimalString,
 } as const;
 
+/** `entity.pan_vat_no` as a stored row may still look (5 to 20 characters, from before the nine-digit rule). Reads only. */
+export const StoredEntityPanVatNoSchema = PanVatNoSchema.nullable();
+
 /** Defaults of the delivery-hold keys (D32: every setting has a default). */
 export const DELIVERY_HOLD_SETTING_DEFAULTS = {
   'sales.delivery_hold.management_npr': '100000',
@@ -104,7 +107,7 @@ export const SETTINGS = {
   /** What a quotation needs on file before the opportunity may become Won. */
   'sales.evidence_policy': EvidencePolicySchema,
   /** The selling entity's PAN or VAT number as quotations print it. Per entity; null until an admin sets it. */
-  'entity.pan_vat_no': PanVatNoSchema.nullable(),
+  'entity.pan_vat_no': NepalPanSchema.nullable(),
   /** The selling entity's address as quotations print it. Per entity; null until set, and no PDF renders without it. */
   'entity.address': AddressSchema.nullable(),
   // P3 sales and invoicing.

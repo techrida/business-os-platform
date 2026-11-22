@@ -79,7 +79,7 @@ describe('parseCreateCustomer', () => {
   it('keeps the optional fields that are filled', () => {
     const out = parseCreateCustomer({
       ...valid,
-      panVatNo: ' 301-234-567 ',
+      panVatNo: ' 301234567 ',
       industry: 'Hydropower',
       defaultCurrency: 'USD',
       relationship: 'active',
@@ -87,7 +87,7 @@ describe('parseCreateCustomer', () => {
       postalCode: '44600',
     });
     expect(out.ok && out.data).toMatchObject({
-      panVatNo: '301-234-567',
+      panVatNo: '301234567',
       industry: 'Hydropower',
       defaultCurrency: 'USD',
       relationship: 'active',

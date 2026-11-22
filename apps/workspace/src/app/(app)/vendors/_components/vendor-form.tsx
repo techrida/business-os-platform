@@ -81,6 +81,9 @@ export function VendorForm({
     errors: {},
   });
   const [values, setValues] = useState<VendorValues>(initial);
+  // The PAN box leaves the page while the kind is foreign; whether it was edited stays here, so a
+  // short PAN that comes back is still stopped at submit.
+  const [panEdited, setPanEdited] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   const sameNameRef = useRef<HTMLDivElement>(null);
@@ -158,6 +161,8 @@ export function VendorForm({
           onValueChange={(pan) => set('pan')({ target: { value: pan } })}
           readOnly={lockIdentity}
           required
+          edited={panEdited}
+          onEditedChange={setPanEdited}
           {...control}
         />
       )}

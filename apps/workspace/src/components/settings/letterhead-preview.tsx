@@ -1,5 +1,6 @@
 'use client';
 
+import { formatPhoneForPrint } from '@bos/contracts';
 import { useEffect, useState } from 'react';
 
 import { scanPollDelays } from '@/components/ui/image-upload';
@@ -27,7 +28,10 @@ export interface LetterheadModel {
 export function LetterheadPreview({ model }: { model: LetterheadModel }) {
   const name = model.displayName.trim();
   const address = addressLines(model.address);
-  const phones = model.phones.map((p) => p.trim()).filter(Boolean);
+  const phones = model.phones
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(formatPhoneForPrint);
   const email = model.email.trim();
   const website = model.website.trim();
   const pan = model.panVatNo.trim();

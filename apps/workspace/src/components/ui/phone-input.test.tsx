@@ -3,7 +3,7 @@ import { PhoneSchema } from '@bos/contracts';
 import { act, useState, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, paste, submit, typeKeys } from '@/test/form-interactions';
+import { click, fill, mountForm, paste, softKey, submit, typeKeys } from '@/test/form-interactions';
 import { Field } from './field';
 import { PhoneInput } from './phone-input';
 
@@ -323,5 +323,57 @@ describe('PhoneInput, drafts and pastes that used to slip through', () => {
     await phone.switchCountry();
     await submit(phone.container);
     expect(reached).toHaveBeenCalledWith(false);
+  });
+
+  it('posts a stored number without a plus as stored, and as +digits once edited', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="4123456" />,
+    );
+    expect(phone.hidden()).toBe('4123456');
+    await typeKeys(phone.box(), '8');
+    expect(phone.hidden()).toBe('+41234568');
+  });
+
+  it('posts the normalised number after a correction that ends on the stored digits', async () => {
+    const pasted = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="4123456" />,
+    );
+    pasted.box().setSelectionRange(0, 7);
+    await paste(pasted.box(), '+4123456');
+    expect(pasted.hidden()).toBe('+4123456');
+    await mounted.unmount();
+    const typed = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="4123456" />,
+    );
+    await typeKeys(typed.box(), '8');
+    await softKey(typed.box(), 'deleteContentBackward');
+    expect(typed.box().value).toBe('4123456');
+    expect(typed.hidden()).toBe('+4123456');
+  });
+
+  it('keeps a stored short Nepal number untouched after another country is typed in and left', async () => {
+    const flags: boolean[] = [];
+    const phone = await mount(
+      <PhoneInput
+        aria-label="Phone"
+        name="phone"
+        defaultValue="+9779812345"
+        onEditedChange={(next) => flags.push(next)}
+      />,
+    );
+    const reached = vi.fn();
+    phone.container.querySelector('form')!.addEventListener('submit', (event) => {
+      reached(event.defaultPrevented);
+      event.preventDefault();
+    });
+    await phone.switchCountry();
+    await typeKeys(phone.box(), '14155550123');
+    await phone.switchCountry();
+    expect(phone.box().value).toBe('9812345');
+    expect(phone.hidden()).toBe('+9779812345');
+    await submit(phone.container);
+    expect(reached).toHaveBeenCalledWith(false);
+    // The parent hears the flag of the box now shown: edited abroad, untouched back in Nepal.
+    expect(flags).toEqual([true, false]);
   });
 });

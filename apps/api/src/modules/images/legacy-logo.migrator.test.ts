@@ -44,7 +44,7 @@ const profile = (over: Partial<CompanyProfile> = {}): CompanyProfile => ({
   ...EMPTY_COMPANY_PROFILE,
   displayName: 'Acme Trading',
   email: 'hello@acme.test',
-  phones: ['+977 1 5550100'],
+  phones: ['+97715550100'],
   logoDocumentId: null,
   legacyLogoDataUrl: PNG_URL,
   ...over,

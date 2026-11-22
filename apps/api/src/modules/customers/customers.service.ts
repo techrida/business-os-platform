@@ -20,6 +20,7 @@ import {
   type CreateCustomerBody,
   type CustomerDto,
   type CustomerFields,
+  nepalPanProblem,
   type PartyAccountDto,
   type PaymentTerm,
   type Permission,
@@ -639,6 +640,9 @@ export class CustomersService {
     body: CustomerFields,
     now: Date,
   ): Promise<CustomerDto> {
+    // Reached by import and lead conversion as well, which skip the request schema.
+    const panProblem = nepalPanProblem(body.address.country, body.panVatNo);
+    if (panProblem !== null) throw new BadRequestException(panProblem);
     const pan = body.panVatNo === undefined ? null : normalizePan(body.panVatNo);
     if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
     if (body.ownerUserId !== undefined) {
@@ -736,6 +740,16 @@ export class CustomersService {
         this.assertVisible('customer.write', row, principal);
       }
 
+      // A Nepal customer has a 9-digit PAN. The contract checks a body that sends both; here the other half comes from
+      // the stored row: a new PAN against the stored country, or a switch to NP against the stored PAN. A record whose
+      // country and PAN are both left alone is not judged, so a legacy tax id never blocks an unrelated edit.
+      const countryAfter = fields.address?.country ?? (row.address as Address).country;
+      const switchedToNepal =
+        fields.address !== undefined && (row.address as Address).country !== 'NP';
+      if (fields.panVatNo !== undefined || switchedToNepal) {
+        const problem = nepalPanProblem(countryAfter, fields.panVatNo ?? row.panVatNo);
+        if (problem !== null) throw new BadRequestException(problem);
+      }
       const pan = fields.panVatNo === undefined ? undefined : normalizePan(fields.panVatNo);
       if (pan !== undefined) await this.assertPanFree(tx, scope.tenantId, pan, id);
       if (ownerChange) await this.assertUser(tx, scope.tenantId, fields.ownerUserId!);

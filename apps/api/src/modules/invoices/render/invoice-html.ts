@@ -18,7 +18,7 @@
 //   into its format snapshot beside the logo, and a copy prints the stored ones, so a later profile edit never
 //   changes what a reprint says. A copy of an original printed before contacts were frozen prints none, as that
 //   original did. The address and PAN/VAT number always come from the seller frozen at issue.
-import type { DocumentSellerContact } from '@bos/contracts';
+import { formatPhoneForPrint, type DocumentSellerContact } from '@bos/contracts';
 import {
   amountInWords,
   bsLongOfDay,
@@ -228,7 +228,7 @@ export function renderInvoiceHtml(
   const footer: string[] = [`<span>${text(view.seller.legalName)}</span>`];
   if (phones.length > 0) {
     footer.push(
-      `<span>${phones.length > 1 ? 'Phones' : 'Phone'} ${phones.map(text).join(', ')}</span>`,
+      `<span>${phones.length > 1 ? 'Phones' : 'Phone'} ${phones.map((phone) => text(formatPhoneForPrint(phone))).join(', ')}</span>`,
     );
   }
   if (view.seller.address) footer.push(`<span>${text(view.seller.address)}</span>`);

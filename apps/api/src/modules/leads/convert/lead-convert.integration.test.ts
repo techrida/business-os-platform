@@ -107,6 +107,8 @@ beforeEach(() => {
 
 const tag = () => randomUUID().replace(/-/g, '').slice(0, 8);
 const phone = () => `+97798${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+/** A Nepal PAN: nine digits. */
+const panOf = () => String(100_000_000 + Math.floor(Math.random() * 899_999_999));
 const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
 const customerBody = (extra: Record<string, unknown> = {}) => ({
   legalName: `Convert${tag()} Traders Pvt. Ltd.`,
@@ -178,12 +180,51 @@ const customerRow = async (id: string) => {
 };
 
 describe('POST /v1/leads/:id/convert', () => {
+  it('refuses a short PAN for a Nepal customer and keeps a foreign tax id loose (FX8)', async () => {
+    const lead = await qualifiedLead();
+    const contact = {
+      mode: 'create',
+      contact: { fullName: 'Sita Rai', email: `s.${tag()}@convert.example` },
+    };
+    const short = await convert(
+      lead.id,
+      createCustomerBody(customerBody({ panVatNo: '12345' }), { contact }),
+    );
+    expect(short.status, JSON.stringify(short.body)).toBe(400);
+    expect(errorOf(short.body).message).toContain('PAN');
+    const badPhone = await convert(
+      lead.id,
+      createCustomerBody(customerBody({ panVatNo: panOf() }), {
+        contact: {
+          mode: 'create',
+          contact: {
+            fullName: 'Sita Rai',
+            email: `s.${tag()}@convert.example`,
+            phone: '+9778123456789',
+          },
+        },
+      }),
+    );
+    expect(badPhone.status, JSON.stringify(badPhone.body)).toBe(400);
+    const abroad = await convert(
+      lead.id,
+      createCustomerBody(
+        customerBody({
+          panVatNo: `AAACH${tag()}C`,
+          address: { line1: 'MG Road', city: 'Bengaluru', country: 'IN' },
+        }),
+        { contact },
+      ),
+    );
+    expect(abroad.status, JSON.stringify(abroad.body)).toBe(201);
+  });
+
   it('creates the customer, the contact and the opportunity, and moves the lead to converted', async () => {
     const lead = await qualifiedLead();
     const email = `sita.${tag()}@convert.example`;
     const res = await convert(
       lead.id,
-      createCustomerBody(customerBody({ panVatNo: `pan-${tag()}` }), {
+      createCustomerBody(customerBody({ panVatNo: panOf() }), {
         contact: { mode: 'create', contact: { fullName: 'Sita Rai', email, phone: phone() } },
       }),
     );
@@ -408,7 +449,7 @@ describe('POST /v1/leads/:id/convert', () => {
   });
 
   it('never overrides a PAN/VAT match: 409 duplicate_pan_vat, and nothing is written', async () => {
-    const pan = `PAN-${tag()}`.toUpperCase();
+    const pan = panOf();
     const original = await qualifiedLead();
     const first = await convert(original.id, createCustomerBody(customerBody({ panVatNo: pan })));
     expect(first.status, JSON.stringify(first.body)).toBe(201);
