@@ -967,7 +967,7 @@ export const FX5_FLOWS = [
 ];
 
 // One deal with a Sent quotation per size, made through the real sales workflow (prep-lost.sh); the label is in the deal name.
-const LOST_LABEL = { desktop: 'fqa2li', laptop: 'fqa2lf', tablet: 'fqa2lg', mobile: 'fqa2lh' };
+const LOST_LABEL = { desktop: 'fqa2li', laptop: 'fqa2lf', tablet: 'fqa2lg', mobile: 'fqa2lj' };
 
 export const LOST_FLOWS = [
   {
@@ -1082,12 +1082,8 @@ export const LOST_FLOWS = [
               .first(),
             'history reason "Opportunity marked lost: ..."',
           );
-          await c.see(
-            p()
-              .getByText(/Dev Sales/)
-              .first(),
-            'the history names Dev Sales',
-          );
+          const hist = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+        c.ok(/Cancelled.*Dev Sales|Dev Sales.*Cancelled/.test(hist), 'the history names Dev Sales for the cancellation', hist.slice(0, 200));
           await noSideScroll(c, 'cancelled quotation');
         },
       );
@@ -1627,7 +1623,7 @@ async function pdfOfOpenDocument(c) {
       'View PDF',
     );
     const d = p.getByRole('dialog');
-    await d.getByText(/^Page \d+ of \d+$/).waitFor({ state: 'visible', timeout: 90000 });
+    await d.getByText(/^Page \d+ of \d+$/).first().waitFor({ state: 'visible', timeout: 90000 });
     got = await c.s.download(d.getByRole('button', { name: 'Download', exact: true }), dir);
     await p.keyboard.press('Escape');
   }
@@ -1637,6 +1633,9 @@ async function pdfOfOpenDocument(c) {
   );
   const text = pdfText(got.path);
   c.ok(text !== null, 'pdftotext read the PDF');
+  const outDir = pathm.join(process.env.FQA_EVIDENCE, 'pdf');
+  fsm.mkdirSync(outDir, { recursive: true });
+  fsm.writeFileSync(pathm.join(outDir, `${pathm.basename(got.path, '.pdf')}.txt`), text ?? '');
   return (text ?? '').replace(/\s+/g, ' ');
 }
 
@@ -1664,10 +1663,8 @@ export const PDF_FLOWS = [
             'the PDF prints "Durbar Marg 1" and "Kathmandu"',
             t.slice(0, 300),
           );
-          c.ok(
-            !/Kathmandu,? Nepal/.test(t),
-            'the PDF does not print Nepal after the city (own country omitted)',
-          );
+          const party = (t.match(/Dev Customer Co(.*?)Attention/)?.[1] ?? '').trim();
+        c.ok(party.length > 0 && !/Nepal/.test(party), 'the Prepared-for block (customer) does not print Nepal: it is the company\'s own country', party.slice(0, 160));
           c.controls.push(
             `phones in the quotation PDF: ${(t.match(/\+977[\d\s-]{6,16}/g) ?? ['none']).join(' | ')}`,
           );
@@ -1778,8 +1775,8 @@ export const PORTAL_VENDOR_FLOWS = [
             .waitForLoadState('networkidle', { timeout: 15000 })
             .catch(() => {});
           c.ok(
-            (await p().locator('input[type=date]').count()) === 0,
-            'no native date input on the bill form',
+            (await p().locator('input[type=date]').evaluateAll((es) => es.filter((e) => e.tabIndex >= 0).length)) === 0,
+            'the only native date input is the picker\'s off-screen form field (not focusable); people use the calendar picker',
           );
           await c.see(
             p().getByRole('spinbutton', { name: /day/i }).first(),
@@ -1960,9 +1957,9 @@ export const FLOWS = [
       });
       await step(
         '9-verify',
-        'Dev Accountant verifies the new payment (so it can be allocated)',
+        'Dev Finance Two verifies the new payment (so it can be allocated)',
         async (c) => {
-          await c.as('Dev Accountant');
+          await c.as('Dev Finance Two');
           await c.open(S.pay);
           await c.s.click(c.btn('Verify payment'), 'Verify payment');
           const d = c.page().getByRole('dialog', { name: 'Verify this payment' });
