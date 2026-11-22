@@ -1,7 +1,7 @@
-/* global document -- referenced inside page.evaluate callbacks, which run in the browser */
+/* global document, DataTransfer, ClipboardEvent -- referenced inside page.evaluate callbacks, which run in the browser */
 // FQA2 flows (final QA part 2): the areas the last round-5 units changed. Same shape as FQA1: each flow is
 // { area, flow, persona, steps(c, S, step) } and runs once per size with its own recorded context.
-import { goNav, noSideScroll, reachable, ledger, logIssue } from './fqa1-lib.mjs';
+import { goNav, noSideScroll, reachable, ledger } from './fqa1-lib.mjs';
 import { proofFile, search } from './fqa1-flows.mjs';
 import { realLogin } from '../lib/session.mjs';
 import { pdfText } from '../lib/support.mjs';
@@ -45,7 +45,7 @@ export const shown = async (loc) => {
     ''
   );
 };
-const phone = (c, n, what) =>
+const phone = (c, n) =>
   c
     .page()
     .getByRole('textbox', { name: `Phone ${n} number`, exact: true })
@@ -1083,7 +1083,11 @@ export const LOST_FLOWS = [
             'history reason "Opportunity marked lost: ..."',
           );
           const hist = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
-        c.ok(/Cancelled.*Dev Sales|Dev Sales.*Cancelled/.test(hist), 'the history names Dev Sales for the cancellation', hist.slice(0, 200));
+          c.ok(
+            /Cancelled.*Dev Sales|Dev Sales.*Cancelled/.test(hist),
+            'the history names Dev Sales for the cancellation',
+            hist.slice(0, 200),
+          );
           await noSideScroll(c, 'cancelled quotation');
         },
       );
@@ -1623,7 +1627,10 @@ async function pdfOfOpenDocument(c) {
       'View PDF',
     );
     const d = p.getByRole('dialog');
-    await d.getByText(/^Page \d+ of \d+$/).first().waitFor({ state: 'visible', timeout: 90000 });
+    await d
+      .getByText(/^Page \d+ of \d+$/)
+      .first()
+      .waitFor({ state: 'visible', timeout: 90000 });
     got = await c.s.download(d.getByRole('button', { name: 'Download', exact: true }), dir);
     await p.keyboard.press('Escape');
   }
@@ -1664,7 +1671,11 @@ export const PDF_FLOWS = [
             t.slice(0, 300),
           );
           const party = (t.match(/Dev Customer Co(.*?)Attention/)?.[1] ?? '').trim();
-        c.ok(party.length > 0 && !/Nepal/.test(party), 'the Prepared-for block (customer) does not print Nepal: it is the company\'s own country', party.slice(0, 160));
+          c.ok(
+            party.length > 0 && !/Nepal/.test(party),
+            "the Prepared-for block (customer) does not print Nepal: it is the company's own country",
+            party.slice(0, 160),
+          );
           c.controls.push(
             `phones in the quotation PDF: ${(t.match(/\+977[\d\s-]{6,16}/g) ?? ['none']).join(' | ')}`,
           );
@@ -1775,8 +1786,10 @@ export const PORTAL_VENDOR_FLOWS = [
             .waitForLoadState('networkidle', { timeout: 15000 })
             .catch(() => {});
           c.ok(
-            (await p().locator('input[type=date]').evaluateAll((es) => es.filter((e) => e.tabIndex >= 0).length)) === 0,
-            'the only native date input is the picker\'s off-screen form field (not focusable); people use the calendar picker',
+            (await p()
+              .locator('input[type=date]')
+              .evaluateAll((es) => es.filter((e) => e.tabIndex >= 0).length)) === 0,
+            "the only native date input is the picker's off-screen form field (not focusable); people use the calendar picker",
           );
           await c.see(
             p().getByRole('spinbutton', { name: /day/i }).first(),
@@ -1802,36 +1815,78 @@ export const PROC_FLOWS = [
       });
       await step('2-new-pr', 'Purchase requests > New purchase request opens', async (c) => {
         await goNav(c, S, 'Purchase requests', '/procurement/requests');
-        await c.s.click(p().getByRole('link', { name: /New purchase request/ }).first(), 'New purchase request');
+        await c.s.click(
+          p()
+            .getByRole('link', { name: /New purchase request/ })
+            .first(),
+          'New purchase request',
+        );
         await c.see(c.btn('Save draft'), 'button Save draft');
-        c.ok((await p().locator('input[type=date]').evaluateAll((es) => es.filter((e) => e.tabIndex >= 0).length)) === 0, 'the Needed-by date is a picker (no focusable native date input)');
+        c.ok(
+          (await p()
+            .locator('input[type=date]')
+            .evaluateAll((es) => es.filter((e) => e.tabIndex >= 0).length)) === 0,
+          'the Needed-by date is a picker (no focusable native date input)',
+        );
         await noSideScroll(c, '/procurement/requests/new');
       });
-      await step('3-finish-the-date', 'FX6: a half-cleared Needed-by date is not silently kept and nothing is saved', async (c) => {
-        const day = p().getByRole('spinbutton', { name: /day/i }).first();
-        const month = p().getByRole('spinbutton', { name: /month/i }).first();
-        const year = p().getByRole('spinbutton', { name: /year/i }).first();
-        for (const [seg, text] of [[day, '15'], [month, '12'], [year, '2027']]) {
-          await seg.click();
-          await p().keyboard.type(text, { delay: 80 });
-        }
-        c.controls.push(`segments before clearing: ${await day.innerText()}/${await month.innerText()}/${await year.innerText()}`);
-        await day.click();
-        await p().keyboard.press('Backspace');
-        await p().keyboard.press('Backspace');
-        c.controls.push(`segments after clearing the day: [${await day.innerText()}]/[${await month.innerText()}]/[${await year.innerText()}]`);
-        await c.s.fill(p().getByRole('textbox', { name: 'Description' }), 'FQA2 date check');
-        await c.s.click(c.btn('Save draft'), 'Save draft');
-        await p().waitForTimeout(1500);
-        c.controls.push(`segments after the refused save: [${await day.innerText()}]/[${await month.innerText()}]/[${await year.innerText()}]; page says: ${(await p().locator('main').innerText()).split('\n').filter((l) => /date|needed/i.test(l)).slice(0, 4).join(' | ')}`);
-        c.ok(await p().getByText(/Choose the date it is needed by/).first().isVisible(), 'a message under Needed by says to choose the date');
-        c.ok(new URL(p().url()).pathname === '/procurement/requests/new', 'nothing was saved');
-      });
+      await step(
+        '3-finish-the-date',
+        'FX6: a half-cleared Needed-by date is not silently kept and nothing is saved',
+        async (c) => {
+          const day = p().getByRole('spinbutton', { name: /day/i }).first();
+          const month = p().getByRole('spinbutton', { name: /month/i }).first();
+          const year = p().getByRole('spinbutton', { name: /year/i }).first();
+          for (const [seg, text] of [
+            [day, '15'],
+            [month, '12'],
+            [year, '2027'],
+          ]) {
+            await seg.click();
+            await p().keyboard.type(text, { delay: 80 });
+          }
+          c.controls.push(
+            `segments before clearing: ${await day.innerText()}/${await month.innerText()}/${await year.innerText()}`,
+          );
+          await day.click();
+          await p().keyboard.press('Backspace');
+          await p().keyboard.press('Backspace');
+          c.controls.push(
+            `segments after clearing the day: [${await day.innerText()}]/[${await month.innerText()}]/[${await year.innerText()}]`,
+          );
+          await c.s.fill(p().getByRole('textbox', { name: 'Description' }), 'FQA2 date check');
+          await c.s.click(c.btn('Save draft'), 'Save draft');
+          await p().waitForTimeout(1500);
+          c.controls.push(
+            `segments after the refused save: [${await day.innerText()}]/[${await month.innerText()}]/[${await year.innerText()}]; page says: ${(
+              await p().locator('main').innerText()
+            )
+              .split('\n')
+              .filter((l) => /date|needed/i.test(l))
+              .slice(0, 4)
+              .join(' | ')}`,
+          );
+          c.ok(
+            await p()
+              .getByText(/Choose the date it is needed by/)
+              .first()
+              .isVisible(),
+            'a message under Needed by says to choose the date',
+          );
+          c.ok(new URL(p().url()).pathname === '/procurement/requests/new', 'nothing was saved');
+        },
+      );
       await step(
         '4-finish-the-date-message',
         'FX6 guide: the red message under the picker reads "Finish the date"',
         async (c) => {
-          await c.see(p().getByText(/Finish the date/).first(), 'message "Finish the date"', 5000);
+          await c.see(
+            p()
+              .getByText(/Finish the date/)
+              .first(),
+            'message "Finish the date"',
+            5000,
+          );
         },
         { soft: true },
       );
@@ -1854,7 +1909,10 @@ export const ACCESS_FLOWS = [
         await c.s.click(p().getByRole('button', { name: 'Review changes' }), 'Review changes');
         const d = p().getByRole('dialog');
         await c.see(d, 'the review dialog');
-        await d.getByText(/Accountant/).first().waitFor({ state: 'visible', timeout: 20000 });
+        await d
+          .getByText(/Accountant/)
+          .first()
+          .waitFor({ state: 'visible', timeout: 20000 });
         c.controls.push(`review: ${(await d.innerText()).replace(/\s+/g, ' ').slice(0, 160)}`);
         const save = d.getByRole('button', { name: 'Save changes', exact: true });
         const understand = d.getByRole('checkbox', { name: /I understand/ });
@@ -1865,30 +1923,67 @@ export const ACCESS_FLOWS = [
       await step('1-as', 'Sign in as Dev Founder', async (c) => {
         await c.as('Dev Founder');
       });
-      await step('2-open', 'Settings > Access shows the areas with an Edit button each', async (c) => {
-        await c.open('/settings/access');
-        await c.see(p().getByRole('button', { name: 'Edit Payables' }), 'button Edit Payables');
-        await noSideScroll(c, '/settings/access');
-      });
-      await step('3-narrow', 'Narrow the Accountant to "Their own" payables, review and save', async (c) => {
-        S.accessChanged = true;
-        ledger({ kind: 'access grant: Accountant can see payables set to Their own (restored in step 5)', path: '/settings/access', size: S.size });
-        await change('Their own');
-      });
-      await step('4-last-changed', 'After a change, the page shows the "Last changed" line with View history (r4d 5.1)', async (c) => {
-        await p().reload({ waitUntil: 'domcontentloaded' });
-        await c.see(p().getByText(/Last changed/).first(), 'the "Last changed" line', 30000);
-        await c.see(p().getByRole('link', { name: /View history/ }).first(), 'link View history');
-      });
-      await step('5-restore', 'Restore: the Accountant sees Everything in payables again, and the editor reads it back', async (c) => {
-        await change('Everything');
-        S.accessChanged = false;
-        await p().reload({ waitUntil: 'domcontentloaded' });
-        await c.s.click(p().getByRole('button', { name: 'Edit Payables' }), 'Edit Payables');
-        const t = (await trigger().innerText()).trim();
-        c.ok(/Everything/.test(t), `Accountant payables reads Everything after the restore (${t})`);
-        await p().getByRole('button', { name: 'Discard' }).click().catch(() => {});
-      });
+      await step(
+        '2-open',
+        'Settings > Access shows the areas with an Edit button each',
+        async (c) => {
+          await c.open('/settings/access');
+          await c.see(p().getByRole('button', { name: 'Edit Payables' }), 'button Edit Payables');
+          await noSideScroll(c, '/settings/access');
+        },
+      );
+      await step(
+        '3-narrow',
+        'Narrow the Accountant to "Their own" payables, review and save',
+        async () => {
+          S.accessChanged = true;
+          ledger({
+            kind: 'access grant: Accountant can see payables set to Their own (restored in step 5)',
+            path: '/settings/access',
+            size: S.size,
+          });
+          await change('Their own');
+        },
+      );
+      await step(
+        '4-last-changed',
+        'After a change, the page shows the "Last changed" line with View history (r4d 5.1)',
+        async (c) => {
+          await p().reload({ waitUntil: 'domcontentloaded' });
+          await c.see(
+            p()
+              .getByText(/Last changed/)
+              .first(),
+            'the "Last changed" line',
+            30000,
+          );
+          await c.see(
+            p()
+              .getByRole('link', { name: /View history/ })
+              .first(),
+            'link View history',
+          );
+        },
+      );
+      await step(
+        '5-restore',
+        'Restore: the Accountant sees Everything in payables again, and the editor reads it back',
+        async (c) => {
+          await change('Everything');
+          S.accessChanged = false;
+          await p().reload({ waitUntil: 'domcontentloaded' });
+          await c.s.click(p().getByRole('button', { name: 'Edit Payables' }), 'Edit Payables');
+          const t = (await trigger().innerText()).trim();
+          c.ok(
+            /Everything/.test(t),
+            `Accountant payables reads Everything after the restore (${t})`,
+          );
+          await p()
+            .getByRole('button', { name: 'Discard' })
+            .click()
+            .catch(() => {});
+        },
+      );
     },
   },
 ];
@@ -1904,24 +1999,69 @@ export const INVITE_FLOWS = [
       await step('1-as', 'Sign in as Dev Sales (the customer owner)', async (c) => {
         await c.as('Dev Sales');
       });
-      await step('2-customer', 'Open a customer with approved verification and no portal user', async (c) => {
-        await goNav(c, S, 'Customers', '/customers');
-        await c.s.fill(p().getByRole('searchbox', { name: 'Search organizations' }), 'SCR-r3g-1440x0900');
-        await c.s.click(p().locator('main a[href^="/customers/"]').filter({ hasText: 'SCR-r3g-1440x0900' }).first(), 'the customer SCR-r3g');
-        await p().waitForURL((u) => /^\/customers\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 60000 });
-        await c.see(p().getByText(/Portal access/).first(), 'the Portal access line');
-        await c.see(p().getByRole('button', { name: 'Invite portal admin' }), 'button Invite portal admin', 30000);
-        await noSideScroll(c, 'customer page');
-      });
-      await step('3-invite', 'Invite portal admin: choose the contact and send; a confirmation shows', async (c) => {
-        await c.s.click(p().getByRole('button', { name: 'Invite portal admin' }), 'Invite portal admin');
-        const d = p().getByRole('dialog', { name: 'Invite portal admin' });
-        await c.see(d, 'the Invite portal admin dialog');
-        await c.s.choose(d.locator('button[aria-haspopup="listbox"]').filter({ hasText: 'Choose a contact' }), /./);
-        await d.getByRole('button', { name: 'Send invite', exact: true }).click();
-        await c.see(p().getByText(/invit/i).filter({ hasNotText: /Invite portal/ }).first(), 'an invitation confirmation', 45000);
-        ledger({ kind: 'portal invitation sent for customer SCR-r3g-1440x0900', path: p().url(), size: S.size });
-      });
+      await step(
+        '2-customer',
+        'Open a customer with approved verification and no portal user',
+        async (c) => {
+          await goNav(c, S, 'Customers', '/customers');
+          await c.s.fill(
+            p().getByRole('searchbox', { name: 'Search organizations' }),
+            'SCR-r3g-1440x0900',
+          );
+          await c.s.click(
+            p()
+              .locator('main a[href^="/customers/"]')
+              .filter({ hasText: 'SCR-r3g-1440x0900' })
+              .first(),
+            'the customer SCR-r3g',
+          );
+          await p().waitForURL((u) => /^\/customers\/[0-9a-f-]{36}$/.test(u.pathname), {
+            timeout: 60000,
+          });
+          await c.see(
+            p()
+              .getByText(/Portal access/)
+              .first(),
+            'the Portal access line',
+          );
+          await c.see(
+            p().getByRole('button', { name: 'Invite portal admin' }),
+            'button Invite portal admin',
+            30000,
+          );
+          await noSideScroll(c, 'customer page');
+        },
+      );
+      await step(
+        '3-invite',
+        'Invite portal admin: choose the contact and send; a confirmation shows',
+        async (c) => {
+          await c.s.click(
+            p().getByRole('button', { name: 'Invite portal admin' }),
+            'Invite portal admin',
+          );
+          const d = p().getByRole('dialog', { name: 'Invite portal admin' });
+          await c.see(d, 'the Invite portal admin dialog');
+          await c.s.choose(
+            d.locator('button[aria-haspopup="listbox"]').filter({ hasText: 'Choose a contact' }),
+            /./,
+          );
+          await d.getByRole('button', { name: 'Send invite', exact: true }).click();
+          await c.see(
+            p()
+              .getByText(/invit/i)
+              .filter({ hasNotText: /Invite portal/ })
+              .first(),
+            'an invitation confirmation',
+            45000,
+          );
+          ledger({
+            kind: 'portal invitation sent for customer SCR-r3g-1440x0900',
+            path: p().url(),
+            size: S.size,
+          });
+        },
+      );
       await step('4-mail', 'The invitation mail is in Mailpit (no link recorded)', async (c) => {
         const { findMail } = await import('../lib/support.mjs');
         const mail = await findMail(S.qa.cfg, 'subject:invit', 60000, { signal: c.s.signal });

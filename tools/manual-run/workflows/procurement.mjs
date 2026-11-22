@@ -551,7 +551,10 @@ export function workflow(cfg) {
               'Demo device; serial number required at receipt.',
             );
             await s.fill('Unit', 'pcs');
-            await s.fill(s.page.getByLabel('Quantity', { exact: true }).filter({ visible: true }), '2');
+            await s.fill(
+              s.page.getByLabel('Quantity', { exact: true }).filter({ visible: true }),
+              '2',
+            );
             await s.fill('Estimated unit price', '60000.00');
             const serials = s.page.getByRole('checkbox', {
               name: 'Record serial numbers at receipt',
@@ -1376,7 +1379,10 @@ export function workflow(cfg) {
             const form = await main(s);
             s.expect(form.includes(po), `the submission's order ${po} is linked`);
             s.expect(form.includes(VENDOR), `the vendor ${VENDOR} is kept`);
-            await s.fill(s.page.getByLabel('Quantity', { exact: true }).filter({ visible: true }), '2');
+            await s.fill(
+              s.page.getByLabel('Quantity', { exact: true }).filter({ visible: true }),
+              '2',
+            );
             await s.fill('Unit price', '50000.00');
             // The guide's "Tax code VAT13" is the "VAT" field, option "VAT 13%".
             await s.choose(s.select('line:0:taxCodeId', { byName: true }), /VAT\s*13/);
