@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { EMPTY_COMPANY_PROFILE } from '@bos/contracts';
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { click, mountForm, typeKeys } from '@/test/form-interactions';
@@ -77,6 +78,21 @@ describe('CompanyEditor contact boxes (FX8)', () => {
     });
     const preview = editor.container.querySelector('aside')?.textContent ?? '';
     expect(preview).toContain('+977 9812345678 · +977 1-4123456 · 01-4000000');
+  });
+
+  it('posts an unprefixed stored number as stored, never as +digits', async () => {
+    const editor = await mountEditor({ phones: ['4123456'], panVatNo: null });
+    expect(editor.hidden('phone').map((i) => i.value)).toEqual(['4123456']);
+  });
+
+  it('keeps the other rows edit state when a row is removed', async () => {
+    const editor = await mountEditor({ phones: ['+97714123456', ''], panVatNo: null });
+    await typeKeys(editor.box('Phone number 2'), '981234567');
+    await click(editor.container.querySelector('[aria-label="Remove phone number 1"]'));
+    const box = editor.box('Phone number 1');
+    expect(box.value).toBe('981234567');
+    await act(() => Promise.resolve(box.blur()));
+    expect(box.getAttribute('aria-invalid')).toBe('true');
   });
 
   it('keeps the remaining numbers when the first is removed', async () => {

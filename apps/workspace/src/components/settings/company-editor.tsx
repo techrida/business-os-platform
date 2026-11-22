@@ -203,8 +203,9 @@ export function CompanyEditor({
       }),
     [],
   );
-  // The phone rows are keyed by position; a removal bumps this so the rows below it do not inherit the removed row's box.
-  const [phoneGeneration, setPhoneGeneration] = useState(0);
+  // Each phone row keeps its own key, so removing one row leaves the others' boxes (and their edit state) alone.
+  const [phoneIds, setPhoneIds] = useState<(number | string)[]>([]);
+  const nextPhoneId = useRef(0);
   const dirty = (card: keyof CompanyDrafts) =>
     edits[card] !== undefined && !sameDraft(edits[card], base[card]);
 
@@ -214,6 +215,7 @@ export function CompanyEditor({
   const contact = draft.contact;
   const signatory = draft.signatory;
   const phoneRows = contact.phones.length === 0 ? [''] : contact.phones;
+  const rowKeys = phoneRows.map((_, i) => phoneIds[i] ?? `row-${i}`);
   const setContact = (patch: Partial<typeof contact>) => edit('contact', { ...contact, ...patch });
 
   // The undo icon is drawn only while what is SAVED for the card differs from empty. A reset that
@@ -396,7 +398,7 @@ export function CompanyEditor({
               <fieldset className={styles.phones}>
                 <legend className={styles.legend}>Phone numbers</legend>
                 {phoneRows.map((phone, index) => (
-                  <div key={`${phoneGeneration}-${index}`} className={styles.phoneRow}>
+                  <div key={rowKeys[index]} className={styles.phoneRow}>
                     <PhoneInput
                       name="phone"
                       aria-label={`Phone number ${index + 1}`}
@@ -410,7 +412,7 @@ export function CompanyEditor({
                       size="small"
                       aria-label={`Remove phone number ${index + 1}`}
                       onClick={() => {
-                        setPhoneGeneration((g) => g + 1);
+                        setPhoneIds(rowKeys.filter((_, i) => i !== index));
                         setContact({ phones: removePhone(phoneRows, index) });
                       }}
                     >
@@ -428,7 +430,10 @@ export function CompanyEditor({
                   size="small"
                   className={styles.addPhone}
                   disabled={!canAddPhone(phoneRows)}
-                  onClick={() => setContact({ phones: addPhone(phoneRows) })}
+                  onClick={() => {
+                    setPhoneIds([...rowKeys, nextPhoneId.current++]);
+                    setContact({ phones: addPhone(phoneRows) });
+                  }}
                 >
                   Add phone number
                 </Button>

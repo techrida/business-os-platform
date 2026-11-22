@@ -36,6 +36,11 @@ export interface DigitRules {
   cleanPaste(pasted: string, whole: boolean): string;
   /** A reason these digits may not be typed, or null (a leading 0 where a country code is shown). */
   refuseDigits?(digits: string): string | null;
+  /**
+   * True for a stored value whose digits the box can show but that must keep posting as stored until the user edits
+   * it, because posting the box's own form would change what the value means (an unprefixed `4123456` is not `+4123456`).
+   */
+  keepsStored?(stored: string): boolean;
   /** The reason typing past the limit is refused. */
   tooLong(digits: string): string;
   /** What is wrong with the digits as a finished value, or null. Empty is the caller's `required`. */
@@ -120,7 +125,19 @@ export function DigitBox({
 
   /** True when the box holds something typing could not produce (letters, too many digits). */
   const foreign = (shown: string) => !DIGITS.test(shown) || shown.length > rules.maxFor(shown);
-  const postedOf = (shown: string) => (foreign(shown) ? shown : rules.post(shown));
+  // A stored value the box would rewrite into a different number keeps posting as stored until it is edited.
+  const [asStored] = useState(() => {
+    const raw = (controlled ? value : defaultValue) ?? '';
+    return raw !== '' && rules.keepsStored?.(raw) === true
+      ? { shown: rules.parse(raw), raw }
+      : null;
+  });
+  const postedOf = (shown: string) =>
+    asStored !== null && shown === asStored.shown
+      ? asStored.raw
+      : foreign(shown)
+        ? shown
+        : rules.post(shown);
 
   // A controlled parent that holds a different value wins: it refused the edit or set a new one.
   if (controlled && postedOf(text) !== value) {

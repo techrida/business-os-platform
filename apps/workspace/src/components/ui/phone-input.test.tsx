@@ -325,6 +325,15 @@ describe('PhoneInput, drafts and pastes that used to slip through', () => {
     expect(reached).toHaveBeenCalledWith(false);
   });
 
+  it('posts a stored number without a plus as stored, and as +digits once edited', async () => {
+    const phone = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="4123456" />,
+    );
+    expect(phone.hidden()).toBe('4123456');
+    await typeKeys(phone.box(), '8');
+    expect(phone.hidden()).toBe('+41234568');
+  });
+
   it('keeps a stored short Nepal number untouched after another country is typed in and left', async () => {
     const flags: boolean[] = [];
     const phone = await mount(

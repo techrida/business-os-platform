@@ -81,6 +81,7 @@ const NEPAL_RULES: DigitRules = {
 
 const INTERNATIONAL_RULES: DigitRules = {
   noun: 'phone number',
+  keepsStored: (stored) => !stored.startsWith('+'),
   parse: (posted) => {
     if (!posted.startsWith('+')) return posted;
     const bare = posted.slice(1).replace(NOISE, '');
