@@ -2963,6 +2963,29 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(given).toMatchObject({ overrideCovers: true, override: { orderValue: '22600.00' } });
     });
 
+    it('answers 409 to a repeat override for another order value, and a repeat at the same value with the override as it stands (R5 FX5)', async () => {
+      const q = await overriddenDeal();
+      asFinance();
+      // The override covers 22,600.00; a second one claiming Finance reviewed 5,000.00 has not reviewed this order.
+      expect(await statusOf(overrideOf(q, 'Reviewed the small order', '5000.00'))).toEqual({
+        status: 409,
+        code: 'conflict',
+      });
+      const again = CreditHoldDtoSchema.parse(
+        await overrideOf(q, 'Approved the same order again', '22600.00'),
+      );
+      expect(again).toMatchObject({
+        overrideCovers: true,
+        override: { reason: 'Director approved the order', orderValue: '22600.00' },
+      });
+      const { rows } = await ownerPool.query(
+        `SELECT 1 FROM audit.audit_events
+          WHERE tenant_id = $1 AND action = 'opportunity.credit_overridden' AND entity_id = $2`,
+        [f.tenantId, q.opportunityId],
+      );
+      expect(rows).toHaveLength(1);
+    });
+
     it('treats an override with no recorded value as covering nothing', async () => {
       const q = await overriddenDeal();
       await setRecordedValue(q.opportunityId, null);
