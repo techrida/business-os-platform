@@ -21,6 +21,7 @@ describe.each([
     file: 'src/app/(app)/procurement/requests/_components/pr-lines.module.css',
     container: /@container \(min-width: (\d+)px\) \{/,
     numeric: [3, 4],
+    sideColumns: 40 + 40,
     columns: /\.headFields,\n\s+\.fields \{\n\s+grid-template-columns:([^;]+);/,
   },
   {
@@ -28,9 +29,10 @@ describe.each([
     file: 'src/app/(app)/invoices/new/lines-editor.module.css',
     container: /@container \(min-width: (\d+)px\) \{/,
     numeric: [2, 3],
+    sideColumns: 56 + 40,
     columns: /\.invoice \.fields \{[^}]*grid-template-columns:([^;]+);/,
   },
-])('$name line items', ({ file, container, columns, numeric }) => {
+])('$name line items', ({ file, container, columns, numeric, sideColumns }) => {
   const css = read(file);
 
   it('gives every table column a floor, so no column can shrink to nothing', () => {
@@ -43,8 +45,8 @@ describe.each([
   it('switches to the table on a card wide enough for the floors, not on the window', () => {
     const width = Number(container.exec(css)?.[1]);
     const floors = columnMinimums(columns.exec(css)?.[1] ?? '');
-    // The floors, the four 16px gaps, and the line number and remove columns beside the fields.
-    const needed = floors.reduce((sum, rem) => sum + rem * 16, 0) + 4 * 16 + 2 * 40 + 2 * 12;
+    // The floors, the four 16px gaps, and the line number and remove columns (and their gaps) beside the fields.
+    const needed = floors.reduce((sum, rem) => sum + rem * 16, 0) + 4 * 16 + sideColumns + 2 * 12;
     expect(width).toBeGreaterThanOrEqual(needed);
     expect(css).not.toMatch(/@media \(min-width: \d+px\) \{\s*\.invoice \.head/);
   });
