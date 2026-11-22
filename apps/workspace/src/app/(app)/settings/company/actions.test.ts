@@ -103,7 +103,7 @@ describe('saveCompanyCardAction', () => {
       IDLE,
       form({
         card: 'contact',
-        phone: ['9800000000', ''],
+        phone: ['+9779800000000', ''],
         email: 'b@acme.test',
         website: 'acme.test',
       }),
@@ -111,7 +111,7 @@ describe('saveCompanyCardAction', () => {
     expect(written()).toEqual([
       [
         'entity.profile',
-        { ...stored, phones: ['9800000000'], email: 'b@acme.test', website: 'acme.test' },
+        { ...stored, phones: ['+9779800000000'], email: 'b@acme.test', website: 'acme.test' },
       ],
     ]);
   });
@@ -142,7 +142,7 @@ describe('saveCompanyCardAction', () => {
     const withLogo: CompanyProfile = { ...stored, logoDocumentId: DOC_ID, legacyLogoDataUrl: PNG };
     const saves: Record<string, string | string[]>[] = [
       { card: 'identity', displayName: 'Acme Pvt', panVatNo: '' },
-      { card: 'contact', phone: ['9800000000'], email: '', website: '' },
+      { card: 'contact', phone: ['+9779800000000'], email: '', website: '' },
       { card: 'signatory', name: 'Ram', title: 'Director' },
       // A smuggled logo field is ignored: only the card's own fields are read.
       { card: 'contact', phone: [], email: '', website: '', logoDocumentId: '', logo: '' },
@@ -183,7 +183,7 @@ describe('saveCompanyCardAction', () => {
       form({ card: 'identity', displayName: '', panVatNo: 'ab' }),
     );
     expect(result.status).toBe('error');
-    expect(result.fieldErrors).toEqual({ panVatNo: 'Use 5 to 20 letters, digits or hyphens.' });
+    expect(result.fieldErrors).toEqual({ panVatNo: 'A PAN is exactly 9 digits.' });
     expect(putSetting).not.toHaveBeenCalled();
   });
 
