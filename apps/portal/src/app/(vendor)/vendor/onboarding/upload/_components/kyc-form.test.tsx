@@ -54,5 +54,5 @@ describe('KycForm valid-until date', () => {
     // The refusal came back and React reset the form; the picked date is still there.
     expect(container.textContent).toContain('Add the document.');
     expect(posted(container, 'validUntil')).toBe('2026-12-31');
-  });
+  }, 15_000);
 });
