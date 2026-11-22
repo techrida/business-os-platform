@@ -571,7 +571,11 @@ describe('ReviseService.revise on a Lost deal', () => {
    * A quotation on its own deal whose Sent version has Expired: the Lost cascade cancels only live versions, so an
    * expired one stays revisable unless revise itself checks the deal.
    */
-  const expiredOnOwnDeal = async (): Promise<{ q: QuotationDto; dealId: string; version: number }> => {
+  const expiredOnOwnDeal = async (): Promise<{
+    q: QuotationDto;
+    dealId: string;
+    version: number;
+  }> => {
     const [deal] = await withTx(db, scopeA, systemActor('test'), (tx) =>
       tx
         .insert(opportunities)
