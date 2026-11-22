@@ -156,9 +156,12 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       const selects = page.locator('input[type="hidden"][name="stage"]');
       const count = await selects.count();
       expect(count).toBeGreaterThan(0);
-      // No Move select anywhere lists Won or Quotation Sent. Each list is opened to read it.
+      // No Move select anywhere lists Won or Quotation Sent. Each card's Move control is a closed
+      // <details>: open it first, then read its list.
       const options: string[] = [];
       for (let i = 0; i < count; i += 1) {
+        const move = page.locator('details > summary', { hasText: /^Move/ }).nth(i);
+        await move.click();
         options.push(...(await optionLabels(selectByName(page, 'stage').nth(i))));
       }
       expect(options.some((o) => /^(Won|Quotation Sent)/.test(o))).toBe(false);
