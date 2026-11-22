@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { hasInnerSpace, hasStrayComma, plainAmount } from './plain-amount.js';
+import {
+  canonicalAmount,
+  hasInnerSpace,
+  hasStrayComma,
+  plainAmount,
+  postedAmount,
+} from './plain-amount.js';
 
 describe('plainAmount', () => {
   it.each([
@@ -55,5 +61,22 @@ describe('plainAmount', () => {
 
   it('does not call a trimmed end an inner space', () => {
     expect(hasInnerSpace('  1500  ')).toBe(false);
+  });
+});
+
+describe('canonicalAmount and postedAmount (R5 EF2)', () => {
+  it('posts the same text a hydrated input posts', () => {
+    expect(canonicalAmount('1250.00')).toBe('1250');
+    expect(canonicalAmount('1250.50')).toBe('1250.5');
+    expect(canonicalAmount('1250.')).toBe('1250');
+    expect(canonicalAmount('0.00')).toBe('0');
+    expect(canonicalAmount('100')).toBe('100');
+    expect(canonicalAmount('abc')).toBe('abc');
+  });
+
+  it('cleans grouped, padded text typed before the page hydrated', () => {
+    expect(postedAmount('12,50,000.00')).toBe('1250000');
+    expect(postedAmount(' 1,250.50 ')).toBe('1250.5');
+    expect(postedAmount('1,5')).toBe('1,5');
   });
 });

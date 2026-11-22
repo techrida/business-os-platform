@@ -4,9 +4,7 @@ import {
   type Currency,
   type PrRequestType,
 } from '@bos/contracts';
-import { NO_SPACES } from '@bos/locale';
-
-import { storedNumberText } from '../../_lib/stored-number';
+import { NO_SPACES, postedAmount, storedNumberText } from '@bos/locale';
 
 /**
  * Pure helpers for the purchase request form: read what was typed, check it with the contracts'
@@ -213,8 +211,8 @@ export function parsePrValues(input: PrValues): ParsedPr {
       ...(trim(l.specification) !== '' ? { specification: trim(l.specification) } : {}),
       ...(l.requiresSerials ? { requiresSerials: true } : {}),
       uom: trim(l.uom),
-      quantity: trim(l.quantity),
-      estimatedUnitPrice: trim(l.estimatedUnitPrice),
+      quantity: postedAmount(l.quantity),
+      estimatedUnitPrice: postedAmount(l.estimatedUnitPrice),
     })),
   };
   const parsed = CreatePurchaseRequestBodySchema.safeParse(candidate);

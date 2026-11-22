@@ -56,7 +56,7 @@ describe('parseAmend', () => {
       body: {
         reason: 'Vendor raised the price',
         paymentTermsDays: 45,
-        lines: [{ poLineId: A, unitPrice: '1100.00' }],
+        lines: [{ poLineId: A, unitPrice: '1100' }],
       },
     });
   });
@@ -125,6 +125,56 @@ describe('parseAmend', () => {
       expect(r.errors[`${A}.quantity`]).toBe('Remove the space inside the number.');
       expect(r.errors[`${A}.unitPrice`]).toBe('Remove the space inside the number.');
       expect(r.errors['paymentTermsDays']).toBe('Remove the space inside the number.');
+    }
+  });
+
+  it('sends the same body for grouped or zero-padded text as for the plain number', () => {
+    // A form posted before hydration carries the typed text; a hydrated number box posts the plain number.
+    const typed = parseAmend(
+      {
+        ...same,
+        lines: {
+          [A]: { quantity: '1,500.00', unitPrice: '12,50,000.00' },
+          [B]: { quantity: '10.50', unitPrice: '250.50' },
+        },
+      },
+      current,
+      30,
+    );
+    const plain = parseAmend(
+      {
+        ...same,
+        lines: {
+          [A]: { quantity: '1500', unitPrice: '1250000' },
+          [B]: { quantity: '10.5', unitPrice: '250.5' },
+        },
+      },
+      current,
+      30,
+    );
+    expect(typed).toEqual({
+      ok: true,
+      body: {
+        reason: 'Vendor raised the price',
+        lines: [
+          { poLineId: A, quantity: '1500', unitPrice: '1250000' },
+          { poLineId: B, quantity: '10.5' },
+        ],
+      },
+    });
+    expect(typed).toEqual(plain);
+  });
+
+  it('still refuses a decimal comma and a space inside the number', () => {
+    const r = parseAmend(
+      { ...same, lines: { ...same.lines, [A]: { quantity: '1,5', unitPrice: '10 50' } } },
+      current,
+      30,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors[`${A}.quantity`]).toBe('Use a number with up to 4 decimal places.');
+      expect(r.errors[`${A}.unitPrice`]).toBe('Remove the space inside the number.');
     }
   });
 });

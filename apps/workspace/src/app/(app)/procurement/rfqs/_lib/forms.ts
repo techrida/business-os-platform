@@ -11,7 +11,7 @@ import {
   type RecordQuotationBody,
   type ScoreQuotationBody,
 } from '@bos/contracts';
-import { NO_SPACES } from '@bos/locale';
+import { NO_SPACES, postedAmount } from '@bos/locale';
 
 /**
  * Pure helpers for the RFQ forms: read what was typed, check it with the contracts' schemas and
@@ -267,8 +267,8 @@ export function parseQuoteValues(input: QuoteValues): ParsedQuote {
     return [
       {
         prLineId: trim(l.prLineId),
-        quantity: trim(l.quantity),
-        unitPrice: trim(l.unitPrice),
+        quantity: postedAmount(l.quantity),
+        unitPrice: postedAmount(l.unitPrice),
         taxCodeId: trim(l.taxCodeId),
       },
     ];

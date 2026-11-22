@@ -1,5 +1,5 @@
 import type { VendorBillLineBody, WithholdingCode } from '@bos/contracts';
-import { Dec, hasInnerSpace, NO_SPACES } from '@bos/locale';
+import { Dec, hasInnerSpace, NO_SPACES, postedAmount } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
 
@@ -70,8 +70,8 @@ export function parseBillLines(
 
   rows.forEach((row, i) => {
     if (isBlank(row)) return;
-    const quantity = row.quantity.trim();
-    const unitPrice = row.unitPrice.trim();
+    const quantity = postedAmount(row.quantity);
+    const unitPrice = postedAmount(row.unitPrice);
     const accountId = row.accountId.trim();
     const taxCodeId = row.taxCodeId.trim();
     const tdsCodeId = row.tdsCodeId.trim();

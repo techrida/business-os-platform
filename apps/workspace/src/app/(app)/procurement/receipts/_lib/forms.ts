@@ -5,7 +5,7 @@ import {
   type ConfirmReceiptBody,
   type ReceiptKind,
 } from '@bos/contracts';
-import { NO_SPACES } from '@bos/locale';
+import { NO_SPACES, postedAmount } from '@bos/locale';
 
 import { toScaled, type Errors } from '../../orders/_lib/forms';
 
@@ -89,7 +89,7 @@ export function parseReceipt(
       const v = values.lines[line.poLineId];
       if (v === undefined) continue;
       const key = (field: string): string => `${line.poLineId}.${field}`;
-      const quantity = v.quantity.trim();
+      const quantity = postedAmount(v.quantity);
       const serialNos = splitSerials(v.serials);
 
       if (quantity === '') {

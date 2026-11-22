@@ -17,7 +17,7 @@ import {
   shortCloseAction,
 } from '../actions';
 import { qtyText } from '../_lib/model';
-import { storedNumberText } from '../../_lib/stored-number';
+import { storedNumberText } from '@bos/locale';
 import styles from '../orders.module.css';
 
 import { ProcurementActionDialog } from '../../action-dialog';

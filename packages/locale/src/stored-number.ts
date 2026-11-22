@@ -1,4 +1,4 @@
-import { Dec } from '@bos/locale';
+import { Dec } from './money.js';
 
 /**
  * A stored decimal as the text an editor starts from, so the box shows and posts the same number without the

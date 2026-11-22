@@ -1,7 +1,5 @@
 import type { AmendPurchaseOrderBody } from '@bos/contracts';
-import { NO_SPACES } from '@bos/locale';
-
-import { storedNumberText } from '../../_lib/stored-number';
+import { NO_SPACES, postedAmount, storedNumberText } from '@bos/locale';
 
 /**
  * Checks of the purchase order forms, before anything is sent. Pure. Amounts are compared as scaled
@@ -59,8 +57,9 @@ export function parseAmend(
   for (const line of current) {
     const v = values.lines[line.id];
     if (v === undefined) continue;
-    const quantity = v.quantity.trim();
-    const unitPrice = v.unitPrice.trim();
+    // The text a hydrated box posts: grouped or padded text typed before hydration reads the same.
+    const quantity = postedAmount(v.quantity);
+    const unitPrice = postedAmount(v.unitPrice);
     const q = toScaled(quantity, 4);
     const p = toScaled(unitPrice, 2);
     let bad = false;

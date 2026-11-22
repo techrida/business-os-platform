@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { PositiveDecimalString } from '@bos/contracts';
-import { NO_SPACES, hasInnerSpace } from '@bos/locale';
+import { NO_SPACES, hasInnerSpace, postedAmount } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 
 import { allocatePayment, deallocate } from '@/lib/api-receivables';
@@ -86,11 +86,13 @@ export async function allocateAction(prev: AllocateState, form: FormData): Promi
     if (!name.startsWith(LINE_PREFIX) || typeof value !== 'string') continue;
     const invoiceId = name.slice(LINE_PREFIX.length);
     if (!UUID.test(invoiceId)) return { key: prev.key, ...BROKEN };
-    const amount = value.trim();
-    if (amount === '') continue;
+    const typed = value.trim();
+    if (typed === '') continue;
+    // Grouped or padded text posted before hydration ("1,500.00") becomes what a hydrated box posts ("1500").
+    const amount = postedAmount(typed);
     if (PositiveDecimalString.safeParse(amount).success) lines.push({ invoiceId, amount });
     // "10 50" is not 1050; the digits look fine to the person, so name the space.
-    else wrong[invoiceId] = hasInnerSpace(amount) ? NO_SPACES : AMOUNT_WORDS;
+    else wrong[invoiceId] = hasInnerSpace(typed) ? NO_SPACES : AMOUNT_WORDS;
   }
 
   const session = await requireStaffSession(`/payments/${paymentId}`);

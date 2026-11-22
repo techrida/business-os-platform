@@ -4,7 +4,7 @@ import {
   type PaymentRequestStatus,
   type RequestPaymentBody,
 } from '@bos/contracts';
-import { Dec, formatKathmandu } from '@bos/locale';
+import { Dec, formatKathmandu, postedAmount } from '@bos/locale';
 
 import type { PaymentRequestItem } from '@/lib/api-payables';
 
@@ -92,7 +92,8 @@ export function readPaymentRequestForm(form: FormData): {
     Number.isInteger(count) && count >= 1 && count <= MAX_REQUEST_ITEMS ? count : null;
   const allocations = Array.from({ length: lineCount ?? 0 }, (_, i) => ({
     openItemId: text(`allocation:${i}:openItemId`),
-    amount: text(`allocation:${i}:amount`),
+    // The text a hydrated box posts, so grouped or padded text from before hydration reads the same.
+    amount: postedAmount(text(`allocation:${i}:amount`)),
   }));
   const purchaseOrderId = text('purchaseOrderId');
   return {

@@ -161,10 +161,35 @@ describe('the quantity shape follows the contract limits', () => {
   });
 
   it('refuses a 15th whole digit or a 5th decimal, as the contract does', () => {
-    for (const q of ['123456789012345', '1.00001', '1,250', '.5']) {
+    for (const q of ['123456789012345', '1.00001', '1,5', '10,50', '.5']) {
       expect(decimalPattern(QUANTITY_LIMITS).test(q)).toBe(false);
       expect(quantityError(q)).toMatch(/up to 4 decimal places/);
     }
+  });
+
+  it('sends the same body for grouped or zero-padded text as for the plain number', () => {
+    // A form posted before hydration carries the typed text; a hydrated number box posts the plain number.
+    const body = (quantity: string) => {
+      const r = parseReceipt(PO, values({}, { [PLAIN]: { quantity } }), big);
+      if (!r.ok) throw new Error(`refused ${quantity}: ${JSON.stringify(r.errors)}`);
+      return r.body;
+    };
+    for (const [typed, plain] of [
+      ['1,500.00', '1500'],
+      ['10.50', '10.5'],
+      ['12,50,000.00', '1250000'],
+    ] as const) {
+      expect(body(typed)).toEqual(body(plain));
+      expect(body(typed).lines).toEqual([{ poLineId: PLAIN, quantity: plain }]);
+    }
+  });
+
+  it('caps grouped text by its value: 10.0000 fits a 10 kg line, 1,000 does not', () => {
+    const r = parseReceipt(PO, values({}, { [PLAIN]: { quantity: '10.0000' } }), lines);
+    expect(r.ok && r.body.lines).toEqual([{ poLineId: PLAIN, quantity: '10' }]);
+    expect(fail(values({}, { [PLAIN]: { quantity: '1,000' } }))[`${PLAIN}.quantity`]).toMatch(
+      /Only 10 kg/,
+    );
   });
 
   it('says to remove a space inside the number', () => {

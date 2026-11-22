@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { storedNumberText } from './stored-number';
+import { storedNumberText } from './stored-number.js';
 
 describe('storedNumberText', () => {
   it('drops the extra zeros of a stored value', () => {
