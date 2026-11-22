@@ -95,6 +95,13 @@ describe('CompanyEditor contact boxes (FX8)', () => {
     expect(box.getAttribute('aria-invalid')).toBe('true');
   });
 
+  it('mounts a fresh Nepal box when the only international number is removed', async () => {
+    const editor = await mountEditor({ phones: ['+14155552671'], panVatNo: null });
+    await click(editor.container.querySelector('[aria-label="Remove phone number 1"]'));
+    await typeKeys(editor.box('Phone number 1'), '9812345678');
+    expect(editor.hidden('phone').map((i) => i.value)).toEqual(['+9779812345678']);
+  });
+
   it('keeps the remaining numbers when the first is removed', async () => {
     const editor = await mountEditor({
       phones: ['+9779812345678', '+97714123456'],

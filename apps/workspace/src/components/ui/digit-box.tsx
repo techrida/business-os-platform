@@ -123,9 +123,11 @@ export function DigitBox({
   const [notice, setNotice] = useState({ text: '', seq: 0 });
   const [, setCaretTick] = useState(0);
 
+  const touched = useRef(edited ?? false);
+
   /** True when the box holds something typing could not produce (letters, too many digits). */
   const foreign = (shown: string) => !DIGITS.test(shown) || shown.length > rules.maxFor(shown);
-  // A stored value the box would rewrite into a different number keeps posting as stored until it is edited.
+  // A stored value the box would rewrite into a different number keeps posting as stored until the user makes an accepted edit (even one that ends on the same digits).
   const [asStored] = useState(() => {
     const raw = (controlled ? value : defaultValue) ?? '';
     return raw !== '' && rules.keepsStored?.(raw) === true
@@ -133,7 +135,7 @@ export function DigitBox({
       : null;
   });
   const postedOf = (shown: string) =>
-    asStored !== null && shown === asStored.shown
+    asStored !== null && !touched.current && shown === asStored.shown
       ? asStored.raw
       : foreign(shown)
         ? shown
@@ -156,7 +158,6 @@ export function DigitBox({
   });
 
   // True once the user has edited the box. A stored value nobody touched is never blocked at submit.
-  const touched = useRef(edited ?? false);
   const pendingCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
     const input = inputRef.current;

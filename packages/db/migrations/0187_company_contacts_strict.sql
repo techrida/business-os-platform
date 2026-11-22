@@ -44,7 +44,7 @@ LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE
 	-- `977 1 412345`: the country code is recognised while the separator after it is still there.
 	t text := regexp_replace(
-		regexp_replace(raw, '^[[:space:]]*977(?=[[:space:].()-])', '+977'), '[[:space:]().-]', '', 'g');
+		regexp_replace(raw, '^[[:space:](]*977(?=[[:space:].()-])', '+977'), '[[:space:]().-]', '', 'g');
 	nat_no text;
 BEGIN
 	IF t ~ '^\+[1-9][0-9]{6,14}$' AND (t NOT LIKE '+977%' OR pg_temp.fx8_nepal_national_ok(substr(t, 5))) THEN
