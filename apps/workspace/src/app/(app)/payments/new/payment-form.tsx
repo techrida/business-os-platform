@@ -7,7 +7,7 @@ import {
   PAYMENT_METHODS,
   type PaymentMethod,
 } from '@bos/contracts';
-import { amountInWords } from '@bos/locale';
+import { amountInWords, Dec, postedAmount } from '@bos/locale';
 import {
   type FormEvent,
   type ReactNode,
@@ -360,6 +360,12 @@ export function PaymentForm({
     reviewCurrency !== undefined && /^\d+(\.\d+)?$/.test(amount)
       ? amountInWords(amount, reviewCurrency, numberSystems[reviewCurrency])
       : null;
+  // Tax withheld changes what the payment settles, so the review shows it (and its code) when one is entered.
+  const withheld = postedAmount(tds);
+  const reviewWithheld =
+    reviewCurrency !== undefined && /^\d+(\.\d+)?$/.test(withheld) && new Dec(withheld).gt(0)
+      ? money(withheld, reviewCurrency, numberSystems)
+      : null;
   const reviewFacts = [
     { key: 'payer', label: 'Received from', value: reviewPayer },
     { key: 'amount', label: 'Amount', value: reviewAmount },
@@ -377,6 +383,16 @@ export function PaymentForm({
       label: 'Bank reference',
       value: bankReference.trim() !== '' ? bankReference : 'None given',
     },
+    ...(reviewWithheld !== null
+      ? [
+          { key: 'tdsWithheld', label: 'Tax withheld', value: reviewWithheld },
+          {
+            key: 'withholdingCode',
+            label: 'Withholding code',
+            value: code.trim() !== '' ? code.trim() : 'None given',
+          },
+        ]
+      : []),
   ];
 
   return (
