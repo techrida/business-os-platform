@@ -2,8 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ALLOWED_MIME,
+  countryName,
+  formatAddressLines,
+  formatPartyPhoneForPrint,
   MAX_UPLOAD_BYTES,
   type BankAccountStatus,
+  type CountryCode,
   type VendorAccountDto,
   type VendorBankAccountDto,
   type VendorDto,
@@ -102,11 +106,13 @@ function Contacts({
   result,
   here,
   vendorId,
+  vendorCountry,
   mayWrite,
 }: {
   result: PromiseSettledResult<VendorContact[]>;
   here: string;
   vendorId: string;
+  vendorCountry: CountryCode;
   mayWrite: boolean;
 }) {
   return (
@@ -160,9 +166,10 @@ function Contacts({
                   )}
                 </Td>
                 <Td nowrap>
-                  {c.phone !== null ? (
-                    <a href={`tel:${c.phone}`} className={styles.numeric}>
-                      {c.phone}
+                  {/* The API lists the primary number first. */}
+                  {c.phones[0] !== undefined ? (
+                    <a href={`tel:${c.phones[0].e164}`} className={styles.numeric}>
+                      {formatPartyPhoneForPrint(c.phones[0].e164)}
                     </a>
                   ) : (
                     <span className={styles.quiet}>Not set</span>
@@ -177,7 +184,11 @@ function Contacts({
         <div className={styles.addBlock}>
           <h3 className={styles.subhead}>Add a contact</h3>
           {/* One key per render of this page, so a double click saves the contact once. */}
-          <ContactForm vendorId={vendorId} idempotencyKey={randomUUID()} />
+          <ContactForm
+            vendorId={vendorId}
+            vendorCountry={vendorCountry}
+            idempotencyKey={randomUUID()}
+          />
         </div>
       ) : null}
     </Panel>
@@ -474,7 +485,7 @@ export default async function VendorPage({
     { key: 'kind', label: 'Kind', value: VENDOR_KIND_LABEL[vendor.kind] },
     {
       key: 'pan',
-      label: 'PAN',
+      label: vendor.kind === 'foreign' ? 'Tax ID' : 'PAN',
       value:
         vendor.pan !== null ? (
           <span className={styles.numeric}>{vendor.pan}</span>
@@ -482,7 +493,19 @@ export default async function VendorPage({
           <span className={styles.quiet}>Not set</span>
         ),
     },
-    { key: 'country', label: 'Country', value: vendor.country },
+    { key: 'country', label: 'Country', value: countryName(vendor.country) },
+    {
+      key: 'address',
+      label: 'Address',
+      value:
+        vendor.address !== null ? (
+          <span className={styles.long}>
+            {formatAddressLines(vendor.address, vendor.country).join(', ')}
+          </span>
+        ) : (
+          <span className={styles.quiet}>Not set</span>
+        ),
+    },
     { key: 'vat', label: 'VAT', value: vendor.vatRegistered ? 'Registered' : 'Not registered' },
     {
       key: 'approved',
@@ -564,7 +587,13 @@ export default async function VendorPage({
         </Card>
 
         <div className={styles.main}>
-          <Contacts result={contacts} here={here} vendorId={vendor.id} mayWrite={canEdit} />
+          <Contacts
+            result={contacts}
+            here={here}
+            vendorId={vendor.id}
+            vendorCountry={vendor.country}
+            mayWrite={canEdit}
+          />
           <Accounts result={accounts} here={here} />
           <Banks result={banks} here={here} vendor={vendor} grants={grants} />
         </div>

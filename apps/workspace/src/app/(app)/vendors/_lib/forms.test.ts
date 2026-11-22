@@ -7,8 +7,18 @@ import {
   parseProposeBank,
   parseReason,
   parseUpdateVendor,
+  readContactValues,
+  readPhones,
+  readVendorValues,
+  type ContactValues,
   type VendorValues,
 } from './forms';
+
+const formOf = (entries: [string, string][]): FormData => {
+  const form = new FormData();
+  for (const [key, value] of entries) form.append(key, value);
+  return form;
+};
 
 const company: VendorValues = {
   ...EMPTY_VENDOR_VALUES,
@@ -45,13 +55,50 @@ describe('parseCreateVendor', () => {
     if (!short.ok) expect(short.errors.pan).toMatch(/9 digits/);
   });
 
-  it('a foreign vendor may leave the PAN out and never sends one', () => {
-    const r = parseCreateVendor({ ...company, kind: 'foreign', country: 'IN', pan: '301234567' });
+  it('a foreign vendor may leave the tax ID out', () => {
+    const r = parseCreateVendor({ ...company, kind: 'foreign', country: 'IN', pan: '' });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data.pan).toBeUndefined();
       expect(r.data.country).toBe('IN');
     }
+  });
+
+  it('a foreign vendor with a loose tax ID and an address builds the body', () => {
+    const r = parseCreateVendor({
+      ...company,
+      kind: 'foreign',
+      country: 'US',
+      pan: '12-3456789',
+      addressLine: ' 500 Howard Street, Suite 2 ',
+      addressCity: ' San Francisco ',
+    });
+    expect(r).toEqual({
+      ok: true,
+      data: {
+        legalName: 'Himal Traders Pvt. Ltd.',
+        kind: 'foreign',
+        pan: '12-3456789',
+        vatRegistered: true,
+        country: 'US',
+        address: { line: '500 Howard Street, Suite 2', city: 'San Francisco' },
+      },
+    });
+  });
+
+  it('refuses a foreign tax ID outside the loose shape', () => {
+    const r = parseCreateVendor({ ...company, kind: 'foreign', country: 'US', pan: 'A1' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.pan).toMatch(/5 to 20/);
+  });
+
+  it('refuses half an address, on the missing field', () => {
+    const lineOnly = parseCreateVendor({ ...company, addressLine: 'Thamel Marg' });
+    expect(lineOnly.ok).toBe(false);
+    if (!lineOnly.ok) expect(lineOnly.errors.addressCity).toMatch(/city too/);
+    const cityOnly = parseCreateVendor({ ...company, addressCity: 'Kathmandu' });
+    expect(cityOnly.ok).toBe(false);
+    if (!cityOnly.ok) expect(cityOnly.errors.addressLine).toMatch(/street address too/);
   });
 
   it('refuses a foreign vendor in Nepal and a resident kind abroad, on the country field', () => {
@@ -68,7 +115,7 @@ describe('parseCreateVendor', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.errors.legalName).toMatch(/legal name/i);
-      expect(r.errors.country).toMatch(/two-letter/);
+      expect(r.errors.country).toMatch(/Choose the vendor’s country/);
     }
   });
 
@@ -78,16 +125,40 @@ describe('parseCreateVendor', () => {
   });
 });
 
+describe('readVendorValues', () => {
+  it('reads the address and the country from the address fields', () => {
+    const v = readVendorValues(
+      formOf([
+        ['legalName', 'Acme Inc.'],
+        ['kind', 'foreign'],
+        ['pan', '12-3456789'],
+        ['address.line', '500 Howard Street'],
+        ['address.city', 'San Francisco'],
+        ['address.country', 'US'],
+      ]),
+    );
+    expect(v).toMatchObject({
+      country: 'US',
+      addressLine: '500 Howard Street',
+      addressCity: 'San Francisco',
+      vatRegistered: false,
+    });
+  });
+});
+
 describe('parseUpdateVendor', () => {
   const original = {
     legalName: 'Himal Traders Pvt. Ltd.',
     pan: '301234567',
     vatRegistered: false,
     status: 'draft' as const,
+    country: 'NP',
+    address: null as { line: string; city: string } | null,
   };
   const values = (over: Partial<VendorValues>): VendorValues => ({
     ...company,
     legalName: original.legalName,
+    vatRegistered: original.vatRegistered,
     ...over,
   });
 
@@ -115,23 +186,123 @@ describe('parseUpdateVendor', () => {
     expect(r.ok).toBe(false);
     if (!r.ok && 'errors' in r) expect(r.errors.pan).toMatch(/9 digits/);
   });
+
+  it('holds a foreign vendor to the loose tax-id shape, by its stored country', () => {
+    const foreign = { ...original, country: 'US', pan: null };
+    const ok = parseUpdateVendor(values({ pan: 'EIN-1234567' }), foreign, 3);
+    expect(ok).toEqual({ ok: true, data: { expectedVersion: 3, pan: 'EIN-1234567' } });
+    const cleared = parseUpdateVendor(values({ pan: '' }), { ...foreign, pan: 'EIN-1234567' }, 3);
+    expect(cleared.ok).toBe(false);
+  });
+
+  it('sends a new address, and null when it is cleared', () => {
+    const added = parseUpdateVendor(
+      values({ pan: '301234567', addressLine: 'Thamel Marg', addressCity: 'Kathmandu' }),
+      original,
+      5,
+    );
+    expect(added).toEqual({
+      ok: true,
+      data: { expectedVersion: 5, address: { line: 'Thamel Marg', city: 'Kathmandu' } },
+    });
+    const cleared = parseUpdateVendor(
+      values({}),
+      { ...original, address: { line: 'Thamel Marg', city: 'Kathmandu' } },
+      5,
+    );
+    expect(cleared).toEqual({ ok: true, data: { expectedVersion: 5, address: null } });
+    const half = parseUpdateVendor(values({ addressLine: 'Thamel Marg' }), original, 5);
+    expect(half.ok).toBe(false);
+    if (!half.ok && 'errors' in half) expect(half.errors.addressCity).toMatch(/city too/);
+  });
 });
 
 describe('parseContact', () => {
-  const base = { name: ' Sita Sharma ', email: '', phone: '', role: '', isPortalAdmin: false };
-  it('needs only a name', () => {
+  const base: ContactValues = {
+    name: ' Sita Sharma ',
+    email: '',
+    country: 'NP',
+    phones: [],
+    role: '',
+    isPortalAdmin: false,
+  };
+  it('needs only a name and a country', () => {
     expect(parseContact(base)).toEqual({
       ok: true,
-      data: { name: 'Sita Sharma', isPortalAdmin: false },
+      data: { name: 'Sita Sharma', country: 'NP', phones: [], isPortalAdmin: false },
     });
   });
-  it('words a bad email and phone', () => {
-    const r = parseContact({ ...base, email: 'nope', phone: '98123' });
+  it('words a bad email and a bad phone, naming the row', () => {
+    const r = parseContact({
+      ...base,
+      email: 'nope',
+      phones: [{ country: 'NP', e164: '+97798123', label: null, isPrimary: true }],
+    });
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.errors.email).toMatch(/email/i);
-      expect(r.errors.phone).toMatch(/\+/);
+      expect(r.errors.phones).toMatch(/^Phone 1: /);
     }
+  });
+  it('posts two phones in different countries, read from the form', () => {
+    const r = parseContact(
+      readContactValues(
+        formOf([
+          ['name', 'John Doe'],
+          ['country', 'US'],
+          ['phones.0.country', 'US'],
+          ['phones.0.number', '+14155552671'],
+          ['phones.0.label', 'work'],
+          ['phones.0.isPrimary', 'true'],
+          ['phones.1.country', 'NP'],
+          ['phones.1.number', '+9779812345678'],
+          ['phones.1.label', ''],
+          ['phones.1.isPrimary', 'false'],
+        ]),
+      ),
+    );
+    expect(r).toEqual({
+      ok: true,
+      data: {
+        name: 'John Doe',
+        country: 'US',
+        phones: [
+          { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
+          { country: 'NP', e164: '+9779812345678', isPrimary: false },
+        ],
+        isPortalAdmin: false,
+      },
+    });
+  });
+});
+
+describe('readPhones', () => {
+  it('drops blank rows and keeps one primary', () => {
+    const phones = readPhones(
+      formOf([
+        ['phones.0.country', 'NP'],
+        ['phones.0.number', ''],
+        ['phones.0.isPrimary', 'true'],
+        ['phones.1.country', 'IN'],
+        ['phones.1.number', '+919812345678'],
+        ['phones.1.isPrimary', 'false'],
+      ]),
+      'phones',
+    );
+    expect(phones).toEqual([
+      { country: 'IN', e164: '+919812345678', label: null, isPrimary: true },
+    ]);
+  });
+  it('keeps a row with an invalid number for the contracts to refuse', () => {
+    const phones = readPhones(
+      formOf([
+        ['phones.0.country', 'NP'],
+        ['phones.0.number', '+97798'],
+        ['phones.0.isPrimary', 'true'],
+      ]),
+      'phones',
+    );
+    expect(phones).toHaveLength(1);
   });
 });
 

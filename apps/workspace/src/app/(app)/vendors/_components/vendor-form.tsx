@@ -1,11 +1,12 @@
 'use client';
 
-import { VENDOR_KINDS, type VendorKind } from '@bos/contracts';
+import { countryName, VENDOR_KINDS, type CountryCode, type VendorKind } from '@bos/contracts';
 import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
 
+import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PanInput } from '@/components/ui/pan-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -44,7 +45,11 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
  *
  * Create asks for the kind and country, which are fixed afterwards. Edit locks the legal name and
  * PAN of an approved or suspended vendor (`lockIdentity`): those change through a new KYB review.
- * A foreign vendor has no Nepali PAN, so the field goes away when that kind is chosen.
+ * A foreign vendor has no Nepali PAN: it gets an optional Tax ID in the loose shape instead.
+ *
+ * The address is optional (street and city together, or neither). Its country is the vendor's
+ * country, so the country is asked once, as the address's Country (create), and shown as fixed
+ * text on edit.
  *
  * The page header is part of the form, so Cancel and the submit button sit at its top right (Figma
  * "Add Organization" 449:15784); a narrow screen gets them under the form instead.
@@ -126,8 +131,6 @@ export function VendorForm({
           : undefined
       }
       error={err.legalName}
-      // Alone on its row (an edit of a foreign vendor), it takes the whole row.
-      {...(mode === 'edit' && foreign ? { className: WIDE } : {})}
     >
       {(control) => (
         <Input
@@ -144,7 +147,30 @@ export function VendorForm({
     </Field>
   );
 
-  const pan = foreign ? null : (
+  const pan = foreign ? (
+    <Field
+      label="Tax ID (optional)"
+      hint={
+        lockIdentity
+          ? 'Locked while the vendor is approved.'
+          : 'The vendor’s own tax or VAT number: 5 to 20 letters, digits or hyphens.'
+      }
+      error={err.pan}
+    >
+      {(control) => (
+        <Input
+          name="pan"
+          value={values.pan}
+          onChange={set('pan')}
+          maxLength={20}
+          autoCapitalize="characters"
+          spellCheck={false}
+          readOnly={lockIdentity}
+          {...control}
+        />
+      )}
+    </Field>
+  ) : (
     <Field
       label="PAN"
       hint={
@@ -179,6 +205,50 @@ export function VendorForm({
       />
       Registered for VAT
     </label>
+  );
+
+  const setAddress = (next: { line: string; city: string; country: CountryCode }): void =>
+    setValues((v) => ({
+      ...v,
+      addressLine: next.line,
+      addressCity: next.city,
+      country: next.country,
+    }));
+
+  // Edit: the country is fixed, so Address and City are built here with the names AddressFields posts.
+  const editAddress = (
+    <div className={styles.grid}>
+      <Field label="Address (optional)" error={err.addressLine} className={WIDE}>
+        {(control) => (
+          <Textarea
+            {...control}
+            name="address.line"
+            rows={2}
+            maxLength={300}
+            autoComplete="street-address"
+            value={values.addressLine}
+            onChange={set('addressLine')}
+          />
+        )}
+      </Field>
+      <Field label="City (optional)" error={err.addressCity}>
+        {(control) => (
+          <Input
+            {...control}
+            name="address.city"
+            maxLength={100}
+            autoComplete="address-level2"
+            value={values.addressCity}
+            onChange={set('addressCity')}
+          />
+        )}
+      </Field>
+      <Field label="Country" hint="Fixed once the vendor is added.">
+        {(control) => (
+          <Input {...control} value={countryName(values.country as CountryCode)} readOnly />
+        )}
+      </Field>
+    </div>
   );
 
   return (
@@ -245,13 +315,18 @@ export function VendorForm({
 
       {mode === 'edit' ? (
         // Edit keeps only the fields that can still change, so they share one card and fill its rows.
-        <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
-          <div className={styles.grid}>
-            {legalName}
-            {pan}
-          </div>
-          {vat}
-        </Panel>
+        <>
+          <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
+            <div className={styles.grid}>
+              {legalName}
+              {pan}
+            </div>
+            {vat}
+          </Panel>
+          <Panel title={<SectionTitle eyebrow="02 · Address">Address</SectionTitle>}>
+            {editAddress}
+          </Panel>
+        </>
       ) : (
         <>
           <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
@@ -293,34 +368,25 @@ export function VendorForm({
           <Panel
             title={<SectionTitle eyebrow="02 · Tax registration">Tax registration</SectionTitle>}
           >
-            <div className={styles.grid}>
-              {pan}
-              <Field
-                label="Country code"
-                hint={
-                  foreign
-                    ? 'Two letters, the vendor’s own country, for example IN or US.'
-                    : 'Two letters. Vendors in Nepal use NP.'
-                }
-                error={err.country}
-              >
-                {(control) => (
-                  <Input
-                    name="country"
-                    value={values.country}
-                    onChange={set('country')}
-                    maxLength={2}
-                    autoComplete="country"
-                    autoCapitalize="characters"
-                    spellCheck={false}
-                    className={styles.code}
-                    required
-                    {...control}
-                  />
-                )}
-              </Field>
-            </div>
+            <div className={styles.grid}>{pan}</div>
             {vat}
+          </Panel>
+          <Panel title={<SectionTitle eyebrow="03 · Address">Address</SectionTitle>}>
+            <AddressFields
+              name="address"
+              value={{
+                line: values.addressLine,
+                city: values.addressCity,
+                country: values.country as CountryCode,
+              }}
+              onChange={setAddress}
+              errors={{ line: err.addressLine, city: err.addressCity, country: err.country }}
+              hints={{
+                country: foreign
+                  ? 'The vendor’s own country, outside Nepal. Fixed once the vendor is added.'
+                  : 'Vendors in Nepal use Nepal. Fixed once the vendor is added.',
+              }}
+            />
           </Panel>
         </>
       )}

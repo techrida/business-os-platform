@@ -1,15 +1,19 @@
 import 'server-only';
 
 import {
+  type AddressLines,
+  CountryCodeSchema,
   type CreateVendorBody,
   type DocumentVersionDto,
   DocumentVersionDtoSchema,
+  PartyPhoneSchema,
   type ProposeBankAccountBody,
   type RejectBankAccountBody,
   type VendorAccountDto,
   VendorAccountDtoSchema,
   type VendorBankAccountDto,
   VendorBankAccountDtoSchema,
+  type VendorContactBody,
   type VendorDto,
   VendorDtoSchema,
   type VendorStatus,
@@ -42,13 +46,17 @@ const VendorListSchema = z.object({
   total: z.number().int().min(0),
 });
 
-/** The API returns a contact as `VendorContactDto` (apps/api vendors.types.ts); contracts has the body only. */
+/**
+ * The API returns a contact as `VendorContactDto` (apps/api vendors.types.ts); contracts has the body only. `phones`
+ * lists the primary first (FX9).
+ */
 export const VendorContactSchema = z.object({
   id: z.guid(),
   vendorPartyId: z.guid(),
   name: z.string(),
   email: z.string().nullable(),
-  phone: z.string().nullable(),
+  country: CountryCodeSchema,
+  phones: z.array(PartyPhoneSchema),
   role: z.string().nullable(),
   isPrimary: z.boolean(),
   version: z.number().int().min(1),
@@ -70,18 +78,15 @@ export type VendorPortalAccess = z.infer<typeof VendorPortalAccessSchema>;
 
 export type VendorLifecycleCommand = 'activate' | 'suspend' | 'block' | 'archive';
 
-export interface CreateVendorContact {
-  name: string;
-  email?: string | undefined;
-  phone?: string | undefined;
-  role?: string | undefined;
-  isPortalAdmin: boolean;
-}
+/** A new contact: its own country, and each phone with its country (FX9). */
+export type CreateVendorContact = VendorContactBody;
 
 export interface UpdateVendorFields {
   expectedVersion: number;
   legalName?: string | undefined;
   pan?: string | undefined;
+  /** Replaces the street lines and city; `null` clears them. The country is fixed at create. */
+  address?: AddressLines | null | undefined;
   vatRegistered?: boolean | undefined;
 }
 

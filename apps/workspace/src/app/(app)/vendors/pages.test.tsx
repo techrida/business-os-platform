@@ -1,4 +1,9 @@
-import { avatarColour, DEFAULT_ROLE_PERMISSIONS, imagePath } from '@bos/contracts';
+import {
+  avatarColour,
+  DEFAULT_ROLE_PERMISSIONS,
+  formatPartyPhoneForPrint,
+  imagePath,
+} from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -70,6 +75,7 @@ const vendor = (over: Record<string, unknown> = {}) => ({
   pan: '301234567',
   vatRegistered: true,
   country: 'NP',
+  address: null,
   status: 'draft',
   version: 1,
   approvedAt: null,
@@ -134,6 +140,7 @@ describe('vendor list', () => {
           kind: 'foreign',
           pan: null,
           country: 'IN',
+          address: { line: '12 Marine Drive', city: 'Mumbai' },
           status: 'pending_kyc',
         }),
       ],
@@ -145,6 +152,9 @@ describe('vendor list', () => {
     expect(out).toContain('KYC pending');
     expect(out).toContain('Foreign vendor');
     expect(out).toContain('301234567');
+    // The address with its city and country; a vendor with none shows its country.
+    expect(out).toContain('12 Marine Drive, Mumbai, India');
+    expect(out).toContain('Nepal');
     expect(out).toContain('Add vendor');
     expect(out).toContain('2 vendors');
     expect(out).toContain('type="search"');
@@ -536,7 +546,11 @@ describe('vendor detail', () => {
       vendorPartyId: ID,
       name: 'Sita Sharma',
       email: 'sita@example.com',
-      phone: null,
+      country: 'US',
+      phones: [
+        { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
+        { country: 'NP', e164: '+9779812345678', label: null, isPrimary: false },
+      ],
       role: null,
       isPrimary: true,
       version: 1,
@@ -549,8 +563,27 @@ describe('vendor detail', () => {
     const out = await detail();
     expect(out).toContain('Grant portal access');
     expect(out).toContain('No Mail (no email)');
+    // The contact's primary number, in the print format; the other number stays off the table.
+    expect(out).toContain('href="tel:+14155552671"');
+    expect(out).toContain(formatPartyPhoneForPrint('+14155552671'));
+    expect(out).not.toContain('tel:+9779812345678');
     api.getVendor.mockResolvedValue(vendor({ status: 'draft' }));
     expect(await detail()).not.toContain('Grant portal access');
+  });
+
+  it('shows the address with its city and country, and the country by name', async () => {
+    api.getVendor.mockResolvedValue(
+      vendor({ address: { line: 'Thamel Marg', city: 'Kathmandu' } }),
+    );
+    const out = await detail();
+    expect(out).toContain('Thamel Marg, Kathmandu, Nepal');
+    api.getVendor.mockResolvedValue(
+      vendor({ kind: 'foreign', pan: 'EIN-1234567', country: 'US', address: null }),
+    );
+    const foreign = await detail();
+    expect(foreign).toContain('United States');
+    expect(foreign).toContain('Tax ID');
+    expect(foreign).toContain('EIN-1234567');
   });
 
   it('links to the KYB case for people who may read verification, and says so otherwise', async () => {

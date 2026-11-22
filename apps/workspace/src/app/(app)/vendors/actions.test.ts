@@ -62,7 +62,7 @@ const vendorForm = {
   legalName: 'Himal Traders Pvt. Ltd.',
   kind: 'company',
   pan: '301234567',
-  country: 'NP',
+  'address.country': 'NP',
   vatRegistered: 'on',
 };
 const start = { key: KEY, errors: {} };
@@ -193,6 +193,8 @@ describe('updateVendorAction', () => {
     pan: '301234567',
     vatRegistered: false,
     status: 'draft',
+    country: 'NP',
+    address: null,
   };
   const fields = { vendorId: ID, expectedVersion: '3', ...vendorForm, vatRegistered: 'on' };
 
@@ -534,12 +536,35 @@ describe('contacts and portal access', () => {
     api.createVendorContact.mockResolvedValue({});
     const r = await addContactAction(
       panelStart(KEY),
-      form({ vendorId: ID, idempotencyKey: KEY, name: 'Sita Sharma', email: 'sita@example.com' }),
+      form({
+        vendorId: ID,
+        idempotencyKey: KEY,
+        name: 'Sita Sharma',
+        email: 'sita@example.com',
+        country: 'NP',
+        'phones.0.country': 'NP',
+        'phones.0.number': '+9779812345678',
+        'phones.0.label': 'mobile',
+        'phones.0.isPrimary': 'true',
+        'phones.1.country': 'US',
+        'phones.1.number': '+14155552671',
+        'phones.1.label': '',
+        'phones.1.isPrimary': 'false',
+      }),
     );
     expect(api.createVendorContact).toHaveBeenCalledWith(
       expect.anything(),
       ID,
-      { name: 'Sita Sharma', email: 'sita@example.com', isPortalAdmin: false },
+      {
+        name: 'Sita Sharma',
+        email: 'sita@example.com',
+        country: 'NP',
+        phones: [
+          { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true },
+          { country: 'US', e164: '+14155552671', isPrimary: false },
+        ],
+        isPortalAdmin: false,
+      },
       KEY,
     );
     expect(r.saved).toBe('Sita Sharma was added.');
