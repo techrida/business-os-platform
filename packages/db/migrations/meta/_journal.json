@@ -764,6 +764,13 @@
       "when": 1783000000154,
       "tag": "0181_po_vendor_change_workflow",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1783000000155,
+      "tag": "0187_company_contacts_strict",
+      "breakpoints": true
     }
   ]
 }
