@@ -1,6 +1,6 @@
 'use server';
 
-import { SETTING_DEFAULTS, StoredCompanyProfileSchema } from '@bos/contracts';
+import { SETTING_DEFAULTS, CompanyProfileSchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 
 import {
@@ -190,14 +190,14 @@ async function writeProfile(
   patch: Parameters<typeof mergeProfile>[1],
   write: Write,
 ): Promise<boolean> {
-  const current = StoredCompanyProfileSchema.safeParse(
+  const current = CompanyProfileSchema.safeParse(
     (await getSetting(session, 'entity.profile')).value,
   );
   if (!current.success) {
     throw new ProfileUnreadable();
   }
   // The API holds a write to the strict rules; this only checks the merged value still has the profile's shape.
-  const merged = StoredCompanyProfileSchema.safeParse(mergeProfile(current.data, patch));
+  const merged = CompanyProfileSchema.safeParse(mergeProfile(current.data, patch));
   if (!merged.success) throw new ProfileUnreadable();
   if (sameProfile(current.data, merged.data)) return false;
   await write('entity.profile', merged.data);

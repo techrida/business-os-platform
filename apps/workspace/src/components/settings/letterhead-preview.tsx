@@ -1,6 +1,6 @@
 'use client';
 
-import { formatPhoneForPrint } from '@bos/contracts';
+import { formatPartyPhoneForPrint } from '@bos/contracts';
 import { useEffect, useState } from 'react';
 
 import { scanPollDelays } from '@/components/ui/image-upload';
@@ -14,6 +14,7 @@ export interface LetterheadModel {
   logo: string | null;
   displayName: string;
   address: AddressDraft;
+  /** The numbers as E.164, in print order. */
   phones: readonly string[];
   email: string;
   website: string;
@@ -21,17 +22,19 @@ export interface LetterheadModel {
 }
 
 /**
- * The top of a document as it will print: logo, name, address, phones, email, website and PAN or VAT.
+ * The top of a document as it will print: logo, name, address (line, city; the company's own country is not
+ * printed), phones in print form (Nepal in FX8's format, others international), email, website and PAN or VAT.
  * It reads the drafts of every card, so it changes as the person types, before anything is saved.
  * An empty part shows a quiet placeholder so the person sees what is still missing.
  */
 export function LetterheadPreview({ model }: { model: LetterheadModel }) {
   const name = model.displayName.trim();
-  const address = addressLines(model.address);
+  // The company's own country is left out, as the PDFs print the issuer's address.
+  const address = addressLines(model.address, model.address.country);
   const phones = model.phones
     .map((p) => p.trim())
     .filter(Boolean)
-    .map(formatPhoneForPrint);
+    .map(formatPartyPhoneForPrint);
   const email = model.email.trim();
   const website = model.website.trim();
   const pan = model.panVatNo.trim();

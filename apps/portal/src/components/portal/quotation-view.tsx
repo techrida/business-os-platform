@@ -1,5 +1,5 @@
-import { trimPercent, type CustomerQuotationView } from '@bos/contracts';
-import type { ReactNode } from 'react';
+import { formatAddressLines, trimPercent, type CustomerQuotationView } from '@bos/contracts';
+import { Fragment, type ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -235,25 +235,27 @@ export function QuotationView({
   );
 }
 
+/**
+ * A party's address as the customer reads it: the street lines (free text, one or more lines), the city, then the
+ * country's name. On screen the country always shows; only the PDF leaves out the issuer's own.
+ */
 function PartyBlock({ heading, party }: { heading: string; party: Party }) {
-  const a = party.address;
-  const place = [a.city, a.district, a.province, a.postalCode].filter(Boolean).join(', ');
+  const lines = formatAddressLines(party.address, party.country).flatMap((part) =>
+    part.split('\n').map((line) => line.trim()),
+  );
   return (
     <div className={styles.party}>
       <h3 className={styles.partyHeading}>{heading}</h3>
       <p className={styles.partyName}>{party.legalName}</p>
       <address className={styles.address}>
-        {a.line1}
-        {a.line2 ? (
-          <>
-            <br />
-            {a.line2}
-          </>
-        ) : null}
-        <br />
-        {place}
-        <br />
-        {a.country}
+        {lines
+          .filter((line) => line !== '')
+          .map((line, index) => (
+            <Fragment key={index}>
+              {index > 0 ? <br /> : null}
+              {line}
+            </Fragment>
+          ))}
       </address>
       {party.panVatNo ? <p className={styles.muted}>PAN/VAT {party.panVatNo}</p> : null}
     </div>

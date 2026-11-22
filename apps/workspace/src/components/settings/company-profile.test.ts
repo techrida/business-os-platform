@@ -4,9 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CARD_WRITES,
   MAX_PHONES,
-  addPhone,
   addressLines,
-  canAddPhone,
   companyLogo,
   draftsFromSettings,
   emptyProfilePatch,
@@ -20,11 +18,12 @@ import {
   parseContact,
   parseIdentity,
   parseSignatory,
+  phoneListDefault,
   planCard,
+  postedPhones,
+  profilePhones,
   readExpectedVersion,
-  removePhone,
   sameDraft,
-  setPhone,
   versionFieldName,
   versionFieldValue,
   type AddressDraft,
@@ -61,31 +60,85 @@ describe('logo', () => {
   });
 });
 
+const NP_MOBILE = { country: 'NP', e164: '+9779812345678', label: null } as const;
+const NP_LANDLINE = { country: 'NP', e164: '+97714123456', label: 'work' } as const;
+const US_PHONE = { country: 'US', e164: '+14155552671', label: null } as const;
+
+/** A form as `planCard` reads it: one value per name. */
+const form = (entries: Record<string, string>) => ({
+  get: (name: string) => entries[name] ?? null,
+  getAll: (name: string) => (entries[name] === undefined ? [] : [entries[name]]),
+});
+
+/** The fields a `PhoneListInput` named `phones` posts, row by row. */
+const phoneFields = (rows: { number: string; country: string; label?: string }[]) =>
+  Object.fromEntries(
+    rows.flatMap((row, i) => [
+      [`phones.${i}.number`, row.number],
+      [`phones.${i}.country`, row.country],
+      [`phones.${i}.label`, row.label ?? ''],
+      [`phones.${i}.isPrimary`, i === 0 ? 'true' : 'false'],
+    ]),
+  );
+
 describe('phones', () => {
-  it('adds up to four rows and then stops', () => {
-    let phones: string[] = [];
-    for (let i = 0; i < 6; i += 1) phones = addPhone(phones);
-    expect(phones).toHaveLength(MAX_PHONES);
-    expect(canAddPhone(phones)).toBe(false);
-    expect(canAddPhone(removePhone(phones, 0))).toBe(true);
-  });
-
-  it('removes and edits a row by position', () => {
-    expect(removePhone(['1', '2', '3'], 1)).toEqual(['1', '3']);
-    expect(setPhone(['1', '2'], 1, '9')).toEqual(['1', '9']);
-  });
-
-  it('rejects a fifth number when parsing, and drops empty rows', () => {
-    const base = { email: '', website: '' };
-    expect(parseContact({ ...base, phones: ['+9779812345678', '', ' +97714123456 '] })).toEqual({
+  it('reads each posted number with its own country and label, drops blank rows, and ignores the primary flag', () => {
+    const posted = form({
+      ...phoneFields([
+        { number: '+9779812345678', country: 'NP' },
+        { number: '', country: 'NP' },
+        { number: '+14155552671', country: 'US', label: 'work' },
+      ]),
+      'phones.2.isPrimary': 'true',
+    });
+    expect(postedPhones(posted)).toEqual([
+      { row: 0, country: 'NP', e164: '+9779812345678', label: null },
+      { row: 2, country: 'US', e164: '+14155552671', label: 'work' },
+    ]);
+    expect(planCard('contact', posted)).toEqual({
       ok: true,
-      value: { phones: ['+9779812345678', '+97714123456'], email: null, website: null },
+      value: {
+        profile: {
+          phones: [NP_MOBILE, { ...US_PHONE, label: 'work' }],
+          email: null,
+          website: null,
+        },
+      },
+    });
+  });
+
+  it('refuses a fifth number, a number of the wrong country and a number listed twice, at its row', () => {
+    const base = { email: '', website: '' };
+    const row = (i: number, e164: string, country = 'NP') => ({
+      row: i,
+      country,
+      e164,
+      label: null,
     });
     const five = parseContact({
       ...base,
-      phones: ['+97714123456', '+97714123457', '+97714123458', '+97714123459', '+97714123450'],
+      phones: ['+97714123456', '+97714123457', '+97714123458', '+97714123459', '+97714123450'].map(
+        (e164, i) => row(i, e164),
+      ),
     });
-    expect(five).toMatchObject({ ok: false, errors: { phones: anyString } });
+    expect(five).toMatchObject({ ok: false, errors: { phones: 'Add up to 4 phone numbers.' } });
+    expect(MAX_PHONES).toBe(4);
+    // A US number posted as Nepal's, and the same number twice.
+    expect(
+      parseContact({ ...base, phones: [row(0, '+14155552671', 'NP'), row(1, '+9779812345678')] }),
+    ).toMatchObject({ ok: false, errors: { 'phones.0': 'A Nepal number starts with +977.' } });
+    expect(
+      parseContact({ ...base, phones: [row(0, '+9779812345678'), row(3, '+9779812345678')] }),
+    ).toMatchObject({ ok: false, errors: { 'phones.3': 'This number is already listed.' } });
+  });
+
+  it('opens the list with the saved numbers, the first one marked primary, and saves them without it', () => {
+    const list = phoneListDefault([NP_LANDLINE, US_PHONE]);
+    expect(list).toEqual([
+      { ...NP_LANDLINE, isPrimary: true },
+      { ...US_PHONE, isPrimary: false },
+    ]);
+    expect(profilePhones(list)).toEqual([NP_LANDLINE, US_PHONE]);
   });
 });
 
@@ -94,18 +147,22 @@ describe('profile merge', () => {
     ...EMPTY_COMPANY_PROFILE,
     displayName: 'Acme',
     legacyLogoDataUrl: PNG,
-    phones: ['01-4000000'],
+    phones: [NP_LANDLINE],
     email: 'a@acme.test',
     signatoryName: 'Sita',
     panVatNo: 'LEGACY-1',
   };
 
   it('replaces only the fields of the card that saved', () => {
-    const contact = parseContact({ phones: ['+9779800000000'], email: '', website: 'acme.test' });
+    const contact = parseContact({
+      phones: [{ row: 0, country: 'US', e164: '+14155552671', label: null }],
+      email: '',
+      website: 'acme.test',
+    });
     if (!contact.ok) throw new Error('expected ok');
     expect(mergeProfile(stored, contact.value)).toEqual({
       ...stored,
-      phones: ['+9779800000000'],
+      phones: [US_PHONE],
       email: null,
       website: 'acme.test',
     });
@@ -123,7 +180,7 @@ describe('profile merge', () => {
     const signatory = parseSignatoryForTest();
     const merged = mergeProfile(stored, signatory);
     expect(merged.legacyLogoDataUrl).toBe(PNG);
-    expect(merged.phones).toEqual(['01-4000000']);
+    expect(merged.phones).toEqual([NP_LANDLINE]);
     expect(merged.signatoryName).toBe('Ram');
   });
 });
@@ -135,28 +192,33 @@ function parseSignatoryForTest() {
 }
 
 describe('parsers', () => {
-  const empty: AddressDraft = {
-    line1: '',
-    line2: '',
-    city: '',
-    district: '',
-    province: '',
-    postalCode: '',
-    country: 'NP',
-  };
+  const empty: AddressDraft = { line: '', city: '', country: 'NP' };
 
-  it('treats an address with nothing typed as none', () => {
+  it('treats an address with no street lines and no city as none, whatever the country', () => {
     expect(parseAddress(empty)).toEqual({ ok: true, value: null });
+    expect(parseAddress({ ...empty, country: 'US' })).toEqual({ ok: true, value: null });
   });
 
-  it('requires line 1 and city, and omits optional parts left blank', () => {
-    expect(parseAddress({ ...empty, district: 'Kathmandu' })).toMatchObject({
+  it('requires the address, the city and a country, and trims them', () => {
+    expect(parseAddress({ ...empty, city: 'Kathmandu' })).toMatchObject({
       ok: false,
-      errors: { line1: 'Enter the address line 1.', city: 'Enter the city.' },
+      errors: { line: 'Enter the address.' },
     });
-    expect(parseAddress({ ...empty, line1: ' Durbar Marg ', city: 'Kathmandu' })).toEqual({
+    expect(parseAddress({ ...empty, line: ' Durbar Marg\nWard 1 ', city: ' Kathmandu ' })).toEqual({
       ok: true,
-      value: { line1: 'Durbar Marg', city: 'Kathmandu', country: 'NP' },
+      value: { line: 'Durbar Marg\nWard 1', city: 'Kathmandu', country: 'NP' },
+    });
+  });
+
+  it('refuses an address posted without a country, or with one that is not a country code', () => {
+    const fields = { card: 'address', 'address.line': 'Durbar Marg', 'address.city': 'Kathmandu' };
+    expect(planCard('address', form(fields))).toEqual({
+      ok: false,
+      errors: { country: 'Choose a country.' },
+    });
+    expect(planCard('address', form({ ...fields, 'address.country': 'Nepal' }))).toEqual({
+      ok: false,
+      errors: { country: 'Choose a country.' },
     });
   });
 
@@ -165,6 +227,10 @@ describe('parsers', () => {
       ok: false,
       errors: { panVatNo: anyString },
     });
+    expect(parseIdentity({ displayName: '', panVatNo: '12345678' })).toMatchObject({
+      ok: false,
+      errors: { panVatNo: 'A PAN is exactly 9 digits.' },
+    });
     expect(parseContact({ phones: [], email: 'nope', website: '' })).toMatchObject({
       ok: false,
       errors: { email: anyString },
@@ -172,31 +238,25 @@ describe('parsers', () => {
   });
 
   it('plans the writes each card asks for', () => {
-    const form = (entries: Record<string, string | string[]>) => ({
-      get: (name: string) => {
-        const v = entries[name];
-        return Array.isArray(v) ? v[0] : v;
-      },
-      getAll: (name: string) => {
-        const v = entries[name];
-        return v === undefined ? [] : Array.isArray(v) ? v : [v];
-      },
-    });
     expect(
       planCard(
-        'contact',
-        form({ phone: ['+9779812345678', '+97714123456'], email: '', website: '' }),
+        'address',
+        form({
+          'address.line': 'Durbar Marg',
+          'address.city': 'Kathmandu',
+          'address.country': 'NP',
+        }),
       ),
     ).toEqual({
       ok: true,
-      value: {
-        profile: { phones: ['+9779812345678', '+97714123456'], email: null, website: null },
-      },
+      value: { address: { line: 'Durbar Marg', city: 'Kathmandu', country: 'NP' } },
     });
-    expect(planCard('address', form({ line1: '', city: '', country: 'NP' }))).toEqual({
-      ok: true,
-      value: { address: null },
-    });
+    expect(
+      planCard(
+        'address',
+        form({ 'address.line': '', 'address.city': '', 'address.country': 'NP' }),
+      ),
+    ).toEqual({ ok: true, value: { address: null } });
   });
 
   it('lists the keys each card may write', () => {
@@ -215,39 +275,34 @@ describe('drafts', () => {
       address: null,
       panVatNo: null,
     });
-    expect(drafts.address.country).toBe('NP');
+    expect(drafts.address).toEqual({ line: '', city: '', country: 'NP' });
     expect(drafts.contact.phones).toEqual([]);
     expect(Object.keys(drafts)).toEqual(['identity', 'address', 'contact', 'signatory']);
   });
 
-  it('does not call trimming or a blank phone row a change', () => {
-    expect(sameDraft({ phones: ['1', ''], n: ' a ' }, { phones: ['1'], n: 'a' })).toBe(true);
+  it('does not call a stored phone without a label a change once the list reports it', () => {
+    const { label: _omit, ...unlabelled } = US_PHONE;
+    const drafts = draftsFromSettings({
+      profile: { ...EMPTY_COMPANY_PROFILE, phones: [unlabelled] },
+      address: null,
+      panVatNo: null,
+    });
+    expect(sameDraft(drafts.contact.phones, profilePhones(phoneListDefault([US_PHONE])))).toBe(
+      true,
+    );
+    expect(sameDraft({ n: ' a ' }, { n: 'a' })).toBe(true);
     expect(sameDraft({ n: 'a' }, { n: 'b' })).toBe(false);
   });
 
-  it('writes the letterhead address lines, skipping empty parts', () => {
+  it("prints line and city, leaving out the company's own country but not a foreign one", () => {
+    const kathmandu: AddressDraft = { line: 'Durbar Marg', city: 'Kathmandu', country: 'NP' };
+    expect(addressLines(kathmandu, 'NP')).toEqual(['Durbar Marg', 'Kathmandu']);
+    // A foreign customer of a Nepal company keeps its country.
     expect(
-      addressLines({
-        line1: 'Durbar Marg',
-        line2: '',
-        city: 'Kathmandu',
-        district: 'Kathmandu',
-        province: 'Bagmati',
-        postalCode: '44600',
-        country: 'NP',
-      }),
-    ).toEqual(['Durbar Marg', 'Kathmandu, Kathmandu', 'Bagmati, 44600', 'Nepal']);
-    expect(
-      addressLines({
-        line1: '',
-        line2: '',
-        city: '',
-        district: '',
-        province: '',
-        postalCode: '',
-        country: 'NP',
-      }),
-    ).toEqual([]);
+      addressLines({ line: '1 Market St', city: 'San Francisco', country: 'US' }, 'NP'),
+    ).toEqual(['1 Market St', 'San Francisco', 'United States']);
+    expect(addressLines(kathmandu)).toEqual(['Durbar Marg', 'Kathmandu', 'Nepal']);
+    expect(addressLines({ line: ' ', city: '', country: 'NP' }, 'NP')).toEqual([]);
   });
 
   it('reports an unreadable stored value instead of guessing', () => {
@@ -293,10 +348,10 @@ describe('undo icons (D32)', () => {
       ...EMPTY_COMPANY_PROFILE,
       displayName: 'Acme',
       legacyLogoDataUrl: PNG,
-      phones: ['01-4000000'],
+      phones: [NP_LANDLINE],
       signatoryTitle: 'Director',
     },
-    address: { line1: 'Durbar Marg', city: 'Kathmandu', country: 'NP' },
+    address: { line: 'Durbar Marg', city: 'Kathmandu', country: 'NP' as const },
     panVatNo: '123456789',
   };
 

@@ -45,33 +45,10 @@
   line-height: var(--line-height-body-small);
 }
 
-.phoneRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.phoneRow > :first-child {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 .help {
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
-}
-
-.error {
-  color: var(--status-error);
-  overflow-wrap: anywhere;
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
-}
-
-.addPhone {
-  justify-self: start;
 }
 
 /* ---- logo -------------------------------------------------------------------------------------- */
