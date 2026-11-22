@@ -663,7 +663,8 @@ export class VendorBillsService {
       const [po] = await tx
         .select()
         .from(purchaseOrders)
-        .where(s.where(purchaseOrders, eq(purchaseOrders.id, body.purchaseOrderId)));
+        .where(s.where(purchaseOrders, eq(purchaseOrders.id, body.purchaseOrderId)))
+        .for('share');
       if (po === undefined) throw notFound('Purchase order');
       if (po.vendorId !== body.vendorPartyId) {
         throw unprocessable('PO_VENDOR_MISMATCH', 'The purchase order is for another vendor');

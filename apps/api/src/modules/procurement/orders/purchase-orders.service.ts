@@ -18,17 +18,16 @@ import {
   purchaseOrderLines,
   purchaseOrderVersions,
   purchaseOrders,
-  purchaseRequestLines,
   purchaseRequests,
   scoped,
   taxCodes,
   vendorAccounts,
-  vendorQuotationLines,
+  vendorBills,
   vendors,
 } from '@bos/db';
 import { Inject, Injectable, Optional, UnprocessableEntityException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { can } from '../../../platform/authz/can';
@@ -54,6 +53,17 @@ import {
   requestOf,
   type PoRequestFacts,
 } from './po-read-access';
+import { PO_VENDOR_CHANGE_DOCUMENT_TYPE } from './po-vendor-change.rules';
+import {
+  applyVendorChange,
+  assertNoPendingVendorChange,
+  pendingVendorChangeOf,
+  proposalOf,
+  quotationLinesOf,
+  sameApprovedTotal,
+  vatWarningFor,
+  vendorChangeQuotation,
+} from './po-vendor-change.writes';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import { PurchaseOrderRenderNudge } from './render/purchase-order-render.nudge';
 import {
@@ -62,7 +72,6 @@ import {
   amendLines,
   amendmentApprovalReasons,
   shortCloseCancelled,
-  vendorChangePatch,
   vendorChangeRefusal,
   versionTotals,
   type AmendPurchaseOrderBody,
@@ -85,7 +94,6 @@ import {
   lockPo,
   notFound,
   receivedOf,
-  vendorTermsDays,
   type AmendmentProposal,
   type PoLineRow,
   type PoRow,
@@ -139,6 +147,8 @@ export interface PurchaseOrderDto {
   issuedAt: string | null;
   closedReason: string | null;
   version: number;
+  /** Set on a draft whose change of vendor waits for approval: it cannot be issued until that is decided. */
+  pendingVendorChange?: { approvalRequestId: string; vendorId: string; total: string } | null;
   lines: PurchaseOrderLineDto[];
   /**
    * Detail of a draft with no lines yet: the lines issue will copy from the approved quotation (ids are the
@@ -241,51 +251,26 @@ const vendorOf = (po: typeof purchaseOrders) =>
   and(eq(vendors.tenantId, po.tenantId), eq(vendors.id, po.vendorId));
 
 /**
- * The lines a draft PO from the commitment route gets at issue: one per line of its recommended quotation, with the
- * request line's description, unit and serial rule. Read-only; issue() writes them, and the detail of a draft that
- * has none yet shows them as the lines it will be issued with.
+ * 409 PO_HAS_BILLS while any vendor bill that is not voided names the order (K3 Q3): cancelling, or cancelling and
+ * raising again, would leave a bill pointing at a dead order. The message names the bills so the person can void them.
  */
-async function quotationLinesOf(q: Db | DbTransaction, scope: TxScope, po: PoRow) {
-  if (po.vendorQuotationId === null) return [];
-  const [pr] = await q
-    .select({ requestType: purchaseRequests.requestType })
-    .from(purchaseRequests)
-    .where(scoped(scope).where(purchaseRequests, eq(purchaseRequests.id, po.purchaseRequestId)));
-  const rows = await q
-    .select({ q: vendorQuotationLines, pr: purchaseRequestLines })
-    .from(vendorQuotationLines)
-    .innerJoin(
-      purchaseRequestLines,
-      and(
-        eq(purchaseRequestLines.tenantId, vendorQuotationLines.tenantId),
-        eq(purchaseRequestLines.organizationId, vendorQuotationLines.organizationId),
-        eq(purchaseRequestLines.id, vendorQuotationLines.prLineId),
-      ),
-    )
+async function assertNoLiveBills(tx: DbTransaction, scope: TxScope, poId: string): Promise<void> {
+  const bills = await tx
+    .select({ id: vendorBills.id, number: vendorBills.number })
+    .from(vendorBills)
     .where(
       scoped(scope).where(
-        vendorQuotationLines,
-        eq(vendorQuotationLines.vendorQuotationId, po.vendorQuotationId),
+        vendorBills,
+        and(eq(vendorBills.purchaseOrderId, poId), ne(vendorBills.status, 'voided')),
       ),
     )
-    .orderBy(asc(purchaseRequestLines.lineNo));
-  // A request line has no kind of its own: a service request gives service lines, any other gives goods.
-  const kind: 'goods' | 'service' = pr?.requestType === 'service' ? 'service' : 'goods';
-  return rows.map((r, i) => ({
-    quotationLineId: r.q.id,
-    lineNo: i + 1,
-    prLineId: r.pr.id,
-    kind,
-    requiresSerials: kind === 'goods' && r.pr.requiresSerials,
-    description: r.pr.description,
-    uom: r.pr.uom,
-    orderedQuantity: r.q.quantity,
-    unitPrice: r.q.unitPrice,
-    taxCodeId: r.q.taxCodeId,
-    gross: r.q.gross,
-    taxAmount: r.q.taxAmount,
-    lineTotal: r.q.lineTotal,
-  }));
+    .orderBy(asc(vendorBills.number), asc(vendorBills.id));
+  if (bills.length === 0) return;
+  const names = bills.map((b) => b.number ?? 'an unnumbered draft bill').join(', ');
+  throw conflict(
+    `Vendor bills still refer to this order (${names}); void them before cancelling it`,
+    'PO_HAS_BILLS',
+  );
 }
 
 @Injectable()
@@ -439,6 +424,9 @@ export class PurchaseOrdersService {
           ...toDto(row.po, lines),
           vendorName: row.vendorName,
           ...(proposed !== undefined ? { proposedLines: proposed } : {}),
+          ...(row.po.status === 'draft'
+            ? { pendingVendorChange: await pendingVendorChangeOf(tx, scope, id) }
+            : {}),
           can: {
             enterBill: mayEnterBill(principal, row.po.status, row.request),
             receive: mayReceivePo(
@@ -532,6 +520,7 @@ export class PurchaseOrdersService {
             );
           if (po.status !== 'draft')
             throw conflict(`A ${po.status} purchase order cannot be issued`);
+          await assertNoPendingVendorChange(tx, scope, id);
           await this.assertVendorIssuable(tx, scope, po.vendorId);
           let lines = await linesOf(tx, scope, id, true);
           if (lines.length === 0) lines = await this.copyQuotationLines(tx, scope, po, now);
@@ -600,86 +589,138 @@ export class PurchaseOrdersService {
   // ------------------------------------------------------------------------------------------- change vendor
 
   /**
-   * Changes the vendor of a draft PO (F1-Q40 a). 409 PO_VENDOR_CHANGE_NOT_DRAFT ("Cancel this order and create a new
-   * one") unless a draft, 409 PO_VENDOR_UNCHANGED for the same vendor, 409 PO_REFERENCED when a payment request, bill
-   * or portal bill submission names the draft (each holds a foreign key on the PO and its vendor), and for the new
-   * vendor the issue checks (VENDOR_NOT_APPROVED, which an unknown vendor or one of another tenant also gets, and
-   * VENDOR_NOT_IN_ENTITY) plus 409 VENDOR_NO_VERIFIED_BANK_ACCOUNT. 409 PO_HAS_NO_LINES, writing nothing, when the
-   * draft has no lines and no quotation lines to copy. A commitment draft without lines first gets its quotation's
-   * lines written, so the lines, prices, total, currency, rate and approved band stay as the commitment approved
-   * them; then the vendor, its account's payment terms and a zero advance are set and the RFQ and quotation link is
-   * cleared.
+   * Changes the vendor of a draft PO (F1-Q40 a; K3 Q1 b, Q2). The new vendor must have its OWN quotation on the
+   * order's RFQ: its lines, prices, rate and total replace the old vendor's. 409 PO_VENDOR_CHANGE_NOT_DRAFT ("Cancel
+   * this order and create a new one") unless a draft, 409 PO_VENDOR_UNCHANGED for the same vendor, 409 PO_REFERENCED
+   * when a payment request, bill or portal bill submission names the draft, 409 PO_VENDOR_CHANGE_PENDING while an
+   * earlier change waits for approval, 409 PO_VENDOR_CHANGE_NO_RFQ for a draft with no RFQ link ("create a new
+   * purchase order"), 409 PO_VENDOR_NO_QUOTATION when the new vendor quoted nothing on that RFQ, for the new vendor
+   * the issue checks (VENDOR_NOT_APPROVED, VENDOR_NOT_IN_ENTITY), 409 VENDOR_NO_VERIFIED_BANK_ACCOUNT and 409
+   * VENDOR_CURRENCY_NOT_SUPPORTED (its quotation or verified bank account is not in the order's currency). When the
+   * order carries VAT and the vendor is not VAT registered, 409 VENDOR_NOT_VAT_REGISTERED until the body has
+   * `acknowledgeVatWarning: true`: a warning, not a block. A quotation total equal to the approved total is
+   * written at once; a different one is submitted to the po_vendor_change route (the commitment route again, on the
+   * new total, 422 NO_ELIGIBLE_APPROVER writing nothing when it cannot be staffed) and the order stays as it is,
+   * with `pendingVendorChange` set and issue refused, until the decision.
    */
   async changeVendor(
     id: string,
     body: ChangePurchaseOrderVendorBody,
     idempotencyKey: string,
   ): Promise<PurchaseOrderDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
-    return withTx(this.db, scope, actor, async (tx) => {
-      const done = await withIdempotency(
-        tx,
-        {
-          command: 'procurement.po.change_vendor',
-          key: idempotencyKey,
-          body: { id, vendorId: body.vendorId },
-        },
-        async () => {
-          const po = await lockPo(tx, scope, id);
-          const refusal = vendorChangeRefusal({
-            status: po.status,
-            vendorId: po.vendorId,
-            nextVendorId: body.vendorId,
-          });
-          if (refusal !== null) throw conflict(refusal.message, refusal.code);
-          await assertPoNotReferenced(tx, scope, id);
-          await this.assertVendorIssuable(tx, scope, body.vendorId);
-          await assertVerifiedBankAccount(tx, scope, body.vendorId);
-          // Before the link to the old vendor's quotation is cleared: write the lines it approved.
-          let lines = await linesOf(tx, scope, id, true);
-          const linesCopied = lines.length === 0;
-          if (linesCopied) lines = await this.copyQuotationLines(tx, scope, po, now);
-          // Nothing was written: the quotation it could copy from would be unlinked, leaving a draft that can never
-          // get lines or issue.
-          if (lines.length === 0)
-            throw conflict('The purchase order has no lines', 'PO_HAS_NO_LINES');
-          const patch = vendorChangePatch(po, {
-            vendorId: body.vendorId,
-            paymentTermsDays: await vendorTermsDays(tx, scope, body.vendorId),
-          });
-          const [row] = await tx
-            .update(purchaseOrders)
-            .set({
-              ...patch.set,
-              version: sql`${purchaseOrders.version} + 1`,
-              updatedAt: now,
-            })
-            .where(
-              scoped(scope).where(
-                purchaseOrders,
-                and(eq(purchaseOrders.id, id), eq(purchaseOrders.status, 'draft')),
-              ),
-            )
-            .returning();
-          if (row === undefined)
-            throw conflict('The purchase order changed while its vendor was changed');
-          await this.audit.record(tx, {
-            action: 'procurement.po.vendor_changed',
-            entityType: PO_AUDIT_ENTITY,
-            entityId: id,
-            before: patch.before,
-            after: {
-              ...patch.set,
-              cleared: patch.cleared,
-              linesCopied: linesCopied ? lines.length : 0,
-            },
-          });
-          return { status: 200, response: toDto(row, lines) };
-        },
-      );
-      return done.response;
-    });
+    const acknowledged = body.acknowledgeVatWarning === true;
+    try {
+      return await withTx(this.db, scope, actor, async (tx) => {
+        const done = await withIdempotency<PurchaseOrderDto>(
+          tx,
+          {
+            command: 'procurement.po.change_vendor',
+            key: idempotencyKey,
+            body: acknowledged
+              ? { id, vendorId: body.vendorId, acknowledgeVatWarning: true }
+              : { id, vendorId: body.vendorId },
+          },
+          async () => {
+            const po = await lockPo(tx, scope, id);
+            const refusal = vendorChangeRefusal({
+              status: po.status,
+              vendorId: po.vendorId,
+              nextVendorId: body.vendorId,
+            });
+            if (refusal !== null) throw conflict(refusal.message, refusal.code);
+            await assertPoNotReferenced(tx, scope, id);
+            await assertNoPendingVendorChange(tx, scope, id);
+            await this.assertVendorIssuable(tx, scope, body.vendorId);
+            await assertVerifiedBankAccount(tx, scope, body.vendorId);
+            const quote = await vendorChangeQuotation(tx, scope, po, body.vendorId);
+            if (!acknowledged && (await vatWarningFor(tx, scope, quote, body.vendorId))) {
+              throw conflict(
+                'This order carries VAT and the new vendor is not VAT registered, so the VAT cannot be claimed back. Confirm to go on.',
+                'VENDOR_NOT_VAT_REGISTERED',
+              );
+            }
+            if (sameApprovedTotal(po, quote)) {
+              const { row, lines } = await applyVendorChange(tx, scope, this.audit, po, quote, {
+                now,
+                approvalRequestId: null,
+                expectedVersion: po.version,
+                vatWarningAcknowledged: acknowledged,
+              });
+              return { status: 200, response: toDto(row, lines) };
+            }
+            // A different total: the order stays as it is and the change goes through the commitment route again.
+            const [vendor] = await tx
+              .select({ legalName: vendors.legalName })
+              .from(vendors)
+              .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, body.vendorId)));
+            const [pr] = await tx
+              .select({ requesterUserId: purchaseRequests.requesterUserId })
+              .from(purchaseRequests)
+              .where(
+                scoped(scope).where(
+                  purchaseRequests,
+                  eq(purchaseRequests.id, po.purchaseRequestId),
+                ),
+              );
+            const proposal = proposalOf(po, quote, vendor?.legalName ?? null, acknowledged);
+            const request = await this.approvals.submit(tx, {
+              documentType: PO_VENDOR_CHANGE_DOCUMENT_TYPE,
+              documentId: randomUUID(),
+              documentNumber: `${po.number} vendor change`,
+              title: `Change of vendor on ${po.number}`,
+              snapshot: {
+                purchaseOrderNumber: po.number,
+                vendorChange: proposal,
+              },
+              facts: {
+                amountNpr: quote.totalNpr,
+                requesterIsFounder: await this.holdsRole(
+                  tx,
+                  scope,
+                  pr?.requesterUserId ?? principal.userId,
+                  'founder',
+                ),
+              },
+              requesterUserId: principal.userId,
+              submittedByUserId: principal.userId,
+              sodUserIds: [...new Set([principal.userId, pr?.requesterUserId ?? principal.userId])],
+            });
+            if (request.status === 'blocked') throw new NoEligibleApprover('No eligible approver');
+            await this.audit.record(tx, {
+              action: 'procurement.po.vendor_change_submitted',
+              entityType: PO_AUDIT_ENTITY,
+              entityId: id,
+              before: { vendorId: po.vendorId, approvedTotal: po.approvedTotal },
+              after: {
+                vendorId: body.vendorId,
+                total: quote.total,
+                approvalRequestId: request.requestId,
+              },
+            });
+            return {
+              status: 200,
+              response: {
+                ...toDto(po, await linesOf(tx, scope, id, false)),
+                pendingVendorChange: {
+                  approvalRequestId: request.requestId,
+                  vendorId: body.vendorId,
+                  total: quote.total,
+                },
+              },
+            };
+          },
+        );
+        return done.response;
+      });
+    } catch (error) {
+      if (!(error instanceof NoEligibleApprover)) throw error;
+      throw new UnprocessableEntityException({
+        code: 'NO_ELIGIBLE_APPROVER',
+        message: `This vendor change cannot be submitted: ${error.reason}`,
+      });
+    }
   }
 
   /**
@@ -1046,6 +1087,7 @@ export class PurchaseOrdersService {
       if (received.any) {
         throw conflict('Goods or services were received on this order', 'PO_HAS_RECEIPTS');
       }
+      await assertNoLiveBills(tx, scope, id);
       cancelled = lines.map((l) => ({ id: l.id, cancelledQuantity: l.orderedQuantity }));
     } else {
       if (received.hasDraft) {

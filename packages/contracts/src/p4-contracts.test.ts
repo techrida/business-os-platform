@@ -306,11 +306,12 @@ describe('P4 state machines', () => {
 });
 
 describe('P4 document types', () => {
-  it('lists the seven approval document types', () => {
+  it('lists the eight approval document types', () => {
     expect([...P4_DOCUMENT_TYPES]).toEqual([
       'purchase_request',
       'pr_commitment',
       'po_amendment',
+      'po_vendor_change',
       'match_exception',
       'vendor_bill',
       'payment_request',

@@ -262,6 +262,14 @@ describe('shortCloseAction and cancelAction', () => {
     expect(out.error).toMatch(/already been received/i);
     expect(out.key).not.toBe(KEY);
   });
+
+  it('shows PO_HAS_BILLS in plain words on cancel without asking for a reload, and rotates the key', async () => {
+    api.cancelPurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_BILLS'));
+    const out = await cancelAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.error).toMatch(/vendor bills.*not voided/i);
+    expect(out.reload).toBeUndefined();
+    expect(out.key).not.toBe(KEY);
+  });
 });
 
 describe('changeVendorAction', () => {
@@ -275,10 +283,45 @@ describe('changeVendorAction', () => {
       PO,
       NEW_VENDOR,
       KEY,
+      false,
     );
     expect(out.done).toMatch(/vendor was changed/i);
     expect(out.done).toMatch(/payment terms/i);
     expect(out.error).toBeUndefined();
+  });
+
+  it('shows the VAT warning as a field to tick, then sends the acknowledgement (K3 Q2)', async () => {
+    api.changePurchaseOrderVendor.mockRejectedValueOnce(apiError(409, 'VENDOR_NOT_VAT_REGISTERED'));
+    const warned = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(warned.errors?.['acknowledgeVatWarning']).toMatch(/not VAT registered/i);
+    expect(warned.errors?.['acknowledgeVatWarningVendor']).toBe(NEW_VENDOR);
+    expect(warned.error).toBeUndefined();
+    api.changePurchaseOrderVendor.mockResolvedValue({ ...currentOrder, vendorId: NEW_VENDOR });
+    const out = await changeVendorAction(
+      prev,
+      form({ ...base, vendorId: NEW_VENDOR, acknowledgeVatWarning: 'on' }),
+    );
+    expect(api.changePurchaseOrderVendor).toHaveBeenLastCalledWith(
+      expect.anything(),
+      PO,
+      NEW_VENDOR,
+      KEY,
+      true,
+    );
+    expect(out.error).toBeUndefined();
+  });
+
+  it('says the change went for approval when the API answers with a pending change', async () => {
+    api.changePurchaseOrderVendor.mockResolvedValue({
+      ...currentOrder,
+      pendingVendorChange: {
+        approvalRequestId: NEW_VENDOR,
+        vendorId: NEW_VENDOR,
+        total: '94920.00',
+      },
+    });
+    const out = await changeVendorAction(prev, form({ ...base, vendorId: NEW_VENDOR }));
+    expect(out.done).toMatch(/sent for approval/i);
   });
 
   it('asks for a vendor before any API call', async () => {
@@ -346,6 +389,14 @@ describe('cancelAndRecreateAction', () => {
     api.cancelAndRecreatePurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_RECEIPTS'));
     const out = await cancelAndRecreateAction(prev, form({ ...base, reason: 'x' }));
     expect(out.error).toMatch(/cannot be cancelled and raised again/i);
+    expect(out.key).not.toBe(KEY);
+  });
+
+  it('shows PO_HAS_BILLS in plain words on recreate, stays on the page and rotates the key', async () => {
+    api.cancelAndRecreatePurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_BILLS'));
+    const out = await cancelAndRecreateAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.error).toMatch(/vendor bills.*not voided/i);
+    expect(out.reload).toBeUndefined();
     expect(out.key).not.toBe(KEY);
   });
 

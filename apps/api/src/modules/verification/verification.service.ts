@@ -51,7 +51,10 @@ import { can as decide, type Principal, type ResourceRef } from '../../platform/
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
-import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
+import {
+  type DocumentOwnerPolicy,
+  type UploadGrant,
+} from '../../platform/documents/documents.ports';
 import { assertNotInfected, DocumentsService } from '../../platform/documents/documents.service';
 import { searchPage } from '../../platform/list';
 import { CustomerPartyOwner } from './customer-party-owner';
@@ -138,17 +141,22 @@ function labelOf(
  * What `p` may do with this case, by the same record checks the write and review routes make: review needs
  * verification.review and, like every review route, someone other than the case's submitter (separation of
  * duties); edit needs the kind's write permission (and verification read, as every write here does);
- * attach adds documents.upload and remove adds verification.read, each on the case's ref.
+ * attach adds documents.upload on the case ref for customer cases, or route-level documents.upload for vendor
+ * cases (U18 Q9 b: vendor.write + verification.read on the case ref authorises uploads); remove matches edit.
  */
 export function caseCapabilities(p: Principal, scope: TxScope, l: Loaded): VerificationCaseCan {
   const ref = caseRef(scope, l);
   const allowed = (action: Permission) => decide(p, action, ref).allowed;
   const staff = p.orgKind === 'staff';
   const edit = staff && allowed(l.port.writePermission) && allowed('verification.read');
+  const canUpload =
+    l.row.partyKind === 'vendor'
+      ? decide(p, 'documents.upload').allowed
+      : allowed('documents.upload');
   return {
     review: staff && allowed('verification.review') && l.row.submittedByUserId !== p.userId,
     edit,
-    attach: edit && allowed('documents.upload'),
+    attach: edit && canUpload,
     remove: edit,
   };
 }
@@ -211,6 +219,19 @@ export class VerificationService implements OnModuleInit {
       resource: async (scope, ownerId) => {
         const l = await this.load(this.db, scope.tenantId, ownerId);
         return l === undefined ? null : caseRef(scope, l);
+      },
+      // U18 Q9 b: procurement attaches files to any vendor KYB case it can see, not only vendors it owns.
+      // Customer cases stay on `documents.upload` alone; vendor cases also accept `vendor.write` on the case ref
+      // when the caller holds `verification.read` on that same ref (preserving tenant and entity scoping).
+      uploadGrants: async (scope, ownerId) => {
+        const l = await this.load(this.db, scope.tenantId, ownerId);
+        if (l === undefined) return null;
+        const ref = caseRef(scope, l);
+        const grants: UploadGrant[] = [{ action: 'documents.upload', ref }];
+        if (l.row.partyKind === 'vendor' && this.mayRead(scope, l)) {
+          grants.push({ action: l.port.writePermission, ref });
+        }
+        return grants;
       },
       // A submitted or decided case is frozen: the reviewer decides on exactly the files that were there.
       // FOR SHARE on the case row when a transaction is given, so an upload and a submit cannot interleave.
@@ -587,7 +608,7 @@ export class VerificationService implements OnModuleInit {
     const result = await withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
       this.assertVisible(l.port.writePermission, scope, l);
-      if (l.row.partyKind === 'customer') this.assertVisible('verification.read', scope, l);
+      this.assertVisible('verification.read', scope, l);
       if (!isEditable(l.row.status)) {
         throw conflict(`A case in status ${l.row.status} cannot be changed`);
       }
