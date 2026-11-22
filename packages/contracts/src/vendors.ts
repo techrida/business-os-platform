@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { AddressLinesSchema } from './addresses.js';
 import { CountryCodeSchema } from './countries.js';
-import { EmailSchema, NepalPanSchema } from './crm.js';
+import { EmailSchema, NepalPanSchema, PanVatNoSchema, nepalPanProblem } from './crm.js';
 import { CurrencySchema } from './money.js';
 import { PartyPhonesSchema } from './phones.js';
 
@@ -93,7 +93,8 @@ export const CreateVendorBodySchema = z
     legalName: text(200),
     tradeName: text(200).optional(),
     kind: VendorKindSchema,
-    pan: VendorPanSchema.optional(),
+    /** A Nepal vendor's PAN is nine digits; a foreign vendor keeps the loose tax-id shape (checked below). */
+    pan: PanVatNoSchema.optional(),
     vatRegistered: z.boolean(),
     /** ISO 3166-1 alpha-2, such as NP. The vendor's address country is this one (FX9). */
     country: CountryCodeSchema,
@@ -108,6 +109,10 @@ export const CreateVendorBodySchema = z
   .refine((v) => v.kind === 'foreign' || v.pan !== undefined, {
     message: 'a PAN is required unless the vendor is foreign',
     path: ['pan'],
+  })
+  .superRefine((v, ctx) => {
+    const problem = nepalPanProblem(v.country, v.pan);
+    if (problem !== null) ctx.addIssue({ code: 'custom', message: problem, path: ['pan'] });
   });
 export type CreateVendorBody = z.infer<typeof CreateVendorBodySchema>;
 
