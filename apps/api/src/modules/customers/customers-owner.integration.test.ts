@@ -168,7 +168,7 @@ beforeEach(() => as('founder'));
 
 // ---------------------------------------------------------------------------------------------- helpers
 
-const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+const address = { line: 'Ring Road', city: 'Kathmandu' };
 let keySeq = 0;
 const post = (body: Record<string, unknown>) =>
   request(baseUrl)
@@ -176,8 +176,13 @@ const post = (body: Record<string, unknown>) =>
     .set('Idempotency-Key', `owner-key-${++keySeq}`)
     .send({
       legalName: `Owner Customer ${randomUUID().slice(0, 8)} Pvt. Ltd.`,
+      country: 'NP',
       address,
-      contact: { fullName: 'First Contact', email: `o-${randomUUID().slice(0, 8)}@example.com` },
+      contact: {
+        fullName: 'First Contact',
+        email: `o-${randomUUID().slice(0, 8)}@example.com`,
+        country: 'NP',
+      },
       ...body,
     });
 

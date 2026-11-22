@@ -219,7 +219,7 @@ beforeEach(() => as('founder'));
 
 // ---------------------------------------------------------------------------------------------- helpers
 
-const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+const address = { line: 'Ring Road', city: 'Kathmandu' };
 
 let keySeq = 0;
 /** A new customer of `tenant`, created by its Founder (customer.write), then the caller is put back. */
@@ -234,8 +234,13 @@ async function createCustomer(tenant: Tenant = a) {
     .set('Idempotency-Key', `terms-key-${++keySeq}`)
     .send({
       legalName: `Terms Customer ${randomUUID().slice(0, 8)} Pvt. Ltd.`,
+      country: 'NP',
       address,
-      contact: { fullName: 'First Contact', email: `t-${randomUUID().slice(0, 8)}@example.com` },
+      contact: {
+        fullName: 'First Contact',
+        email: `t-${randomUUID().slice(0, 8)}@example.com`,
+        country: 'NP',
+      },
     });
   Object.assign(current, saved);
   expect(res.status, JSON.stringify(res.body)).toBe(201);

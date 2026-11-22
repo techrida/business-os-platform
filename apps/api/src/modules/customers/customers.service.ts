@@ -10,7 +10,6 @@
 //   filter on it) do not apply. Every query filters the tenant by hand, and the caller's grant scope is applied
 //   in customerVisibleWhere() (customer-read-scope.ts), which mirrors can() for a record that names no entity.
 import {
-  type Address,
   type ContactDto,
   type CustomerActingEntity,
   type CustomerCan,
@@ -19,8 +18,10 @@ import {
   type CreateContactBody,
   type CreateCustomerBody,
   type CustomerDto,
+  type CountryCode,
   type CustomerFields,
   nepalPanProblem,
+  type PartyPhone,
   type PartyAccountDto,
   type PaymentTerm,
   type Permission,
@@ -67,6 +68,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
+import { loadContactPhones, replaceContactPhones } from './contact-phones';
 import { customerVisibleWhere } from './customer-read-scope';
 import { CustomersCaller } from './customers.caller';
 import {
@@ -149,7 +151,8 @@ export function toCustomerDto(row: CustomerRow): CustomerDto {
     relationship: row.relationship,
     ownerUserId: row.ownerUserId,
     defaultCurrency: row.defaultCurrency as CustomerDto['defaultCurrency'],
-    address: row.address as Address,
+    country: row.country as CountryCode,
+    address: { line: row.addressLine, city: row.addressCity },
     logoDocumentId: row.logoDocumentId,
     mergedIntoId: row.mergedIntoId,
     version: row.version,
@@ -158,13 +161,15 @@ export function toCustomerDto(row: CustomerRow): CustomerDto {
   };
 }
 
-export function toContactDto(row: ContactRow): ContactDto {
+/** A contact as the API returns it, with its numbers (loadContactPhones: primary first, then saved order). */
+export function toContactDto(row: ContactRow, phones: PartyPhone[]): ContactDto {
   return {
     id: row.id,
     customerId: row.customerId,
     fullName: row.fullName,
     email: row.emailNorm,
-    phone: row.phoneE164,
+    country: row.country as CountryCode,
+    phones,
     title: row.title,
     isPrimary: row.isPrimary,
     version: row.version,
@@ -641,7 +646,7 @@ export class CustomersService {
     now: Date,
   ): Promise<CustomerDto> {
     // Reached by import and lead conversion as well, which skip the request schema.
-    const panProblem = nepalPanProblem(body.address.country, body.panVatNo);
+    const panProblem = nepalPanProblem(body.country, body.panVatNo);
     if (panProblem !== null) throw new BadRequestException(panProblem);
     const pan = body.panVatNo === undefined ? null : normalizePan(body.panVatNo);
     if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
@@ -674,7 +679,9 @@ export class CustomersService {
           relationship: body.relationship,
           ownerUserId: body.ownerUserId ?? this.caller.current().principal.userId,
           defaultCurrency: body.defaultCurrency ?? null,
-          address: body.address,
+          country: body.country,
+          addressLine: body.address.line,
+          addressCity: body.address.city,
           version: 1,
           createdAt: now,
           updatedAt: now,
@@ -740,14 +747,21 @@ export class CustomersService {
         this.assertVisible('customer.write', row, principal);
       }
 
+      // An address is its street lines, city and country together (FX9), so a new address names its country.
+      if (fields.address !== undefined && fields.country === undefined) {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: 'an address needs its country',
+          fieldErrors: { country: 'an address needs its country' },
+        });
+      }
       // A Nepal customer has a 9-digit PAN. The contract checks a body that sends both; here the other half comes from
-      // the stored row: a new PAN against the stored country, or a switch to NP against the stored PAN. A record whose
-      // country and PAN are both left alone is not judged, so a legacy tax id never blocks an unrelated edit.
-      const countryAfter = fields.address?.country ?? (row.address as Address).country;
-      const switchedToNepal =
-        fields.address !== undefined && (row.address as Address).country !== 'NP';
-      if (fields.panVatNo !== undefined || switchedToNepal) {
-        const problem = nepalPanProblem(countryAfter, fields.panVatNo ?? row.panVatNo);
+      // the stored row: a new PAN against the stored country, or a new country against the stored PAN.
+      if (fields.panVatNo !== undefined || fields.country !== undefined) {
+        const problem = nepalPanProblem(
+          fields.country ?? row.country,
+          fields.panVatNo ?? row.panVatNo,
+        );
         if (problem !== null) throw new BadRequestException(problem);
       }
       const pan = fields.panVatNo === undefined ? undefined : normalizePan(fields.panVatNo);
@@ -764,7 +778,11 @@ export class CustomersService {
           ...(fields.relationship !== undefined && { relationship: fields.relationship }),
           ...(ownerChange && { ownerUserId: fields.ownerUserId }),
           ...(fields.defaultCurrency !== undefined && { defaultCurrency: fields.defaultCurrency }),
-          ...(fields.address !== undefined && { address: fields.address }),
+          ...(fields.country !== undefined && { country: fields.country }),
+          ...(fields.address !== undefined && {
+            addressLine: fields.address.line,
+            addressCity: fields.address.city,
+          }),
           updatedAt: now,
         });
         if (fields.legalName !== undefined) {
@@ -955,7 +973,11 @@ export class CustomersService {
         asc(customerContacts.fullName),
         asc(customerContacts.id),
       );
-    return rows.map(toContactDto);
+    const phones = await loadContactPhones(
+      this.db,
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => toContactDto(r, phones.get(r.id) ?? []));
   }
 
   async createContact(
@@ -1022,7 +1044,7 @@ export class CustomersService {
           customerId,
           fullName: body.fullName,
           emailNorm: body.email === undefined ? null : normalizeEmail(body.email),
-          phoneE164: body.phone ?? null,
+          country: body.country,
           title: body.title ?? null,
           isPrimary: body.isPrimary,
           version: 1,
@@ -1030,7 +1052,14 @@ export class CustomersService {
           updatedAt: now,
         })
         .returning();
-      return toContactDto(row!);
+      // The numbers go in with the contact, so a refused number leaves no contact behind.
+      await replaceContactPhones(tx, {
+        tenantId: scope.tenantId,
+        contactId: row!.id,
+        phones: body.phones,
+      });
+      const phones = await loadContactPhones(tx, [row!.id]);
+      return toContactDto(row!, phones.get(row!.id) ?? []);
     } catch (error) {
       if (isUnique(error, PRIMARY_CONTACT_INDEX)) {
         throw new ConflictException({

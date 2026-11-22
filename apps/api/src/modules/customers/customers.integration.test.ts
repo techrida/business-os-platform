@@ -33,7 +33,12 @@ import {
   verificationCases,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
-import { ConflictException, ForbiddenException, type INestApplication } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  type INestApplication,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -50,6 +55,7 @@ import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { loadContactPhones, replaceContactPhones } from './contact-phones';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
@@ -203,17 +209,24 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------------------------- helpers
 
-const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+const address = { line: 'Ring Road', city: 'Kathmandu' };
+/** A Nepal customer: its country and address (FX9: the country is the party's own field). */
+const nepal = { country: 'NP' as const, address };
 /** A customer abroad keeps the loose tax id (letters and hyphens allowed). */
-const abroad = { line1: 'MG Road', city: 'Bengaluru', country: 'IN' };
+const abroad = { country: 'IN' as const, address: { line: 'MG Road', city: 'Bengaluru' } };
 /** Every new customer comes with its first contact, which needs an email. */
 const firstContact = () => ({
   fullName: 'First Contact',
   email: `first-${randomUUID().slice(0, 8)}@example.com`,
+  country: 'NP' as const,
+  phones: [],
 });
+/** One number of a contact, as the form sends it. */
+const npMobile = { country: 'NP' as const, e164: '+9779812345678', label: 'mobile' as const };
+const usWork = { country: 'US' as const, e164: '+14155552671', label: 'work' as const };
 const customerBody = (over: Record<string, unknown> = {}) => ({
   legalName: `Customer ${randomUUID().slice(0, 8)} Pvt. Ltd.`,
-  address,
+  ...nepal,
   contact: firstContact(),
   ...over,
 });
@@ -248,7 +261,7 @@ describe('create a customer and read it back', () => {
     const body = customerBody({
       legalName: 'Himalayan Construction Pvt. Ltd.',
       panVatNo: 'ab-123456',
-      address: abroad,
+      ...abroad,
       industry: 'Construction',
       defaultCurrency: 'NPR',
     });
@@ -531,14 +544,14 @@ describe('"Create anyway" on a customer of the same name (F1-Q55)', () => {
     const first = await createCustomer({
       legalName: `Kailash ${tag} Pvt. Ltd.`,
       panVatNo: '123456789',
-      address: abroad,
+      ...abroad,
     });
 
     const refused = await post(
       customerBody({
         legalName: `Different ${tag} Pvt. Ltd.`,
         panVatNo: '123-456-789',
-        address: abroad,
+        ...abroad,
       }),
     );
     expect(refused.status, JSON.stringify(refused.body)).toBe(400);
@@ -552,7 +565,7 @@ describe('"Create anyway" on a customer of the same name (F1-Q55)', () => {
       customerBody({
         legalName: `Different ${tag} Pvt. Ltd.`,
         panVatNo: '123-456-789',
-        address: abroad,
+        ...abroad,
         duplicateOverrideReason: 'Sister company sharing the group PAN',
       }),
     );
@@ -622,7 +635,7 @@ describe('a duplicate PAN/VAT number', () => {
           legalName: 'Race Pvt. Ltd.',
           panVatNo: pan,
           relationship: 'prospect',
-          address,
+          ...nepal,
           contact: firstContact(),
         },
         newKey(),
@@ -728,7 +741,7 @@ describe('a caller from another tenant', () => {
     const contact = await request(baseUrl)
       .post(`/v1/customers/${created.id}/contacts`)
       .set('Idempotency-Key', newKey())
-      .send({ fullName: 'Sita Rai' });
+      .send({ country: 'NP', fullName: 'Sita Rai' });
     expect(contact.status).toBe(201);
 
     asStaff(b);
@@ -741,7 +754,7 @@ describe('a caller from another tenant', () => {
     const post = await request(baseUrl)
       .post(`/v1/customers/${created.id}/contacts`)
       .set('Idempotency-Key', newKey())
-      .send({ fullName: 'Intruder' });
+      .send({ country: 'NP', fullName: 'Intruder' });
     expect(post.status).toBe(404);
     const list = await request(baseUrl).get('/v1/customers').query({ q: 'Hidden' });
     expect((list.body as { items: unknown[] }).items).toEqual([]);
@@ -760,17 +773,26 @@ describe('contacts', () => {
         .post(`/v1/customers/${customer.id}/contacts`)
         .set('Idempotency-Key', newKey())
         .send(body);
-    const plain = await post({ fullName: 'Anil Shrestha', email: 'Anil@Example.COM' });
+    const plain = await post({
+      country: 'NP',
+      fullName: 'Anil Shrestha',
+      email: 'Anil@Example.COM',
+    });
     expect(plain.status, JSON.stringify(plain.body)).toBe(201);
     expect(ContactDtoSchema.parse(plain.body)).toMatchObject({
       customerId: customer.id,
       email: 'anil@example.com',
-      phone: null,
+      country: 'NP',
+      phones: [],
       isPrimary: false,
       version: 1,
     });
     // A later contact may have no email: the customer already has one with an address.
-    const phoneOnly = await post({ fullName: 'Sita Rai', phone: '+9779812345678' });
+    const phoneOnly = await post({
+      country: 'NP',
+      fullName: 'Sita Rai',
+      phones: [{ ...npMobile, isPrimary: true }],
+    });
     expect(phoneOnly.status, JSON.stringify(phoneOnly.body)).toBe(201);
 
     const list = await request(baseUrl).get(`/v1/customers/${customer.id}/contacts`);
@@ -803,7 +825,11 @@ describe('contacts', () => {
     const res = await request(baseUrl)
       .post(`/v1/customers/${customer.id}/contacts`)
       .set('Idempotency-Key', newKey())
-      .send({ fullName: 'Sita Rai', phone });
+      .send({
+        country: 'NP',
+        fullName: 'Sita Rai',
+        phones: [{ country: 'NP', e164: phone, isPrimary: true }],
+      });
     expect(res.status).toBe(400);
     const rows = await db
       .select()
@@ -814,19 +840,140 @@ describe('contacts', () => {
   });
 
   it('is also enforced by the database CHECKs, whatever the API does', async () => {
-    const customer = await createCustomer();
-    const insert = (over: Record<string, unknown>) =>
+    // The first contact's primary number is written through the API; the raw inserts below all fail.
+    const customer = await createCustomer({
+      contact: { ...firstContact(), phones: [{ ...npMobile, isPrimary: true }] },
+    });
+    await expect(
       ownerPool.query(
-        `INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm, phone_e164)
-         VALUES ($1, $2, 'Raw', $3, $4)`,
-        [a.tenantId, customer.id, over.email ?? null, over.phone ?? null],
+        `INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm)
+         VALUES ($1, $2, 'Raw', 'Upper@Example.com')`,
+        [a.tenantId, customer.id],
+      ),
+    ).rejects.toMatchObject({ constraint: 'customer_contacts_email_norm_check' });
+    const contact = await ownerPool.query<{ id: string }>(
+      'SELECT id FROM app.customer_contacts WHERE customer_id = $1',
+      [customer.id],
+    );
+    const phone = (e164: string, isPrimary: boolean) =>
+      ownerPool.query(
+        `INSERT INTO app.customer_contact_phones (tenant_id, contact_id, country, e164, is_primary)
+         VALUES ($1, $2, 'NP', $3, $4)`,
+        [a.tenantId, contact.rows[0]!.id, e164, isPrimary],
       );
-    await expect(insert({ phone: '9812345678' })).rejects.toMatchObject({
-      constraint: 'customer_contacts_phone_e164_check',
+    await expect(phone('9812345678', false)).rejects.toMatchObject({
+      constraint: 'customer_contact_phones_e164_check',
     });
-    await expect(insert({ email: 'Upper@Example.com' })).rejects.toMatchObject({
-      constraint: 'customer_contacts_email_norm_check',
+    await expect(phone('+9779812345679', true)).rejects.toMatchObject({
+      constraint: 'customer_contact_phones_owner_primary_unique',
     });
+    await expect(phone(npMobile.e164, false)).rejects.toMatchObject({
+      constraint: 'customer_contact_phones_owner_e164_unique',
+    });
+  });
+
+  // FX9: several numbers per person, each with its own country; the person's country may differ from the company's.
+  it('round-trips a contact with a Nepal mobile and a US number through POST and GET, primary first', async () => {
+    const customer = await createCustomer();
+    const res = await request(baseUrl)
+      .post(`/v1/customers/${customer.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({
+        fullName: 'Ram Thapa',
+        email: 'ram@example.com',
+        country: 'US',
+        phones: [
+          { ...usWork, isPrimary: false },
+          { ...npMobile, isPrimary: true },
+        ],
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const expected = {
+      fullName: 'Ram Thapa',
+      country: 'US',
+      phones: [
+        { ...npMobile, isPrimary: true },
+        { ...usWork, isPrimary: false },
+      ],
+    };
+    expect(ContactDtoSchema.parse(res.body)).toMatchObject(expected);
+    const list = await request(baseUrl).get(`/v1/customers/${customer.id}/contacts`);
+    expect(list.status).toBe(200);
+    const read = ContactDtoSchema.array()
+      .parse(list.body)
+      .find((c) => c.fullName === 'Ram Thapa');
+    expect(read).toMatchObject(expected);
+    expect(customer.country).toBe('NP');
+  });
+
+  it("writes the first contact's numbers with the customer", async () => {
+    const customer = await createCustomer({
+      contact: { ...firstContact(), phones: [{ ...npMobile, isPrimary: true }] },
+    });
+    const list = await request(baseUrl).get(`/v1/customers/${customer.id}/contacts`);
+    expect(ContactDtoSchema.array().parse(list.body)[0]).toMatchObject({
+      fullName: 'First Contact',
+      isPrimary: true,
+      phones: [{ ...npMobile, isPrimary: true }],
+    });
+  });
+
+  it('refuses a second primary number on one contact and writes no contact', async () => {
+    const customer = await createCustomer();
+    const res = await request(baseUrl)
+      .post(`/v1/customers/${customer.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({
+        fullName: 'Two Primaries',
+        country: 'NP',
+        phones: [
+          { ...npMobile, isPrimary: true },
+          { ...usWork, isPrimary: true },
+        ],
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toContain('only one number can be primary');
+    const rows = await db
+      .select()
+      .from(customerContacts)
+      .where(eq(customerContacts.customerId, customer.id));
+    expect(rows.map((r) => r.fullName)).toEqual(['First Contact']);
+  });
+
+  it('holds replaceContactPhones (lead conversion) to one primary, promoting the first row when none is marked', async () => {
+    const customer = await createCustomer();
+    const [contact] = await db
+      .select({ id: customerContacts.id })
+      .from(customerContacts)
+      .where(eq(customerContacts.customerId, customer.id));
+    const write = (phones: Parameters<typeof replaceContactPhones>[1]['phones']) =>
+      withTx(db, a, systemActor('test'), (tx) =>
+        replaceContactPhones(tx, { tenantId: a.tenantId, contactId: contact!.id, phones }),
+      );
+    await expect(
+      write([
+        { ...npMobile, isPrimary: true },
+        { ...usWork, isPrimary: true },
+      ]),
+    ).rejects.toThrow(BadRequestException);
+    await write([
+      { ...usWork, isPrimary: false },
+      { ...npMobile, isPrimary: false },
+    ]);
+    const phones = await withTx(db, a, systemActor('test'), (tx) =>
+      loadContactPhones(tx, [contact!.id]),
+    );
+    expect(phones.get(contact!.id)).toEqual([
+      { ...usWork, isPrimary: true },
+      { ...npMobile, isPrimary: false },
+    ]);
+    // The set is replaced as a whole: an empty list removes every number.
+    await write([]);
+    const left = await ownerPool.query(
+      'SELECT count(*)::int AS n FROM app.customer_contact_phones WHERE contact_id = $1',
+      [contact!.id],
+    );
+    expect(left.rows[0]).toEqual({ n: 0 });
   });
 
   it('is 409 for a second primary contact and 404 for an unknown customer', async () => {
@@ -837,10 +984,10 @@ describe('contacts', () => {
         .set('Idempotency-Key', newKey())
         .send(body);
     // The first contact, made with the customer, is already the primary one.
-    const second = await post(customer.id, { fullName: 'Two', isPrimary: true });
+    const second = await post(customer.id, { country: 'NP', fullName: 'Two', isPrimary: true });
     expect(second.status).toBe(409);
     expect(errorOf(second.body).code).toBe('primary_contact_exists');
-    expect((await post(randomUUID(), { fullName: 'Nobody' })).status).toBe(404);
+    expect((await post(randomUUID(), { country: 'NP', fullName: 'Nobody' })).status).toBe(404);
   });
 
   it('replays a retried create once', async () => {
@@ -850,7 +997,7 @@ describe('contacts', () => {
       request(baseUrl)
         .post(`/v1/customers/${customer.id}/contacts`)
         .set('Idempotency-Key', key)
-        .send({ fullName: 'Once Only' });
+        .send({ country: 'NP', fullName: 'Once Only' });
     const first = await send();
     const replay = await send();
     expect(replay.body).toEqual(first.body);
@@ -877,7 +1024,12 @@ describe('a customer always has a contact with an email (quotations are emailed)
       .set('Idempotency-Key', newKey())
       .send(
         customerBody({
-          contact: { fullName: 'Maya Gurung', email: 'Maya@Example.COM', title: 'Director' },
+          contact: {
+            country: 'NP',
+            fullName: 'Maya Gurung',
+            email: 'Maya@Example.COM',
+            title: 'Director',
+          },
         }),
       );
     expect(res.status, JSON.stringify(res.body)).toBe(201);
@@ -894,11 +1046,15 @@ describe('a customer always has a contact with an email (quotations are emailed)
 
   it('is 400 without a first contact, or with one that has no valid email, and writes nothing', async () => {
     const legalName = `No Contact ${randomUUID().slice(0, 8)} Pvt. Ltd.`;
-    for (const contact of [undefined, { fullName: 'No Mail' }, { fullName: 'Bad', email: 'x' }]) {
+    for (const contact of [
+      undefined,
+      { country: 'NP', fullName: 'No Mail' },
+      { country: 'NP', fullName: 'Bad', email: 'x' },
+    ]) {
       const res = await request(baseUrl)
         .post('/v1/customers')
         .set('Idempotency-Key', newKey())
-        .send({ legalName, address, ...(contact === undefined ? {} : { contact }) });
+        .send({ legalName, ...nepal, ...(contact === undefined ? {} : { contact }) });
       expect(res.status, JSON.stringify(contact)).toBe(400);
     }
     expect(await db.select().from(customers).where(eq(customers.legalName, legalName))).toEqual([]);
@@ -929,17 +1085,28 @@ describe('a customer always has a contact with an email (quotations are emailed)
         .where(eq(customerContacts.customerId, customer.id)),
     );
 
-    const refused = await post(customer.id, { fullName: 'Phone Only', phone: '+9779812345678' });
+    const refused = await post(customer.id, {
+      country: 'NP',
+      fullName: 'Phone Only',
+      phones: [{ ...npMobile, isPrimary: true }],
+    });
     expect(refused.status, JSON.stringify(refused.body)).toBe(422);
     expect(errorOf(refused.body).code).toBe('contact_email_required');
     expect((await contactsOf(customer.id)).map((r) => r.fullName)).toEqual(['First Contact']);
 
     // A contact with an email is fine, and after it a contact without one is too.
     expect(
-      (await post(customer.id, { fullName: 'Has Mail', email: 'mail@example.com' })).status,
+      (await post(customer.id, { country: 'NP', fullName: 'Has Mail', email: 'mail@example.com' }))
+        .status,
     ).toBe(201);
     expect(
-      (await post(customer.id, { fullName: 'Phone Only', phone: '+9779812345678' })).status,
+      (
+        await post(customer.id, {
+          country: 'NP',
+          fullName: 'Phone Only',
+          phones: [{ ...npMobile, isPrimary: true }],
+        })
+      ).status,
     ).toBe(201);
   });
 });
@@ -1268,7 +1435,7 @@ describe('the Nepal PAN rule on the server (FX8)', () => {
 
   it('holds createInTx (import, lead conversion) to the same rule', async () => {
     const now = new Date('2026-11-08T04:00:00Z');
-    const create = (panVatNo: string, addr: typeof address) =>
+    const create = (panVatNo: string, place: typeof nepal | typeof abroad) =>
       withTx(db, a, systemActor('test'), (tx) =>
         service.createInTx(
           tx,
@@ -1277,18 +1444,18 @@ describe('the Nepal PAN rule on the server (FX8)', () => {
             legalName: `Direct ${randomUUID().slice(0, 8)}`,
             panVatNo,
             relationship: 'prospect',
-            address: addr,
+            ...place,
           },
           now,
         ),
       );
-    await expect(create('AB-12345', address)).rejects.toThrow(/9 digits/);
+    await expect(create('AB-12345', nepal)).rejects.toThrow(/9 digits/);
     await expect(create(foreignPanOf(), abroad)).resolves.toBeDefined();
   });
 
   it('keeps the loose tax id for a customer abroad', async () => {
     const foreignPan = foreignPanOf();
-    const customer = await createCustomer({ panVatNo: foreignPan, address: abroad });
+    const customer = await createCustomer({ panVatNo: foreignPan, ...abroad });
     expect(customer.panVatNo).toBe(foreignPan);
   });
 
@@ -1297,26 +1464,73 @@ describe('the Nepal PAN rule on the server (FX8)', () => {
     const shortPan = await patch(nepali.id, { expectedVersion: nepali.version, panVatNo: '12345' });
     expect(shortPan.status, JSON.stringify(shortPan.body)).toBe(400);
 
-    const foreign = await createCustomer({ panVatNo: foreignPanOf(), address: abroad });
-    const toNepal = await patch(foreign.id, { expectedVersion: foreign.version, address });
+    const foreign = await createCustomer({ panVatNo: foreignPanOf(), ...abroad });
+    const toNepal = await patch(foreign.id, { expectedVersion: foreign.version, ...nepal });
     expect(toNepal.status, JSON.stringify(toNepal.body)).toBe(400);
+    expect(errorOf(toNepal.body).message).toContain('9 digits');
     const fixed = await patch(foreign.id, {
       expectedVersion: foreign.version,
-      address,
+      ...nepal,
       panVatNo: panOf(),
     });
     expect(fixed.status, JSON.stringify(fixed.body)).toBe(200);
   });
 
-  it('does not judge a legacy tax id while neither the PAN nor the country changes', async () => {
-    const created = await createCustomer({ address: abroad });
-    await withTx(db, a, systemActor('test'), (tx) =>
-      tx
-        .update(customers)
-        .set({ panVatNo: 'LEGACY-1', address })
-        .where(eq(customers.id, created.id)),
-    );
-    const res = await patch(created.id, { expectedVersion: created.version, industry: 'Retail' });
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  it('saves a US customer without a PAN and refuses an NP customer with a 5-digit PAN', async () => {
+    const us = await createCustomer({
+      country: 'US',
+      address: { line: '1 Market St', city: 'San Francisco' },
+    });
+    expect(us).toMatchObject({
+      country: 'US',
+      address: { line: '1 Market St', city: 'San Francisco' },
+      panVatNo: null,
+    });
+    const short = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(customerBody({ panVatNo: '12345' }));
+    expect(short.status, JSON.stringify(short.body)).toBe(400);
+    expect(errorOf(short.body).message).toContain('9 digits');
+  });
+
+  it('keeps a loose PAN valid after NP to US, and refuses US to NP while the stored PAN is loose', async () => {
+    const created = await createCustomer({ panVatNo: panOf() });
+    const toUs = await patch(created.id, { expectedVersion: created.version, country: 'US' });
+    expect(toUs.status, JSON.stringify(toUs.body)).toBe(200);
+    const loose = await patch(created.id, { expectedVersion: 2, panVatNo: foreignPanOf() });
+    expect(loose.status, JSON.stringify(loose.body)).toBe(200);
+    const back = await patch(created.id, { expectedVersion: 3, country: 'NP' });
+    expect(back.status, JSON.stringify(back.body)).toBe(400);
+    expect(errorOf(back.body).message).toContain('9 digits');
+  });
+
+  it('refuses an address without its country, on create and on PATCH', async () => {
+    const legalName = `No Country ${randomUUID().slice(0, 8)} Pvt. Ltd.`;
+    const created = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send({ legalName, address, contact: firstContact() });
+    expect(created.status, JSON.stringify(created.body)).toBe(400);
+    expect(errorOf(created.body).message).toContain('country');
+    expect(await db.select().from(customers).where(eq(customers.legalName, legalName))).toEqual([]);
+
+    const customer = await createCustomer();
+    const res = await patch(customer.id, {
+      expectedVersion: customer.version,
+      address: { line: 'New Road', city: 'Pokhara' },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toContain('country');
+    const moved = await patch(customer.id, {
+      expectedVersion: customer.version,
+      country: 'NP',
+      address: { line: 'New Road', city: 'Pokhara' },
+    });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    expect(CustomerDtoSchema.parse(moved.body).address).toEqual({
+      line: 'New Road',
+      city: 'Pokhara',
+    });
   });
 });
