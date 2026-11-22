@@ -60,7 +60,14 @@ const source = (version = 1, currency: 'NPR' | 'USD' = 'NPR'): RenderSource => (
       ],
     },
   },
-  vendor: { legalName: 'Himal Solar Pvt. Ltd.', pan: '600123456' },
+  vendor: {
+    legalName: 'Himal Solar Pvt. Ltd.',
+    pan: '600123456',
+    country: 'NP',
+    addressLine: 'Baneshwor-10',
+    addressCity: 'Kathmandu',
+    phoneE164: '+9779812345678',
+  },
   delivery: { requiredBy: null, deliveryLocation: null },
   taxCodes: new Map([[VAT, 'VAT13']]),
 });
@@ -81,6 +88,8 @@ function fixture(
     profile?: unknown;
     /** What the logo document resolves to; omitted, nothing (null). */
     logo?: DocumentLogoResolver;
+    /** The raw `entity.address` value; omitted, unset (null). */
+    entityAddress?: unknown;
   } = {},
 ) {
   let now = NOW;
@@ -110,6 +119,7 @@ function fixture(
         return Promise.resolve('dateFormat' in over ? over.dateFormat : 'dd MMM yyyy');
       }
       if (key === 'entity.profile') return Promise.resolve(live.profile);
+      if (key === 'entity.address') return Promise.resolve(over.entityAddress ?? null);
       return Promise.resolve('pan' in over ? over.pan : '301234567');
     }),
   } as unknown as RenderSettings;
@@ -165,6 +175,29 @@ describe('PurchaseOrderRenderSweeper.renderOne', () => {
     expect(f.settings.get).toHaveBeenCalledWith(
       { tenantId: 'tenant-1', organizationId: 'org-1' },
       'entity.pan_vat_no',
+    );
+  });
+
+  it('prints the vendor address and primary phone, without the country when it is the entity own', async () => {
+    const own = fixture({
+      entityAddress: { line: 'Kupondole', city: 'Lalitpur', country: 'NP' },
+    });
+    await expect(own.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const html = own.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+    expect(own.settings.get).toHaveBeenCalledWith(
+      { tenantId: 'tenant-1', organizationId: 'org-1' },
+      'entity.address',
+    );
+    expect(html).toContain('<div class="addr">Baneshwor-10</div>');
+    expect(html).toContain('<div class="addr">Kathmandu</div>');
+    expect(html).toContain('Phone +977 9812345678');
+    expect(html).not.toContain('Nepal');
+
+    // No entity address set: the entity's country is unknown, so the vendor's country prints.
+    const unset = fixture();
+    await expect(unset.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(unset.pdf.htmlToPdf.mock.calls[0]?.[0] as string).toContain(
+      '<div class="addr">Nepal</div>',
     );
   });
 

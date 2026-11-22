@@ -34,7 +34,6 @@ import {
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   SETTINGS,
-  StoredEntityPanVatNoSchema,
   type DocumentFormatSnapshot,
 } from '@bos/contracts';
 import {
@@ -45,6 +44,8 @@ import {
   purchaseRequests,
   scoped,
   taxCodes,
+  vendorContactPhones,
+  vendorContacts,
   vendors,
 } from '@bos/db';
 import {
@@ -127,7 +128,7 @@ export interface RenderCandidate {
   purchaseOrderId: string;
 }
 
-/** What the mapper needs of a version's rows. The buying entity's PAN is read from settings by the sweeper. */
+/** What the mapper needs of a version's rows. The buying entity's PAN and country are read from settings by the sweeper. */
 export type RenderSource = Omit<PurchaseOrderViewInput, 'buyer'> & { buyerLegalName: string };
 
 export interface OrphanDocument {
@@ -285,7 +286,7 @@ export class PurchaseOrderRenderSweeper {
       const { buyerLegalName, ...rows } = source;
       // A missing PAN prints nothing; it is not an error (a new entity may be pre-registration). A row that was
       // edited by hand and no longer fits the setting counts as not set.
-      const pan = StoredEntityPanVatNoSchema.safeParse(
+      const pan = SETTINGS['entity.pan_vat_no'].safeParse(
         await this.settings.get(scope, 'entity.pan_vat_no'),
       );
       // An invalid value (a hand-edited row) prints the default grouping or date; it never fails the render.
@@ -295,9 +296,19 @@ export class PurchaseOrderRenderSweeper {
       const dateFormat = SETTINGS['format.date'].safeParse(
         await this.settings.get(scope, 'format.date'),
       );
+      // The entity's own country, through the same setting the quotation issuer reads: a vendor there prints no
+      // country line. An unset or invalid address is not an error here (the PO does not print the buyer's address);
+      // the vendor's country then always prints.
+      const address = SETTINGS['entity.address'].safeParse(
+        await this.settings.get(scope, 'entity.address'),
+      );
       const view = toPurchaseOrderRenderView({
         ...rows,
-        buyer: { legalName: buyerLegalName, panVatNo: pan.success ? pan.data : null },
+        buyer: {
+          legalName: buyerLegalName,
+          panVatNo: pan.success ? pan.data : null,
+          country: address.success && address.data !== null ? address.data.country : null,
+        },
       });
       // What this render prints with, frozen into the one PDF it stores. A referenced logo that cannot be read
       // fails the render (it retries later) rather than storing a logo-less PO for good.
@@ -556,11 +567,40 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
         .limit(1);
       if (po === undefined) return undefined;
       // vendors and tax_codes are tenant-level tables: keyed by tenant and id.
-      const [vendor] = await tx
-        .select({ legalName: vendors.legalName, pan: vendors.pan })
+      const [vendorRow] = await tx
+        .select({
+          legalName: vendors.legalName,
+          pan: vendors.pan,
+          country: vendors.country,
+          addressLine: vendors.addressLine,
+          addressCity: vendors.addressCity,
+        })
         .from(vendors)
         .where(and(eq(vendors.tenantId, c.tenantId), eq(vendors.id, po.vendorId)))
         .limit(1);
+      // The phone the PO prints: the primary number of the vendor's primary contact (at most one of each, by
+      // partial unique index). Contacts and their phones are tenant-level too.
+      const [phone] = await tx
+        .select({ e164: vendorContactPhones.e164 })
+        .from(vendorContacts)
+        .innerJoin(
+          vendorContactPhones,
+          and(
+            eq(vendorContactPhones.tenantId, vendorContacts.tenantId),
+            eq(vendorContactPhones.contactId, vendorContacts.id),
+          ),
+        )
+        .where(
+          and(
+            eq(vendorContacts.tenantId, c.tenantId),
+            eq(vendorContacts.vendorId, po.vendorId),
+            eq(vendorContacts.isPrimary, true),
+            eq(vendorContactPhones.isPrimary, true),
+          ),
+        )
+        .limit(1);
+      const vendor =
+        vendorRow === undefined ? undefined : { ...vendorRow, phoneE164: phone?.e164 ?? null };
       const [org] = await tx
         .select({ legalName: organizations.legalName })
         .from(organizations)
