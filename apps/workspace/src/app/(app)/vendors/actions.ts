@@ -30,11 +30,10 @@ import {
   parseProposeBank,
   parseReason,
   parseUpdateVendor,
-  tidyVendorValues,
-  VENDOR_FIELDS,
+  readContactValues,
+  readVendorValues,
   type BankField,
   type ContactField,
-  type VendorValues,
 } from './_lib/forms';
 import type { LifecycleCommand } from './_lib/model';
 import type { PanelState, VendorFormState } from './_lib/state';
@@ -63,15 +62,6 @@ const nextKeyFor = (f: VendorFailure, key: string): string => (f.definite ? rand
 const noPermission = (what: string): string =>
   `Your roles do not include ${what}. Ask an administrator if you need to.`;
 
-function vendorValues(form: FormData): VendorValues {
-  const raw: Partial<VendorValues> = {};
-  for (const field of VENDOR_FIELDS) {
-    if (field === 'vatRegistered') raw.vatRegistered = text(form, field) === 'on';
-    else raw[field] = text(form, field);
-  }
-  return tidyVendorValues(raw);
-}
-
 // ---------------------------------------------------------------------------------------------
 // Create and edit
 // ---------------------------------------------------------------------------------------------
@@ -85,7 +75,7 @@ export async function createVendorAction(
   if (!(await getPermissionCheck(session))('vendor.write')) {
     return { key, errors: {}, error: noPermission('adding vendors') };
   }
-  const parsed = parseCreateVendor(vendorValues(form));
+  const parsed = parseCreateVendor(readVendorValues(form));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
   // TR-Q12d, warn but allow: a vendor whose name matches one already on file is added only after the
@@ -131,7 +121,7 @@ export async function updateVendorAction(
   } catch (err) {
     return { key, errors: {}, error: vendorFailure(err, 'edit').message };
   }
-  const parsed = parseUpdateVendor(vendorValues(form), original, seen);
+  const parsed = parseUpdateVendor(readVendorValues(form), original, seen);
   if (!parsed.ok) {
     return 'nothingChanged' in parsed
       ? { key, errors: {}, error: 'Nothing has changed, so there is nothing to save.' }
@@ -206,13 +196,7 @@ export async function addContactAction(
       error: noPermission('changing vendors'),
     };
   }
-  const parsed = parseContact({
-    name: text(form, 'name'),
-    email: text(form, 'email'),
-    phone: text(form, 'phone'),
-    role: text(form, 'role'),
-    isPortalAdmin: text(form, 'isPortalAdmin') === 'on',
-  });
+  const parsed = parseContact(readContactValues(form));
   if (!parsed.ok) return { savedCount: prev.savedCount, key: o.key, errors: parsed.errors };
 
   try {

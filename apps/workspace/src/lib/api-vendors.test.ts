@@ -48,6 +48,7 @@ const vendor = {
   pan: '301234567',
   vatRegistered: true,
   country: 'NP',
+  address: null,
   status: 'draft',
   version: 1,
   approvedAt: null,
@@ -250,14 +251,17 @@ describe('contacts and portal access', () => {
           vendorPartyId: ID_A,
           name: 'Sita',
           email: null,
-          phone: null,
+          country: 'US',
+          phones: [{ country: 'US', e164: '+14155552671', label: 'work', isPrimary: true }],
           role: null,
           isPrimary: true,
           version: 1,
         },
       ]),
     );
-    expect((await listVendorContacts(session, ID_A))[0]?.name).toBe('Sita');
+    const [contact] = await listVendorContacts(session, ID_A);
+    expect(contact?.name).toBe('Sita');
+    expect(contact?.phones[0]?.e164).toBe('+14155552671');
   });
 
   it('grants portal access to a contact with the key', async () => {

@@ -1,14 +1,16 @@
 'use client';
 
-import type { VendorStatus } from '@bos/contracts';
+import type { CountryCode, PartyPhoneInput, VendorStatus } from '@bos/contracts';
 import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
+import { CountrySelect } from '@/components/ui/country-select';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
-import { PhoneInput } from '@/components/ui/phone-input';
+import fieldStyles from '@/components/ui/field.module.css';
+import { PhoneListInput, type PhoneRowProblem } from '@/components/ui/phone-list-input';
 import { toast } from '@/components/ui/toast';
 import { formatBytes, guessMime } from '@/lib/kernel-ui';
 
@@ -19,12 +21,7 @@ import {
   lifecycleAction,
   proposeBankAction,
 } from '../actions';
-import {
-  EMPTY_BANK_VALUES,
-  EMPTY_CONTACT_VALUES,
-  type BankField,
-  type ContactField,
-} from '../_lib/forms';
+import { EMPTY_BANK_VALUES, type BankField, type ContactField } from '../_lib/forms';
 import type { LifecycleOption } from '../_lib/model';
 import { panelStart, type PanelState } from '../_lib/state';
 import styles from '../vendors.module.css';
@@ -74,9 +71,12 @@ function Notice({
 
 export function ContactForm({
   vendorId,
+  vendorCountry,
   idempotencyKey,
 }: {
   vendorId: string;
+  /** A new contact starts in the vendor's country; the person can pick another. */
+  vendorCountry: CountryCode;
   idempotencyKey: string;
 }) {
   const [state, formAction, pending] = useActionState<PanelState<ContactField>, FormData>(
@@ -88,7 +88,7 @@ export function ContactForm({
       <input type="hidden" name="vendorId" value={vendorId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <Notice state={state} reloadHref={`/vendors/${vendorId}`} title="Contact not saved" />
-      <ContactFields key={state.savedCount} errors={state.errors} />
+      <ContactFields key={state.savedCount} errors={state.errors} vendorCountry={vendorCountry} />
       <div className={styles.actions}>
         <Button type="submit" variant="secondary" disabled={pending}>
           {pending ? 'Saving' : 'Add contact'}
@@ -98,15 +98,52 @@ export function ContactForm({
   );
 }
 
-function ContactFields({ errors }: { errors: PanelState<ContactField>['errors'] }) {
-  const [v, setV] = useState(EMPTY_CONTACT_VALUES);
+const PHONES_UNFINISHED = 'Finish or remove the phone number marked below.';
+
+function ContactFields({
+  errors,
+  vendorCountry,
+}: {
+  errors: PanelState<ContactField>['errors'];
+  vendorCountry: CountryCode;
+}) {
+  const [v, setV] = useState({ name: '', email: '', role: '', isPortalAdmin: false });
+  const [country, setCountry] = useState<CountryCode>(vendorCountry);
+  // The valid numbers so far. They are the list's `defaultValue`, so the reset React runs after a refused
+  // submit puts them back instead of wiping them; a save remounts this block (keyed on `savedCount`).
+  const [phones, setPhones] = useState<PartyPhoneInput[]>([]);
+  const problems = useRef<PhoneRowProblem[]>([]);
+  const [unfinished, setUnfinished] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const phonesLabel = useId();
   const set =
-    (field: ContactField) =>
+    (field: 'name' | 'email' | 'role') =>
     (e: { target: { value: string } }): void =>
       setV((x) => ({ ...x, [field]: e.target.value }));
+
+  // A row with an unfinished or wrong number stops the submit here (capture phase, before the action runs),
+  // with the list's error, and focus goes to that row.
+  useEffect(() => {
+    const form = rootRef.current?.closest('form');
+    if (!form) return;
+    const listener = (event: Event) => {
+      if (event.defaultPrevented || problems.current.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setUnfinished(true);
+      rootRef.current
+        ?.querySelector<HTMLElement>(
+          `[data-row="${problems.current[0]?.key}"] input[inputmode="tel"]`,
+        )
+        ?.focus();
+    };
+    form.addEventListener('submit', listener, true);
+    return () => form.removeEventListener('submit', listener, true);
+  }, []);
+
   return (
     <>
-      <div className={styles.grid}>
+      <div ref={rootRef} className={styles.grid}>
         <Field label="Name" error={errors.name}>
           {(c) => (
             <Input
@@ -140,19 +177,41 @@ function ContactFields({ errors }: { errors: PanelState<ContactField>['errors'] 
           )}
         </Field>
         <Field
-          label="Phone"
-          hint="Optional. Nepal numbers need only the digits."
-          error={errors.phone}
+          label="Country"
+          hint="Where this person is. It can differ from the vendor’s."
+          error={errors.country}
         >
           {(c) => (
-            <PhoneInput
-              name="phone"
-              value={v.phone}
-              onValueChange={(phone) => set('phone')({ target: { value: phone } })}
-              {...c}
+            <CountrySelect
+              id={c.id}
+              aria-labelledby={c['aria-labelledby']}
+              aria-describedby={c['aria-describedby']}
+              aria-invalid={c['aria-invalid']}
+              name="country"
+              required
+              value={country}
+              onChange={setCountry}
             />
           )}
         </Field>
+        <div className={styles.wide}>
+          <span id={phonesLabel} className={fieldStyles.label}>
+            Phone numbers (optional)
+          </span>
+          <PhoneListInput
+            name="phones"
+            aria-labelledby={phonesLabel}
+            defaultValue={phones}
+            defaultCountry={country}
+            showLabels
+            onChange={setPhones}
+            onValidityChange={(next) => {
+              problems.current = next;
+              if (next.length === 0) setUnfinished(false);
+            }}
+            error={errors.phones ?? (unfinished ? PHONES_UNFINISHED : undefined)}
+          />
+        </div>
       </div>
       <label className={styles.check}>
         <input

@@ -51,15 +51,18 @@ describe('vendor form', () => {
     expect(submit).toBeGreaterThan(cancel);
     // Before the first field.
     expect(submit).toBeLessThan(out.indexOf('name="legalName"'));
-    // One live region however many copies of the buttons there are, plus the PAN box's own status line.
-    expect(out.match(/role="status"/g)).toHaveLength(2);
+    // One live region however many copies of the buttons there are, plus the PAN box's own status line and the
+    // Country picker's results count.
+    expect(out.match(/role="status"/g)).toHaveLength(3);
   });
 
-  it('create submits the same fields as before, under numbered section eyebrows', () => {
+  it('create submits the vendor fields and the address, under numbered section eyebrows', () => {
     const out = create();
     expect(names(out)).toEqual(
       [
-        'country',
+        'address.city',
+        'address.country',
+        'address.line',
         'idempotencyKey',
         'kind',
         'legalName',
@@ -70,21 +73,35 @@ describe('vendor form', () => {
     );
     expect(out).toContain('aria-hidden="true">01 · The basics</span>');
     expect(out).toContain('aria-hidden="true">02 · Tax registration</span>');
+    expect(out).toContain('aria-hidden="true">03 · Address</span>');
+    // The country is asked once, as the address's Country.
+    expect(out.match(/name="address\.country"/g)).toHaveLength(1);
+    expect(out).not.toContain('name="country"');
   });
 
-  it('edit keeps the editable fields together in one card', () => {
+  it('edit keeps the editable fields in a details card and an address card, the country fixed', () => {
     const out = edit();
     expect(names(out)).toEqual(
-      ['expectedVersion', 'legalName', 'pan', 'vatRegistered', 'vendorId'].sort(),
+      [
+        'address.city',
+        'address.line',
+        'expectedVersion',
+        'legalName',
+        'pan',
+        'vatRegistered',
+        'vendorId',
+      ].sort(),
     );
-    expect(out.match(/<section/g)).toHaveLength(1);
+    expect(out.match(/<section/g)).toHaveLength(2);
     expect(out).toContain('>Save changes</button>');
+    expect(out).toContain('value="Nepal"');
+    expect(out).toContain('Fixed once the vendor is added.');
   });
 
-  it('edit of a foreign vendor has no PAN, and the legal name takes the whole row', () => {
+  it('edit of a foreign vendor offers an optional Tax ID instead of the nine-digit PAN', () => {
     const out = edit('foreign');
-    expect(names(out)).not.toContain('pan');
-    const field = out.slice(0, out.indexOf('name="legalName"'));
-    expect(field.slice(field.lastIndexOf('<div class="'))).toMatch(/wide/);
+    expect(names(out)).toContain('pan');
+    expect(out).toContain('Tax ID (optional)');
+    expect(out).not.toContain('>PAN<');
   });
 });

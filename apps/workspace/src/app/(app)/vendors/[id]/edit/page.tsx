@@ -109,6 +109,8 @@ export default async function EditVendorPage({ params }: { params: Promise<{ id:
           pan: vendor.pan ?? '',
           vatRegistered: vendor.vatRegistered,
           country: vendor.country,
+          addressLine: vendor.address?.line ?? '',
+          addressCity: vendor.address?.city ?? '',
         }}
         vendorId={vendor.id}
         version={vendor.version}

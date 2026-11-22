@@ -1,4 +1,6 @@
 import {
+  countryName,
+  formatAddressLines,
   pageWindow,
   VENDOR_KINDS,
   VENDOR_STATUSES,
@@ -91,7 +93,13 @@ function Row({ v }: { v: VendorDto }) {
           <span className={styles.quiet}>Not set</span>
         )}
       </Td>
-      <Td nowrap>{v.country}</Td>
+      <Td>
+        {v.address !== null ? (
+          <span className={styles.long}>{formatAddressLines(v.address, v.country).join(', ')}</span>
+        ) : (
+          countryName(v.country)
+        )}
+      </Td>
       <Td nowrap pinned>
         <Badge tone={status.tone}>{status.text}</Badge>
       </Td>
@@ -235,7 +243,7 @@ export default async function VendorsPage({ searchParams }: { searchParams: Prom
                 <Th>Vendor</Th>
                 <Th>Kind</Th>
                 <Th>PAN</Th>
-                <Th>Country</Th>
+                <Th>Address</Th>
                 <Th pinned>Status</Th>
                 <Th pinned>Action</Th>
               </tr>
