@@ -140,6 +140,7 @@ describe('tenant-scoped tables (ADR 0027 §6)', () => {
       [
         'app.customers',
         'app.customer_contacts',
+        'app.customer_contact_phones',
         'app.verification_cases',
         'app.verification_review_events',
         'app.tax_codes',
@@ -148,6 +149,7 @@ describe('tenant-scoped tables (ADR 0027 §6)', () => {
         'app.withholding_codes',
         'app.vendors',
         'app.vendor_contacts',
+        'app.vendor_contact_phones',
         'app.vendor_bank_accounts',
         'app.access_revisions',
         'app.authz_versions',

@@ -13,6 +13,7 @@ import {
   foreignKey,
   index,
   integer,
+  smallint,
   text,
   timestamp,
   unique,
@@ -21,6 +22,7 @@ import {
   type PgTableExtraConfigValue,
 } from 'drizzle-orm/pg-core';
 
+import { PHONE_LABELS } from './crm.js';
 import { documents } from './documents.js';
 import { users } from './identity.js';
 import { appSchema, organizations, parties, tenants } from './platform.js';
@@ -79,6 +81,10 @@ export const vendors = appSchema.table(
     vatRegistered: boolean('vat_registered').notNull().default(false),
     /** ISO 3166-1 alpha-2; not 'NP' exactly when kind is 'foreign' (CHECK). */
     country: char('country', { length: 2 }).notNull().default('NP'),
+    /** The street lines of the address (0191); set together with addressCity or not at all (CHECK). */
+    addressLine: text('address_line'),
+    /** The address's city (0191); the address's country is `country`. */
+    addressCity: text('address_city'),
     status: text('status', { enum: VENDOR_STATUSES }).notNull().default('draft'),
     ownerUserId: uuid('owner_user_id'),
     createdBy: uuid('created_by').notNull(),
@@ -130,6 +136,10 @@ export const vendors = appSchema.table(
     check('vendors_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
     check('vendors_foreign_country_check', sql`(${t.kind} = 'foreign') = (${t.country} <> 'NP')`),
     check(
+      'vendors_address_check',
+      sql`(${t.addressLine} IS NULL) = (${t.addressCity} IS NULL) AND btrim(${t.addressLine}) <> '' AND btrim(${t.addressCity}) <> ''`,
+    ),
+    check(
       'vendors_pan_check',
       sql`${t.kind} = 'foreign' OR (${t.pan} IS NOT NULL AND ${t.pan} ~ '^[0-9]{9}$')`,
     ),
@@ -152,8 +162,8 @@ export const vendorContacts = appSchema.table(
     fullName: text('full_name').notNull(),
     /** Lower-cased and trimmed (CHECK). */
     emailNorm: text('email_norm'),
-    /** E.164 (CHECK). */
-    phoneE164: text('phone_e164'),
+    /** ISO 3166-1 alpha-2 (0191, CHECK); may differ from the vendor's. Phones: vendorContactPhones. */
+    country: char('country', { length: 2 }).notNull().default('NP'),
     title: text('title'),
     isPrimary: boolean('is_primary').notNull().default(false),
     version: integer('version').notNull().default(1),
@@ -172,8 +182,48 @@ export const vendorContacts = appSchema.table(
     index('vendor_contacts_tenant_vendor_idx').on(t.tenantId, t.vendorId),
     index('vendor_contacts_tenant_email_norm_idx').on(t.tenantId, t.emailNorm),
     check('vendor_contacts_email_norm_check', sql`${t.emailNorm} = lower(btrim(${t.emailNorm}))`),
-    check('vendor_contacts_phone_e164_check', sql`${t.phoneE164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check('vendor_contacts_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
     check('vendor_contacts_version_check', sql`${t.version} >= 1`),
+  ],
+);
+
+/**
+ * A phone number of a vendor contact (0192). Tenant-level, like the contact; deleted with it. Same columns and
+ * rules as customerContactPhones (crm.ts).
+ */
+export const vendorContactPhones = appSchema.table(
+  'vendor_contact_phones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    contactId: uuid('contact_id').notNull(),
+    country: char('country', { length: 2 }).notNull(),
+    e164: text('e164').notNull(),
+    label: text('label', { enum: PHONE_LABELS }),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('vendor_contact_phones_owner_e164_unique').on(t.tenantId, t.contactId, t.e164),
+    foreignKey({
+      name: 'vendor_contact_phones_contact_fk',
+      columns: [t.tenantId, t.contactId],
+      foreignColumns: [vendorContacts.tenantId, vendorContacts.id],
+    }).onDelete('cascade'),
+    uniqueIndex('vendor_contact_phones_owner_primary_unique')
+      .on(t.tenantId, t.contactId)
+      .where(sql`${t.isPrimary}`),
+    index('vendor_contact_phones_tenant_e164_idx').on(t.tenantId, t.e164),
+    check('vendor_contact_phones_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
+    check('vendor_contact_phones_e164_check', sql`${t.e164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check(
+      'vendor_contact_phones_label_check',
+      sql`${t.label} in ('mobile', 'work', 'home', 'landline')`,
+    ),
+    check('vendor_contact_phones_sort_order_check', sql`${t.sortOrder} >= 0`),
   ],
 );
 
