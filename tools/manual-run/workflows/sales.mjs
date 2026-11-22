@@ -721,7 +721,12 @@ export function workflow(cfg) {
             await fill('PAN or VAT number', v.pan);
             await fill('Address', '17 Demo Marg');
             await fill('City', 'Kathmandu');
-            await fill('Country code', 'NP');
+            // FX9: Country is the AddressFields CountrySelect, a searchable combobox. Typing highlights the best
+            // match and Enter takes it; the list is in a popover outside the dialog, so no option click is scoped to d.
+            const country = d.getByRole('combobox', { name: 'Country', exact: true });
+            await country.fill('Nepal');
+            await country.press('Enter');
+            s.expect((await country.inputValue()) === 'Nepal', 'the Country box shows Nepal');
             const newContact = d.getByLabel('Create a new contact');
             if (await newContact.count()) await newContact.check();
             await fill('Contact name', v.contact);

@@ -148,10 +148,19 @@ export const SEED_ENTITY: EntitySeed = {
   name: 'Techrida',
   legalName: 'Techrida Pvt. Ltd.',
 };
+/**
+ * The dev parties. `customer` and `vendor` stand behind the customer and vendor ZITADEL orgs (tenancySeed upserts
+ * them); the two foreign ones have no org, so the kernel's dev step creates them (DEV_FOREIGN_CUSTOMER and
+ * DEV_FOREIGN_VENDOR in db-seed.ts; a test pins the codes together).
+ */
 export const SEED_PARTIES = {
   customer: { code: 'CUST-DEV', name: ORG_NAMES.customer },
   vendor: { code: 'VEND-DEV', name: ORG_NAMES.vendor },
-} as const satisfies Record<'customer' | 'vendor', PartySeed>;
+  /** A US customer with no PAN (FX9). */
+  foreignCustomer: { code: 'CUST-US-DEV', name: 'Acme Robotics Inc' },
+  /** An Indian vendor with an address and a loose tax id (FX9). */
+  foreignVendor: { code: 'VEND-IN-DEV', name: 'Mumbai Industrial Supplies Pvt Ltd' },
+} as const satisfies Record<'customer' | 'vendor' | 'foreignCustomer' | 'foreignVendor', PartySeed>;
 export const STAFF_IDP_ORG_NAME = 'Techrida Staff';
 
 /** The dev stack's tenancy for the three ZITADEL orgs the seed created. */
