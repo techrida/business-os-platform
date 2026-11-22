@@ -3,7 +3,7 @@
 // workspace (settings screens, live previews), so a preview can never draw something the PDF cannot.
 import { z } from 'zod';
 
-import { PanVatNoSchema } from './crm.js';
+import { NepalPanSchema, PanVatNoSchema, PhoneSchema, nepalPhoneProblem } from './crm.js';
 import { CURRENCIES, type Currency } from './money.js';
 import { richTextSchema } from './rich-text.js';
 
@@ -195,16 +195,27 @@ export const LogoDataUrlSchema = z
     'must be a PNG, JPEG or WebP image',
   );
 
-/** The company fields every profile shape shares: what the footer and signature block print. */
+/**
+ * The company fields a write checks: phones are E.164 numbers (Nepal ones a mobile or landline) and the PAN is the
+ * company's own nine digits. What a row held before these rules (free-text phones, a 5 to 20 character PAN) is read
+ * with `legacyProfileFields` instead, so an old row never fails a screen or a render.
+ */
 const companyProfileFields = {
   displayName: text(120).nullable(),
-  phones: z.array(text(40)).max(4),
+  phones: z.array(PhoneSchema).max(4),
   email: z.email().max(200).nullable(),
   website: text(200).nullable(),
   /** Printed with the footer next to the address; the PAN/VAT number is its own setting (`entity.pan_vat_no`). */
-  panVatNo: PanVatNoSchema.nullable(),
+  panVatNo: NepalPanSchema.nullable(),
   signatoryName: text(120).nullable(),
   signatoryTitle: text(120).nullable(),
+};
+
+/** The same fields as a row may hold them from before the strict rules: free-text phones, a loose PAN. Reads only. */
+const legacyProfileFields = {
+  ...companyProfileFields,
+  phones: z.array(text(40)).max(4),
+  panVatNo: PanVatNoSchema.nullable(),
 };
 
 /**
@@ -218,6 +229,16 @@ export const CompanyProfileSchema = z.strictObject({
   legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
 });
 export type CompanyProfile = z.infer<typeof CompanyProfileSchema>;
+
+/**
+ * `CompanyProfileSchema` as a stored row may still look: phones and PAN from before the strict contracts. Every
+ * read of `entity.profile` uses this one; only a write uses the strict schema.
+ */
+export const StoredCompanyProfileSchema = z.strictObject({
+  ...legacyProfileFields,
+  logoDocumentId: z.guid().nullable().default(null),
+  legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
+});
 
 export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
   displayName: null,
@@ -235,14 +256,14 @@ export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
  * a document already sent. This is the shape every stored snapshot already has.
  */
 export const SnapshotCompanyProfileSchema = z.strictObject({
-  displayName: companyProfileFields.displayName,
+  displayName: legacyProfileFields.displayName,
   logoDataUrl: LogoDataUrlSchema.nullable(),
-  phones: companyProfileFields.phones,
-  email: companyProfileFields.email,
-  website: companyProfileFields.website,
-  panVatNo: companyProfileFields.panVatNo,
-  signatoryName: companyProfileFields.signatoryName,
-  signatoryTitle: companyProfileFields.signatoryTitle,
+  phones: legacyProfileFields.phones,
+  email: legacyProfileFields.email,
+  website: legacyProfileFields.website,
+  panVatNo: legacyProfileFields.panVatNo,
+  signatoryName: legacyProfileFields.signatoryName,
+  signatoryTitle: legacyProfileFields.signatoryTitle,
 });
 export type SnapshotCompanyProfile = z.infer<typeof SnapshotCompanyProfileSchema>;
 
@@ -324,7 +345,7 @@ export type DocumentSellerContact = z.infer<typeof DocumentSellerContactSchema>;
  * document then prints no contact block rather than failing.
  */
 export function documentSellerContact(rawProfile: unknown): DocumentSellerContact | null {
-  const profile = CompanyProfileSchema.safeParse(rawProfile);
+  const profile = StoredCompanyProfileSchema.safeParse(rawProfile);
   if (!profile.success) return null;
   return {
     phones: [...profile.data.phones],
@@ -457,3 +478,17 @@ export const DEFAULT_TERM_PRESETS: TermPresetList = [
       '<p>Invoices are payable within the term shown above.</p>',
   },
 ];
+
+/**
+ * A phone number as a letterhead, quotation or invoice prints it. A Nepal mobile is `+977 9812345678`; a landline
+ * puts its area code first, `+977 1-4123456` (Kathmandu, one digit) and `+977 61-523456` (two digits). Any other
+ * text, a number from abroad or a free-text value stored before phones were E.164, prints as it is. Applied to an
+ * already formatted number it changes nothing.
+ */
+export function formatPhoneForPrint(phone: string): string {
+  if (!/^\+977\d+$/.test(phone) || nepalPhoneProblem(phone) !== null) return phone;
+  const national = phone.slice(4);
+  if (national.length === 10) return `+977 ${national}`;
+  const area = national.startsWith('1') ? 1 : 2;
+  return `+977 ${national.slice(0, area)}-${national.slice(area)}`;
+}

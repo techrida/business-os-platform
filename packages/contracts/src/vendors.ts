@@ -3,7 +3,7 @@
 // proposed by one person and verified by another, and every DTO shows the last four digits only.
 import { z } from 'zod';
 
-import { AddressSchema, EmailSchema, PhoneSchema } from './crm.js';
+import { AddressSchema, EmailSchema, NepalPanSchema, PhoneSchema } from './crm.js';
 import { CurrencySchema } from './money.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -75,7 +75,7 @@ export const BankProposedViaSchema = z.enum(BANK_PROPOSED_VIA);
 export type BankProposedVia = z.infer<typeof BankProposedViaSchema>;
 
 /** A resident vendor's PAN: exactly nine digits (GK). */
-export const VendorPanSchema = z.string().regex(/^[0-9]{9}$/, 'a PAN is 9 digits');
+export const VendorPanSchema = NepalPanSchema;
 
 // ---------------------------------------------------------------------------------------------
 // Vendor bodies and views
