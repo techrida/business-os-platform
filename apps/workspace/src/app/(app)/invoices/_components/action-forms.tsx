@@ -83,6 +83,7 @@ function InvoiceActionDialog({
   primary = false,
   destructive = !primary,
   fields,
+  doneWords,
 }: Omit<InvoiceActionProps, 'name'> & {
   action: (prev: InvoiceActionState, form: FormData) => Promise<InvoiceActionState>;
   triggerLabel: string;
@@ -94,6 +95,8 @@ function InvoiceActionDialog({
   /** A secondary action that is not a loss (Edit due date) sets this false; it defaults to "not primary". */
   destructive?: boolean;
   fields?: (state: InvoiceActionState) => ReactNode;
+  /** Said under the result once the action is done: the invoice's new status and what follows. */
+  doneWords?: string;
 }) {
   const [state, formAction, pending] = useActionState<InvoiceActionState, FormData>(action, {
     key: idempotencyKey,
@@ -146,7 +149,14 @@ function InvoiceActionDialog({
         )
       }
     >
-      {state.done ? null : (
+      {state.done ? (
+        // The toast may be gone by the time the person looks, so the dialog keeps the result until Done.
+        <div className={styles.done}>
+          <p className={styles.doneResult}>{state.message ?? 'The invoice was updated.'}</p>
+          {doneWords ? <p>{doneWords}</p> : null}
+          <p className={styles.doneNext}>Done closes this and shows the updated invoice.</p>
+        </div>
+      ) : (
         <form id={formId} ref={formRef} action={formAction} noValidate className={styles.form}>
           <input type="hidden" name="invoiceId" value={invoiceId} />
           <input type="hidden" name="expectedVersion" value={version} />
@@ -178,6 +188,7 @@ export function SubmitDialog({ name, ...rest }: InvoiceActionProps) {
       title={`Submit ${name}`}
       description="Send this invoice to the approvers. Its line items will be locked during review."
       pendingWords="Submitting"
+      doneWords="It is now awaiting approval, and its line items stay locked while the approvers review it."
     />
   );
 }
@@ -198,6 +209,7 @@ export function IssueDialog({
       title={`Issue ${name}`}
       description="Issuing assigns the invoice number and today's date. Afterwards, neither can be changed."
       pendingWords="Issuing"
+      doneWords="Its number and date are set and cannot be changed."
     />
   );
 }

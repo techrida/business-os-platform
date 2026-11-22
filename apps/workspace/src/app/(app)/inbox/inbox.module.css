@@ -27,7 +27,11 @@
   background: var(--table-row-bg);
 }
 
+/* `.table` lands on the table's scrolling wrapper. Positioning it keeps the visually hidden
+   "Actions" header (absolutely positioned) inside the scroll box; without it the label escaped to
+   the right of the 760px table and the whole page scrolled sideways on a phone and a tablet. */
 .tableCard .table {
+  position: relative;
   border: 0;
   border-end-start-radius: 0;
   border-end-end-radius: 0;

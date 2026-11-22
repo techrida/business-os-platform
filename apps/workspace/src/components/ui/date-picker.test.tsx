@@ -435,3 +435,39 @@ it('shows "Finish the date" beside the picker when an incomplete date blocks a p
   expect(mounted.container.querySelector('[aria-invalid="true"]')).toBeNull();
   expect(mounted.container.querySelector(`[aria-describedby~="${message.id}"]`)).toBeNull();
 });
+
+it('focuses the first date segment when its Field label is clicked', async () => {
+  mounted = await mountForm(
+    <Field label="Due">
+      {(control) => <DatePicker {...control} name="due" defaultValue="2026-11-21" />}
+    </Field>,
+  );
+  const label = mounted.container.querySelector('label')!;
+  const first = mounted.container.querySelector('[role="spinbutton"]');
+  expect(first).not.toBeNull();
+  // Old code: the label's `for` names React Aria's group, a div, so the click focused nothing.
+  await click(label);
+  expect(document.activeElement).toBe(first);
+});
+
+it('leaves the focus alone on a label click while the picker is disabled', async () => {
+  mounted = await mountForm(
+    <Field label="Due">
+      {(control) => <DatePicker {...control} name="due" defaultValue="2026-11-21" disabled />}
+    </Field>,
+  );
+  await click(mounted.container.querySelector('label'));
+  expect(document.activeElement).toBe(document.body);
+});
+
+it('DateTimePicker focuses its first date segment when its Field label is clicked', async () => {
+  mounted = await mountForm(
+    <Field label="Due">
+      {(control) => <DateTimePicker {...control} name="dueAt" defaultValue="2026-11-21T09:30" />}
+    </Field>,
+  );
+  const first = mounted.container.querySelector('[role="spinbutton"]');
+  expect(first).not.toBeNull();
+  await click(mounted.container.querySelector('label'));
+  expect(document.activeElement).toBe(first);
+});
