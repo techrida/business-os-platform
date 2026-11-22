@@ -2114,3 +2114,60 @@ describe('bill line expense accounts (round 5, unit P1)', () => {
     expect(codeOf(e)).toBe('EXPENSE_ACCOUNT_INVALID');
   });
 });
+
+describe('invoice date (FX6 #6): today in Kathmandu at the latest', () => {
+  // Kathmandu is UTC+05:45, so its day turns at 18:15 UTC.
+  const lastSecondOfNov9 = new Date('2026-11-09T18:14:59Z');
+  const firstSecondOfNov10 = new Date('2026-11-09T18:15:00Z');
+  const clocked = (at: Date) =>
+    new VendorBillsService(
+      db,
+      approvals,
+      new AuditService(db),
+      new SettingsService(db),
+      caller,
+      () => at,
+    );
+  const dated = (documentId: string, invoiceDate: string) => ({
+    vendorPartyId: documentVendors.get(documentId)!,
+    kind: 'bill' as const,
+    vendorInvoiceNo: `FUT-${randomUUID().slice(0, 8)}`,
+    invoiceDate,
+    currency: 'NPR' as const,
+    documentId,
+    lines: [
+      { accountId: expenseAccountId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
+    ],
+  });
+  const billsOf = (vendorId: string) =>
+    read((tx) => tx.select().from(vendorBills).where(eq(vendorBills.vendorId, vendorId)));
+
+  it('takes today and refuses tomorrow with 422 BILL_DATE_IN_FUTURE, writing nothing', async () => {
+    const svc = clocked(lastSecondOfNov9);
+    const documentId = await doc();
+    const vendorId = documentVendors.get(documentId)!;
+
+    const refused = await httpErrorOf(svc.create(dated(documentId, '2026-11-10'), randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'BILL_DATE_IN_FUTURE',
+      details: { invoiceDate: '2026-11-10', today: '2026-11-09' },
+    });
+    expect(await billsOf(vendorId)).toEqual([]);
+
+    const ok = await svc.create(dated(documentId, '2026-11-09'), randomUUID());
+    expect(ok).toMatchObject({ status: 'draft', invoiceDate: '2026-11-09' });
+  });
+
+  it('follows the Kathmandu day, not the UTC one, at its midnight', async () => {
+    const svc = clocked(firstSecondOfNov10);
+    const documentId = await doc();
+    // 18:15 UTC on 9 November is already 10 November in Kathmandu.
+    expect(await svc.create(dated(documentId, '2026-11-10'), randomUUID())).toMatchObject({
+      invoiceDate: '2026-11-10',
+    });
+    expect(
+      codeOf(await httpErrorOf(svc.create(dated(documentId, '2026-11-11'), randomUUID()))),
+    ).toBe('BILL_DATE_IN_FUTURE');
+  });
+});

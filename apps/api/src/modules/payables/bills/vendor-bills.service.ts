@@ -95,6 +95,7 @@ import {
   MATCH_EXCEPTION_DOCUMENT_TYPE,
   VENDOR_BILL_DOCUMENT_TYPE,
   afterMatch,
+  assertInvoiceDateByToday,
   billFactsOf,
   billTotals,
   invoiceInstant,
@@ -621,6 +622,7 @@ export class VendorBillsService {
     if (body.currency !== 'NPR') {
       throw unprocessable('CURRENCY_NOT_SUPPORTED', 'Only NPR bills can be keyed in for now');
     }
+    assertInvoiceDateByToday(body.invoiceDate, now);
     const s = scoped(scope);
     const [account] = await tx
       .select({ id: vendorAccounts.id })
