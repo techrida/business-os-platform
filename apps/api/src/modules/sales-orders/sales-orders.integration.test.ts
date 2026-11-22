@@ -9,6 +9,7 @@
 // the plan's 60/20/20 and 40/60 examples are cut from.
 // Every answer is parsed with the contract schema the workspace parses it with.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/sales-orders/sales-orders.integration.test.ts
+import Decimal from 'decimal.js';
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -53,7 +54,7 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor, type AuthzService } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
-import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
+import { READ_ONLY, systemActor, withTx, type TxScope } from '../../platform/db/tx';
 import type { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../platform/settings/money.service';
@@ -2607,6 +2608,33 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     expect((await statusOf(credit.get(q.opportunityId))).status).toBe(404);
   });
 
+  // R5 FU6. Several confirms of one customer's orders at the same moment: each would pass the gate alone, but
+  // together they are over the limit, so exactly one may pass. The confirm transaction takes the tenant's audit
+  // lock before it reads the credit position and holds it to the commit (withTx), which serialises them: the
+  // second one reads the first one's committed order. No deadlock (40P01) and no lock timeout (55P03).
+  it('lets exactly one of several simultaneous confirms for one customer through', async () => {
+    await setLimit('150000.00');
+    try {
+      const quotes = await Promise.all([0, 1, 2].map(() => accepted({ unitPrice: '80000.00' })));
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+      const settled = await Promise.allSettled(quotes.map((q) => confirm(q)));
+      const passed = settled.filter((r) => r.status === 'fulfilled');
+      const refused = settled.flatMap((r) =>
+        r.status === 'rejected' ? [r.reason as unknown] : [],
+      );
+      expect(passed).toHaveLength(1);
+      expect(refused).toHaveLength(2);
+      for (const error of refused) {
+        expect(error).toBeInstanceOf(HttpException);
+        expect((error as HttpException).getStatus()).toBe(409);
+        expect((error as HttpException).getResponse()).toMatchObject({ code: 'credit_hold' });
+      }
+    } finally {
+      await setLimit(null);
+    }
+  });
+
   // R5 FU4. Before: a confirmed order that no invoice covers yet counted nowhere, so a customer with no receivables
   // and a limit of 150,000.00 could confirm two orders of 90,400.00 on different deals.
   describe('a confirmed order counts until it is invoiced', () => {
@@ -2695,6 +2723,48 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       current.grants = grantsOf('sales');
       current.userId = undefined;
       expect(parsed(await confirm(second)).order.status).toBe('confirmed');
+    });
+
+    // R5 FU6. The deal's flag and the credit-hold page read the position in a read-only transaction. If the
+    // receivables and the orders' balance were two statements (read committed: two snapshots), an invoice issued
+    // between them dropped out of both: not yet a receivable at the first read, already subtracted at the second.
+    it('keeps an invoice issued while the position is being read in the receivables or the order, never in neither', async () => {
+      const { first, second } = await twoOrders();
+      const [order] = await liveOrders(first.id);
+      const dealCustomer = party;
+      let issued = false;
+      const position = await withTx(
+        db,
+        scopeA,
+        systemActor('test'),
+        async (tx) => {
+          const interleaved = new Proxy(tx, {
+            get(target, prop, receiver) {
+              if (prop !== 'execute') return Reflect.get(target, prop, receiver) as unknown;
+              return async (...args: Parameters<typeof tx.execute>) => {
+                const result = await target.execute(...args);
+                // The first statement of the position (the receivables, in the old code) is over: the invoice is
+                // issued, and committed on another connection, before the transaction's next statement.
+                if (!issued) {
+                  issued = true;
+                  await issueInvoiceOf(order!.id);
+                }
+                return result;
+              };
+            },
+          });
+          return creditPosition(interleaved, scopeA, dealCustomer, {
+            opportunityId: second.opportunityId,
+          });
+        },
+        READ_ONLY,
+      );
+      expect(issued).toBe(true);
+      // Before the invoice: 90,400.00 not yet invoiced. After it: 90,400.00 owed. Never 0.00 for both.
+      expect(
+        new Decimal(position.exposure).plus(position.uninvoiced).toFixed(2),
+        JSON.stringify(position),
+      ).toBe('90400.00');
     });
 
     it('does not count it twice once an invoice is issued, and counts it again when credit notes cancel the invoice in full', async () => {

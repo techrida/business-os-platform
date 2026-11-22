@@ -99,12 +99,22 @@ describe('the delivery hold card', () => {
       'The Founder may release any amount; the person who created the order never can.',
     );
     expect(html).toContain('Management releases holds above (NPR)');
+    // The shared number input: a hidden input posts the plain amount, the labelled box shows it.
     const input = html.match(/<input[^>]*name="v:sales\.delivery_hold\.management_npr"[^>]*>/)?.[0];
     expect(input).toBeDefined();
-    expect(input).toContain('type="number"');
-    expect(input).toContain('step="0.01"');
-    expect(input).toContain('min="0"');
+    expect(input).toContain('type="hidden"');
     expect(input).toContain('value="250000.50"');
+    expect(html).not.toContain('type="number"');
+    const labelFor = html.match(
+      /<label[^>]*for="([^"]+)"[^>]*>Management releases holds above \(NPR\)<\/label>/,
+    )?.[1];
+    expect(labelFor).toBeDefined();
+    const box = html.match(new RegExp(`<input[^>]*id="${labelFor}"[^>]*>`))?.[0] ?? '';
+    expect(box).toContain('type="text"');
+    // Decimal keyboard: the 0.01 step allows two decimals.
+    expect(box).toContain('inputMode="decimal"');
+    expect(box).toContain('value="250000.50"');
+    expect(box).not.toContain('name=');
   });
 
   it('keeps the other cards when the threshold cannot be read', async () => {

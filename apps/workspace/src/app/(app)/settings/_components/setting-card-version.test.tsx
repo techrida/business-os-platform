@@ -85,8 +85,10 @@ describe('SettingCard expectedVersion tracking', () => {
     expect(saveSettingsPageAction).not.toHaveBeenCalled();
 
     // Edit qty_pct as well.
-    const inputs = mounted.container.querySelectorAll('input');
-    await fill(inputs[1] ?? null, '5');
+    const qtyLabel = Array.from(mounted.container.querySelectorAll('label')).find(
+      (l) => l.textContent === 'Quantity tolerance (%)',
+    );
+    await fill(document.getElementById(qtyLabel?.htmlFor ?? ''), '5');
 
     await submit(mounted.container);
 
