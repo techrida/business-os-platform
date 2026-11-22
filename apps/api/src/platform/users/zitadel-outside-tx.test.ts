@@ -1244,7 +1244,9 @@ describe('Admin invite and setRoles outside any tx against Postgres (FU1)', () =
     expect(await store.rolesOf(db, f.scope.tenantId, f.userId)).toEqual([]);
 
     // 3. DB write failure in Phase (C): ZITADEL keeps only roles the person held and the request kept.
-    await withTx(db, f.scope, systemActor('seed'), (tx) => store.replaceRoles(tx, f.scope, f.userId, ['sales']));
+    await withTx(db, f.scope, systemActor('seed'), (tx) =>
+      store.replaceRoles(tx, f.scope, f.userId, ['sales']),
+    );
     zitadel.grants.set(f.zitadelUserId, ['sales']);
     zitadel.calls = [];
     zitadel.onCall = null;
@@ -1609,19 +1611,23 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     const zitadel = zitadelFor(f, 'active');
     zitadel.grants.set(f.zitadelUserId, ['accountant', 'finance']);
     const { users } = services(zitadel);
-    let failing = false;
     // Phase C of this request: another admin's phase B has revoked finance in ZITADEL (their phase C has not
     // committed), then this request is rejected.
     const rejected = () => {
       zitadel.grants.set(f.zitadelUserId, ['accountant']);
-      failing = true;
       return Promise.reject(new ForbiddenException('revoked'));
     };
     let calls = 0;
     const assertAccess = () => (++calls === 1 ? Promise.resolve() : rejected());
 
     const error = await users
-      .setRoles(f.scope, adminActor(f.adminId), f.userId, ['accountant', 'finance', 'sales'], assertAccess)
+      .setRoles(
+        f.scope,
+        adminActor(f.adminId),
+        f.userId,
+        ['accountant', 'finance', 'sales'],
+        assertAccess,
+      )
       .catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ForbiddenException);
@@ -1651,7 +1657,13 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     );
 
     const error = await users
-      .setRoles(f.scope, adminActor(f.adminId), f.userId, ['accountant', 'finance', 'sales'], assertAccess)
+      .setRoles(
+        f.scope,
+        adminActor(f.adminId),
+        f.userId,
+        ['accountant', 'finance', 'sales'],
+        assertAccess,
+      )
       .catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ForbiddenException);
@@ -1761,7 +1773,11 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
         email: 'mina@techrida.test',
         displayName: 'Mina Gurung',
         status: 'inactive',
-        lock: { reason: 'failed_sign_ins', lockedAt: new Date(), until: new Date(Date.now() + 3_600_000) },
+        lock: {
+          reason: 'failed_sign_ins',
+          lockedAt: new Date(),
+          until: new Date(Date.now() + 3_600_000),
+        },
       });
     };
     const status = new UserStatusService(db, store, zitadel.asClient(), audit);

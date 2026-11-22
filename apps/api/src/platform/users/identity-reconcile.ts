@@ -90,7 +90,10 @@ export function decideStatusReconcile(input: {
   const rowClosed = isRowShutOut(row);
   const liveState = liveStateOf(live);
   const timedLockToUpgrade =
-    closingApplied?.lock === true && rowClosed && (row.lockReason ?? null) !== null && row.lockReason !== 'admin';
+    closingApplied?.lock === true &&
+    rowClosed &&
+    (row.lockReason ?? null) !== null &&
+    row.lockReason !== 'admin';
   if (!rowClosed && liveState !== 'closed' && failedOpening === null) return none;
 
   // A lock (admin or timed) is held as LOCKED in ZITADEL; anything else closed is a deactivation.
@@ -99,8 +102,12 @@ export function decideStatusReconcile(input: {
     : liveState === 'closed'
       ? live?.locked === true
       : (failedOpening?.lock ?? false);
-  const closeRow = rowClosed && !timedLockToUpgrade ? null : { lock: locked || timedLockToUpgrade ? adminLock() : null };
-  const closeZitadel = liveState === 'open' || liveState === 'unknown' ? (locked ? 'lock' : 'deactivate') : null;
+  const closeRow =
+    rowClosed && !timedLockToUpgrade
+      ? null
+      : { lock: locked || timedLockToUpgrade ? adminLock() : null };
+  const closeZitadel =
+    liveState === 'open' || liveState === 'unknown' ? (locked ? 'lock' : 'deactivate') : null;
   if (closeRow === null && closeZitadel === null) return none;
   return {
     closeRow,
@@ -282,7 +289,10 @@ export class IdentityReconciler {
           actor,
           note.row ? 'users' : 'idp_orgs',
           note.row ?? p.idpOrgId,
-          { before: note.before, after: { roles: decided.target, grants: [...decided.target].sort() } },
+          {
+            before: note.before,
+            after: { roles: decided.target, grants: [...decided.target].sort() },
+          },
         );
       }
     } catch (error) {
@@ -304,17 +314,13 @@ export class IdentityReconciler {
     differed: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await withTx(
-        this.db,
-        scope,
-        systemActor('identity-reconcile', actor.correlationId),
-        (tx) =>
-          this.audit.record(tx, {
-            action: IDENTITY_RECONCILED,
-            entityType,
-            entityId,
-            meta: { ...differed, requestedBy: actor.id },
-          }),
+      await withTx(this.db, scope, systemActor('identity-reconcile', actor.correlationId), (tx) =>
+        this.audit.record(tx, {
+          action: IDENTITY_RECONCILED,
+          entityType,
+          entityId,
+          meta: { ...differed, requestedBy: actor.id },
+        }),
       );
     } catch (error) {
       this.logger.error(
@@ -329,7 +335,8 @@ export class IdentityReconciler {
    * wait. If both are refused and ZITADEL already shows the person closed, there is nothing left to do. Never throws.
    */
   private async closeInZitadel(zitadelUserId: string, kind: 'lock' | 'deactivate'): Promise<void> {
-    const order = kind === 'lock' ? (['lock', 'deactivate'] as const) : (['deactivate', 'lock'] as const);
+    const order =
+      kind === 'lock' ? (['lock', 'deactivate'] as const) : (['deactivate', 'lock'] as const);
     let last: unknown;
     for (const delay of CLOSE_DELAYS_MS) {
       if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -341,7 +348,8 @@ export class IdentityReconciler {
         } catch (error) {
           last = error;
           if (error instanceof ZitadelNotConfiguredError) return;
-          const refused = error instanceof ZitadelHttpError && error.status >= 400 && error.status < 500;
+          const refused =
+            error instanceof ZitadelHttpError && error.status >= 400 && error.status < 500;
           if (!refused) break;
         }
       }
