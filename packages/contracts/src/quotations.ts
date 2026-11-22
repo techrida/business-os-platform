@@ -126,8 +126,9 @@ function edge(
 
 /**
  * The version state machine of A2 section 2.2. Approval steps are not states: a Submitted version
- * stays Submitted while the kernel request runs (A2 C3). `cascade_reject` is the Lost-opportunity
- * cascade. `cancel` ends a quotation that has not been approved yet (Kuu, F1-Q27: Cancel only, no
+ * stays Submitted while the kernel request runs (A2 C3). `cascade_reject` was the original Lost-opportunity
+ * cascade for an Approved or Sent version; nothing runs it, and the Lost cascade uses `cancel_on_lost` (R5 FU12).
+ * `cancel` ends a quotation that has not been approved yet (Kuu, F1-Q27: Cancel only, no
  * Recall): a Draft, a Returned one, or a Submitted one, whose open approval request is cancelled with it.
  */
 export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
