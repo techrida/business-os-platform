@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { pickCountry } from '../helpers/country';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { searchBox } from '../helpers/multi-select';
 
@@ -54,6 +55,82 @@ test.fixme('a role without customer access sees words, not a blank page', () => 
   // Needs a seeded staff persona with no `customer.read`; none exists after K3.
 });
 
+test('a US customer without a PAN keeps its country and a contact number typed with +1', async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  const { page, context } = await signInAs(browser, baseURL ?? 'https://app.localhost', 'founder');
+  const stamp = Date.now();
+  const name = `US customer ${stamp}`;
+
+  try {
+    await page.goto('/customers/new');
+    await page.waitForLoadState('networkidle');
+    await page.getByLabel('Organization legal name').fill(name);
+
+    // The address's Country comes first: the contact's country and each new phone row follow it.
+    // The form has two Country pickers (the organization's and the contact's), so each is scoped.
+    const address = page.getByRole('region', { name: 'Business Address' });
+    await address.getByLabel('Address', { exact: true }).fill('1 Market Street');
+    await address.getByLabel('City', { exact: true }).fill('San Francisco');
+    await pickCountry(
+      address.getByRole('combobox', { name: 'Country', exact: true }),
+      'us',
+      'United States',
+    );
+
+    const contact = page.getByRole('region', { name: 'Primary Contact' });
+    await contact.getByLabel('Full name').fill('Jordan Lee');
+    await contact.getByLabel('Email', { exact: true }).fill(`jordan.${stamp}@example.test`);
+    await expect(contact.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue(
+      'United States',
+    );
+
+    // Typing + and the code switches the row's country: the box remounts and keeps the focus.
+    const first = contact.getByLabel('Phone 1 number', { exact: true });
+    await first.click();
+    await page.keyboard.type('+');
+    await expect(first).toBeFocused();
+    await page.keyboard.type('1 4155552671');
+    await expect(
+      contact.getByRole('combobox', { name: 'Phone 1 country', exact: true }),
+    ).toHaveValue('+1');
+
+    await contact.getByRole('button', { name: 'Add phone number' }).click();
+    await pickCountry(
+      contact.getByRole('combobox', { name: 'Phone 2 country', exact: true }),
+      '+977',
+      '+977',
+    );
+    const second = contact.getByLabel('Phone 2 number', { exact: true });
+    await second.click();
+    await page.keyboard.type('9812345678');
+
+    // What the form posts, as E.164: both rows are complete before the save.
+    await expect(page.locator('input[name="contactPhones.0.number"]')).toHaveValue('+14155552671');
+    await expect(page.locator('input[name="contactPhones.1.number"]')).toHaveValue(
+      '+9779812345678',
+    );
+    await expect(page.getByLabel('PAN or VAT number')).toHaveValue('');
+
+    await page.getByRole('button', { name: 'Create Organization', exact: true }).click();
+    await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}(?:\?created=1)?$/);
+    await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
+
+    await expect(
+      page.getByText('1 Market Street, San Francisco, United States', { exact: true }),
+    ).toBeVisible();
+    const phone = page
+      .getByRole('table', { name: 'Contacts', exact: true })
+      .getByRole('link', { name: '+1 415 555 2671', exact: true });
+    await expect(phone).toBeVisible();
+    await expect(phone).toHaveAttribute('href', 'tel:+14155552671');
+  } finally {
+    await context.close();
+  }
+});
+
 test('the KYB queue opens a case and refuses a decision without a reason', async ({
   browser,
   baseURL,
@@ -106,7 +183,7 @@ test('verification uploads immediately and only saves changes confirmed in the p
     await page.goto('/customers/new');
     await page.waitForLoadState('networkidle');
     await page.getByLabel('Organization legal name').fill(name);
-    await page.getByLabel('Address line 1').fill('Fixture road');
+    await page.getByLabel('Address', { exact: true }).fill('Fixture road');
     await page.getByLabel('City', { exact: true }).fill('Kathmandu');
     // Every customer starts with a main contact who has an email (quotations are sent by email).
     await page.getByLabel('Full name').fill('Fixture Contact');

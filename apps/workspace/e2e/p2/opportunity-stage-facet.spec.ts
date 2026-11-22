@@ -50,6 +50,10 @@ async function createOpportunity(page: Page, name: string) {
     .getByRole('textbox', { name: 'Company or organization', exact: true })
     .fill(`${name} Company`);
   await page.getByLabel('Contact person').fill(name);
+  // A lead needs an email or at least one phone number.
+  await page
+    .getByRole('textbox', { name: 'Email', exact: true })
+    .fill(`${randomUUID()}@example.test`);
   await page.getByRole('button', { name: 'Create lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
   await moveStage(page, 'contacted', 'Contacted');
