@@ -103,7 +103,14 @@
   display: none;
 }
 
-@media (min-width: 1120px) {
+/* The rows switch to a table on the card's own width, not the window's: with the sidebar open a 1280px
+   window leaves the card narrower than the window suggests. 940px is the narrowest card whose five
+   columns keep their minimums, so a number box always has room for its unit, steppers and a value. */
+.invoice {
+  container-type: inline-size;
+}
+
+@container (min-width: 940px) {
   .invoice .head {
     display: grid;
     grid-template-columns: 3.5rem minmax(0, 1fr) 2.5rem;
@@ -118,7 +125,9 @@
 
   .invoice .headFields {
     display: grid;
-    grid-template-columns: minmax(0, 2.25fr) repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr);
+    grid-template-columns:
+      minmax(11rem, 2.25fr) minmax(5.5rem, 0.8fr) minmax(11rem, 1fr) minmax(10.5rem, 1.2fr)
+      minmax(8rem, 1.2fr);
     gap: 12px 16px;
   }
 
@@ -156,7 +165,9 @@
 
   .invoice .fields {
     grid-area: 1 / 2;
-    grid-template-columns: minmax(0, 2.25fr) repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr);
+    grid-template-columns:
+      minmax(11rem, 2.25fr) minmax(5.5rem, 0.8fr) minmax(11rem, 1fr) minmax(10.5rem, 1.2fr)
+      minmax(8rem, 1.2fr);
   }
 
   .invoice .wide {
