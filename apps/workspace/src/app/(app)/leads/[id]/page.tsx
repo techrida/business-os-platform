@@ -1,4 +1,4 @@
-import type { ActivityDto, LeadDto, LeadOwnerOption } from '@bos/contracts';
+import { countryName, type ActivityDto, type LeadDto, type LeadOwnerOption } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -35,6 +35,7 @@ import { convertLeadAction, moveLeadStageAction } from '../actions';
 import styles from '../leads.module.css';
 import { QualifyLead } from '../qualify-lead';
 
+import { LeadContactField } from './lead-contact-field';
 import { LeadOwnerField } from './lead-owner-field';
 
 export const metadata: Metadata = { title: 'Lead · Business OS' };
@@ -46,6 +47,8 @@ function facts(
   l: LeadDto,
   owners: readonly LeadOwnerOption[],
   numberSystems: NumberSystems,
+  /** Whether the caller may change the country and phones (an editor, the lead not converted). */
+  editable: boolean,
 ): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
@@ -68,7 +71,22 @@ function facts(
       label: 'Email',
       value: l.email ?? dash,
     },
-    { key: 'phone', label: 'Phone', value: l.phone ?? dash },
+    {
+      key: 'phone',
+      label: 'Phone',
+      value: (
+        <LeadContactField
+          leadId={l.id}
+          version={l.version}
+          country={l.country}
+          phones={l.phones}
+          editable={editable}
+        />
+      ),
+      // The editor (Country, the phone list and Save) needs a full row; a number fits a cell.
+      wide: editable,
+    },
+    { key: 'country', label: 'Country', value: countryName(l.country) },
     {
       key: 'source',
       label: 'Lead source',
@@ -351,7 +369,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                     companyName: lead.companyName,
                     contactName: lead.contactName,
                     email: lead.email ?? '',
-                    phone: lead.phone ?? '',
+                    country: lead.country,
+                    phones: lead.phones,
                     requirement: lead.requirement,
                     value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
                     probability: lead.probability,
@@ -479,6 +498,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                 lead,
                 canEdit && lead.stage !== 'converted' ? owners : [],
                 numberSystems,
+                canEdit && lead.stage !== 'converted',
               )}
               className={styles.overviewFacts ?? ''}
             />

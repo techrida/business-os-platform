@@ -19,6 +19,7 @@ import {
   type CreateLeadBody,
   type LeadStageChangeBody,
   type OpportunityStageChangeBody,
+  type PartyPhoneInput,
   type RecordKind,
   type RescheduleActivityBody,
   type SchedulableActivityKind,
@@ -38,7 +39,6 @@ export type Parsed<T> = { ok: true; data: T } | { ok: false; fieldErrors: FieldE
 
 const RELOAD = 'This page is out of date. Reload it and try again.';
 const INCOMPLETE = 'This form is incomplete. Reload the page.';
-const PHONE = 'Enter the number with its country code, for example +9779812345678.';
 
 /** A trimmed string field, or undefined when it is empty or missing. */
 function field(form: FormData, name: string): string | undefined {
@@ -159,8 +159,9 @@ const LEAD_MESSAGES: Record<string, string> = {
   source: 'Choose where the lead came from.',
   companyName: 'Enter the company name, up to 200 characters.',
   contactName: 'Enter the contact person, up to 200 characters.',
+  country: 'Choose a country from the list.',
   email: 'Enter an email address such as name@company.com.',
-  phone: PHONE,
+  phones: 'Check the phone numbers: mark one as primary and list each number once.',
   requirement: 'The requirement is too long. The limit is 5,000 characters.',
   expectedValue:
     'Enter an amount such as 1250000.50: digits with at most two decimals, not negative.',
@@ -202,12 +203,55 @@ function leadFollowUp(form: FormData): Record<string, unknown> | undefined {
   });
 }
 
+/** A lead needs a way to reach the person; the form shows this under the email before it submits. */
+export const EMAIL_OR_PHONE = 'Enter an email or at least one phone number.';
+
+/** More rows than a list can hold still reach the contract, which refuses them; this only bounds the loop. */
+const PHONE_ROWS_READ = 20;
+
+/** A contract phone problem ("not a valid United States number") as a sentence. */
+const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+
+/**
+ * The numbers a `PhoneListInput` posted under `name` (`<name>.<i>.number`, `.country`, `.label`,
+ * `.isPrimary`), blank rows left out. `rowOf[j]` is the list row of `phones[j]`, so an error on a
+ * posted number lands under the row it came from. When the primary row was left blank, the first
+ * number is primary, as the list itself reports it.
+ */
+export function formPhones(
+  form: FormData,
+  name: string,
+): { phones: PartyPhoneInput[]; rowOf: number[] } {
+  const phones: PartyPhoneInput[] = [];
+  const rowOf: number[] = [];
+  for (let row = 0; row < PHONE_ROWS_READ; row += 1) {
+    const at = `${name}.${row}`;
+    if (!form.has(`${at}.number`)) break;
+    const e164 = field(form, `${at}.number`);
+    if (e164 === undefined) continue;
+    const label = field(form, `${at}.label`);
+    phones.push({
+      country: (field(form, `${at}.country`) ?? '') as PartyPhoneInput['country'],
+      e164,
+      ...(label === undefined ? {} : { label: label as NonNullable<PartyPhoneInput['label']> }),
+      isPrimary: field(form, `${at}.isPrimary`) === 'true',
+    });
+    rowOf.push(row);
+  }
+  if (phones.length > 0 && !phones.some((phone) => phone.isPrimary)) phones[0]!.isPrimary = true;
+  return { phones, rowOf };
+}
+
 /**
  * Lead create. `ownerUserId` comes from the "Lead owner" select (the API defaults to the caller
  * when it is absent). The first follow-up arrives as `followUpKind` + `followUpAt` (+ optional
- * assignee, subject, details); the older single `nextFollowUpAt` input is still read.
+ * assignee, subject, details); the older single `nextFollowUpAt` input is still read. The person's
+ * numbers come from the `phones` list, each with its own country; an error on one is keyed
+ * `phones.<row>`, one about the list `phones`.
  */
 export function parseLead(form: FormData): Parsed<CreateLeadBody> {
+  const { phones, rowOf } = formPhones(form, 'phones');
+  const email = field(form, 'email');
   const input = defined({
     title: field(form, 'title'),
     source: field(form, 'source'),
@@ -215,8 +259,9 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
     ownerUserId: field(form, 'ownerUserId'),
     companyName: field(form, 'companyName'),
     contactName: field(form, 'contactName'),
-    email: field(form, 'email'),
-    phone: field(form, 'phone'),
+    country: field(form, 'country'),
+    email,
+    phones,
     requirement: field(form, 'requirement'),
     expectedValue: moneyField(form, 'expectedValue'),
     currency: field(form, 'currency'),
@@ -228,7 +273,17 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
   });
   const r = CreateLeadBodySchema.safeParse(input);
   if (r.success) return { ok: true, data: r.data };
-  const fieldErrors = collect(r.error.issues, leadKey, LEAD_MESSAGES, 'Check this field.');
+  const others = r.error.issues.filter((issue) => issue.path[0] !== 'phones');
+  const fieldErrors = collect(others, leadKey, LEAD_MESSAGES, 'Check this field.');
+  for (const issue of r.error.issues) {
+    if (issue.path[0] !== 'phones') continue;
+    const index = issue.path[1];
+    const key =
+      typeof index === 'number' && rowOf[index] !== undefined ? `phones.${rowOf[index]}` : 'phones';
+    fieldErrors[key] ??= key === 'phones' ? LEAD_MESSAGES['phones'] : sentence(issue.message);
+  }
+  // Neither an email nor a number: the contract puts this on the email, in its own words.
+  if (email === undefined && phones.length === 0) fieldErrors['email'] = EMAIL_OR_PHONE;
   // "10 50" is not 1050: say what to fix rather than the generic sentence.
   if (fieldErrors['expectedValue'] && hasInnerSpace(field(form, 'expectedValue') ?? '')) {
     fieldErrors['expectedValue'] = NO_SPACES;
@@ -237,22 +292,51 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
 }
 
 /**
- * Lead edit. Today the detail page edits only the owner (D39: follow-ups are activities, not a
- * lead field), so the owner is required here; the body is the contract's partial update.
+ * Lead edit, from either of the detail page's editors: the owner, or the person's country and
+ * numbers (D39: follow-ups are activities, not a lead field). The body is the contract's partial
+ * update with only the keys the form posted. `phones` counts as posted when the list's first row
+ * is on the form (a `PhoneListInput` clears its last row rather than removing it), and replaces
+ * the whole list, so clearing every row sends `[]`; the server refuses that when the lead has no
+ * email either. A form that posts none of the editable keys names the owner, as before.
  */
 export function parseLeadUpdate(form: FormData): Parsed<UpdateLeadBody> {
   const ownerUserId = field(form, 'ownerUserId');
+  const country = field(form, 'country');
+  const listed = form.has('phones.0.number') ? formPhones(form, 'phones') : undefined;
   const expectedVersion = numberField(form, 'expectedVersion') ?? Number.NaN;
-  const r = UpdateLeadBodySchema.safeParse(defined({ ownerUserId, expectedVersion }));
+  const posted = defined({ ownerUserId, country, phones: listed?.phones });
+  const r = UpdateLeadBodySchema.safeParse({ ...posted, expectedVersion });
+  const changes = Object.keys(posted).length > 0;
   // Only the submitted keys: the contract's partial still applies the create-time currency
-  // default, and sending it would reset a USD lead to NPR on an owner change.
-  if (r.success && ownerUserId !== undefined) {
-    return { ok: true, data: { ownerUserId, expectedVersion: r.data.expectedVersion } };
+  // default, and sending it would reset a USD lead to NPR on an owner or phone change.
+  if (r.success && changes) {
+    const { ownerUserId: owner, country: code, phones } = r.data;
+    return {
+      ok: true,
+      data: {
+        ...(ownerUserId === undefined || owner === undefined ? {} : { ownerUserId: owner }),
+        ...(country === undefined || code === undefined ? {} : { country: code }),
+        ...(listed === undefined || phones === undefined ? {} : { phones }),
+        expectedVersion: r.data.expectedVersion,
+      },
+    };
   }
-  const errors: FieldErrors = r.success
-    ? {}
-    : collect(r.error.issues, lastKey, { ...LEAD_MESSAGES, expectedVersion: RELOAD }, RELOAD);
-  if (ownerUserId === undefined) errors['ownerUserId'] = LEAD_MESSAGES['ownerUserId'];
+  const issues = r.success ? [] : r.error.issues;
+  const errors: FieldErrors = collect(
+    issues.filter((issue) => issue.path[0] !== 'phones'),
+    lastKey,
+    { ...LEAD_MESSAGES, expectedVersion: RELOAD },
+    RELOAD,
+  );
+  // As on create: a problem with one number goes under the row it came from.
+  for (const issue of issues) {
+    if (issue.path[0] !== 'phones') continue;
+    const index = issue.path[1];
+    const row = typeof index === 'number' ? listed?.rowOf[index] : undefined;
+    const key = row === undefined ? 'phones' : `phones.${row}`;
+    errors[key] ??= key === 'phones' ? LEAD_MESSAGES['phones'] : sentence(issue.message);
+  }
+  if (!changes) errors['ownerUserId'] = LEAD_MESSAGES['ownerUserId'];
   return { ok: false, fieldErrors: errors };
 }
 
@@ -439,13 +523,14 @@ const CONVERT_MESSAGES: Record<string, string> = {
   legalName: 'Enter the customer legal name, up to 200 characters.',
   panVatNo: 'Enter 5 to 20 letters, digits or hyphens.',
   industry: 'The industry is too long. The limit is 100 characters.',
-  line1: 'Enter the first line of the address.',
-  city: 'Enter the city.',
-  country: 'Enter a two-letter country code such as NP.',
+  'address.line': 'Enter the street address, up to 300 characters.',
+  'address.city': 'Enter the city, up to 100 characters.',
+  'address.country': 'Choose the country from the list.',
   contactId: 'Enter the id of the existing contact.',
   contactName: 'Enter the contact name.',
   contactEmail: 'Enter the contact email, such as name@company.com. Quotations are sent to it.',
-  contactPhone: PHONE,
+  contactCountry: "Choose the contact's country from the list.",
+  contactPhones: 'Check the phone numbers: mark one as primary and list each number once.',
   opportunityName: 'Name the opportunity, up to 200 characters.',
   overrideReason: 'Give the reason for creating a duplicate, up to 500 characters.',
   expectedVersion: RELOAD,
@@ -457,10 +542,33 @@ const CONVERT_KEY: Record<string, string> = {
   contact: 'contactMode',
   fullName: 'contactName',
   email: 'contactEmail',
-  phone: 'contactPhone',
   reason: 'overrideReason',
 };
 
+/**
+ * The form field a convert issue belongs to. The customer's country sits in its address block, so
+ * it is `address.country`; the contact's is `contactCountry`; a phone row is `contactPhones.<row>`
+ * by its list position (`rowOf`), the list as a whole `contactPhones`.
+ */
+function convertKey(path: readonly PropertyKey[], rowOf: readonly number[]): string {
+  const [top, , leaf, sub] = path;
+  if (top === 'customer' && leaf === 'address') return `address.${String(sub ?? 'line')}`;
+  if (top === 'customer' && leaf === 'country') return 'address.country';
+  if (top === 'contact' && leaf === 'country') return 'contactCountry';
+  if (top === 'contact' && leaf === 'phones') {
+    const row = typeof sub === 'number' ? rowOf[sub] : undefined;
+    return row === undefined ? 'contactPhones' : `contactPhones.${row}`;
+  }
+  const key = lastKey([...path]);
+  return CONVERT_KEY[key] ?? key;
+}
+
+/**
+ * Lead conversion. A new customer posts its country from the address block (`address.country`,
+ * no default) with `address.line` and `address.city`; a Nepal customer's PAN is nine digits, a
+ * foreign one's is loose and optional. A new contact posts `contactCountry` and the
+ * `contactPhones` list, each number with its own country.
+ */
 export function parseConvert(form: FormData): Parsed<ConvertLeadBody> {
   const customerMode = field(form, 'customerMode');
   // A contact is required (its email receives the quotations); there is no "none" any more.
@@ -478,24 +586,28 @@ export function parseConvert(form: FormData): Parsed<ConvertLeadBody> {
             panVatNo: field(form, 'panVatNo'),
             industry: field(form, 'industry'),
             relationship: 'prospect',
+            country: field(form, 'address.country'),
             address: defined({
-              line1: field(form, 'line1'),
-              city: field(form, 'city'),
-              country: field(form, 'country') ?? 'NP',
+              line: field(form, 'address.line'),
+              city: field(form, 'address.city'),
             }),
           }),
         };
 
   let contact: Record<string, unknown> | undefined;
+  let rowOf: number[] = [];
   if (contactMode === 'existing') {
     contact = { mode: 'existing', contactId: field(form, 'contactId') };
   } else if (contactMode === 'create') {
+    const posted = formPhones(form, 'contactPhones');
+    rowOf = posted.rowOf;
     contact = {
       mode: 'create',
       contact: defined({
         fullName: field(form, 'contactName'),
         email: field(form, 'contactEmail'),
-        phone: field(form, 'contactPhone'),
+        country: field(form, 'contactCountry'),
+        phones: posted.phones,
         // The main contact of a new customer. An existing customer may already have one (a second
         // would be a 409), so a contact added to it is an ordinary one.
         isPrimary: customerMode !== 'existing',
@@ -518,16 +630,14 @@ export function parseConvert(form: FormData): Parsed<ConvertLeadBody> {
   }
   const r = ConvertLeadBodySchema.safeParse(input);
   if (r.success && Object.keys(earlyErrors).length === 0) return { ok: true, data: r.data };
-  const fromSchema = r.success
-    ? {}
-    : collect(
-        r.error.issues,
-        (path) => {
-          const key = lastKey(path);
-          return CONVERT_KEY[key] ?? key;
-        },
-        CONVERT_MESSAGES,
-        'Check this field.',
-      );
+  const fromSchema: FieldErrors = {};
+  for (const issue of r.success ? [] : r.error.issues) {
+    const key = convertKey(issue.path, rowOf);
+    // A phone row, and a Nepal PAN that is not nine digits, keep the contract's own reason.
+    const own = key.startsWith('contactPhones.') || (key === 'panVatNo' && issue.code === 'custom');
+    fromSchema[key] ??= own
+      ? sentence(issue.message)
+      : (CONVERT_MESSAGES[key] ?? 'Check this field.');
+  }
   return { ok: false, fieldErrors: { ...fromSchema, ...earlyErrors } };
 }

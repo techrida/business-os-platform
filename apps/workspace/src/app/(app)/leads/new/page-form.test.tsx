@@ -40,6 +40,8 @@ it('submits the lead form from the page header with the action’s original fiel
     await choose(container, 'source', 'Referral');
     await fill(container.querySelector('[name="companyName"]'), 'Binford Ltd.');
     await fill(container.querySelector('[name="contactName"]'), 'Sunita Shrestha');
+    // A lead needs a way to reach the person (an email or a phone) before it saves.
+    await fill(container.querySelector('[name="email"]'), 'sunita@binford.example');
     const probabilityLabel = Array.from(container.querySelectorAll('label')).find((l) =>
       l.textContent?.startsWith('Probability'),
     );
@@ -82,6 +84,7 @@ async function mountLead(
   await choose(container, 'source', 'Referral');
   await fill(container.querySelector('[name="companyName"]'), 'Binford Ltd.');
   await fill(container.querySelector('[name="contactName"]'), 'Sunita Shrestha');
+  await fill(container.querySelector('[name="email"]'), 'sunita@binford.example');
   async function send() {
     await click(container.querySelector('button[type="submit"]'));
     expect(action).toHaveBeenCalledTimes(1);

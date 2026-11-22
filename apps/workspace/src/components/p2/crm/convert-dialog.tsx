@@ -1,14 +1,17 @@
 'use client';
 
+import { MAX_PARTY_PHONES, type CountryCode, type PartyPhoneInput } from '@bos/contracts';
 import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
+import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { CountrySelect } from '@/components/ui/country-select';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select } from '@/components/ui/field';
 import { PanInput } from '@/components/ui/pan-input';
-import { PhoneInput } from '@/components/ui/phone-input';
+import { PhoneListInput } from '@/components/ui/phone-list-input';
 
 import { FactList, Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -24,7 +27,10 @@ export interface ConvertLead {
   companyName: string;
   contactName: string;
   email: string;
-  phone: string;
+  /** The lead person's country: the new customer and contact start in it. */
+  country: CountryCode;
+  /** The lead person's numbers (the DTO's `phones`, primary first): the new contact starts with them. */
+  phones: readonly PartyPhoneInput[];
   requirement?: string | null;
   value?: string | null;
   probability?: number | null;
@@ -37,14 +43,14 @@ function initialValues(lead: ConvertLead): Record<string, string> {
     customerId: '',
     legalName: lead.companyName,
     panVatNo: '',
-    line1: '',
+    line: '',
     city: '',
-    country: 'NP',
+    country: lead.country,
     contactMode: 'create',
     contactId: '',
     contactName: lead.contactName,
     contactEmail: lead.email,
-    contactPhone: lead.phone,
+    contactCountry: lead.country,
     opportunityName: lead.title,
     createAnyway: '',
     overrideReason: '',
@@ -123,11 +129,16 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
     setValues((v) => ({ ...v, [name]: e.target.value }));
   // The contract also takes the tax ids of customers abroad, so only a Nepal customer gets the
   // digits-only PAN box.
-  const nepalCustomer = (values['country'] ?? '').trim().toUpperCase() === 'NP';
-  // Both edit flags live here, above the boxes that remount (a country or contact-mode switch), so a
-  // short value the user typed is still stopped at submit when its box comes back.
+  const customerCountry = (values['country'] ?? lead.country) as CountryCode;
+  const contactCountry = (values['contactCountry'] ?? lead.country) as CountryCode;
+  const nepalCustomer = customerCountry === 'NP';
+  // The PAN edit flag lives here, above the box that remounts on a country switch, so a short value
+  // the user typed is still stopped at submit when its box comes back.
   const [panEdited, setPanEdited] = useState(false);
-  const [phoneEdited, setPhoneEdited] = useState(false);
+  // The phone list is not fully controlled: React resets the form after every action, and the list
+  // then starts over from `defaultValue`. Holding its saved numbers here keeps what the user typed
+  // through a refusal; incomplete rows never get that far, their boxes stop the submit.
+  const [phones, setPhones] = useState<readonly PartyPhoneInput[]>(lead.phones);
   const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
 
   // Keep one key per decision, even when the dialog is closed and reopened. Only a definite
@@ -140,7 +151,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
   useEffect(() => {
     if (!open || pending) return;
     if (summary.current) summary.current.focus();
-    else form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    else form.current?.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled)')?.focus();
   }, [open, pending, state]);
 
   useEffect(() => {
@@ -331,89 +342,69 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 </Field>
               </>
             ) : (
-              <div className={styles.formGrid}>
-                <Field label="Legal name" error={err['legalName']}>
-                  {(c) => (
-                    <Input
-                      name="legalName"
-                      value={values['legalName']}
-                      onChange={set('legalName')}
-                      required
-                      maxLength={200}
-                      {...c}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="PAN or VAT number"
-                  hint={nepalCustomer ? 'Optional. Nine digits.' : 'Optional.'}
-                  error={err['panVatNo']}
-                >
-                  {(c) =>
-                    nepalCustomer ? (
-                      <PanInput
-                        name="panVatNo"
-                        value={values['panVatNo']}
-                        onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
-                        edited={panEdited}
-                        onEditedChange={setPanEdited}
-                        {...c}
-                      />
-                    ) : (
+              <div className={styles.convertFields}>
+                <div className={styles.formGrid}>
+                  <Field label="Legal name" error={err['legalName']}>
+                    {(c) => (
                       <Input
-                        name="panVatNo"
-                        value={values['panVatNo']}
-                        onChange={(e) => {
-                          // The same value becomes the PAN if the country turns NP.
-                          setPanEdited(true);
-                          set('panVatNo')(e);
-                        }}
-                        autoComplete="off"
+                        name="legalName"
+                        value={values['legalName']}
+                        onChange={set('legalName')}
+                        required
+                        maxLength={200}
                         {...c}
                       />
-                    )
+                    )}
+                  </Field>
+                  <Field
+                    label="PAN or VAT number"
+                    hint={nepalCustomer ? 'Optional. Nine digits.' : 'Optional.'}
+                    error={err['panVatNo']}
+                  >
+                    {(c) =>
+                      nepalCustomer ? (
+                        <PanInput
+                          name="panVatNo"
+                          value={values['panVatNo']}
+                          onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
+                          edited={panEdited}
+                          onEditedChange={setPanEdited}
+                          {...c}
+                        />
+                      ) : (
+                        <Input
+                          name="panVatNo"
+                          value={values['panVatNo']}
+                          onChange={(e) => {
+                            // The same value becomes the PAN if the country turns NP.
+                            setPanEdited(true);
+                            set('panVatNo')(e);
+                          }}
+                          autoComplete="off"
+                          {...c}
+                        />
+                      )
+                    }
+                  </Field>
+                </div>
+                {/* The customer's one country: it sits with the address and decides the PAN rules. */}
+                <AddressFields
+                  name="address"
+                  required
+                  value={{
+                    line: values['line'] ?? '',
+                    city: values['city'] ?? '',
+                    country: customerCountry,
+                  }}
+                  onChange={(next) =>
+                    patch({ line: next.line, city: next.city, country: next.country })
                   }
-                </Field>
-                <Field label="Address" error={err['line1']}>
-                  {(c) => (
-                    <Input
-                      name="line1"
-                      value={values['line1']}
-                      onChange={set('line1')}
-                      required
-                      maxLength={200}
-                      {...c}
-                    />
-                  )}
-                </Field>
-                <Field label="City" error={err['city']}>
-                  {(c) => (
-                    <Input
-                      name="city"
-                      value={values['city']}
-                      onChange={set('city')}
-                      required
-                      maxLength={100}
-                      {...c}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="Country code"
-                  hint="Two letters, for example NP."
-                  error={err['country']}
-                >
-                  {(c) => (
-                    <Input
-                      name="country"
-                      value={values['country']}
-                      onChange={set('country')}
-                      required
-                      maxLength={2}
-                      {...c}
-                    />
-                  )}
-                </Field>
+                  errors={{
+                    line: err['address.line'],
+                    city: err['address.city'],
+                    country: err['address.country'],
+                  }}
+                />
               </div>
             )}
           </fieldset>
@@ -441,57 +432,80 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
               Link to an existing contact
             </label>
 
-            {contactMode === 'create' ? (
-              <div className={styles.formGrid}>
-                <Field label="Contact name" error={err['contactName']}>
-                  {(c) => (
-                    <Input
-                      name="contactName"
-                      value={values['contactName']}
-                      onChange={set('contactName')}
-                      required
-                      maxLength={200}
-                      {...c}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="Email"
-                  hint="Required: quotations are sent to it."
-                  error={err['contactEmail']}
-                >
-                  {(c) => (
-                    <Input
-                      name="contactEmail"
-                      type="email"
-                      value={values['contactEmail']}
-                      onChange={set('contactEmail')}
-                      autoComplete="off"
-                      spellCheck={false}
-                      maxLength={254}
-                      required
-                      {...c}
-                    />
-                  )}
-                </Field>
+            {/* Kept mounted while an existing contact is chosen, so the typed numbers and their checks
+                come back with it; disabled, nothing in it posts or stops the submit. */}
+            <div hidden={contactMode !== 'create'}>
+              <fieldset className={styles.convertFields} disabled={contactMode !== 'create'}>
+                <div className={styles.formGrid}>
+                  <Field label="Contact name" error={err['contactName']}>
+                    {(c) => (
+                      <Input
+                        name="contactName"
+                        value={values['contactName']}
+                        onChange={set('contactName')}
+                        required
+                        maxLength={200}
+                        {...c}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label="Email"
+                    hint="Required: quotations are sent to it."
+                    error={err['contactEmail']}
+                  >
+                    {(c) => (
+                      <Input
+                        name="contactEmail"
+                        type="email"
+                        value={values['contactEmail']}
+                        onChange={set('contactEmail')}
+                        autoComplete="off"
+                        spellCheck={false}
+                        maxLength={254}
+                        required
+                        {...c}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Country" error={err['contactCountry']}>
+                    {(c) => (
+                      <CountrySelect
+                        id={c.id}
+                        aria-labelledby={c['aria-labelledby']}
+                        aria-describedby={c['aria-describedby']}
+                        aria-invalid={c['aria-invalid']}
+                        name="contactCountry"
+                        required
+                        value={contactCountry}
+                        onChange={(country) => patch({ contactCountry: country })}
+                      />
+                    )}
+                  </Field>
+                </div>
                 <Field
                   label="Phone"
-                  hint="Optional. Nepal numbers need only the digits."
-                  error={err['contactPhone']}
+                  hint="Optional. Pick each number's country, or type + and its code."
                 >
                   {(c) => (
-                    <PhoneInput
-                      name="contactPhone"
-                      value={values['contactPhone']}
-                      onValueChange={(phone) => set('contactPhone')({ target: { value: phone } })}
-                      edited={phoneEdited}
-                      onEditedChange={setPhoneEdited}
-                      {...c}
+                    <PhoneListInput
+                      key={`${lead.id}-${lead.version}`}
+                      name="contactPhones"
+                      aria-labelledby={c['aria-labelledby']}
+                      defaultValue={phones}
+                      defaultCountry={contactCountry}
+                      onChange={setPhones}
+                      rowErrors={Array.from(
+                        { length: MAX_PARTY_PHONES },
+                        (_, row) => err[`contactPhones.${row}`],
+                      )}
+                      error={err['contactPhones']}
+                      disabled={contactMode !== 'create'}
                     />
                   )}
                 </Field>
-              </div>
-            ) : null}
+              </fieldset>
+            </div>
             {contactMode === 'existing' ? (
               <Field
                 label="Contact"
