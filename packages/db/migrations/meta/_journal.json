@@ -752,9 +752,16 @@
       "breakpoints": true
     },
     {
-      "idx": 109,
+      "idx": 107,
       "version": "7",
-      "when": 1783000000155,
+      "when": 1783000000153,
+      "tag": "0183_credit_override_quotation_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1783000000154,
       "tag": "0185_party_import_batches_expiry",
       "breakpoints": true
     }

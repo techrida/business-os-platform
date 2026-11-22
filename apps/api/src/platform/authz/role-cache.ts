@@ -251,6 +251,33 @@ export class RoleCache {
   }
 
   /**
+   * The rows read once on `on`, at the first `grantsFor`, then reused for every role set asked of the same table:
+   * a caller that checks many users' role sets in one transaction (the small-team rule) reads the rows once, not
+   * once per role set. Fresh and uncached like `grantsFor(..., on)`, and scoped to that one caller: never keep it
+   * past the transaction.
+   */
+  tableOn(on: Db | DbTransaction): {
+    grantsFor(
+      tenantId: string,
+      organizationId: string,
+      roles: readonly RoleKey[],
+      level?: AccessLevel,
+    ): Promise<ReadonlyMap<Permission, AccessScope>>;
+  } {
+    const read = new Map<string, Promise<ReadonlyMap<string, LeveledGrants>>>();
+    return {
+      grantsFor: async (tenantId, _organizationId, roles, level = 'staff') => {
+        let rows = read.get(tenantId);
+        if (rows === undefined) {
+          rows = this.readRows(tenantId, on);
+          read.set(tenantId, rows);
+        }
+        return merge(await rows, roles, level);
+      },
+    };
+  }
+
+  /**
    * Changes whenever this instance forgets the tenant or sees a newer `authz_versions` row. The tenancy
    * interceptor keys its user cache (department and level of each membership) to the same value, read
    * through `current()`, so a membership change saved with `AuthzService.invalidate` or a version bump

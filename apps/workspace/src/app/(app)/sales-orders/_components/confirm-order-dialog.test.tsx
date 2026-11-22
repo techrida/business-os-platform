@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest';
 
 import { choose, click, mountForm } from '@/test/form-interactions';
 
+import { confirmRefusalText } from '../_lib/confirm-refusal';
 import type { ActionState } from '../_lib/state';
 
 const mocks = vi.hoisted(() => ({
@@ -104,6 +105,8 @@ const dialogLinks = () =>
     a.getAttribute('href'),
   ]);
 
+/** The position the action read for a `credit.override` holder: the override is given at its order value. */
+const POSITION = { orderValue: '90400.00', rows: [] };
 const HELD =
   'With its open receivables, its confirmed orders not yet invoiced and this order, this customer is over its credit limit, so the sales order is on hold.';
 const OVERRIDE = 'Override credit hold';
@@ -121,6 +124,7 @@ it('lets a credit.override holder who cannot open the deal override it in place 
       canOpen: false,
       canOverride: true,
       quotationVersionId: QUOTE_A.versionId,
+      position: POSITION,
     },
   });
   expect(document.querySelector('[role="alert"]')?.textContent).toContain('over its credit limit');
@@ -213,6 +217,7 @@ it("offers no Override or link for quotation A once quotation B is selected, and
       canOpen: true,
       canOverride: true,
       quotationVersionId: QUOTE_A.versionId,
+      position: POSITION,
     },
   });
   expect(buttonNamed(OVERRIDE)).not.toBeNull();
@@ -399,5 +404,34 @@ it('shows the evidence refusal on the upload control', async () => {
     document.getElementById(input.getAttribute('aria-describedby')!.split(' ').at(-1)!)
       ?.textContent,
   ).toBe(INVALID);
+  await mounted.unmount();
+});
+
+it('says the file was not filed when the order was already confirmed, never "Order confirmed" (R5 FU10 item 8)', async () => {
+  // The action answers the API's 409 with the shared refusal words, as `confirmOrderAction` does.
+  const alreadyConfirmed = {
+    status: 409,
+    body: {
+      error: {
+        code: 'evidence_not_filed',
+        message: 'This order was already confirmed, so the named files were not filed with it',
+        correlationId: 'corr-2',
+      },
+    },
+  };
+  mocks.confirmOrderAction.mockImplementation(() =>
+    Promise.resolve({ key: 'rotated-key-0001', error: confirmRefusalText(alreadyConfirmed) }),
+  );
+  const mounted = await openDialog();
+  await choose(document.body, 'quotationVersionId', QUOTE_A.label);
+  await chooseFile();
+  await finishUpload();
+  await submitConfirm();
+
+  expect(confirmDialog().querySelector('[role="alert"]')?.textContent).toContain(
+    'This order was already confirmed, so your file was not filed with it.',
+  );
+  expect(mocks.success).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   await mounted.unmount();
 });

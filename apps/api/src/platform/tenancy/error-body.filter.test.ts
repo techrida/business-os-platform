@@ -764,6 +764,17 @@ describe('ErrorBodyFilter', () => {
     expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
   });
 
+  it('keeps evidence_not_filed and its message on a 409: a second confirm named files it did not file (R5 FU10)', () => {
+    const message = 'This order was already confirmed, so the named files were not filed with it';
+    const out = filter(new ConflictException({ code: 'evidence_not_filed', message }));
+
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'evidence_not_filed',
+      message,
+    });
+  });
+
   it.each(['promise_open', 'invoice_not_open'])(
     'keeps the promise to pay conflict code %s and its message on a 409, and only on a 409',
     (code) => {

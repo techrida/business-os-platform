@@ -9,6 +9,7 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 
 import { partyAccounts } from '@bos/db';
+import { HttpException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -17,7 +18,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { LedgerService } from '../ledger/ledger.service';
 import { startHarness, type Harness } from '../leads/test/harness';
-import { creditPosition, orderValueOf, type VersionNprSnapshot } from './credit-hold';
+import {
+  creditPosition,
+  orderValueOf,
+  overrideCovers,
+  type VersionNprSnapshot,
+} from './credit-hold';
+import { CreditHoldController } from './credit-hold.controller';
+import { type CreditHoldService } from './credit-hold.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -99,6 +107,7 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
       exposure: '100000.00',
       uninvoiced: '0.00',
       orderValue: '0.00',
+      pendingQuotationVersionId: null,
       exposureWithOrder: '100000.00',
       held: false,
     });
@@ -114,6 +123,7 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
       exposure: '100000.01',
       uninvoiced: '0.00',
       orderValue: '0.00',
+      pendingQuotationVersionId: null,
       exposureWithOrder: '100000.01',
       held: true,
     });
@@ -129,6 +139,7 @@ describe('the credit exposure rounds each item, then sums (D22)', () => {
       exposure: '100000.00',
       uninvoiced: '0.00',
       orderValue: '0.00',
+      pendingQuotationVersionId: null,
       exposureWithOrder: '100000.00',
       held: false,
     });
@@ -145,6 +156,7 @@ describe('the hold counts the order being confirmed on top of the receivables (K
       exposure: '90000.00',
       uninvoiced: '0.00',
       orderValue: '20000.00',
+      pendingQuotationVersionId: null,
       exposureWithOrder: '110000.00',
       held: true,
     });
@@ -215,5 +227,124 @@ describe('the hold counts the order being confirmed on top of the receivables (K
     expect(() => orderValueOf({ currency: 'USD', total: '150.00', amountNpr: null })).toThrow(
       /no NPR snapshot/,
     );
+  });
+
+  it('names the version being confirmed as the pending one', async () => {
+    const party = await customerWithLimit('100000.00');
+    const id = randomUUID();
+    expect(await positionOf(party, { ...nprOrder('20000.00'), id })).toMatchObject({
+      orderValue: '20000.00',
+      pendingQuotationVersionId: id,
+      held: false,
+    });
+  });
+});
+
+// R5 FU10 (FU4 Q1). Before: an override given for an order of some value covered any later order of the deal at or
+// below that value, whatever its quotation version.
+describe('an override covers exactly one quotation version and order value', () => {
+  const v1 = randomUUID();
+  const v2 = randomUUID();
+
+  it('covers the version and value it was given for', () => {
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.00' },
+        { versionId: v1, orderValue: '22600.00' },
+      ),
+    ).toBe(true);
+    // Equal as amounts, whatever the scale the column returned.
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.0' },
+        { versionId: v1, orderValue: '22600.00' },
+      ),
+    ).toBe(true);
+  });
+
+  it('does not cover a smaller or a bigger order of the same version', () => {
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.00' },
+        { versionId: v1, orderValue: '22599.99' },
+      ),
+    ).toBe(false);
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.00' },
+        { versionId: v1, orderValue: '22600.01' },
+      ),
+    ).toBe(false);
+  });
+
+  it('does not cover another version (a second order on the deal, or a new version), even at the same value', () => {
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.00' },
+        { versionId: v2, orderValue: '22600.00' },
+      ),
+    ).toBe(false);
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.00' },
+        { versionId: v2, orderValue: '5000.00' },
+      ),
+    ).toBe(false);
+  });
+
+  it('fails closed for an override with no recorded version or value, and when nothing is pending', () => {
+    expect(
+      overrideCovers(
+        { versionId: null, orderValue: '22600.00' },
+        { versionId: v1, orderValue: '22600.00' },
+      ),
+    ).toBe(false);
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: null },
+        { versionId: v1, orderValue: '22600.00' },
+      ),
+    ).toBe(false);
+    expect(
+      overrideCovers(
+        { versionId: v1, orderValue: '22600.00' },
+        { versionId: null, orderValue: '0.00' },
+      ),
+    ).toBe(false);
+  });
+});
+
+// R5 FU10 (FU4 Q3). Before: the order value was optional and there was no quotation version on the body.
+describe('the override body needs the quotation version and the order value', () => {
+  const service = { override: vi.fn() };
+  const controller = new CreditHoldController(service as unknown as CreditHoldService);
+  const deal = randomUUID();
+
+  async function statusOf(body: unknown): Promise<number> {
+    try {
+      await controller.override(deal, body);
+    } catch (error) {
+      if (error instanceof HttpException) return error.getStatus();
+      throw error;
+    }
+    return 200;
+  }
+
+  it('answers 400 without the order value or without the quotation version, and passes a full body on', async () => {
+    const quotationVersionId = randomUUID();
+    expect(await statusOf({ reason: 'Advance received' })).toBe(400);
+    expect(await statusOf({ reason: 'Advance received', quotationVersionId })).toBe(400);
+    expect(await statusOf({ reason: 'Advance received', orderValue: '22600.00' })).toBe(400);
+    expect(
+      await statusOf({
+        reason: 'Advance received',
+        quotationVersionId: 'v1',
+        orderValue: '22600.00',
+      }),
+    ).toBe(400);
+    expect(service.override).not.toHaveBeenCalled();
+    const body = { reason: 'Advance received', quotationVersionId, orderValue: '22600.00' };
+    expect(await statusOf(body)).toBe(200);
+    expect(service.override).toHaveBeenCalledWith(deal, body);
   });
 });
