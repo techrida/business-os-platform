@@ -164,8 +164,12 @@ export class UsersService extends UserDirectory {
   ): Promise<InvitedUser> {
     // One identity change at a time per tenant: the lease keeps two invites (or an invite and a role set) from running
     // their ZITADEL calls and writes interleaved.
-    return withFounderRemovalLease(this.store, scope.tenantId, () =>
-      this.inviteOnce(scope, actor, b, placement, assertAccess),
+    return withFounderRemovalLease(
+      this.store,
+      scope.tenantId,
+      () => this.inviteOnce(scope, actor, b, placement, assertAccess),
+      undefined,
+      this.mirror.settleOutstandingRemoval(scope, actor),
     );
   }
 
@@ -232,9 +236,9 @@ export class UsersService extends UserDirectory {
 
   /**
    * Resolves a person flagged for identity review (a failed or ambiguous write to ZITADEL left their state unsure): reads
-   * ZITADEL again (it must answer), clears the flag under the locks with an audit row, then runs a full sync so the row
-   * takes the status, lock and roles ZITADEL holds. If the sync fails the row stays closed and unflagged until the next
-   * sync. The caller invalidates authz after this resolves.
+   * ZITADEL again (the user and the grants; any unreadable answer is a 503 and nothing changes), then in one transaction
+   * checks the flag is still the one read (409 otherwise), writes the status, lock and roles ZITADEL holds, clears the
+   * flag and records the audit row. The caller invalidates authz after this resolves.
    */
   async resolveIdentityReview(
     scope: TxScope,
