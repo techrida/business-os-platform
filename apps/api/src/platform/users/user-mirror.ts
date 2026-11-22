@@ -523,8 +523,8 @@ export class UserMirror {
         actor,
         async (tx) => {
           await lockAccessRevision(tx, scope.tenantId);
-          // Clears the recorded removal with this write; a holder whose lease was taken over writes nothing.
-          await assertFounderLeaseHeld(tx, userId);
+          // The lease must still be held (it clears a recorded removal with this write); a taken-over holder writes nothing.
+          await assertFounderLeaseHeld(tx);
           if (assertAccess) await assertAccess(tx);
           const current = await this.store.findById(tx, scope, userId, true);
           if (!current || current.idpOrgId !== plan.org.idpOrgId) throw userChangedConflict();
