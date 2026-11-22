@@ -37,8 +37,6 @@ const QUOTATION_TABLES = [
   'quotation_status_history',
 ] as const;
 
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
-
 let testDb: TestDatabase;
 let owner: Pool;
 let app: Pool;
@@ -94,9 +92,9 @@ async function insertCustomer(scope: Scope): Promise<string> {
   const { partyId } = await createParty(app, { tenantId: scope.tenantId, kind: 'customer' });
   await exec(
     scope,
-    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4::jsonb)`,
-    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`, ADDRESS],
+    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
+     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', 'Durbar Marg 1', 'Kathmandu')`,
+    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`],
   );
   return partyId;
 }

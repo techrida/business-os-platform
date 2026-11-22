@@ -36,8 +36,6 @@ const CRM_TABLES = [
   'activities',
 ] as const;
 
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
-
 let testDb: TestDatabase;
 let owner: Pool;
 let app: Pool;
@@ -85,9 +83,9 @@ async function insertCustomer(scope: Scope, panVatNo: string | null = null): Pro
 function insertCustomerRow(scope: Scope, id: string, panVatNo: string | null): Promise<unknown> {
   return inTx(scope.organizationId, (c) =>
     c.query(
-      `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, pan_vat_no, address)
-       VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4, $5::jsonb)`,
-      [id, scope.tenantId, `CUS-${id.slice(0, 8)}`, panVatNo, ADDRESS],
+      `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, pan_vat_no, address_line, address_city)
+       VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4, 'Durbar Marg 1', 'Kathmandu')`,
+      [id, scope.tenantId, `CUS-${id.slice(0, 8)}`, panVatNo],
     ),
   );
 }

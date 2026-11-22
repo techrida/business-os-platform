@@ -21,8 +21,6 @@ import { checkTenancy, describeViolations } from './check-tenancy.js';
 import { createParty, createTenantWithEntity } from './testing/fixtures.js';
 import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
-
 /** A small SO (NPR 113,000.00 including 13% VAT) with a single 100% billing line. */
 const ORDER = {
   subtotal: '100000.00',
@@ -76,9 +74,9 @@ async function insertCustomer(scope: Scope): Promise<string> {
   const { partyId } = await createParty(app, { tenantId: scope.tenantId, kind: 'customer' });
   await exec(
     scope,
-    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4::jsonb)`,
-    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`, ADDRESS],
+    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
+     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', 'Durbar Marg 1', 'Kathmandu')`,
+    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`],
   );
   return partyId;
 }

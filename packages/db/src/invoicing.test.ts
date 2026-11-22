@@ -31,8 +31,6 @@ const INVOICING_TABLES = [
   'invoice_print_log',
 ] as const;
 
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
-
 /** The golden SO (SCREENS.md R20): NPR 5,045,450.00 including 13% VAT. */
 const GOLDEN = {
   subtotal: '4675000.00',
@@ -97,9 +95,9 @@ async function insertCustomer(scope: Scope): Promise<string> {
   const { partyId } = await createParty(app, { tenantId: scope.tenantId, kind: 'customer' });
   await exec(
     scope,
-    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4::jsonb)`,
-    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`, ADDRESS],
+    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
+     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', 'Durbar Marg 1', 'Kathmandu')`,
+    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`],
   );
   return partyId;
 }
