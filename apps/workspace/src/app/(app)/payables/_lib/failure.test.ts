@@ -30,6 +30,7 @@ describe('billFailure', () => {
       [409, 'BILL_NOT_POSTED', 'void', /payable/i],
       [409, 'MATCH_NOT_REQUIRED', 'match', /purchase order/i],
       [422, 'NO_ELIGIBLE_APPROVER', 'submit', /nobody can approve/i],
+      [422, 'BILL_DATE_IN_FUTURE', 'create', /invoice date is after today/i],
       [422, 'PO_VENDOR_MISMATCH', 'convert', /another vendor/i],
       [422, 'SUBMISSION_MISMATCH', 'convert', /does not match the submission/i],
       [422, 'invalid_evidence_document', 'exception', /not evidence uploaded to this record/],

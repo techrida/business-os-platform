@@ -60,6 +60,8 @@ export function receiptFailure(err: unknown, op: ReceiptOp, kind?: ReceiptKind):
       switch (code) {
         case 'over_receipt':
           return 'More was entered than is still open on a line. A draft or another receipt may have used some of it since you opened this page. Reload to see what is left. To receive more than was ordered, ask Procurement to amend the purchase order first.';
+        case 'RECEIPT_DATE_IN_FUTURE':
+          return 'The receipt date is after today. Choose today or an earlier date.';
         case 'po_line_unknown':
           return 'A line in this form is no longer on the purchase order. Reload the page and start again.';
         case 'duplicate_po_line':
