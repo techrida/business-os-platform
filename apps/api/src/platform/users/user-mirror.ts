@@ -21,7 +21,12 @@ import { AuditService } from '../audit/audit.service';
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
-import { IdentityReconciler, withFounderRemovalLease } from './identity-reconcile';
+import {
+  assertWithinOperationDeadline,
+  IdentityReconciler,
+  isDefiniteRefusal,
+  withFounderRemovalLease,
+} from './identity-reconcile';
 import {
   lockoutPinnedCursor,
   USERS_QUEUE,
@@ -304,7 +309,7 @@ export class UserMirror {
       await this.enqueueSync(i.zitadelUserId);
       row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
       if (!row) throw new Error('JIT user insert left no row');
-    } else if (row.status === 'invited') {
+    } else if (row.status === 'invited' && row.identityReviewRequired !== true) {
       const invited = row;
       await withTx(
         this.db,
@@ -385,36 +390,32 @@ export class UserMirror {
   }
 
   /**
-   * After an invite's database write failed: shrinks the person's grants in ZITADEL to what the database still allows
-   * and they held before the invite (see IdentityReconciler.reconcileRoles), and never deletes the identity (FU8: a
-   * concurrent invite may have committed it). A fresh identity with no row ends with no roles, still an open invite that
-   * a retry of the same invite finishes. A row means a concurrent invite committed the identity: it is left alone.
+   * After an invite failed once the person may exist in ZITADEL (with grants, or an invite mail sent): closes and flags
+   * their row, writing a closed invited row with no roles when none exists yet. Nothing is changed in ZITADEL (no grants
+   * stripped, no identity deleted); a retry of the same invite reuses the identity, and an admin resolves the flag.
    * Never throws.
    */
-  async reconcileFailedInvite(
+  flagFailedInvite(
     scope: TxScope,
     actor: Actor,
     org: IdpOrgRow,
-    invited: { zitadelUserId: string; created: boolean; previousGrants?: readonly RoleKey[] },
-    requested: readonly RoleKey[],
+    invited: { zitadelUserId: string },
+    b: InviteInput,
   ): Promise<void> {
-    await this.reconciler.reconcileRoles(scope, actor, {
+    return this.reconciler.denyAfterFailure(scope, actor, {
+      reason: 'users.invite:failed',
       zitadelUserId: invited.zitadelUserId,
-      zitadelOrgId: org.zitadelOrgId,
-      idpOrgId: org.idpOrgId,
-      requested,
-      previous: invited.created ? [] : (invited.previousGrants ?? []),
-      skipWhenRowExists: invited.created,
+      createRow: (tx) =>
+        this.writeInvitedUser(tx, org, scope, invited.zitadelUserId, { ...b, roles: [] }),
+      close: null,
     });
   }
 
   /**
    * Sets a staff user's roles with ZITADEL called outside any transaction: (A) guard + version/roles snapshot tx,
-   * (B) ZITADEL setGrants, (C) re-checked versioned write tx. On failure or conflict it never writes a stored snapshot
-   * back: it reads ZITADEL and the committed roles as they are now and keeps only roles both still hold that this
-   * request did not add (IdentityReconciler.reconcileRoles), so a role another admin just revoked is never granted
-   * again. A role set runs under the tenant's Founder-removal lease (see user-status.ts). The caller
-   * invalidates authz after this resolves.
+   * (B) ZITADEL setGrants, (C) re-checked versioned write tx. A failed or ambiguous write closes and flags the
+   * person (IdentityReconciler.denyAfterFailure); nothing is replaced or re-granted in ZITADEL. A role set runs under
+   * the tenant's identity lease (see user-status.ts). The caller invalidates authz after this resolves.
    */
   async setRoles(
     scope: TxScope,
@@ -453,7 +454,21 @@ export class UserMirror {
       READ_ONLY,
     );
 
-    await this.zitadel.setGrants(plan.user.zitadelUserId, plan.org.zitadelOrgId, roles);
+    assertWithinOperationDeadline();
+    try {
+      await this.zitadel.setGrants(plan.user.zitadelUserId, plan.org.zitadelOrgId, roles);
+    } catch (error) {
+      // A 4xx refusal changed nothing; anything else may have replaced part of the grants.
+      if (!isDefiniteRefusal(error)) {
+        await this.reconciler.denyAfterFailure(scope, actor, {
+          reason: 'users.set_roles:phase_b_failed',
+          userId: plan.user.id,
+          zitadelUserId: plan.user.zitadelUserId,
+          close: null,
+        });
+      }
+      throw error;
+    }
 
     try {
       await withTx(
@@ -482,13 +497,11 @@ export class UserMirror {
         LOCKS_USER_ROW,
       );
     } catch (error) {
-      await this.reconciler.reconcileRoles(scope, actor, {
+      await this.reconciler.denyAfterFailure(scope, actor, {
+        reason: 'users.set_roles:phase_c_failed',
+        userId: plan.user.id,
         zitadelUserId: plan.user.zitadelUserId,
-        zitadelOrgId: plan.org.zitadelOrgId,
-        idpOrgId: plan.org.idpOrgId,
-        requested: roles,
-        previous: plan.previousRoles,
-        skipWhenNoRow: true,
+        close: null,
       });
       throw error;
     }
@@ -596,7 +609,13 @@ export class UserMirror {
     next: NextState,
     roles: readonly RoleKey[],
   ): Promise<boolean> {
-    const { user, status, lock } = next;
+    const { user, lock } = next;
+    // A flagged person is never reopened by what ZITADEL says (migration 0190 enforces it in the database too): the
+    // sync may keep closing, never opening, until an admin resolves the flag.
+    const status =
+      existing?.identityReviewRequired === true && next.status === 'active'
+        ? existing.status
+        : next.status;
     let changed = false;
     let userId: string;
     if (!existing) {

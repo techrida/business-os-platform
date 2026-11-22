@@ -20,7 +20,11 @@ import { AuditService } from '../audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
 import { type InvitedUser, type InviteInput, type ResolvedUser, UserMirror } from './user-mirror';
-import { withFounderRemovalLease } from './identity-reconcile';
+import {
+  assertWithinOperationDeadline,
+  IDENTITY_REVIEW_RESOLVED,
+  withFounderRemovalLease,
+} from './identity-reconcile';
 import { type IdpOrgRow, type ListedUsers, UsersStore } from './users.store';
 import { ZitadelAdminClient, ZitadelHttpError, type ZitadelUser } from './zitadel-admin.client';
 
@@ -158,8 +162,8 @@ export class UsersService extends UserDirectory {
     placement: InvitePlacement | null = null,
     assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<InvitedUser> {
-    // One invite or role change at a time per tenant: a failed invite's reconcile replaces the whole grant set in
-    // ZITADEL, so it must not interleave with another writer of the same person's grants.
+    // One identity change at a time per tenant: the lease keeps two invites (or an invite and a role set) from running
+    // their ZITADEL calls and writes interleaved.
     return withFounderRemovalLease(this.store, scope.tenantId, () =>
       this.inviteOnce(scope, actor, b, placement, assertAccess),
     );
@@ -190,7 +194,7 @@ export class UsersService extends UserDirectory {
         )
       : await this.staffOrgOf(scope.tenantId);
 
-    const prepared = await this.prepareInviteInZitadel(org, b);
+    const prepared = await this.prepareInviteInZitadel(scope, actor, org, b);
 
     try {
       const userId = await withTx(
@@ -221,9 +225,78 @@ export class UsersService extends UserDirectory {
       );
       return { userId, zitadelUserId: prepared.zitadelUserId, created: prepared.created };
     } catch (error) {
-      await this.mirror.reconcileFailedInvite(scope, actor, org, prepared, b.roles);
+      await this.mirror.flagFailedInvite(scope, actor, org, prepared, b);
       throw error;
     }
+  }
+
+  /**
+   * Resolves a person flagged for identity review (a failed or ambiguous write to ZITADEL left their state unsure): reads
+   * ZITADEL again (it must answer), clears the flag under the locks with an audit row, then runs a full sync so the row
+   * takes the status, lock and roles ZITADEL holds. If the sync fails the row stays closed and unflagged until the next
+   * sync. The caller invalidates authz after this resolves.
+   */
+  async resolveIdentityReview(
+    scope: TxScope,
+    actor: Actor,
+    userId: string,
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
+  ): Promise<void> {
+    const target = await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        await lockAccessRevision(tx, scope.tenantId);
+        if (assertAccess) await assertAccess(tx);
+        const org = await this.store.staffIdpOrgOf(scope.tenantId, tx);
+        const found = await this.store.findById(tx, scope, userId);
+        if (!org || !found || found.idpOrgId !== org.idpOrgId) {
+          throw new NotFoundException('User not found');
+        }
+        if (found.identityReviewRequired !== true) {
+          throw new ConflictException({
+            code: 'wrong_status',
+            message: 'This person is not waiting for a review.',
+          });
+        }
+        return found;
+      },
+      READ_ONLY,
+    );
+
+    // ZITADEL must answer before anything is cleared.
+    const live = await this.zitadel.getUser(target.zitadelUserId);
+    if (live === null || !live.status) {
+      throw new ConflictException({
+        code: 'identity_unreadable',
+        message: 'The sign-in service does not know this person right now. Try again later.',
+      });
+    }
+
+    await withTx(
+      this.db,
+      scope,
+      actor,
+      async (tx) => {
+        await lockAccessRevision(tx, scope.tenantId);
+        if (assertAccess) await assertAccess(tx);
+        const current = await this.store.findById(tx, scope, userId, true);
+        if (!current || current.identityReviewRequired !== true) return;
+        await this.store.clearIdentityReview(tx, current.id);
+        await this.store.bumpAuthzVersion(tx, scope);
+        await this.audit.record(tx, {
+          action: IDENTITY_REVIEW_RESOLVED,
+          entityType: 'users',
+          entityId: current.id,
+          before: { reviewRequired: true, status: current.status },
+          after: { reviewRequired: false },
+          meta: { zitadel: { status: live.status, locked: live.locked === true } },
+        });
+      },
+      AFTER_ACCESS_LOCK,
+    );
+    await this.mirror.syncUser(target.zitadelUserId);
   }
 
   /**
@@ -297,18 +370,20 @@ export class UsersService extends UserDirectory {
    * an email that belongs to a user who finished sign-up stays a 409.
    */
   private async prepareInviteInZitadel(
+    scope: TxScope,
+    actor: Actor,
     org: IdpOrgRow,
     b: InviteInput,
-  ): Promise<{ zitadelUserId: string; created: boolean; previousGrants?: RoleKey[] }> {
+  ): Promise<{ zitadelUserId: string; created: boolean }> {
     let zitadelUserId: string | null = null;
     try {
+      assertWithinOperationDeadline();
       zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
     } catch (error) {
       if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
     }
     if (zitadelUserId !== null) {
-      await this.zitadel.setGrants(zitadelUserId, org.zitadelOrgId, b.roles);
-      await this.zitadel.sendInviteCode(zitadelUserId);
+      await this.finishInviteSteps(scope, actor, org, b, zitadelUserId);
       return { zitadelUserId, created: true };
     }
 
@@ -318,14 +393,32 @@ export class UsersService extends UserDirectory {
     const row = await this.store.findByZitadelId(this.db, open.id);
     if (row && row.status !== 'invited') throw conflict;
 
-    // Read the existing grants before replacing them: if phase (C) fails the reconcile keeps only the roles the person
-    // held before this invite and the database still has (it never adds one back).
-    const previousGrants = await this.zitadel.listGrants(open.id, org.zitadelOrgId);
     // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants replaces the whole
     // set, and sendInviteCode resends the invite link.
-    await this.zitadel.setGrants(open.id, org.zitadelOrgId, b.roles);
-    await this.zitadel.sendInviteCode(open.id);
-    return { zitadelUserId: open.id, created: false, previousGrants };
+    await this.finishInviteSteps(scope, actor, org, b, open.id);
+    return { zitadelUserId: open.id, created: false };
+  }
+
+  /**
+   * Grants and invite mail for an identity that exists. A failure here may have changed ZITADEL (part of the grants, a
+   * mail sent): the person is closed and flagged, with no roles in the database, and nothing is undone in ZITADEL.
+   */
+  private async finishInviteSteps(
+    scope: TxScope,
+    actor: Actor,
+    org: IdpOrgRow,
+    b: InviteInput,
+    zitadelUserId: string,
+  ): Promise<void> {
+    try {
+      assertWithinOperationDeadline();
+      await this.zitadel.setGrants(zitadelUserId, org.zitadelOrgId, b.roles);
+      assertWithinOperationDeadline();
+      await this.zitadel.sendInviteCode(zitadelUserId);
+    } catch (error) {
+      await this.mirror.flagFailedInvite(scope, actor, org, { zitadelUserId }, b);
+      throw error;
+    }
   }
 
   /** ZITADEL has no lookup by email in our client, so walk the org's pages for an open invite. */

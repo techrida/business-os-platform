@@ -1,22 +1,26 @@
-// Fail-closed reconcile for the admin actions that change a person in ZITADEL and then in the database (FU8).
-// Serves the NFR "a removed user must stop working": after a failed or conflicting write the code never replays a
-// stored snapshot into ZITADEL. It reads what ZITADEL and the row say NOW and lets the closing state win:
-//   - if either side says locked, deactivated or role-removed, the row ends closed and ZITADEL is closed if it is open;
-//   - an undo never opens access (no unlock, no reactivate, no role added) and never deletes an identity;
-//   - what differed is audited as `identity.reconciled`.
-// ZITADEL is read and written with no transaction open; the row is read and written under the access-revision lock
-// and the user row lock, the order every access write takes (access_revisions -> user row -> audit chain).
-// `reconcile*` never throws: the caller rethrows its own error, and a later sync or admin action opens access again.
+// Local denial after a failed or ambiguous write to ZITADEL (FU8, round 3).
+// BOS never tries to undo a ZITADEL write: it cannot know what ZITADEL holds after a timeout, a refusal in the middle of
+// a multi-step change, or a webhook sync that already copied the change. So:
+//   - any failed or ambiguous identity write (a status action, a role set, an invite) closes the person's row and sets
+//     `identity_review_required` in its own transaction. A trigger (migration 0190) keeps a flagged row from ever being
+//     'active', whoever writes it; sync never clears the flag; an admin resolves it after reading ZITADEL again;
+//   - there is no compensation in ZITADEL: no grants replaced, no role stripped or re-granted, no identity deleted;
+//   - one best-effort remote close (lock or deactivate) is attempted after the local write, and it does not depend on
+//     the local write having worked;
+//   - the local change and the remote outcome are audited separately (`identity.review_required`, `identity.reconciled`).
+// ZITADEL is called with no transaction open. The row is written under the access-revision lock, the order every access
+// write takes (access_revisions -> user row -> audit chain). `denyAfterFailure` never throws: the caller rethrows its own
+// error.
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-import type { RoleKey } from '@bos/contracts';
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import type { AuditService } from '../audit/audit.service';
-import type { Db } from '../db/db.module';
+import type { Db, DbTransaction } from '../db/db.module';
 import { type Actor, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
-import type { UserLock, UserRow, UsersStore } from './users.store';
+import type { UserLock, UsersStore } from './users.store';
 import {
   type ZitadelAdminClient,
   ZitadelHttpError,
@@ -24,13 +28,15 @@ import {
   type ZitadelUser,
 } from './zitadel-admin.client';
 
+/** The row is closed and flagged: what changed locally. */
+export const IDENTITY_REVIEW_REQUIRED = 'identity.review_required';
+/** The best-effort close in ZITADEL: what the remote side answered. */
 export const IDENTITY_RECONCILED = 'identity.reconciled';
+/** An admin read ZITADEL again and cleared the flag. */
+export const IDENTITY_REVIEW_RESOLVED = 'identity.review_resolved';
 
-/** What reconcile may call in ZITADEL: it can read, close a person and shrink their grants, never open or add. */
-export type CloseOnlyIdentity = Pick<
-  ZitadelAdminClient,
-  'getUser' | 'listGrants' | 'setGrants' | 'lockUser' | 'deactivateUser'
->;
+/** What the denial may call in ZITADEL: read, and close a person. Never open, grant, replace or delete. */
+export type CloseOnlyIdentity = Pick<ZitadelAdminClient, 'getUser' | 'lockUser' | 'deactivateUser'>;
 
 // Takes the access-revision lock before the user row lock and the first audited write, like every other access write.
 const AFTER_ACCESS_LOCK: TxOptions = { audit: 'lazy' };
@@ -40,122 +46,32 @@ const CLOSE_DELAYS_MS = [0, 250, 1_000] as const;
 
 const errorName = (error: unknown): string => (error instanceof Error ? error.name : 'error');
 
-export const isRowShutOut = (row: UserRow): boolean =>
-  row.status !== 'active' || (row.lockReason ?? null) !== null;
-
 const adminLock = (): UserLock => ({ reason: 'admin', lockedAt: new Date(), until: null });
 
-type LiveState = 'open' | 'closed' | 'unknown' | 'missing';
-
-function liveStateOf(live: ZitadelUser | null | undefined): LiveState {
-  if (live === undefined) return 'unknown';
-  if (live === null) return 'missing';
-  if (live.status === null) return 'unknown';
-  return live.status === 'inactive' || live.locked === true ? 'closed' : 'open';
+/** A ZITADEL answer that says nothing was applied: a 4xx refusal, or no ZITADEL configured. */
+export function isDefiniteRefusal(error: unknown): boolean {
+  if (error instanceof ZitadelNotConfiguredError) return true;
+  if (error instanceof ConflictException) return true; // identityCall maps a 4xx refusal to 409 identity_refused
+  return error instanceof ZitadelHttpError && error.status >= 400 && error.status < 500;
 }
 
-export interface StatusDecision {
-  /** The closed state to write to the row, or null to keep the row as it is. */
-  closeRow: { lock: UserLock | null } | null;
-  /** The ZITADEL call that closes the person, or null when ZITADEL needs none. */
-  closeZitadel: 'lock' | 'deactivate' | null;
-  /** What differed, for the audit row; null when there is nothing to reconcile. */
-  differed: Record<string, unknown> | null;
-}
+const isClosed = (live: ZitadelUser | null | undefined): boolean =>
+  live !== undefined && live !== null && (live.status === 'inactive' || live.locked === true);
 
-/**
- * Closed wins. `failedOpening` is set for an unlock or reactivate that failed: an action that did not happen counts
- * as a closed side, so the person ends shut out (never opened by an undo, only left closed). `lock` says whether
- * they were locked (rather than deactivated) before it.
- */
-export function decideStatusReconcile(input: {
-  row: UserRow | null;
-  live: ZitadelUser | null | undefined;
-  failedOpening: { lock: boolean } | null;
-  /**
-   * Set when this request's closing call (lock or deactivate) went through in ZITADEL. If ZITADEL cannot be read now,
-   * that call counts as the live state, so the row is closed too; an admin lock also replaces a timed lock a sync
-   * recorded for it (a timed lock would be lifted when its window ends).
-   */
-  closingApplied?: { lock: boolean } | null;
-}): StatusDecision {
-  const none: StatusDecision = { closeRow: null, closeZitadel: null, differed: null };
-  const { row, failedOpening } = input;
-  const closingApplied = input.closingApplied ?? null;
-  if (!row) return none;
-  const live =
-    input.live === undefined && closingApplied !== null
-      ? ({ status: 'inactive', locked: closingApplied.lock } as unknown as ZitadelUser)
-      : input.live;
-  const rowClosed = isRowShutOut(row);
-  const liveState = liveStateOf(live);
-  const timedLockToUpgrade =
-    closingApplied?.lock === true &&
-    rowClosed &&
-    (row.lockReason ?? null) !== null &&
-    row.lockReason !== 'admin';
-  if (!rowClosed && liveState !== 'closed' && failedOpening === null) return none;
-
-  // A lock (admin or timed) is held as LOCKED in ZITADEL; anything else closed is a deactivation.
-  const locked = rowClosed
-    ? (row.lockReason ?? null) !== null
-    : liveState === 'closed'
-      ? live?.locked === true
-      : (failedOpening?.lock ?? false);
-  const closeRow =
-    rowClosed && !timedLockToUpgrade
-      ? null
-      : { lock: locked || timedLockToUpgrade ? adminLock() : null };
-  const closeZitadel =
-    liveState === 'open' || liveState === 'unknown' ? (locked ? 'lock' : 'deactivate') : null;
-  if (closeRow === null && closeZitadel === null) return none;
-  return {
-    closeRow,
-    closeZitadel,
-    differed: {
-      row: { status: row.status, lockReason: row.lockReason ?? null },
-      zitadel:
-        live === undefined
-          ? 'unreadable'
-          : live === null
-            ? 'missing'
-            : { status: live.status, locked: live.locked === true },
-      failedOpening: failedOpening !== null,
-      closedRow: closeRow !== null,
-      closedZitadel: closeZitadel,
-    },
-  };
-}
-
-export interface RolesDecision {
-  /** The grants ZITADEL should hold after reconcile; always a subset of what it holds now. */
-  target: RoleKey[];
-  removed: RoleKey[];
-}
-
-/**
- * A role survives only if ZITADEL still holds it AND it is allowed. Allowed is what the database commits now, minus
- * the roles this failed request added (it did not happen). With no row (or an unreadable one) it is what the person
- * held before the request and the request kept. Never adds a role, so a role another admin just revoked stays gone.
- */
-export function decideRolesReconcile(input: {
-  live: readonly RoleKey[];
-  committed: readonly RoleKey[] | null;
-  previous: readonly RoleKey[];
-  requested: readonly RoleKey[];
-}): RolesDecision {
-  const added = new Set(input.requested.filter((r) => !input.previous.includes(r)));
-  const allowed =
-    input.committed !== null
-      ? new Set(input.committed.filter((r) => !added.has(r)))
-      : new Set(input.previous.filter((r) => input.requested.includes(r)));
-  const target = [...new Set(input.live)].filter((r) => allowed.has(r));
-  const removed = [...new Set(input.live)].filter((r) => !allowed.has(r));
-  return { target, removed };
+export interface DenySpec {
+  /** Why, for the audit rows (the action that failed). */
+  reason: string;
+  /** The row to close: by id, or by ZITADEL id. */
+  userId?: string;
+  zitadelUserId: string;
+  /** Writes the closed row of a person who has none yet (an invite that failed before its write), returning its id. */
+  createRow?: (tx: DbTransaction) => Promise<string>;
+  /** The best-effort remote close, or null for none (role sets and invites are denied locally only). */
+  close: 'lock' | 'deactivate' | null;
 }
 
 export class IdentityReconciler {
-  private readonly logger = new Logger(IdentityReconciler.name);
+  private readonly logger = new Logger('IdentityReconciler');
 
   constructor(
     private readonly db: Db,
@@ -165,214 +81,88 @@ export class IdentityReconciler {
   ) {}
 
   /**
-   * After an admin status action failed or conflicted (or left a half-done multi-step change): reads ZITADEL with no
-   * transaction open, then under the locks reads the row, writes it closed when either side is closed, audits what
-   * differed and closes ZITADEL when it is still open. `failedOpening` is set for unlock and reactivate.
+   * Closes and flags the person in the database, then tries one remote close, then audits both separately. The remote
+   * close runs even when the local write failed. Never throws.
    */
-  async reconcileStatus(
-    scope: TxScope,
-    actor: Actor,
-    target: UserRow,
-    failedOpening: { lock: boolean } | null,
-    closingApplied: { lock: boolean } | null = null,
-  ): Promise<void> {
+  async denyAfterFailure(scope: TxScope, actor: Actor, spec: DenySpec): Promise<void> {
+    let local: {
+      id: string;
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    } | null = null;
+    let localFailed = false;
     try {
-      const live = await this.zitadel.getUser(target.zitadelUserId).catch(() => undefined);
-      const decision = await withTx(
+      local = await withTx(
         this.db,
         scope,
         systemActor('identity-reconcile', actor.correlationId),
         async (tx) => {
           await lockAccessRevision(tx, scope.tenantId);
-          const row = await this.store.findById(tx, scope, target.id, true);
-          const decided = decideStatusReconcile({ row, live, failedOpening, closingApplied });
-          if (row && decided.closeRow !== null) {
-            await this.store.updateUser(tx, row.id, {
-              email: row.email,
-              displayName: row.displayName,
-              status: 'inactive',
-              lock: decided.closeRow.lock,
-            });
-            // Every process drops its cached principals at once, so the closed person is refused on their next request.
-            await this.store.bumpAuthzVersion(tx, scope);
+          let row =
+            spec.userId !== undefined
+              ? await this.store.findById(tx, scope, spec.userId, true)
+              : await this.store.findByZitadelId(tx, spec.zitadelUserId, true);
+          if (!row && spec.createRow) {
+            row = await this.store.findById(tx, scope, await spec.createRow(tx), true);
           }
-          return decided;
+          if (!row) return null;
+          // A locked person stays locked as an admin lock (a timed lock would be lifted when its window ends); an
+          // invited row keeps its status and takes no lock.
+          const lock =
+            spec.close === 'lock' && row.status !== 'invited' && row.lockReason !== 'admin'
+              ? adminLock()
+              : undefined;
+          await this.store.flagIdentityReview(tx, row.id, lock);
+          await this.store.bumpAuthzVersion(tx, scope);
+          return {
+            id: row.id,
+            before: {
+              status: row.status,
+              lockReason: row.lockReason ?? null,
+              reviewRequired: row.identityReviewRequired === true,
+            },
+            after: {
+              status: row.status === 'active' ? 'inactive' : row.status,
+              lockReason: lock ? lock.reason : (row.lockReason ?? null),
+              reviewRequired: true,
+            },
+          };
         },
         AFTER_ACCESS_LOCK,
       );
-      if (decision.closeZitadel !== null) {
-        await this.closeInZitadel(target.zitadelUserId, decision.closeZitadel);
-        // A sync can copy the still-open ZITADEL state into the row between the write above and this close; the row
-        // follows the closed side again.
-        await this.settleRowClosed(scope, actor, target.id, decision.closeZitadel === 'lock');
-      }
-      if (decision.differed !== null) {
-        await this.recordReconciled(scope, actor, 'users', target.id, decision.differed);
-      }
     } catch (error) {
+      localFailed = true;
       this.logger.error(
-        `users.reconcile: could not reconcile ${target.id} after a failed change (kind=${errorName(error)}); the next sync mirrors what ZITADEL holds`,
+        `users.review: could not flag ${spec.zitadelUserId} (kind=${errorName(error)}); trying the remote close anyway`,
       );
+    }
+
+    const remote =
+      spec.close === null ? null : await this.closeInZitadel(spec.zitadelUserId, spec.close);
+
+    if (local) {
+      await this.record(scope, actor, IDENTITY_REVIEW_REQUIRED, local.id, {
+        reason: spec.reason,
+        before: local.before,
+        after: local.after,
+      });
+    }
+    if (remote !== null) {
+      await this.record(scope, actor, IDENTITY_RECONCILED, local?.id ?? spec.userId ?? null, {
+        reason: spec.reason,
+        zitadelUserId: spec.zitadelUserId,
+        close: spec.close,
+        outcome: remote,
+        localChange: localFailed ? 'failed' : local ? 'committed' : 'none',
+      });
     }
   }
 
-  private async settleRowClosed(
-    scope: TxScope,
-    actor: Actor,
-    userId: string,
-    locked: boolean,
-  ): Promise<void> {
-    await withTx(
-      this.db,
-      scope,
-      systemActor('identity-reconcile', actor.correlationId),
-      async (tx) => {
-        await lockAccessRevision(tx, scope.tenantId);
-        const row = await this.store.findById(tx, scope, userId, true);
-        if (!row || isRowShutOut(row)) return;
-        await this.store.updateUser(tx, row.id, {
-          email: row.email,
-          displayName: row.displayName,
-          status: 'inactive',
-          lock: locked ? adminLock() : null,
-        });
-        await this.store.bumpAuthzVersion(tx, scope);
-      },
-      AFTER_ACCESS_LOCK,
-    );
-  }
-
-  /**
-   * Shrinks a person's grants in ZITADEL after a failed setRoles or invite to what ZITADEL still holds and the database
-   * still allows (decideRolesReconcile). Reads ZITADEL first with no transaction open and writes nothing without that
-   * read. `skipWhenRowExists` is for an identity this request created: a row means a concurrent invite committed it, so
-   * it is theirs and is left alone. `skipWhenNoRow` is for a request on an existing user whose row is gone.
-   */
-  async reconcileRoles(
-    scope: TxScope,
-    actor: Actor,
-    p: {
-      zitadelUserId: string;
-      zitadelOrgId: string;
-      idpOrgId: string;
-      requested: readonly RoleKey[];
-      previous: readonly RoleKey[];
-      skipWhenRowExists?: boolean;
-      skipWhenNoRow?: boolean;
-    },
-  ): Promise<void> {
-    try {
-      const live = await this.zitadel.listGrants(p.zitadelUserId, p.zitadelOrgId);
-      let decided: RolesDecision | null;
-      const note: { audited: boolean; row: string | null; before: Record<string, unknown> } = {
-        audited: false,
-        row: null,
-        before: {},
-      };
-      try {
-        decided = await withTx(
-          this.db,
-          scope,
-          systemActor('identity-reconcile', actor.correlationId),
-          async (tx) => {
-            await lockAccessRevision(tx, scope.tenantId);
-            const row = await this.store.findByZitadelId(tx, p.zitadelUserId, true);
-            if (row ? p.skipWhenRowExists : p.skipWhenNoRow) return null;
-            const committed = row ? await this.store.rolesOf(tx, scope.tenantId, row.id) : null;
-            const next = decideRolesReconcile({
-              live,
-              committed,
-              previous: p.previous,
-              requested: p.requested,
-            });
-            // The row follows the closed side too: a role ZITADEL no longer holds is dropped here at once, so the
-            // app does not keep granting it until the next sync.
-            const rowKeeps = committed !== null && committed.every((r) => next.target.includes(r));
-            if (row && committed !== null && !rowKeeps) {
-              await this.store.replaceRoles(tx, scope, row.id, next.target);
-              await this.store.bumpAuthzVersion(tx, scope);
-            }
-            note.audited = next.removed.length > 0 || (committed !== null && !rowKeeps);
-            note.row = row ? row.id : null;
-            note.before = { roles: committed ?? [], grants: [...live].sort() };
-            return next;
-          },
-          AFTER_ACCESS_LOCK,
-        );
-      } catch {
-        // The database cannot be read: fail closed on the smallest set, roles held before AND kept by the request.
-        decided = decideRolesReconcile({
-          live,
-          committed: null,
-          previous: p.previous,
-          requested: p.requested,
-        });
-      }
-      if (decided === null) return;
-      let grantsError: unknown = null;
-      if (decided.removed.length > 0) {
-        // The audit below records the local removal even when ZITADEL refuses the smaller set.
-        await this.zitadel
-          .setGrants(p.zitadelUserId, p.zitadelOrgId, decided.target)
-          .catch((e: unknown) => {
-            grantsError = e;
-          });
-      }
-      if (note.audited) {
-        await this.recordReconciled(
-          scope,
-          actor,
-          note.row ? 'users' : 'idp_orgs',
-          note.row ?? p.idpOrgId,
-          {
-            before: note.before,
-            after: { roles: decided.target, grants: [...decided.target].sort() },
-          },
-        );
-      }
-      if (grantsError !== null) {
-        throw grantsError instanceof Error ? grantsError : new Error('setGrants failed');
-      }
-    } catch (error) {
-      this.logger.error(
-        `users.reconcile: could not reconcile the roles of ${p.zitadelUserId} after a failed change (kind=${errorName(error)}); the next sync mirrors what ZITADEL holds`,
-      );
-    }
-  }
-
-  /**
-   * Records what the reconcile found in its own transaction, so a failing audit write can never undo the closing write
-   * before it. Never throws.
-   */
-  private async recordReconciled(
-    scope: TxScope,
-    actor: Actor,
-    entityType: string,
-    entityId: string,
-    differed: Record<string, unknown>,
-  ): Promise<void> {
-    try {
-      await withTx(this.db, scope, systemActor('identity-reconcile', actor.correlationId), (tx) =>
-        this.audit.record(tx, {
-          action: IDENTITY_RECONCILED,
-          entityType,
-          entityId,
-          meta: { ...differed, requestedBy: actor.id },
-        }),
-      );
-    } catch (error) {
-      this.logger.error(
-        `users.reconcile: could not audit the reconcile of ${entityId} (kind=${errorName(error)})`,
-      );
-    }
-  }
-
-  /**
-   * Closes a person in ZITADEL. A refusal (4xx: v4.20.1 refuses lock on a locked or deactivated user and deactivate on a
-   * deactivated one) tries the other close call at once; a failure that may pass (an outage) is tried again after a short
-   * wait. If both are refused and ZITADEL already shows the person closed, there is nothing left to do. Never throws.
-   */
-  private async closeInZitadel(zitadelUserId: string, kind: 'lock' | 'deactivate'): Promise<void> {
+  /** One best-effort close; never throws. Returns what ZITADEL ended up as far as this call could tell. */
+  private async closeInZitadel(
+    zitadelUserId: string,
+    kind: 'lock' | 'deactivate',
+  ): Promise<'closed' | 'failed'> {
     const order =
       kind === 'lock' ? (['lock', 'deactivate'] as const) : (['deactivate', 'lock'] as const);
     let last: unknown;
@@ -382,45 +172,99 @@ export class IdentityReconciler {
         try {
           if (call === 'lock') await this.zitadel.lockUser(zitadelUserId);
           else await this.zitadel.deactivateUser(zitadelUserId);
-          return;
+          return 'closed';
         } catch (error) {
           last = error;
-          if (error instanceof ZitadelNotConfiguredError) return;
-          const refused =
-            error instanceof ZitadelHttpError && error.status >= 400 && error.status < 500;
-          if (!refused) break;
+          if (error instanceof ZitadelNotConfiguredError) return 'failed';
+          if (!isDefiniteRefusal(error)) break;
+          // A refusal usually means ZITADEL is already closed (it refuses to lock a locked person): look before trying
+          // the other close.
+          if (isClosed(await this.zitadel.getUser(zitadelUserId).catch(() => undefined))) {
+            return 'closed';
+          }
         }
       }
       const live = await this.zitadel.getUser(zitadelUserId).catch(() => undefined);
-      if (liveStateOf(live) === 'closed') return;
+      if (isClosed(live)) return 'closed';
     }
     this.logger.error(
-      `users.reconcile: could not close ${zitadelUserId} in ZITADEL (kind=${errorName(last)}); the next sync mirrors what ZITADEL holds`,
+      `users.review: could not close ${zitadelUserId} in ZITADEL (kind=${errorName(last)}); the row stays closed and flagged`,
     );
+    return 'failed';
+  }
+
+  /** An audit row in its own transaction, so a failing audit write can never undo the closing write. Never throws. */
+  private async record(
+    scope: TxScope,
+    actor: Actor,
+    action: string,
+    entityId: string | null,
+    detail: Record<string, unknown>,
+  ): Promise<void> {
+    if (entityId === null) return;
+    try {
+      await withTx(this.db, scope, systemActor('identity-reconcile', actor.correlationId), (tx) =>
+        this.audit.record(tx, {
+          action,
+          entityType: 'users',
+          entityId,
+          meta: { ...detail, requestedBy: actor.kind === 'user' ? actor.id : actor.kind },
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(`users.review: could not audit ${action} (kind=${errorName(error)})`);
+    }
   }
 }
 
-/** Waits up to this long for another Founder-removing action of the tenant before answering 409. */
+/** Waits up to this long for another identity change of the tenant before answering 409. */
 const LEASE_WAIT_MS = 3_000;
 const LEASE_POLL_MS = 150;
-/** A lease older than this is dead (its holder crashed) and is taken over. */
-const LEASE_TTL_SECONDS = 120;
+/**
+ * A lease older than this is dead (its holder crashed) and is taken over. It is far longer than the operation's own
+ * deadline plus the slowest in-flight provider call and the best-effort close, so a live holder is never overtaken.
+ */
+const LEASE_TTL_SECONDS = 300;
+/** After this long a guarded operation starts no more provider mutations (a best-effort close is still allowed). */
+export const OPERATION_DEADLINE_MS = 60_000;
+
+const operation = new AsyncLocalStorage<{ startedAt: number; deadlineMs: number }>();
 
 /**
- * Runs `fn` while holding the tenant's Founder-removal lease, so two actions that can take a Founder away (deactivate,
- * lock, a role set without founder) never run their guard, ZITADEL call and write interleaved: the second waits, then
- * sees the first one's result. A transaction lock cannot span the ZITADEL call, and the ZITADEL call cannot be undone
- * (an undo never opens access), so the guard has to hold before it. Never held across a database connection.
+ * Call before every provider mutation of a guarded operation: throws 503 once the operation has run past its hard
+ * deadline, so nothing new starts while the lease could be about to be taken over.
+ */
+export function assertWithinOperationDeadline(): void {
+  const current = operation.getStore();
+  if (current && Date.now() - current.startedAt > current.deadlineMs) {
+    throw new ServiceUnavailableException('This change took too long. Try again.');
+  }
+}
+
+/**
+ * Runs `fn` while holding the tenant's identity lease, so two actions that change who can sign in (deactivate, lock,
+ * unlock, reactivate, a role set, an invite) never run their guard, ZITADEL call and write interleaved: the second
+ * waits (3 s at most, bounded in the claim statement itself), then sees the first one's result. A transaction lock
+ * cannot span a ZITADEL call. The operation has a hard deadline (`OPERATION_DEADLINE_MS`) after which no provider
+ * mutation starts, and the lease TTL is longer than that deadline plus everything still allowed after it. Never held
+ * across a database connection.
  */
 export async function withFounderRemovalLease<T>(
   store: UsersStore,
   tenantId: string,
   fn: () => Promise<T>,
+  deadlineMs: number = OPERATION_DEADLINE_MS,
 ): Promise<T> {
   const leaseId = randomUUID();
-  const deadline = Date.now() + LEASE_WAIT_MS;
-  while (!(await store.claimFounderLease(tenantId, leaseId, LEASE_TTL_SECONDS))) {
-    if (Date.now() >= deadline) {
+  const giveUpAt = Date.now() + LEASE_WAIT_MS;
+  for (;;) {
+    const remaining = giveUpAt - Date.now();
+    if (
+      await store.claimFounderLease(tenantId, leaseId, LEASE_TTL_SECONDS, Math.max(remaining, 100))
+    ) {
+      break;
+    }
+    if (Date.now() >= giveUpAt) {
       throw new ConflictException({
         code: 'conflict',
         message: 'Another change to who can sign in is in progress. Try again in a moment.',
@@ -429,7 +273,7 @@ export async function withFounderRemovalLease<T>(
     await new Promise((resolve) => setTimeout(resolve, LEASE_POLL_MS));
   }
   try {
-    return await fn();
+    return await operation.run({ startedAt: Date.now(), deadlineMs }, fn);
   } finally {
     await store.releaseFounderLease(tenantId, leaseId).catch(() => undefined);
   }
