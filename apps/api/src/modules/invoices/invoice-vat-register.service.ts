@@ -136,7 +136,8 @@ export class InvoiceVatRegisterService {
           if (!remainder.isZero()) {
             let target = 0;
             buckets.forEach((x, i) => {
-              if (!x.isZero() && (buckets[target]!.isZero() || x.abs().gt(buckets[target]!.abs()))) target = i;
+              if (!x.isZero() && (buckets[target]!.isZero() || x.abs().gt(buckets[target]!.abs())))
+                target = i;
             });
             converted[target] = converted[target]!.plus(remainder);
           }
