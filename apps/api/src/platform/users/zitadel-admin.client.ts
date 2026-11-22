@@ -204,7 +204,10 @@ const AuthorizationList = z.object({
         organizationId: Str.optional(),
       }),
     )
-    .default([]),
+    .optional(),
+  // Either envelope may carry the count; the field is checked only to refuse an omitted list that should not be empty.
+  details: z.object({ totalResult: z.union([Str, z.number()]).optional() }).optional(),
+  pagination: z.object({ totalResult: z.union([Str, z.number()]).optional() }).optional(),
 });
 // Protobuf JSON omits false booleans and empty lists. Every other field is carried over (CARRY_OVER).
 const LoginPolicyResponse = z.object({
@@ -607,7 +610,7 @@ export class ZitadelAdminClient {
   }
 
   private async authorizations(zitadelUserId: string) {
-    return parse(
+    const res = parse(
       AuthorizationList,
       await this.post(ZITADEL_ENDPOINTS.listAuthorizations, {
         filters: [
@@ -616,7 +619,14 @@ export class ZitadelAdminClient {
         ],
       }),
       'ListAuthorizations',
-    ).authorizations;
+    );
+    // Protobuf JSON omits an empty list, but a positive count with no list is a broken answer, not "no roles": reading
+    // it as none would strip every role of the person (fail closed means an error here, not an empty set).
+    const total = totalOrNull(res.pagination?.totalResult ?? res.details?.totalResult);
+    if (res.authorizations === undefined && total !== null && total > 0) {
+      throw new Error('ListAuthorizations answered a positive count without the authorizations');
+    }
+    return res.authorizations ?? [];
   }
 
   /** Found by name once per process; the project id never changes after the seed created it. */

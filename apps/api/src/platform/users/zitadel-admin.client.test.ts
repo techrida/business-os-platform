@@ -413,3 +413,22 @@ describe('ensureOrgLockoutPolicy (F1-Q4)', () => {
     expect(sent.map((s) => s.method)).toEqual(['GET', 'POST', 'PUT']);
   });
 });
+
+describe('listGrants (FU8)', () => {
+  const project = { status: 200, body: { projects: [{ projectId: 'p1', name: 'business-os' }] } };
+
+  it('refuses an omitted authorizations list when the count is positive: a broken answer is not "no roles"', async () => {
+    answers.push(project, { status: 200, body: { details: { totalResult: '2' } } });
+
+    await expect(client().listGrants('u-1', 'o-1')).rejects.toThrow(/positive count/);
+  });
+
+  it('reads an omitted list with no count (or a zero count) as no roles', async () => {
+    const c = client();
+    answers.push(project, { status: 200, body: {} });
+    expect(await c.listGrants('u-1', 'o-1')).toEqual([]);
+
+    answers.push({ status: 200, body: { details: { totalResult: '0' } } });
+    expect(await c.listGrants('u-1', 'o-1')).toEqual([]);
+  });
+});
