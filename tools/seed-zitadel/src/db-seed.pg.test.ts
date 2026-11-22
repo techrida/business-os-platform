@@ -14,6 +14,8 @@ import { createParty, createTenantWithEntity } from '../../../packages/db/src/te
 import {
   DEV_CUSTOMER_NAME_NORM,
   DEV_CUSTOMER_PARTY_CODE,
+  DEV_FOREIGN_CUSTOMER,
+  DEV_FOREIGN_VENDOR,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
   type SeedScope,
@@ -225,7 +227,7 @@ describe('dev people step on Postgres', () => {
         ['Sales', 1],
       ]);
 
-      // CUST-DEV customer, primary contact, and TR party account are seeded with the party's id and name.
+      // CUST-DEV and the US customer (FX9, no PAN), with their 0191 country and address columns.
       const customers = await owner.query<{
         id: string;
         number: string;
@@ -234,32 +236,97 @@ describe('dev people step on Postgres', () => {
         relationship: string;
         default_currency: string;
         owner_zid: string | null;
+        pan_vat_no: string | null;
+        country: string;
+        address_line: string;
+        address_city: string;
       }>(
         `SELECT c.id, c.number, c.legal_name, c.name_norm, c.relationship, c.default_currency,
-                u.zitadel_user_id AS owner_zid
+                u.zitadel_user_id AS owner_zid, c.pan_vat_no, c.country, c.address_line, c.address_city
          FROM app.customers c
          LEFT JOIN app.users u ON u.id = c.owner_user_id
-         WHERE c.tenant_id = $1`,
+         WHERE c.tenant_id = $1
+         ORDER BY c.number`,
         [scope.tenantId],
       );
-      expect(customers.rows).toHaveLength(1);
+      expect(customers.rows).toHaveLength(2);
       expect(customers.rows[0]).toMatchObject({
         number: DEV_CUSTOMER_PARTY_CODE,
         name_norm: DEV_CUSTOMER_NAME_NORM,
         relationship: 'active',
         default_currency: 'NPR',
         owner_zid: zid('sales'),
+        country: 'NP',
+        address_line: 'Durbar Marg 1',
+        address_city: 'Kathmandu',
+      });
+      expect(customers.rows[1]).toMatchObject({
+        number: DEV_FOREIGN_CUSTOMER.code,
+        legal_name: DEV_FOREIGN_CUSTOMER.name,
+        name_norm: DEV_FOREIGN_CUSTOMER.nameNorm,
+        relationship: 'active',
+        default_currency: 'USD',
+        owner_zid: zid('sales'),
+        pan_vat_no: null,
+        country: 'US',
+        address_line: DEV_FOREIGN_CUSTOMER.address.line,
+        address_city: DEV_FOREIGN_CUSTOMER.address.city,
       });
       const contacts = await owner.query<{
+        id: string;
         full_name: string;
         email_norm: string | null;
         is_primary: boolean;
+        country: string;
       }>(
-        `SELECT full_name, email_norm, is_primary FROM app.customer_contacts WHERE tenant_id = $1`,
+        `SELECT id, full_name, email_norm, is_primary, country FROM app.customer_contacts
+         WHERE tenant_id = $1 ORDER BY full_name`,
         [scope.tenantId],
       );
-      expect(contacts.rows).toEqual([
-        { full_name: 'Dev Customer', email_norm: 'customer@dev.bos.test', is_primary: true },
+      expect(contacts.rows).toHaveLength(2);
+      expect(contacts.rows[1]).toMatchObject({
+        full_name: DEV_FOREIGN_CUSTOMER.contact.name,
+        email_norm: DEV_FOREIGN_CUSTOMER.contact.email,
+        is_primary: true,
+        country: 'US',
+      });
+      expect(contacts.rows[0]).toMatchObject({
+        full_name: 'Dev Customer',
+        email_norm: 'customer@dev.bos.test',
+        is_primary: true,
+        country: 'NP',
+      });
+      // Two numbers in two countries on the one contact (0192), the Nepal mobile primary.
+      const phones = await owner.query<{
+        contact_id: string;
+        country: string;
+        e164: string;
+        label: string | null;
+        sort_order: number;
+        is_primary: boolean;
+      }>(
+        `SELECT contact_id, country, e164, label, sort_order, is_primary
+         FROM app.customer_contact_phones WHERE tenant_id = $1 ORDER BY sort_order`,
+        [scope.tenantId],
+      );
+      const contactId = contacts.rows[0]?.id;
+      expect(phones.rows).toEqual([
+        {
+          contact_id: contactId,
+          country: 'NP',
+          e164: '+9779812345678',
+          label: 'mobile',
+          sort_order: 0,
+          is_primary: true,
+        },
+        {
+          contact_id: contactId,
+          country: 'US',
+          e164: '+14155552671',
+          label: 'work',
+          sort_order: 1,
+          is_primary: false,
+        },
       ]);
       const partyAccounts = await owner.query<{
         party_id: string;
@@ -269,12 +336,55 @@ describe('dev people step on Postgres', () => {
         `SELECT pa.party_id, pa.default_currency, pt.code AS term_code
          FROM app.party_accounts pa
          LEFT JOIN app.payment_terms pt ON pt.id = pa.payment_term_id
-         WHERE pa.tenant_id = $1 AND pa.organization_id = $2`,
+         WHERE pa.tenant_id = $1 AND pa.organization_id = $2
+         ORDER BY pa.default_currency`,
         [scope.tenantId, scope.organizationId],
       );
       expect(partyAccounts.rows).toEqual([
         { party_id: customers.rows[0]?.id, default_currency: 'NPR', term_code: 'NET30' },
+        { party_id: customers.rows[1]?.id, default_currency: 'USD', term_code: 'NET30' },
       ]);
+
+      // VEND-DEV (NP, 9-digit PAN) and the Indian vendor (foreign, loose tax id), each with an address and an account.
+      const vendors = await owner.query<{
+        legal_name: string;
+        kind: string;
+        pan: string | null;
+        country: string;
+        address_line: string | null;
+        address_city: string | null;
+        status: string;
+        currency: string | null;
+      }>(
+        `SELECT v.legal_name, v.kind, v.pan, v.country, v.address_line, v.address_city, v.status,
+                va.default_currency AS currency
+         FROM app.vendors v
+         LEFT JOIN app.vendor_accounts va
+           ON va.tenant_id = v.tenant_id AND va.vendor_id = v.id AND va.organization_id = $2
+         WHERE v.tenant_id = $1
+         ORDER BY v.country DESC`,
+        [scope.tenantId, scope.organizationId],
+      );
+      expect(vendors.rows).toHaveLength(2);
+      expect(vendors.rows[0]).toMatchObject({
+        kind: 'company',
+        pan: '123456789',
+        country: 'NP',
+        address_line: 'Teku Road 4',
+        address_city: 'Kathmandu',
+        status: 'approved',
+        currency: 'NPR',
+      });
+      expect(vendors.rows[1]).toEqual({
+        legal_name: DEV_FOREIGN_VENDOR.name,
+        kind: 'foreign',
+        pan: DEV_FOREIGN_VENDOR.pan,
+        country: 'IN',
+        address_line: DEV_FOREIGN_VENDOR.address.line,
+        address_city: DEV_FOREIGN_VENDOR.address.city,
+        status: 'approved',
+        currency: 'INR',
+      });
 
       // A re-run changes 0 rows, and no trigger writes behind the counts either.
       const audited = await auditCount(scope.tenantId);

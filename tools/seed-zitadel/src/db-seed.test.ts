@@ -1,6 +1,13 @@
 // Tests for the kernel seed rows. A fake pg client records every statement and answers from a small
 // script, so we can check the order (BEGIN, seed actor, rows, COMMIT) and idempotency without Postgres.
-import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema } from '@bos/contracts';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  PanVatNoSchema,
+  WorkflowSpecSchema,
+  nepalPanProblem,
+  phoneProblem,
+  type CountryCode,
+} from '@bos/contracts';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -15,9 +22,12 @@ import {
   TEST_MEMO_WORKFLOW_SPEC,
   DEV_BANK_ACCOUNTS,
   DEV_EXPENSE_ACCOUNTS,
+  DEV_CUSTOMER_CONTACT_PHONES,
   DEV_CUSTOMER_NAME_NORM,
   DEV_CUSTOMER_PARTY_CODE,
   DEV_DEPARTMENTS,
+  DEV_FOREIGN_CUSTOMER,
+  DEV_FOREIGN_VENDOR,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
   seedKernelRows,
@@ -627,10 +637,11 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
           rows: Object.entries(userIds).map(([zitadel, id]) => ({ id, zitadel_user_id: zitadel })),
         };
       }
+      // Keyed by code, so the foreign parties' rows are told apart from CUST-DEV's and VEND-DEV's.
       if (text.startsWith('SELECT id FROM app.parties')) {
-        return {
-          rows: [{ id: text.includes("kind = 'customer'") ? 'party-cust' : 'party-vend' }],
-        };
+        const code = String(call.values[1]);
+        const ids: Record<string, string> = { 'CUST-DEV': 'party-cust', 'VEND-DEV': 'party-vend' };
+        return { rows: [{ id: ids[code] ?? `party-${code}` }] };
       }
       // Keyed by name, so a member filed into the wrong department shows up as the wrong id.
       if (text.startsWith('SELECT id FROM app.departments')) {
@@ -646,6 +657,20 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
   it('looks the vendor and customer up by the party codes the tenancy step creates', () => {
     expect(DEV_VENDOR_PARTY_CODE).toBe(SEED_PARTIES.vendor.code);
     expect(DEV_CUSTOMER_PARTY_CODE).toBe(SEED_PARTIES.customer.code);
+    expect(SEED_PARTIES.foreignCustomer).toEqual({
+      code: DEV_FOREIGN_CUSTOMER.code,
+      name: DEV_FOREIGN_CUSTOMER.name,
+    });
+    expect(SEED_PARTIES.foreignVendor).toEqual({
+      code: DEV_FOREIGN_VENDOR.code,
+      name: DEV_FOREIGN_VENDOR.name,
+    });
+    // The foreign parties have no ZITADEL org, so the tenancy step does not write them.
+    const codes = tenancySeed({ staff: 's', customer: 'c', vendor: 'v' }).idpOrgs.map(
+      (o) => o.party?.code,
+    );
+    expect(codes).not.toContain(DEV_FOREIGN_CUSTOMER.code);
+    expect(codes).not.toContain(DEV_FOREIGN_VENDOR.code);
   });
 
   it('writes nothing for people, departments, vendors or customers when no personas are passed', async () => {
@@ -659,7 +684,9 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       'vendor_accounts',
       'customers',
       'customer_contacts',
+      'customer_contact_phones',
       'party_accounts',
+      'parties',
     ]) {
       expect(writesTo(calls, table)).toEqual([]);
     }
@@ -804,7 +831,16 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope, personas);
     const vendor = calls.find((c) => c.text.includes('INTO app.vendors'));
-    expect(vendor?.values).toEqual(['tenant-1', 'party-vend', '123456789', 'u-proc', 'u-mgmt']);
+    expect(vendor?.values).toEqual([
+      'tenant-1',
+      'party-vend',
+      '123456789',
+      'u-proc',
+      'u-mgmt',
+      'Teku Road 4',
+      'Kathmandu',
+    ]);
+    expect(vendor?.text).toContain('address_line, address_city');
     expect(vendor?.values[2]).toMatch(/^[0-9]{9}$/);
     expect(vendor?.text).toContain("'company'");
     expect(vendor?.text).toContain("'NP'");
@@ -829,17 +865,18 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     expect(party?.values).toEqual(['tenant-1', 'CUST-DEV']);
 
     const customer = calls.find((c) => c.text.includes('INTO app.customers'));
-    expect(customer?.values.slice(0, 4)).toEqual([
+    expect(customer?.values).toEqual([
       'tenant-1',
       'party-cust',
       DEV_CUSTOMER_NAME_NORM,
       'u-sales',
+      'NP',
+      'Durbar Marg 1',
+      'Kathmandu',
     ]);
-    expect(JSON.parse(String(customer?.values[4]))).toEqual({
-      line1: 'Durbar Marg 1',
-      city: 'Kathmandu',
-      country: 'NP',
-    });
+    // 0191: country, address_line and address_city replace the jsonb address.
+    expect(customer?.text).toContain('country, address_line, address_city');
+    expect(customer?.text).not.toMatch(/\baddress\)|jsonb/);
     expect(customer?.text).toContain("'active'");
     expect(customer?.text).toContain("'NPR'");
     expect(customer?.text).toContain('ON CONFLICT (id) DO NOTHING');
@@ -866,6 +903,134 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     expect(at('INTO app.customer_contacts')).toBeGreaterThan(at('INTO app.customers'));
     expect(at('INTO app.party_accounts')).toBeGreaterThan(at('INTO app.customers'));
     expect(at('INTO app.party_accounts')).toBeGreaterThan(at('INTO app.payment_terms'));
+  });
+
+  it("gives CUST-DEV's primary contact two numbers in two countries, a Nepal mobile first and primary", async () => {
+    // The real consumer's rule: each number is valid for its own country.
+    for (const p of DEV_CUSTOMER_CONTACT_PHONES) {
+      expect(phoneProblem(p.country as CountryCode, p.e164), p.e164).toBeNull();
+    }
+    expect(DEV_CUSTOMER_CONTACT_PHONES.filter((p) => p.isPrimary)).toHaveLength(1);
+
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const phones = writesTo(calls, 'customer_contact_phones');
+    expect(phones).toHaveLength(1);
+    expect(phones[0]?.values).toEqual([
+      'tenant-1',
+      'party-cust',
+      ['NP', 'US'],
+      ['+9779812345678', '+14155552671'],
+      ['mobile', 'work'],
+      [0, 1],
+      [true, false],
+    ]);
+    // Only on CUST-DEV's primary contact, and only while it has no number at all (a hand edit is kept).
+    expect(phones[0]?.text).toContain('cc.customer_id = $2::uuid AND cc.is_primary');
+    expect(phones[0]?.text).toContain('NOT EXISTS');
+    expect(phones[0]?.text).not.toContain('phone_e164');
+    const at = (needle: string) => calls.findIndex((c) => c.text.includes(needle));
+    expect(at('INTO app.customer_contact_phones')).toBeGreaterThan(
+      at('INTO app.customer_contacts'),
+    );
+  });
+
+  it('seeds a US customer with no PAN, a USD account and a full address', async () => {
+    expect(DEV_FOREIGN_CUSTOMER.address.country).not.toBe('NP');
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+
+    const party = writesTo(calls, 'parties');
+    expect(party.map((c) => c.values)).toEqual([
+      ['tenant-1', 'customer', 'CUST-US-DEV', 'Acme Robotics Inc'],
+      ['tenant-1', 'vendor', 'VEND-IN-DEV', 'Mumbai Industrial Supplies Pvt Ltd'],
+    ]);
+    for (const c of party) expect(c.text).toContain('ON CONFLICT (tenant_id, code) DO NOTHING');
+
+    const customers = writesTo(calls, 'customers');
+    expect(customers).toHaveLength(2);
+    expect(customers[1]?.values).toEqual([
+      'tenant-1',
+      'party-CUST-US-DEV',
+      'acme robotics',
+      'u-sales',
+      'USD',
+      'US',
+      '500 Market Street, Suite 200',
+      'San Francisco',
+    ]);
+    // No PAN column at all: pan_vat_no stays NULL.
+    expect(customers[1]?.text).not.toContain('pan_vat_no');
+    expect(customers[1]?.text).toContain('ON CONFLICT (id) DO NOTHING');
+
+    const contacts = writesTo(calls, 'customer_contacts');
+    expect(contacts).toHaveLength(2);
+    expect(contacts[1]?.values).toEqual([
+      'tenant-1',
+      'party-CUST-US-DEV',
+      'Jordan Lee',
+      'jordan.lee@acme-robotics.example',
+      'US',
+    ]);
+    expect(contacts[1]?.text).toContain('WHERE NOT EXISTS');
+
+    const accounts = writesTo(calls, 'party_accounts');
+    expect(accounts[1]?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'party-CUST-US-DEV',
+      'u-sales',
+      'USD',
+      'NET30',
+    ]);
+  });
+
+  it('seeds an approved Indian vendor (kind foreign) with an address and a loose tax id', async () => {
+    // Loose, not a Nepal PAN: the DB's vendors_pan_check and vendors_pan_format_check accept it for a foreign vendor, and
+    // it passes the contracts' loose tax-id shape. (CreateVendorBodySchema still asks every vendor PAN for 9 digits.)
+    expect(PanVatNoSchema.safeParse(DEV_FOREIGN_VENDOR.pan).success).toBe(true);
+    expect(DEV_FOREIGN_VENDOR.pan).not.toMatch(/^[0-9]{9}$/);
+    expect(DEV_FOREIGN_VENDOR.pan).toMatch(/^[A-Z0-9-]{5,20}$/);
+    expect(nepalPanProblem(DEV_FOREIGN_VENDOR.address.country, DEV_FOREIGN_VENDOR.pan)).toBeNull();
+    expect(nepalPanProblem('NP', DEV_FOREIGN_VENDOR.pan)).not.toBeNull();
+
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const vendors = writesTo(calls, 'vendors');
+    expect(vendors).toHaveLength(2);
+    expect(vendors[1]?.values).toEqual([
+      'tenant-1',
+      'party-VEND-IN-DEV',
+      'AAACM1234F',
+      'IN',
+      'Plot 12, MIDC, Andheri East',
+      'Mumbai',
+      'u-proc',
+      'u-mgmt',
+    ]);
+    // vendors_foreign_country_check: kind is foreign exactly when the country is not NP.
+    expect(vendors[1]?.text).toContain("'foreign'");
+    expect(vendors[1]?.text).toContain("'approved'");
+    const lookup = calls.find(
+      (c) => c.text.startsWith('SELECT id FROM app.parties') && c.values[1] === 'VEND-IN-DEV',
+    );
+    expect(lookup?.text).toContain("kind = 'vendor'");
+
+    const accounts = writesTo(calls, 'vendor_accounts');
+    expect(accounts[1]?.values).toEqual(['tenant-1', 'org-1', 'party-VEND-IN-DEV', 'INR', 'NET30']);
+    // After CUST-DEV and VEND-DEV, so their lookups and inserts keep coming first.
+    const at = (needle: string) => calls.findIndex((c) => c.text.includes(needle));
+    expect(at('INTO app.parties')).toBeGreaterThan(at('INTO app.party_accounts'));
+  });
+
+  it('fails clearly, and rolls back, when a foreign party is missing after its insert', async () => {
+    const { client, calls } = fakeClient((call) =>
+      call.text.startsWith('SELECT id FROM app.parties') && call.values[1] === 'VEND-IN-DEV'
+        ? { rows: [] }
+        : withLookups(firstRun)(call),
+    );
+    await expect(seedKernelRows(client, scope, personas)).rejects.toThrow(/VEND-IN-DEV/);
+    expect(calls.at(-1)?.text).toBe('ROLLBACK');
   });
 
   it('gives VEND-DEV an NPR account in TR on the NET30 term, after the payment terms exist', async () => {

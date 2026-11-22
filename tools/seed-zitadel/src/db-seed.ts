@@ -592,11 +592,51 @@ const DEV_CUSTOMER_OWNER_KEY = 'sales';
 const DEV_CUSTOMER_TERM = 'NET30';
 const DEV_CUSTOMER_CONTACT_NAME = 'Dev Customer';
 const DEV_CUSTOMER_CONTACT_EMAIL = personaUsername('customer');
-const DEV_CUSTOMER_ADDRESS = JSON.stringify({
-  line1: 'Durbar Marg 1',
-  city: 'Kathmandu',
-  country: 'NP',
-});
+/** CUST-DEV's address (0191: country, address_line and address_city columns). */
+const DEV_CUSTOMER_ADDRESS = { line: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' } as const;
+/** VEND-DEV's address (optional on a vendor; both lines or neither). Its country is the vendor's, NP. */
+const DEV_VENDOR_ADDRESS = { line: 'Teku Road 4', city: 'Kathmandu' } as const;
+
+/** A phone row of app.customer_contact_phones (0192). Fictional numbers, valid per the contracts' phoneProblem. */
+export interface DevContactPhone {
+  country: string;
+  e164: string;
+  label: 'mobile' | 'work' | 'home' | 'landline';
+  isPrimary: boolean;
+}
+
+/** CUST-DEV's primary contact has two numbers in two countries: a Nepal mobile (primary) and a US work line. */
+export const DEV_CUSTOMER_CONTACT_PHONES: readonly DevContactPhone[] = [
+  { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true },
+  { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false },
+];
+
+/**
+ * A foreign customer with no PAN (FX9: only a Nepal party is held to the 9-digit PAN). It has no ZITADEL org, so this
+ * step creates its party (SEED_PARTIES.foreignCustomer in index.ts; a test pins the two together).
+ */
+export const DEV_FOREIGN_CUSTOMER = {
+  code: 'CUST-US-DEV',
+  name: 'Acme Robotics Inc',
+  /** normalizeName in apps/api customers.normalize.ts: lower-case, the form word "inc" dropped. */
+  nameNorm: 'acme robotics',
+  currency: 'USD',
+  address: { line: '500 Market Street, Suite 200', city: 'San Francisco', country: 'US' },
+  /** Its primary contact, in the US like the company; the e-mail is stored lower-case. */
+  contact: { name: 'Jordan Lee', email: 'jordan.lee@acme-robotics.example' },
+} as const;
+
+/**
+ * A foreign vendor with an address and a loose tax id (an Indian PAN, not nine digits). Its party is created here
+ * too (SEED_PARTIES.foreignVendor in index.ts).
+ */
+export const DEV_FOREIGN_VENDOR = {
+  code: 'VEND-IN-DEV',
+  name: 'Mumbai Industrial Supplies Pvt Ltd',
+  pan: 'AAACM1234F',
+  currency: 'INR',
+  address: { line: 'Plot 12, MIDC, Andheri East', city: 'Mumbai', country: 'IN' },
+} as const;
 
 /** The personas the dev people step needs, in a fixed order; a missing one is an error, not a skip. */
 function devPeople(personas: readonly DevPersona[]): (DevPersona & { role: string })[] {
@@ -691,8 +731,9 @@ async function seedDevPeopleAndVendor(
   const partyId = party.rows[0]?.id;
   if (!partyId) throw new Error(`dev seed: vendor party ${DEV_VENDOR_PARTY_CODE} not found`);
   const vendor = await client.query(
-    `INSERT INTO app.vendors (id, tenant_id, legal_name, kind, pan, vat_registered, country, status, created_by, approved_by)
-     SELECT p.id, p.tenant_id, p.name, 'company', $3, false, 'NP', 'approved', $4::uuid, $5::uuid
+    `INSERT INTO app.vendors
+       (id, tenant_id, legal_name, kind, pan, vat_registered, country, address_line, address_city, status, created_by, approved_by)
+     SELECT p.id, p.tenant_id, p.name, 'company', $3, false, 'NP', $6, $7, 'approved', $4::uuid, $5::uuid
      FROM app.parties p
      WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
      ON CONFLICT (id) DO NOTHING`,
@@ -702,6 +743,8 @@ async function seedDevPeopleAndVendor(
       DEV_VENDOR_PAN,
       userIdOf(VENDOR_CREATOR_KEY),
       userIdOf(VENDOR_APPROVER_KEY),
+      DEV_VENDOR_ADDRESS.line,
+      DEV_VENDOR_ADDRESS.city,
     ],
   );
   changed += vendor.rowCount ?? 0;
@@ -728,8 +771,9 @@ async function seedDevPeopleAndVendor(
   const customerOwnerId = userIdOf(DEV_CUSTOMER_OWNER_KEY);
   const customer = await client.query(
     `INSERT INTO app.customers
-       (id, tenant_id, number, legal_name, name_norm, relationship, owner_user_id, default_currency, address)
-     SELECT p.id, p.tenant_id, p.code, p.name, $3, 'active', $4::uuid, 'NPR', $5::jsonb
+       (id, tenant_id, number, legal_name, name_norm, relationship, owner_user_id, default_currency,
+        country, address_line, address_city)
+     SELECT p.id, p.tenant_id, p.code, p.name, $3, 'active', $4::uuid, 'NPR', $5, $6, $7
      FROM app.parties p
      WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
      ON CONFLICT (id) DO NOTHING`,
@@ -738,7 +782,9 @@ async function seedDevPeopleAndVendor(
       customerPartyId,
       DEV_CUSTOMER_NAME_NORM,
       customerOwnerId,
-      DEV_CUSTOMER_ADDRESS,
+      DEV_CUSTOMER_ADDRESS.country,
+      DEV_CUSTOMER_ADDRESS.line,
+      DEV_CUSTOMER_ADDRESS.city,
     ],
   );
   changed += customer.rowCount ?? 0;
@@ -752,6 +798,30 @@ async function seedDevPeopleAndVendor(
     [scope.tenantId, customerPartyId, DEV_CUSTOMER_CONTACT_NAME, DEV_CUSTOMER_CONTACT_EMAIL],
   );
   changed += contact.rowCount ?? 0;
+  // Its numbers (0192), in one statement and only while the primary contact has none, so a number edited or removed
+  // by hand is not added back, and the one-primary-per-contact index is never in play.
+  const phones = await client.query(
+    `INSERT INTO app.customer_contact_phones (tenant_id, contact_id, country, e164, label, sort_order, is_primary)
+     SELECT cc.tenant_id, cc.id, v.country, v.e164, v.label, v.sort_order, v.is_primary
+     FROM app.customer_contacts cc
+     CROSS JOIN unnest($3::text[], $4::text[], $5::text[], $6::smallint[], $7::boolean[])
+       AS v(country, e164, label, sort_order, is_primary)
+     WHERE cc.tenant_id = $1::uuid AND cc.customer_id = $2::uuid AND cc.is_primary
+       AND NOT EXISTS (
+         SELECT 1 FROM app.customer_contact_phones ph
+         WHERE ph.tenant_id = cc.tenant_id AND ph.contact_id = cc.id
+       )`,
+    [
+      scope.tenantId,
+      customerPartyId,
+      DEV_CUSTOMER_CONTACT_PHONES.map((p) => p.country),
+      DEV_CUSTOMER_CONTACT_PHONES.map((p) => p.e164),
+      DEV_CUSTOMER_CONTACT_PHONES.map((p) => p.label),
+      DEV_CUSTOMER_CONTACT_PHONES.map((_, i) => i),
+      DEV_CUSTOMER_CONTACT_PHONES.map((p) => p.isPrimary),
+    ],
+  );
+  changed += phones.rowCount ?? 0;
   const customerAccount = await client.query(
     `INSERT INTO app.party_accounts (tenant_id, organization_id, party_id, owner_user_id, default_currency, payment_term_id)
      SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'NPR', pt.id
@@ -761,6 +831,131 @@ async function seedDevPeopleAndVendor(
     [scope.tenantId, scope.organizationId, customerPartyId, customerOwnerId, DEV_CUSTOMER_TERM],
   );
   changed += customerAccount.rowCount ?? 0;
+
+  changed += await seedForeignParties(client, scope, userIdOf);
+  return changed;
+}
+
+/**
+ * Creates a dev party with no ZITADEL org behind it, once per code, and returns its id. A party of that code but the
+ * other kind is an error, not a reuse.
+ */
+async function seedBareParty(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  kind: 'customer' | 'vendor',
+  party: { code: string; name: string },
+): Promise<{ partyId: string; changed: number }> {
+  const inserted = await client.query(
+    `INSERT INTO app.parties (tenant_id, kind, code, name)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (tenant_id, code) DO NOTHING`,
+    [scope.tenantId, kind, party.code, party.name],
+  );
+  const kindSql = kind === 'customer' ? "kind = 'customer'" : "kind = 'vendor'";
+  const found = await client.query<{ id: string }>(
+    `SELECT id FROM app.parties WHERE tenant_id = $1 AND code = $2 AND ${kindSql}`,
+    [scope.tenantId, party.code],
+  );
+  const partyId = found.rows[0]?.id;
+  if (!partyId) throw new Error(`dev seed: ${kind} party ${party.code} not found after insert`);
+  return { partyId, changed: inserted.rowCount ?? 0 };
+}
+
+/**
+ * FX9: a US customer with no PAN and an Indian vendor with an address and a loose tax id, each with a TR account in
+ * its own currency, so the country, address and PAN rules can be tried on seeded records. Insert only, like the rest
+ * of the dev step: a second run changes 0 rows and a hand edit is kept.
+ */
+async function seedForeignParties(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  userIdOf: (key: string) => string,
+): Promise<number> {
+  let changed = 0;
+  const c = DEV_FOREIGN_CUSTOMER;
+  const customerParty = await seedBareParty(client, scope, 'customer', c);
+  changed += customerParty.changed;
+  const ownerId = userIdOf(DEV_CUSTOMER_OWNER_KEY);
+  const customer = await client.query(
+    `INSERT INTO app.customers
+       (id, tenant_id, number, legal_name, name_norm, relationship, owner_user_id, default_currency,
+        country, address_line, address_city)
+     SELECT p.id, p.tenant_id, p.code, p.name, $3, 'active', $4::uuid, $5, $6, $7, $8
+     FROM app.parties p
+     WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      scope.tenantId,
+      customerParty.partyId,
+      c.nameNorm,
+      ownerId,
+      c.currency,
+      c.address.country,
+      c.address.line,
+      c.address.city,
+    ],
+  );
+  changed += customer.rowCount ?? 0;
+  // A customer is created with a contact (CreateCustomerBodySchema), so this one has its primary contact too.
+  const contact = await client.query(
+    `INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm, country, is_primary)
+     SELECT $1::uuid, $2::uuid, $3, $4, $5, true
+     WHERE NOT EXISTS (
+       SELECT 1 FROM app.customer_contacts
+       WHERE tenant_id = $1::uuid AND customer_id = $2::uuid AND is_primary
+     )`,
+    [scope.tenantId, customerParty.partyId, c.contact.name, c.contact.email, c.address.country],
+  );
+  changed += contact.rowCount ?? 0;
+  const customerAccount = await client.query(
+    `INSERT INTO app.party_accounts (tenant_id, organization_id, party_id, owner_user_id, default_currency, payment_term_id)
+     SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, pt.id
+     FROM app.payment_terms pt
+     WHERE pt.tenant_id = $1::uuid AND pt.code = $6
+     ON CONFLICT (tenant_id, organization_id, party_id) DO NOTHING`,
+    [
+      scope.tenantId,
+      scope.organizationId,
+      customerParty.partyId,
+      ownerId,
+      c.currency,
+      DEV_CUSTOMER_TERM,
+    ],
+  );
+  changed += customerAccount.rowCount ?? 0;
+
+  const v = DEV_FOREIGN_VENDOR;
+  const vendorParty = await seedBareParty(client, scope, 'vendor', v);
+  changed += vendorParty.changed;
+  const vendor = await client.query(
+    `INSERT INTO app.vendors
+       (id, tenant_id, legal_name, kind, pan, vat_registered, country, address_line, address_city, status, created_by, approved_by)
+     SELECT p.id, p.tenant_id, p.name, 'foreign', $3, false, $4, $5, $6, 'approved', $7::uuid, $8::uuid
+     FROM app.parties p
+     WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      scope.tenantId,
+      vendorParty.partyId,
+      v.pan,
+      v.address.country,
+      v.address.line,
+      v.address.city,
+      userIdOf(VENDOR_CREATOR_KEY),
+      userIdOf(VENDOR_APPROVER_KEY),
+    ],
+  );
+  changed += vendor.rowCount ?? 0;
+  const vendorAccount = await client.query(
+    `INSERT INTO app.vendor_accounts (tenant_id, organization_id, vendor_id, default_currency, payment_term_id)
+     SELECT $1::uuid, $2::uuid, $3::uuid, $4, pt.id
+     FROM app.payment_terms pt
+     WHERE pt.tenant_id = $1::uuid AND pt.code = $5
+     ON CONFLICT (tenant_id, organization_id, vendor_id) DO NOTHING`,
+    [scope.tenantId, scope.organizationId, vendorParty.partyId, v.currency, DEV_VENDOR_TERM],
+  );
+  changed += vendorAccount.rowCount ?? 0;
   return changed;
 }
 
