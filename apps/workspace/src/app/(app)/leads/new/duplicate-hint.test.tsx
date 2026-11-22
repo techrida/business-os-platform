@@ -27,6 +27,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** The visible phone box (the name `phone` is on its hidden input). */
+function phoneBox(container: HTMLElement): HTMLInputElement | null {
+  const label = Array.from(container.querySelectorAll('label')).find(
+    (l) => l.textContent?.trim() === 'Phone',
+  );
+  return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+}
+
 async function mount(fetcher: DuplicateFetcher) {
   const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
   const mounted = await mountForm(
@@ -152,9 +160,13 @@ it('cancels a lookup in flight when typing goes on, so its late answer never sho
   });
   const m = await mount(fetcher);
   try {
-    await fill(m.container.querySelector('[name="phone"]'), '980-111 2233');
+    // Typed into the visible phone box: its posted number comes from a hidden input that fires no
+    // events of its own, so the form announces it for the hint.
+    await fill(phoneBox(m.container), '9801112233');
     await m.pause(400);
-    await fill(m.container.querySelector('[name="phone"]'), '980-111 2234');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]![0].get('phone')).toBe('+9779801112233');
+    await fill(phoneBox(m.container), '9801112234');
     expect(signals[0]?.aborted).toBe(true);
     await m.pause(400);
     await act(async () => {
