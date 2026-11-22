@@ -93,6 +93,8 @@ test('an empty form names every wrong field, and tax needs its code', async ({
     await page.getByText('The customer withheld tax at source (TDS)').click();
     await page.getByLabel('Tax withheld').fill('15.00');
     await page.getByRole('button', { name: 'Record payment' }).click();
+    // The form is complete as far as the browser can tell, so the review opens first.
+    await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
     await expect(page.getByText(/Name the withholding code when tax was withheld/)).toBeVisible();
     // What was typed is still there after the refusal.
     await expect(page.getByLabel('Amount received')).toHaveValue('1,000.00');
@@ -125,6 +127,7 @@ test('records a payment with a PDF proof and opens it', async ({ browser, baseUR
     const submit = page.getByRole('button', { name: 'Record payment' });
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await submit.click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
       const opened = await page
         .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
         .then(() => true)
