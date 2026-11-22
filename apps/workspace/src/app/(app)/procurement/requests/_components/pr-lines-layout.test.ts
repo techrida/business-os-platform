@@ -19,7 +19,7 @@ describe.each([
   {
     name: 'purchase request',
     file: 'src/app/(app)/procurement/requests/_components/pr-lines.module.css',
-    container: /@container \(min-width: (\d+)px\) \{/,
+    container: /@container \(min-width: (\d+)rem\) \{/,
     numeric: [3, 4],
     sideColumns: 40 + 40,
     columns: /\.headFields,\n\s+\.fields \{\n\s+grid-template-columns:([^;]+);/,
@@ -27,7 +27,7 @@ describe.each([
   {
     name: 'manual invoice',
     file: 'src/app/(app)/invoices/new/lines-editor.module.css',
-    container: /@container \(min-width: (\d+)px\) \{/,
+    container: /@container \(min-width: (\d+)rem\) \{/,
     numeric: [2, 3],
     sideColumns: 56 + 40,
     columns: /\.invoice \.fields \{[^}]*grid-template-columns:([^;]+);/,
@@ -43,7 +43,8 @@ describe.each([
   });
 
   it('switches to the table on a card wide enough for the floors, not on the window', () => {
-    const width = Number(container.exec(css)?.[1]);
+    // rem, like the floors: a larger browser font moves both together.
+    const width = Number(container.exec(css)?.[1]) * 16;
     const floors = columnMinimums(columns.exec(css)?.[1] ?? '');
     // The floors, the four 16px gaps, and the line number and remove columns (and their gaps) beside the fields.
     const needed = floors.reduce((sum, rem) => sum + rem * 16, 0) + 4 * 16 + sideColumns + 2 * 12;
