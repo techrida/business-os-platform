@@ -81,6 +81,20 @@ interface EngineProps extends DigitBoxProps {
   rules: DigitRules;
   /** Fixed text before the digits (`+977`). It is part of the posted value, not the box. */
   prefix?: string | undefined;
+  /**
+   * Called instead of refusing a `+` that starts the whole number: typed into an empty box, pasted or autofilled
+   * over all of it. The caller switches to a box that takes the country code. Gets the digits after the plus
+   * (`''` when only the plus was typed).
+   */
+  onPlus?: ((digits: string) => void) | undefined;
+  /** The soft keyboard. `tel` keeps the `+` key that `onPlus` listens for; the default number pad has none. */
+  inputMode?: 'numeric' | 'tel' | undefined;
+}
+
+/** A whole number written with its international prefix (`+1 415`, `00977 98`), or null. */
+function plusDigits(text: string): string | null {
+  const match = /^\s*(?:\+|00)([\d\s\p{Pd}().]*)$/u.exec(text);
+  return match ? match[1]!.replace(/\D/g, '') : null;
 }
 
 const DIGITS = /^\d*$/;
@@ -104,6 +118,8 @@ export function DigitBox({
   onEditedChange,
   rules,
   prefix,
+  onPlus,
+  inputMode = 'numeric',
 }: EngineProps) {
   const base = useId();
   const prefixId = `${base}-prefix`;
@@ -261,6 +277,14 @@ export function DigitBox({
     if (foreign(current)) return;
     const start = input.selectionStart ?? current.length;
     const end = input.selectionEnd ?? start;
+    if (onPlus && data.startsWith('+') && current.slice(0, start) + current.slice(end) === '') {
+      const digits = plusDigits(data);
+      if (digits !== null) {
+        event.preventDefault();
+        onPlus(digits);
+        return;
+      }
+    }
     const reason = refusalOf(current.slice(0, start) + data + current.slice(end));
     if (reason) {
       event.preventDefault();
@@ -281,6 +305,9 @@ export function DigitBox({
     const raw = input.value;
     const caret = input.selectionStart ?? raw.length;
     const current = textRef.current;
+    // An autofilled or dropped `+1 415…` (no beforeinput came first): hand it to the caller whole.
+    const international = onPlus && raw.startsWith('+') ? plusDigits(raw) : null;
+    if (international !== null) return onPlus?.(international);
     // Editing a stored value the box cannot hold: deleting is always allowed, so it can be repaired.
     if (foreign(current) && raw.length <= current.length) return accept(raw, caret);
     const reason = refusalOf(raw, raw.length < current.length);
@@ -301,6 +328,8 @@ export function DigitBox({
     const end = input.selectionEnd ?? start;
     // Whole number: nothing is left of the box once the selection is replaced.
     const whole = current.slice(0, start) + current.slice(end) === '';
+    const international = onPlus && whole ? plusDigits(event.clipboardData.getData('text')) : null;
+    if (international !== null) return onPlus?.(international);
     const pasted = rules.cleanPaste(event.clipboardData.getData('text'), whole);
     const next = current.slice(0, start) + pasted + current.slice(end);
     const reason = refusalOf(next);
@@ -315,6 +344,25 @@ export function DigitBox({
     clearNotice();
     setError(rules.problem(textRef.current));
   }
+
+  // Text typed into the server-rendered box before React hydrated. Hydration leaves it in the DOM but not in state,
+  // so the hidden input would post the empty initial value and the next render would wipe the box (FX5). It is taken
+  // in once, as a whole paste would be: cleaned, then accepted, or kept as given and flagged when the rules refuse it.
+  const adoptTyped = useEffectEvent(() => {
+    const input = inputRef.current;
+    if (!input || disabled || readOnly) return;
+    const typed = input.value;
+    if (typed === '' || typed === textRef.current) return;
+    const international = onPlus ? plusDigits(typed) : null;
+    if (international !== null) return onPlus?.(international);
+    const cleaned = rules.cleanPaste(typed, true);
+    const reason = refusalOf(cleaned);
+    accept(reason === null ? cleaned : typed, null);
+    if (reason !== null) setError(rules.problem(typed) ?? reason);
+  });
+  useLayoutEffect(() => {
+    adoptTyped();
+  }, []);
 
   const digits = foreign(text) ? '' : text;
   const countText = foreign(text) ? '' : rules.count(digits);
@@ -358,7 +406,7 @@ export function DigitBox({
           ref={inputRef}
           className={styles.input}
           type="text"
-          inputMode="numeric"
+          inputMode={inputMode}
           autoComplete="off"
           value={text}
           onChange={onChange}

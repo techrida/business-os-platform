@@ -1,0 +1,22 @@
+/* Address on its own row; City and Country share the next row when the container has room for both. The query
+   container is the outer element, because a container query cannot restyle its own container. */
+.root {
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@container (min-width: 32rem) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .line {
+    grid-column: 1 / -1;
+  }
+}
