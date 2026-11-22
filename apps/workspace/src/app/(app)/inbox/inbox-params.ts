@@ -17,6 +17,7 @@ export const DOCUMENT_TYPE_OPTIONS = [
   { value: 'purchase_request', label: 'Purchase request' },
   { value: 'pr_commitment', label: 'PR commitment' },
   { value: 'po_amendment', label: 'PO amendment' },
+  { value: 'po_vendor_change', label: 'PO vendor change' },
   { value: 'emergency_review', label: 'Emergency review' },
   { value: 'match_exception', label: 'Match exception' },
   { value: 'vendor_bill', label: 'Vendor bill' },
