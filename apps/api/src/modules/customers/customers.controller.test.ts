@@ -11,7 +11,9 @@ import { CustomersController } from './customers.controller';
 import type { CustomersService } from './customers.service';
 
 const ID = '3f1c2a52-9a7e-4c41-8f6e-2b1a1d0c9e11';
-const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+const address = { line: 'Ring Road', city: 'Kathmandu' };
+const npMobile = { country: 'NP', e164: '+9779812345678', label: 'mobile' } as const;
+const usWork = { country: 'US', e164: '+14155552671', label: 'work' } as const;
 
 function setup() {
   const service = {
@@ -51,8 +53,14 @@ describe('GET /v1/customers', () => {
 });
 
 describe('POST /v1/customers', () => {
-  const contact = { fullName: 'Sita Rai', email: 'sita@acme.example' };
-  const body = { legalName: 'Acme Pvt. Ltd.', panVatNo: '123456789', address, contact };
+  const contact = { fullName: 'Sita Rai', email: 'sita@acme.example', country: 'NP', phones: [] };
+  const body = {
+    legalName: 'Acme Pvt. Ltd.',
+    panVatNo: '123456789',
+    country: 'NP',
+    address,
+    contact,
+  };
 
   it('is a 400 without an Idempotency-Key, before the service is called', () => {
     const { service, controller } = setup();
@@ -86,6 +94,41 @@ describe('POST /v1/customers', () => {
     await controller.create('k1', body);
     expect(service.create).toHaveBeenCalledWith({ ...body, relationship: 'prospect' }, 'k1');
   });
+
+  // FX9: the PAN follows the party's country, and an address always names its country.
+  it('saves a US customer without a PAN, and is a 400 for an NP customer with a 5-digit PAN', async () => {
+    const { service, controller } = setup();
+    const { panVatNo: _pan, ...noPan } = body;
+    await controller.create('k1', { ...noPan, country: 'US' });
+    expect(service.create).toHaveBeenCalledWith(
+      expect.objectContaining({ country: 'US', address }),
+      'k1',
+    );
+    expect(() => controller.create('k1', { ...body, panVatNo: '12345' })).toThrow(/9 digits/);
+    expect(() =>
+      controller.create('k1', { ...body, country: 'US', panVatNo: 'AB-12345' }),
+    ).not.toThrow();
+  });
+
+  it('is a 400 for an address without a country, or with the old line1 shape', () => {
+    const { controller } = setup();
+    const { country: _country, ...noCountry } = body;
+    expect(() => controller.create('k1', noCountry)).toThrow(/country/);
+    expect(() =>
+      controller.create('k1', { ...body, address: { line1: 'Ring Road', city: 'Kathmandu' } }),
+    ).toThrow(BadRequestException);
+  });
+
+  it("is a 400 for a first contact's second primary number", () => {
+    const { controller } = setup();
+    const phones = [
+      { ...npMobile, isPrimary: true },
+      { ...usWork, isPrimary: true },
+    ];
+    expect(() => controller.create('k1', { ...body, contact: { ...contact, phones } })).toThrow(
+      /only one number can be primary/,
+    );
+  });
 });
 
 describe('PATCH /v1/customers/:id', () => {
@@ -105,35 +148,59 @@ describe('PATCH /v1/customers/:id', () => {
     const { controller } = setup();
     expect(() => controller.update(ID, { legalName: 'Acme' })).toThrow(BadRequestException);
   });
+
+  it('hands a country sent alone to the service, which checks it against the stored PAN', async () => {
+    const { service, controller } = setup();
+    await controller.update(ID, { expectedVersion: 4, country: 'US' });
+    expect(service.update).toHaveBeenCalledWith(ID, 4, { country: 'US' });
+  });
 });
 
 describe('POST /v1/customers/:id/contacts', () => {
   it('is a 400 without an Idempotency-Key', () => {
     const { controller } = setup();
-    expect(() => controller.createContact(ID, undefined, { fullName: 'Sita Rai' })).toThrow(
-      /Idempotency-Key/,
-    );
+    expect(() =>
+      controller.createContact(ID, undefined, { fullName: 'Sita Rai', country: 'NP' }),
+    ).toThrow(/Idempotency-Key/);
   });
 
   it.each(['9812345678', '+0123456789', '+977 981 234', '+97798123456789012'])(
     'is a 400 for the phone number %s (not E.164)',
     (phone) => {
       const { service, controller } = setup();
-      expect(() => controller.createContact(ID, 'k1', { fullName: 'Sita Rai', phone })).toThrow(
-        BadRequestException,
-      );
+      const phones = [{ country: 'NP', e164: phone, isPrimary: true }];
+      expect(() =>
+        controller.createContact(ID, 'k1', { fullName: 'Sita Rai', country: 'NP', phones }),
+      ).toThrow(BadRequestException);
       expect(service.createContact).not.toHaveBeenCalled();
     },
   );
 
-  it('accepts an E.164 number', async () => {
+  it('accepts a contact abroad with a Nepal mobile and a US number', async () => {
     const { service, controller } = setup();
-    await controller.createContact(ID, 'k1', { fullName: 'Sita Rai', phone: '+9779812345678' });
-    expect(service.createContact).toHaveBeenCalledWith(
-      ID,
-      { fullName: 'Sita Rai', phone: '+9779812345678', isPrimary: false },
-      'k1',
-    );
+    const contact = {
+      fullName: 'Sita Rai',
+      country: 'US',
+      phones: [
+        { ...npMobile, isPrimary: true },
+        { ...usWork, isPrimary: false },
+      ],
+    };
+    await controller.createContact(ID, 'k1', contact);
+    expect(service.createContact).toHaveBeenCalledWith(ID, { ...contact, isPrimary: false }, 'k1');
+  });
+
+  it('is a 400 without a country, or with two primary numbers, before the service is called', () => {
+    const { service, controller } = setup();
+    expect(() => controller.createContact(ID, 'k1', { fullName: 'Sita Rai' })).toThrow(/country/);
+    const phones = [
+      { ...npMobile, isPrimary: true },
+      { ...usWork, isPrimary: true },
+    ];
+    expect(() =>
+      controller.createContact(ID, 'k1', { fullName: 'Sita Rai', country: 'NP', phones }),
+    ).toThrow(/only one number can be primary/);
+    expect(service.createContact).not.toHaveBeenCalled();
   });
 });
 
