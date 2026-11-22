@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { SubmitPaymentBodySchema } from '@bos/contracts';
-import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
+import { NO_SPACES, USE_A_POINT, hasInnerSpace, hasStrayComma, plainAmount } from '@bos/locale';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -152,12 +152,14 @@ export async function recordPaymentAction(
       if (field !== undefined && field in FIELD_MESSAGE) fieldErrors[field] = FIELD_MESSAGE[field];
     }
   }
-  // A comma that is not grouping ("10,50") is a decimal comma: say so, since the digits alone look fine to the person.
-  if (fieldErrors.amount !== undefined && hasStrayComma(text(form, 'amount'))) {
-    fieldErrors.amount = `${USE_A_POINT} ${fieldErrors.amount}`;
-  }
-  if (fieldErrors.tdsWithheld !== undefined && hasStrayComma(text(form, 'tdsWithheld'))) {
-    fieldErrors.tdsWithheld = `${USE_A_POINT} ${fieldErrors.tdsWithheld}`;
+  // "10 50" is refused rather than read as 1050; the digits look fine to the person, so name the space.
+  // A comma that is not grouping ("10,50") is a decimal comma: say so, for the same reason.
+  for (const field of ['amount', 'tdsWithheld'] as const) {
+    if (fieldErrors[field] === undefined) continue;
+    if (hasInnerSpace(text(form, field))) fieldErrors[field] = NO_SPACES;
+    else if (hasStrayComma(text(form, field))) {
+      fieldErrors[field] = `${USE_A_POINT} ${fieldErrors[field]}`;
+    }
   }
   // Tax withheld needs its code. The contract says so too, but its object-level check may not run
   // when another field already failed, so the person is told about every wrong field at once.

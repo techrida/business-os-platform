@@ -1,4 +1,4 @@
-import { ConfirmReceiptBodySchema } from '@bos/contracts';
+import { ConfirmReceiptBodySchema, decimalPattern, QUANTITY_LIMITS } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { EMPTY_LINE, parseReceipt, splitSerials, type CapLine, type ReceiptValues } from './forms';
@@ -140,6 +140,37 @@ describe('the quantity cap (open minus pending in drafts)', () => {
     for (const q of ['0', '0.0000', 'abc', '1.00001', '-1', '1e3', '123456789012345']) {
       expect(fail(values({}, { [PLAIN]: { quantity: q } }))[`${PLAIN}.quantity`]).toBeDefined();
     }
+  });
+});
+
+describe('the quantity shape follows the contract limits', () => {
+  const big: CapLine[] = [
+    { ...lines[1]!, openQuantity: '99999999999999.9999', pendingQuantity: '0.0000' },
+  ];
+  const quantityError = (quantity: string) => {
+    const r = parseReceipt(PO, values({}, { [PLAIN]: { quantity } }), big);
+    return r.ok ? null : (r.errors[`${PLAIN}.quantity`] ?? null);
+  };
+
+  it('accepts 14 whole digits and 4 decimals, the most QUANTITY_LIMITS allows', () => {
+    expect(QUANTITY_LIMITS).toEqual({ intDigits: 14, scale: 4 });
+    for (const q of ['99999999999999.9999', '12345678901234', '0.0001', '1250000']) {
+      expect(decimalPattern(QUANTITY_LIMITS).test(q)).toBe(true);
+      expect(quantityError(q)).toBeNull();
+    }
+  });
+
+  it('refuses a 15th whole digit or a 5th decimal, as the contract does', () => {
+    for (const q of ['123456789012345', '1.00001', '1,250', '.5']) {
+      expect(decimalPattern(QUANTITY_LIMITS).test(q)).toBe(false);
+      expect(quantityError(q)).toMatch(/up to 4 decimal places/);
+    }
+  });
+
+  it('says to remove a space inside the number', () => {
+    expect(quantityError('10 50')).toMatch(/Remove the space/);
+    expect(quantityError('1 250 000')).toMatch(/Remove the space/);
+    expect(quantityError(' 1050 ')).toBeNull();
   });
 });
 

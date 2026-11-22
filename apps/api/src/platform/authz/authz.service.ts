@@ -2,7 +2,7 @@
 // filter a list query to the same rows `can()` would allow, and `invalidate()` after a role change.
 // Serves the NFR "authorization is deny-by-default" (P1 plan §1, k-authz; §6.2): a list query and a
 // record check give the same answer, so a user cannot see a row in a list that they could not open.
-import type { Permission, RoleKey } from '@bos/contracts';
+import type { AccessLevel, AccessScope, Permission, RoleKey } from '@bos/contracts';
 import { authzVersions, type Scoped, scoped } from '@bos/db';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { eq, or, type SQL, sql } from 'drizzle-orm';
@@ -186,15 +186,25 @@ export class AuthzService {
   /**
    * True when `roles` (already narrowed to one user's roles in the entity) hold `permission` in the tenant's live
    * role rows: the same answer the request path gives, including the built-in defaults of a tenant with no stored
-   * rows. For listing who could do something, where there is no request principal to ask.
+   * rows. For listing who could do something, where there is no request principal to ask. `scope` asks for that
+   * exact scope (a grant at `own` is not one at `all`); `level` is the member's level in the entity, whose level
+   * rows can widen a grant, as they do on a request. Both default to what a plain "holds it at any scope" needs.
    */
   async rolesHold(
     tenantId: string,
     organizationId: string,
     roles: readonly RoleKey[],
     permission: Permission,
+    options: { scope?: AccessScope; level?: AccessLevel } = {},
   ): Promise<boolean> {
-    return (await this.roleCache.grantsFor(tenantId, organizationId, roles)).has(permission);
+    const grants = await this.roleCache.grantsFor(
+      tenantId,
+      organizationId,
+      roles,
+      options.level ?? 'staff',
+    );
+    const held = grants.get(permission);
+    return held !== undefined && (options.scope === undefined || held === options.scope);
   }
 
   /** A `.where()` condition limiting `table` to the rows the current principal may `action`. */

@@ -1,10 +1,12 @@
 'use client';
 
+import { RATE_LIMITS } from '@bos/contracts';
 import { useActionState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select } from '@/components/ui/field';
+import { DecimalInput } from '@/components/ui/number-input';
 
 import { IDLE } from '../action-state';
 import { FormStatus } from '../ui';
@@ -32,15 +34,13 @@ export function FxForm({ today }: { today: string }) {
           hint="Up to 6 decimals."
         >
           {(control) => (
-            <Input
-              name="rateNpr"
-              inputMode="decimal"
-              autoComplete="off"
-              required
-              pattern="\d{1,12}(\.\d{1,6})?"
-              title="A number with up to 6 decimals, for example 133.5"
-              defaultValue={kept.rateNpr ?? ''}
+            <DecimalInput
               {...control}
+              name="rateNpr"
+              intDigits={RATE_LIMITS.intDigits}
+              scale={RATE_LIMITS.scale}
+              required
+              defaultValue={kept.rateNpr ?? ''}
             />
           )}
         </Field>

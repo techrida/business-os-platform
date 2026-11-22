@@ -5,8 +5,10 @@ import { useActionState, useEffect, useRef, useState, type ReactNode } from 'rea
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { MoneyInput, QuantityInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -99,12 +101,18 @@ export function PrForm({
     (field: HeaderKey) =>
     (e: { target: { value: string } }): void =>
       setValues((v) => ({ ...v, [field]: e.target.value }));
+  const setLineValue = (
+    uid: number,
+    field: Exclude<keyof LineValues, 'requiresSerials'>,
+    value: string,
+  ): void =>
+    setRows((rs) =>
+      rs.map((r) => (r.uid === uid ? { ...r, line: { ...r.line, [field]: value } } : r)),
+    );
   const setLine =
     (uid: number, field: Exclude<keyof LineValues, 'requiresSerials'>) =>
     (e: { target: { value: string } }): void =>
-      setRows((rs) =>
-        rs.map((r) => (r.uid === uid ? { ...r, line: { ...r.line, [field]: e.target.value } } : r)),
-      );
+      setLineValue(uid, field, e.target.value);
   const addLine = (): void => {
     setRows((rs) =>
       rs.length >= MAX_LINES ? rs : [...rs, { uid: nextUid.current++, line: emptyLine() }],
@@ -187,11 +195,10 @@ export function PrForm({
           </Field>
           <Field label="Needed by" error={err.requiredBy}>
             {(control) => (
-              <Input
-                type="date"
+              <DatePicker
                 name="requiredBy"
                 value={values.requiredBy}
-                onChange={set('requiredBy')}
+                onChange={(iso) => setValues((v) => ({ ...v, requiredBy: iso }))}
                 required
                 {...control}
               />
@@ -431,13 +438,12 @@ export function PrForm({
                     </Field>
                     <Field label="Quantity" error={err[`lines.${i}.quantity`]}>
                       {(control) => (
-                        <Input
+                        <QuantityInput
                           name={`lines.${i}.quantity`}
                           value={row.line.quantity}
-                          onChange={setLine(row.uid, 'quantity')}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          className={styles.numeric}
+                          onValueChange={(plain) => setLineValue(row.uid, 'quantity', plain)}
+                          uom={row.line.uom.trim() || undefined}
+                          currency={values.currency as Currency}
                           required
                           {...control}
                         />
@@ -448,13 +454,13 @@ export function PrForm({
                       error={err[`lines.${i}.estimatedUnitPrice`]}
                     >
                       {(control) => (
-                        <Input
+                        <MoneyInput
                           name={`lines.${i}.estimatedUnitPrice`}
                           value={row.line.estimatedUnitPrice}
-                          onChange={setLine(row.uid, 'estimatedUnitPrice')}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          className={styles.numeric}
+                          onValueChange={(plain) =>
+                            setLineValue(row.uid, 'estimatedUnitPrice', plain)
+                          }
+                          currency={values.currency as Currency}
                           required
                           {...control}
                         />

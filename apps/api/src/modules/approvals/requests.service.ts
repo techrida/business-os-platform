@@ -571,6 +571,7 @@ export class ApprovalsService {
         .where(
           and(
             eq(approvalActions.tenantId, scope.tenantId),
+            eq(approvalActions.organizationId, scope.organizationId),
             eq(approvalActions.actorUserId, userId),
             eq(approvalActions.requestId, requestId),
             eq(approvalActions.idempotencyKey, idempotencyKey),

@@ -70,6 +70,20 @@ describe('allocate panel', () => {
     expect(html).toContain('inputMode="decimal"');
   });
 
+  it('takes each amount in a money box in the payment currency that posts through a hidden input', () => {
+    const html = render({ currency: 'USD' });
+    const box = /<input[^>]*aria-label="Amount to allocate to INV-2083\/84-00007"[^>]*>/.exec(
+      html,
+    )?.[0];
+    expect(box).toBeDefined();
+    // Old code put the name on the typed text box itself, with no currency inside it.
+    expect(box).not.toContain('name=');
+    expect(html).toContain(`<input type="hidden" name="amount:${INVOICE_ID}" value=""/>`);
+    const prefixId = /aria-describedby="([^"\s]+)/.exec(box ?? '')?.[1];
+    expect(html).toContain(`id="${prefixId}"`);
+    expect(new RegExp(`id="${prefixId}"[^>]*>USD<`).test(html)).toBe(true);
+  });
+
   it('carries the payment id and the page key, and shows no total or remaining check of its own', () => {
     const html = render();
     expect(html).toContain(`name="paymentId" value="${PAYMENT_ID}"`);

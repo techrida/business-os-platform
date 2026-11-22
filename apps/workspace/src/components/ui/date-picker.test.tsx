@@ -2,7 +2,7 @@
 import { act, useState } from 'react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
-import { click, mountForm, settle } from '@/test/form-interactions';
+import { click, mountForm, settle, submit } from '@/test/form-interactions';
 import { DatePicker } from './date-picker';
 import { DateTimePicker } from './date-time-picker';
 import { Dialog } from './dialog';
@@ -140,4 +140,25 @@ it('DateTimePicker posts nothing until both the day and the time are set', async
     'input[type="hidden"][name="dueAt"]',
   )!;
   expect(hidden.value).toBe('');
+});
+
+it('keeps a controlled date after the form action resets the form', async () => {
+  function Form() {
+    const [date, setDate] = useState('2026-12-01');
+    return (
+      <form action={async () => {}}>
+        <DatePicker aria-label="Needed by" name="d" value={date} onChange={setDate} />
+        <button type="button" onClick={() => setDate('2026-12-05')}>
+          pick
+        </button>
+      </form>
+    );
+  }
+  mounted = await mountForm(<Form />);
+  await click(mounted.container.querySelector('button:not([aria-label])'));
+  await submit(mounted.container);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect((mounted.container.querySelector('input[name="d"]') as HTMLInputElement).value).toBe(
+    '2026-12-05',
+  );
 });
