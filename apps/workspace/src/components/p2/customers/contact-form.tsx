@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/field';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { toast } from '@/components/ui/toast';
 
 import type { ContactFormState } from './form-state';
@@ -80,6 +81,8 @@ export function ContactForm({
         </Alert>
       ) : null}
       <ContactFields
+        // A saved contact empties the form; fresh fields also drop the phone's other-country switch.
+        key={state.savedCount}
         values={values}
         onChange={(next) => setDraft({ savedCount: state.savedCount, values: next })}
         errors={state.errors}
@@ -194,18 +197,14 @@ function ContactFields({
         </Field>
         <Field
           label="Phone"
-          hint="Optional. Start with + and the country code, for example +9779812345678."
+          hint="Optional. Nepal numbers need only the digits."
           error={errors.phone}
         >
           {(control) => (
-            <Input
-              type="tel"
+            <PhoneInput
               name="phone"
               value={values.phone}
-              onChange={set('phone')}
-              maxLength={30}
-              autoComplete="off"
-              className={styles.numeric}
+              onValueChange={(phone) => set('phone')({ target: { value: phone } })}
               {...control}
             />
           )}

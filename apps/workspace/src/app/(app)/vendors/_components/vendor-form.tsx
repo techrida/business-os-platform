@@ -6,6 +6,7 @@ import { type ReactNode, useActionState, useEffect, useRef, useState } from 'rea
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { PanInput } from '@/components/ui/pan-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
@@ -151,14 +152,10 @@ export function VendorForm({
       error={err.pan}
     >
       {(control) => (
-        <Input
+        <PanInput
           name="pan"
           value={values.pan}
-          onChange={set('pan')}
-          inputMode="numeric"
-          maxLength={9}
-          autoComplete="off"
-          className={styles.numeric}
+          onValueChange={(pan) => set('pan')({ target: { value: pan } })}
           readOnly={lockIdentity}
           required
           {...control}
