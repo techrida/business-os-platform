@@ -279,7 +279,7 @@ export function DatePicker({
     const onLabelClick = (event: MouseEvent) => {
       const label = event.target instanceof Element ? event.target.closest('label') : null;
       if (label?.htmlFor !== id) return;
-      rootRef.current?.querySelector<HTMLElement>('[role="spinbutton"]')?.focus();
+      rootRef.current?.querySelector<HTMLElement>('[role="spinbutton"], [role="textbox"]')?.focus();
     };
     doc.addEventListener('click', onLabelClick);
     return () => doc.removeEventListener('click', onLabelClick);

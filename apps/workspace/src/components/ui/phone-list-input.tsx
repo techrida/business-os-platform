@@ -414,7 +414,11 @@ export function PhoneListInput({
   }
 
   function onCountry(row: PhoneRowState, country: CountryCode) {
-    if (country === row.country && row.mode === 'national') return;
+    if (country === row.country && row.mode === 'national') {
+      // A deliberate pick stops the row following the party country.
+      if (!row.countryPicked) update(row.key, (current) => ({ ...current, countryPicked: true }));
+      return;
+    }
     update(row.key, (current) => {
       // The digits after the old code carry over to the new one, so picking the wrong country and back loses nothing.
       const prefix = `+${dialOf(current.country)}`;
@@ -422,12 +426,14 @@ export function PhoneListInput({
         current.e164.startsWith(prefix) && ALL_DIGITS.test(current.e164.slice(prefix.length))
           ? current.e164.slice(prefix.length)
           : null;
-      const seed =
+      const rawSeed =
         current.e164 === ''
           ? ''
           : national === null
             ? current.e164
             : `+${dialOf(country)}${national}`;
+      // A bare calling code would show as an empty box that still holds a value, so it is cleared.
+      const seed = rawSeed === `+${dialOf(country)}` ? '' : rawSeed;
       return {
         country,
         mode: 'national',
