@@ -31,3 +31,15 @@ export const hasStrayComma = (raw: string): boolean => plainAmount(raw).includes
 
 /** True when the trimmed text holds a space, tab or other whitespace inside it. */
 export const hasInnerSpace = (raw: string): boolean => /\s/.test(raw.trim());
+
+/**
+ * The amount as a hydrated number input posts it: `1250.00` is `1250`, `1250.` is `1250`, `0.00` is `0`. A form posted
+ * before hydration carries the padded text, and a retry under the same idempotency key must not change body. Plain
+ * digits in (see `plainAmount`); anything else comes back unchanged for the caller's digit check to refuse.
+ */
+export function canonicalAmount(plain: string): string {
+  return /^\d+\.\d*$/.test(plain) ? plain.replace(/\.?0*$/, '') || '0' : plain;
+}
+
+/** `plainAmount` then `canonicalAmount`: the text a server action puts in its request body for a typed amount. */
+export const postedAmount = (raw: string): string => canonicalAmount(plainAmount(raw));

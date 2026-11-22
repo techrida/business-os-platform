@@ -143,7 +143,7 @@ describe('parseQuoteValues', () => {
         vendorId: V1,
         documentId: DOC,
         currency: 'NPR',
-        lines: [{ prLineId: LINE1, quantity: '10', unitPrice: '450000.00', taxCodeId: TAX }],
+        lines: [{ prLineId: LINE1, quantity: '10', unitPrice: '450000', taxCodeId: TAX }],
       },
     });
   });
@@ -249,6 +249,39 @@ describe('parseQuoteValues', () => {
       expect(out.errors['lines.0.quantity']).toBe('Remove the space inside the number.');
       expect(out.errors['lines.0.unitPrice']).toBe('Remove the space inside the number.');
       expect(out.errors['lines.1.unitPrice']).toMatch(/2 decimal places/);
+    }
+  });
+
+  it('sends the same body for grouped or zero-padded text as for the plain number', () => {
+    // A form posted before hydration carries the typed text; a hydrated number box posts the plain number.
+    const quote = (q0: string, p0: string, q1: string, p1: string) => {
+      const v = quoteValuesFromForm(quoteForm());
+      v.lines[0]!.quantity = q0;
+      v.lines[0]!.unitPrice = p0;
+      v.lines[1]!.include = true;
+      v.lines[1]!.quantity = q1;
+      v.lines[1]!.unitPrice = p1;
+      v.lines[1]!.taxCodeId = TAX;
+      return parseQuoteValues(v);
+    };
+    const typed = quote('1,500.00', '12,50,000.00', '10.50', '10.50');
+    expect(typed).toEqual(quote('1500', '1250000', '10.5', '10.5'));
+    expect(typed.ok && typed.data.lines).toEqual([
+      { prLineId: LINE1, quantity: '1500', unitPrice: '1250000', taxCodeId: TAX },
+      { prLineId: LINE2, quantity: '10.5', unitPrice: '10.5', taxCodeId: TAX },
+    ]);
+  });
+
+  it('still refuses a decimal comma and a space inside a quantity or price', () => {
+    const v = quoteValuesFromForm(quoteForm());
+    v.lines[0]!.quantity = '1,5';
+    v.lines[0]!.unitPrice = '10 50';
+    const out = parseQuoteValues(v);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.errors['lines.0.quantity']).toBeDefined();
+      expect(out.errors['lines.0.quantity']).not.toBe('Remove the space inside the number.');
+      expect(out.errors['lines.0.unitPrice']).toBe('Remove the space inside the number.');
     }
   });
 });

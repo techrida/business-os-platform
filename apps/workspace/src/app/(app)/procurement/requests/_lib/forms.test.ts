@@ -138,10 +138,53 @@ describe('parsePrValues', () => {
     if (!r.ok) expect(r.errors.lines).toMatch(/at least one line/i);
   });
 
-  it('keeps quantities and prices as the text typed (no arithmetic)', () => {
+  it('keeps quantities and prices as text, only the trailing zeros dropped (no arithmetic)', () => {
     const r = parsePrValues(valid());
     expect(r.ok && r.data.lines[0]?.quantity).toBe('10');
-    expect(r.ok && r.data.lines[0]?.estimatedUnitPrice).toBe('4500.00');
+    expect(r.ok && r.data.lines[0]?.estimatedUnitPrice).toBe('4500');
+  });
+
+  it('sends the same body for grouped or zero-padded text as for the plain number', () => {
+    // A form posted before hydration carries the typed text; a hydrated number box posts the plain number.
+    const line = (quantity: string, estimatedUnitPrice: string) => ({
+      description: 'Chair',
+      specification: '',
+      uom: 'pcs',
+      quantity,
+      estimatedUnitPrice,
+    });
+    const typed = parsePrValues(
+      valid({ lines: [line('1,500.00', '12,50,000.00'), line('10.50', '10.50')] }),
+    );
+    const plain = parsePrValues(valid({ lines: [line('1500', '1250000'), line('10.5', '10.5')] }));
+    expect(typed.ok).toBe(true);
+    expect(typed).toEqual(plain);
+    expect(typed.ok && typed.data.lines.map((l) => [l.quantity, l.estimatedUnitPrice])).toEqual([
+      ['1500', '1250000'],
+      ['10.5', '10.5'],
+    ]);
+  });
+
+  it('still refuses a decimal comma in a quantity or price', () => {
+    const r = parsePrValues(
+      valid({
+        lines: [
+          {
+            description: 'Chair',
+            specification: '',
+            uom: 'pcs',
+            quantity: '1,5',
+            estimatedUnitPrice: '10,50',
+          },
+        ],
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors['lines.0.quantity']).toBeDefined();
+      expect(r.errors['lines.0.estimatedUnitPrice']).toBeDefined();
+      expect(r.errors['lines.0.quantity']).not.toBe('Remove the space inside the number.');
+    }
   });
 
   it('says to remove the space in a quantity or price typed as "10 50"', () => {

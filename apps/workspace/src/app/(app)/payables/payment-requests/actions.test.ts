@@ -76,7 +76,8 @@ describe('payment request actions', () => {
         fromBankAccountId: id,
         currency: 'NPR',
         paymentType: 'settlement',
-        allocations: [{ openItemId: id, amount: '111500.00' }],
+        // The padded "111500.00" goes as a hydrated box posts it (R5 EF2).
+        allocations: [{ openItemId: id, amount: '111500' }],
       },
       key,
     );

@@ -1,4 +1,5 @@
 import { VendorBillLineBodySchema } from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -27,7 +28,7 @@ const row = (over: Partial<LineRow> = {}): LineRow => ({
 });
 
 describe('parseBillLines', () => {
-  it('builds lines the contract accepts, with the strings exactly as typed (trimmed)', () => {
+  it('builds lines the contract accepts, with the numbers as a hydrated number input posts them', () => {
     const out = parseBillLines([
       row({ quantity: ' 2.5 ', tdsCodeId: TDS, poLineId: POLINE, receiptLineId: RECEIPT }),
     ]);
@@ -39,7 +40,7 @@ describe('parseBillLines', () => {
         receiptLineId: RECEIPT,
         accountId: ACCOUNT,
         quantity: '2.5',
-        unitPrice: '1000.50',
+        unitPrice: '1000.5',
         taxCodeId: TAX,
         tdsCodeId: TDS,
       },
@@ -94,7 +95,35 @@ describe('parseBillLines', () => {
 
   it('accepts the plain amount a grouped price box posts', () => {
     const out = parseBillLines([row({ quantity: '1250000', unitPrice: '1250000.00' })]);
-    expect(out.ok && out.lines[0]).toMatchObject({ quantity: '1250000', unitPrice: '1250000.00' });
+    expect(out.ok && out.lines[0]).toMatchObject({ quantity: '1250000', unitPrice: '1250000' });
+  });
+
+  it('posts the same line body for grouped or padded text as for the canonical text', () => {
+    // Fails on the old code: "2.5000" and "1,250.50" went into the body as typed, so a form posted before
+    // hydration and its retry under the same idempotency key sent different bodies.
+    const typed = parseBillLines([row({ quantity: '2.5000', unitPrice: '1,250.50' })]);
+    const canonical = parseBillLines([row({ quantity: '2.5', unitPrice: '1250.5' })]);
+    expect(typed.ok && canonical.ok).toBe(true);
+    if (!typed.ok || !canonical.ok) return;
+    expect(typed.lines[0]).toMatchObject({ quantity: '2.5', unitPrice: '1250.5' });
+    expect(typed.lines).toEqual(canonical.lines);
+    for (const l of typed.lines) expect(VendorBillLineBodySchema.safeParse(l).success).toBe(true);
+  });
+
+  it('still refuses a price with a space inside, with its own reason', () => {
+    const out = parseBillLines([row({ unitPrice: '10 50' })]);
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.errors['0.unitPrice']).toBe(NO_SPACES);
+  });
+
+  it('still refuses a decimal comma: "1,5" is not read as 15', () => {
+    const out = parseBillLines([row({ quantity: '1,5', unitPrice: '1,5' })]);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors['0.quantity']).toBe('Use a number with up to 4 decimal places.');
+    expect(out.errors['0.unitPrice']).toBe(
+      'Use an amount such as 1250.50, with up to 2 decimal places.',
+    );
   });
 
   it('refuses a price with a sign, an exponent or too many digits, and more than 200 lines', () => {

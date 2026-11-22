@@ -65,9 +65,26 @@ describe('allocateAction', () => {
     expect(path).toBe(`/v1/payments/${PAYMENT_ID}/allocations`);
     expect(init.method).toBe('POST');
     expect(sentKey(0)).toBe(KEY);
-    expect(sentBody(0)).toEqual({ lines: [{ invoiceId: INVOICE_ID, amount: '500000.00' }] });
+    // The padded "500000.00" goes as a hydrated box posts it (R5 EF2).
+    expect(sentBody(0)).toEqual({ lines: [{ invoiceId: INVOICE_ID, amount: '500000' }] });
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/payments/${PAYMENT_ID}`);
   });
+
+  it.each([
+    ['1,500.00', '1500'],
+    ['10.50', '10.5'],
+    ['12,50,000.00', '1250000'],
+  ])(
+    'sends grouped or padded %s exactly as the plain %s, so a retry before hydration is the same request (R5 EF2)',
+    async (typed, plain) => {
+      mocks.apiFetch.mockImplementation(() => answer(200, [allocationRow()]));
+      await allocateAction(prev, form({ ...base, [`amount:${INVOICE_ID}`]: typed }));
+      await allocateAction(prev, form({ ...base, [`amount:${INVOICE_ID}`]: plain }));
+      expect(mocks.apiFetch).toHaveBeenCalledTimes(2);
+      expect(sentBody(0)).toEqual({ lines: [{ invoiceId: INVOICE_ID, amount: plain }] });
+      expect(sentBody(0)).toEqual(sentBody(1));
+    },
+  );
 
   it('takes a new key once the allocation is accepted, so the next one is a new request', async () => {
     mocks.apiFetch.mockImplementation(() => answer(200, [allocationRow()]));
@@ -81,7 +98,7 @@ describe('allocateAction', () => {
     await allocateAction(prev, form({ ...one, [`amount:${INVOICE_2}`]: '9999999.5' }));
     expect(sentBody(0)).toEqual({
       lines: [
-        { invoiceId: INVOICE_ID, amount: '500000.00' },
+        { invoiceId: INVOICE_ID, amount: '500000' },
         { invoiceId: INVOICE_2, amount: '9999999.5' },
       ],
     });
@@ -94,7 +111,8 @@ describe('allocateAction', () => {
     expect(state.errors?.form).toMatch(/at least one invoice/i);
   });
 
-  it.each(['0', '0.00', '-5', '12.345', '1,500', 'abc', '1e3', '.5'])(
+  // "1,500" is grouping and now goes as 1500 (R5 EF2); "1,5" and "10,50" are decimal commas and stay refused.
+  it.each(['0', '0.00', '-5', '12.345', '1,5', '10,50', 'abc', '1e3', '.5'])(
     'refuses %s as an amount, names the invoice and keeps the key',
     async (bad) => {
       const state = await allocateAction(
