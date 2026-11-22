@@ -14,7 +14,7 @@ import { stat } from 'node:fs/promises';
 import { documents, documentVersions, scoped } from '@bos/db';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { and, asc, eq, isNull, lt } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, lt } from 'drizzle-orm';
 import type { Job, Queue } from 'bullmq';
 
 import { DB, type Db } from '../db/db.module';
@@ -98,6 +98,12 @@ export class ScanProcessor extends WorkerHost {
     // A retried or duplicated job must not scan or promote a version twice.
     if (v === undefined || v.status !== 'quarantined') {
       this.logger.warn(`scan skipped for version ${data.versionId}: ${v?.status ?? 'not found'}`);
+      return 'skipped';
+    }
+    // The bytes are only a file to scan once the upload recorded that they passed its length and type checks. Before
+    // that (a stopped process, a client still sending) they are unvalidated and must never be scanned clean.
+    if (v.sha256 === null || v.detectedMime === null) {
+      this.logger.warn(`scan skipped for version ${v.id}: its upload never finished validating`);
       return 'skipped';
     }
     // A removed document's quarantine bytes are deleted with it. A job that still arrives for it has nothing
@@ -391,7 +397,14 @@ export class ScanSweepProcessor extends WorkerHost {
   async sweep(now: Date = new Date()): Promise<SweepResult> {
     const cutoff = new Date(now.getTime() - SWEEP_STALE_MS);
     const stale = await this.list(
-      and(eq(documentVersions.status, 'quarantined'), lt(documentVersions.updatedAt, cutoff)),
+      and(
+        eq(documentVersions.status, 'quarantined'),
+        lt(documentVersions.updatedAt, cutoff),
+        // Validated uploads only (sha256 and detected type, recorded together after the checks). An upload that never recorded
+        // them stays quarantined for good: never scanned, published or served. The user uploads again as a new version.
+        isNotNull(documentVersions.sha256),
+        isNotNull(documentVersions.detectedMime),
+      ),
     );
     const failed = await this.list(
       and(
