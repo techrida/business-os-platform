@@ -8,9 +8,11 @@ import {
   useEffect,
   useId,
   useInsertionEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from 'react';
 import {
   Button,
@@ -54,20 +56,61 @@ function defined<T extends object>(bag: T): { [K in keyof T]: Exclude<T[K], unde
 /**
  * Rendered inside the date field, where React Aria keeps its segment state. While a segment is
  * cleared, React Aria keeps the last complete date as its value, and posts it; this reports that
- * case, and the date the field holds, so the picker can post '' instead.
+ * case, and the date the field holds, so the picker can post '' instead. `unfinished` is any partly
+ * filled field, including one typed into from empty, which React Aria posts as ''.
  */
 function CompletenessWatch({
   onChange,
 }: {
-  onChange: (incomplete: boolean, current: string) => void;
+  onChange: (incomplete: boolean, current: string, unfinished: boolean) => void;
 }) {
   const state = useContext(DateFieldStateContext);
   const current = state?.value ? state.value.toString() : '';
-  const incomplete =
-    current !== '' &&
-    (state?.segments.some((segment) => segment.isEditable && segment.isPlaceholder) ?? false);
-  useEffect(() => onChange(incomplete, current), [incomplete, current, onChange]);
+  const editable = state?.segments.filter((segment) => segment.isEditable) ?? [];
+  const someEmpty = editable.some((segment) => segment.isPlaceholder);
+  const incomplete = current !== '' && someEmpty;
+  const unfinished = someEmpty && (current !== '' || editable.some((s) => !s.isPlaceholder));
+  useEffect(
+    () => onChange(incomplete, current, unfinished),
+    [incomplete, current, unfinished, onChange],
+  );
   return null;
+}
+
+/**
+ * Keeps a native-validated form from submitting a partly typed date, as a native date input does.
+ * Nameless, so it posts nothing; the browser cannot point at a hidden field, so the empty segment
+ * takes the focus instead.
+ */
+export function UnfinishedBlocker({
+  message,
+  root,
+  disabled,
+}: {
+  message: string;
+  root: RefObject<HTMLElement | null>;
+  disabled?: boolean | undefined;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.setCustomValidity(message);
+  }, [message]);
+  return (
+    <input
+      ref={ref}
+      type="text"
+      hidden
+      tabIndex={-1}
+      aria-hidden="true"
+      value=""
+      disabled={disabled === true}
+      onChange={() => {}}
+      onInvalid={(event) => {
+        event.preventDefault();
+        root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
+      }}
+    />
+  );
 }
 
 export interface DatePickerProps {
@@ -148,6 +191,7 @@ export function DatePicker({
   const rootRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState(defaultValue ?? '');
   const [incomplete, setIncomplete] = useState(false);
+  const [unfinished, setUnfinished] = useState(false);
   // The date React Aria still holds while the field is incomplete. A controlled parent hears '' and
   // passes '' back; React Aria keeps getting this date, or it would wipe the segments still filled.
   const [held, setHeld] = useState<string | null>(null);
@@ -164,16 +208,19 @@ export function DatePicker({
   });
   // React 19 resets a form after every function action, and React Aria then reports the reset as a
   // change to a controlled picker, which would wipe what the user chose. A reset restores the
-  // default of an uncontrolled picker; a controlled parent keeps its own value.
+  // default of an uncontrolled picker; a controlled parent keeps its own value. An incomplete
+  // controlled date posted '' and its parent holds ''; dropping the held date shows that, where
+  // React Aria would refill the segments from the held date and post it.
   const isResetting = useFormReset(rootRef, () => {
     setTyped(defaultValue ?? '');
-    if (value === undefined) hold(null);
+    hold(null);
   });
   const watchCompleteness = useCallback(
-    (nowIncomplete: boolean, current: string) => {
+    (nowIncomplete: boolean, current: string, nowUnfinished: boolean) => {
       const was = heldRef.current;
       hold(nowIncomplete ? current : null);
       setIncomplete(nowIncomplete);
+      setUnfinished(nowUnfinished);
       if (nowIncomplete && was === null) latestOnChange.current?.('');
       // Retyping the date React Aria already holds completes the field without a change event.
       else if (!nowIncomplete && was !== null) latestOnChange.current?.(current);
@@ -323,20 +370,10 @@ export function DatePicker({
         </Popover>
       </AriaDatePicker>
       {incomplete && name !== undefined ? (
-        <input
-          type={validation === 'native' && required ? 'text' : 'hidden'}
-          hidden
-          name={name}
-          value=""
-          required={validation === 'native' && required === true}
-          disabled={disabled}
-          onChange={() => {}}
-          onInvalid={(event) => {
-            // Hidden, so the browser cannot point at it; take the user to the empty segment instead.
-            event.preventDefault();
-            rootRef.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
-          }}
-        />
+        <input type="hidden" name={name} value="" disabled={disabled} />
+      ) : null}
+      {validation === 'native' && unfinished ? (
+        <UnfinishedBlocker message="Finish the date" root={rootRef} disabled={disabled} />
       ) : null}
       {bs ? (
         <span id={bsId} className={styles.bs}>

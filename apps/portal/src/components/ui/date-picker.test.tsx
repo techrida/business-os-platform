@@ -95,17 +95,27 @@ it('tells a controlled parent the date is empty while incomplete, without wiping
   expect(mounted.container.textContent).toContain('05 Mangsir 2083 BS');
 }, 15_000);
 
-it('after the form action resets an incomplete controlled date, it posts the date it shows', async () => {
+it('after a refused submit resets an incomplete controlled date, it shows, posts and reports empty', async () => {
+  const heard: string[] = [];
+  const sent: unknown[] = [];
   function Harness() {
     const [day, setDay] = useState('2026-11-21');
     return (
-      <form action={async () => {}}>
+      <form
+        noValidate
+        action={(form: FormData) => {
+          sent.push(form.get('d'));
+        }}
+      >
         <DatePicker
           aria-label="Received on"
           name="d"
           value={day}
-          onChange={setDay}
-          validation="aria"
+          onChange={(next) => {
+            heard.push(next);
+            setDay(next);
+          }}
+          required
         />
       </form>
     );
@@ -114,12 +124,15 @@ it('after the form action resets an incomplete controlled date, it posts the dat
   await clearSegment(segment('day'));
   expect(posted('d')).toBe('');
   await submit(mounted.container);
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  // React Aria refills the segments from the date it holds on a reset; what posts must match.
-  const day = segment('day');
-  expect(day.hasAttribute('data-placeholder')).toBe(false);
-  expect(posted('d')).toBe(`2026-11-${day.textContent.padStart(2, '0')}`);
-  expect(segment('month').textContent).toBe('11');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(sent).toEqual(['']);
+  // React Aria would refill the day from the date it held (2, after the first Backspace).
+  expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+  expect(posted('d')).toBe('');
+  expect(heard).toEqual(['2026-11-02', '']);
+  await submit(mounted.container);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(sent).toEqual(['', '']);
 }, 15_000);
 
 it('lets the browser block a required picker left incomplete in a plain form', async () => {
@@ -153,4 +166,31 @@ it('completes again when the held date is picked from the calendar', async () =>
   await act(() => Promise.resolve(selected!.click()));
   expect(segment('day').hasAttribute('data-placeholder')).toBe(false);
   expect(posted('d')).toBe(`2026-11-${segment('day').textContent.padStart(2, '0')}`);
+}, 15_000);
+
+it('blocks a plain form while an optional date is incomplete, as a native date input does', async () => {
+  await mountForm(
+    <form method="get">
+      <DatePicker aria-label="From" name="from" defaultValue="2026-11-21" />
+    </form>,
+  );
+  const form = mounted.container.querySelector('form')!;
+  expect(form.checkValidity()).toBe(true);
+  await clearSegment(segment('day'));
+  expect(form.checkValidity()).toBe(false);
+  await typeSegment(segment('day'), '21');
+  expect(form.checkValidity()).toBe(true);
+}, 15_000);
+
+it('blocks a plain form when only part of an empty date is typed', async () => {
+  await mountForm(
+    <form method="get">
+      <DatePicker aria-label="From" name="from" />
+    </form>,
+  );
+  const form = mounted.container.querySelector('form')!;
+  await act(() => Promise.resolve((segment('day') as HTMLElement).focus()));
+  await typeSegment(segment('day'), '21');
+  expect(posted('from')).toBe('');
+  expect(form.checkValidity()).toBe(false);
 }, 15_000);
