@@ -220,4 +220,9 @@ describe('addresses', () => {
     expect(PrintAddressSchema.safeParse(address).success).toBe(false);
     expect(PrintAddressSchema.safeParse({ ...address, country: 'NP' }).success).toBe(true);
   });
+
+  it('refuses a foreign number written with its trunk 0 after the country code', () => {
+    expect(phoneProblem('GB', '+4407911123456')).not.toBeNull();
+    expect(phoneProblem('GB', '+447911123456')).toBeNull();
+  });
 });

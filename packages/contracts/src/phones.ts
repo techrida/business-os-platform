@@ -63,6 +63,8 @@ export function phoneProblem(country: CountryCode, e164: string): string | null 
     return `a ${countryName(country)} number starts with +${code}`;
   }
   if (!parsed.isValid()) return `not a valid ${countryName(country)} number`;
+  // libphonenumber drops a national trunk 0 (+44 07911...): two spellings of one number would both pass.
+  if (parsed.number !== e164) return 'leave out the leading 0 of the national number';
   return null;
 }
 
