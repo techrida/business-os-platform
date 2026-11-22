@@ -15,7 +15,9 @@
 // active, sync never clears the flag, and an admin resolves it after reading ZITADEL again. One best-effort remote
 // close follows; nothing unlocks, reactivates or compensates in ZITADEL. A 4xx refusal on the first call changed
 // nothing and flags nobody. The last-Founder guard holds across the three phases through a per-tenant lease
-// (withFounderRemovalLease) with a hard deadline, after which no provider call starts.
+// (withFounderRemovalLease) with a hard deadline, after which no provider call starts. Taking a Founder away is recorded
+// on the lease before (B) and cleared by (C) or the denial; a holder that takes a stalled lease over flags that person
+// before its own guard runs, and the stalled holder, once it resumes, writes nothing more.
 //
 // What each action does depends on the person's status and lock (planFor):
 //   deactivate  active: ZITADEL deactivate. Locked (either kind): ZITADEL unlock, then deactivate (if deactivate fails
@@ -37,12 +39,16 @@ import { AuditService } from '../audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
 import {
+  assertFounderLeaseHeld,
   assertWithinOperationDeadline,
+  dropOwnFounderRemoval,
+  FounderLeaseLostError,
   IdentityReconciler,
   isDefiniteRefusal,
+  recordFounderRemoval,
   withFounderRemovalLease,
 } from './identity-reconcile';
-import { soleFounderEntities } from './user-mirror';
+import { holdsFounder, soleFounderEntities } from './user-mirror';
 import { type UserLock, type UserRow, UsersStore } from './users.store';
 import {
   type MirroredStatus,
@@ -210,8 +216,15 @@ export class UserStatusService {
   ): Promise<void> {
     // A deactivate or lock may take a Founder away: one identity change at a time per tenant, so the last-Founder guard
     // of (A) still holds when ZITADEL has been changed and (C) writes (see the header). The other actions take it too.
-    return withFounderRemovalLease(this.store, scope.tenantId, () =>
-      this.run(scope, actor, userId, action, assertAccess),
+    // A removal this action records on the lease and never clears (it stalls past the TTL after ZITADEL closed the
+    // person) is settled by the next holder before its guard runs.
+    return withFounderRemovalLease(
+      this.store,
+      scope.tenantId,
+      () => this.run(scope, actor, userId, action, assertAccess),
+      undefined,
+      (removal, clearRecord) =>
+        this.reconciler.settleOutstandingRemoval(scope, actor, removal, clearRecord),
     );
   }
 
@@ -222,7 +235,7 @@ export class UserStatusService {
     action: UserStatusAction,
     assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<void> {
-    const { target, plan, idpOrgId } = await withTx(
+    const { target, plan, idpOrgId, removesFounder } = await withTx(
       this.db,
       scope,
       actor,
@@ -236,12 +249,19 @@ export class UserStatusService {
           throw new NotFoundException('User not found');
         }
         const planned = await this.guardAndPlan(tx, scope.tenantId, actor, found, action);
-        return { target: found, plan: planned, idpOrgId: org.idpOrgId };
+        const founder =
+          planned.removesAccess && (await holdsFounder(tx, this.store, scope.tenantId, found.id));
+        return {
+          target: found,
+          plan: planned,
+          idpOrgId: org.idpOrgId,
+          removesFounder: founder,
+        };
       },
       READ_ONLY,
     );
 
-    await this.runSteps(scope, actor, plan, target, action);
+    await this.runSteps(scope, actor, plan, target, action, removesFounder);
 
     try {
       await withTx(
@@ -250,6 +270,8 @@ export class UserStatusService {
         actor,
         async (tx) => {
           await lockAccessRevision(tx, scope.tenantId);
+          // Clears the recorded removal with this write; a holder whose lease was taken over writes nothing.
+          await assertFounderLeaseHeld(tx, userId);
           if (assertAccess) await assertAccess(tx);
           const current = await this.store.findById(tx, scope, userId, true);
           if (!current || current.idpOrgId !== idpOrgId) throw userChangedConflict();
@@ -298,6 +320,8 @@ export class UserStatusService {
         AFTER_ACCESS_LOCK,
       );
     } catch (error) {
+      // The lease was taken over: the new holder settles the recorded removal, this one changes nothing more.
+      if (error instanceof FounderLeaseLostError) throw error;
       // Phase B already changed ZITADEL: whatever failed here, the person is closed and flagged, never reopened.
       await this.deny(scope, actor, target, action, 'phase_c_failed');
       throw error;
@@ -342,15 +366,22 @@ export class UserStatusService {
     plan: Plan,
     target: UserRow,
     action: UserStatusAction,
+    removesFounder: boolean,
   ): Promise<void> {
     for (const [index, step] of plan.steps.entries()) {
-      if (index === 0) assertWithinOperationDeadline();
+      if (index === 0) {
+        assertWithinOperationDeadline();
+        // Taking a Founder away: recorded on the lease before the first call (see withFounderRemovalLease).
+        if (removesFounder) await recordFounderRemoval(target, action);
+      }
       try {
         if (index > 0) assertWithinOperationDeadline();
         await this.identityCall(() => step(this.zitadel, target.zitadelUserId));
       } catch (error) {
         if (index > 0 || !isDefiniteRefusal(error)) {
           await this.deny(scope, actor, target, action, 'phase_b_failed');
+        } else {
+          await dropOwnFounderRemoval(target.id);
         }
         throw error;
       }

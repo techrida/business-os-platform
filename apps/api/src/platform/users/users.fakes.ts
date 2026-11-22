@@ -11,6 +11,7 @@ import {
   type ListedUser,
   type ListedUsers,
   type MembershipRow,
+  type PendingFounderRemoval,
   type PlacementDepartment,
   type Queryable,
   type ExpiredLock,
@@ -358,6 +359,24 @@ export class FakeUsersStore extends UsersStore {
   releaseFounderLease(tenantId: string, leaseId: string) {
     if (this.founderLeases.get(tenantId) === leaseId) this.founderLeases.delete(tenantId);
     return Promise.resolve();
+  }
+  /** The outstanding Founder removal per tenant; it stays across a release and passes to the next holder. */
+  founderRemovals = new Map<string, PendingFounderRemoval>();
+  recordFounderRemoval(tenantId: string, leaseId: string, removal: PendingFounderRemoval) {
+    if (this.founderLeases.get(tenantId) !== leaseId || this.founderRemovals.has(tenantId)) {
+      return Promise.resolve(false);
+    }
+    this.founderRemovals.set(tenantId, removal);
+    return Promise.resolve(true);
+  }
+  outstandingFounderRemoval(tenantId: string, leaseId: string) {
+    if (this.founderLeases.get(tenantId) !== leaseId) return Promise.resolve(null);
+    return Promise.resolve(this.founderRemovals.get(tenantId) ?? null);
+  }
+  settleFounderRemoval(tenantId: string, leaseId: string, _q?: Queryable) {
+    if (this.founderLeases.get(tenantId) !== leaseId) return Promise.resolve(false);
+    this.founderRemovals.delete(tenantId);
+    return Promise.resolve(true);
   }
 }
 
