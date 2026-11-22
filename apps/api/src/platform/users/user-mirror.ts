@@ -296,8 +296,7 @@ export class UserMirror {
     let row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
     // An invite whose database write never committed: its grants and mail may exist in ZITADEL, but BOS never made this
     // person. No row is created and no invited row is activated until the invite commits (or an admin resolves it).
-    const invitePending = row?.status === 'invited' || !row;
-    if (invitePending && (await this.store.isInvitePending(i.zitadelUserId))) {
+    if (await this.store.isInvitePending(i.zitadelUserId)) {
       throw new ForbiddenException('This invitation is not complete yet.');
     }
     if (!row) {
@@ -565,12 +564,20 @@ export class UserMirror {
       this.logger.warn(`users.resolve: ZITADEL unreadable (kind=${(error as Error).name})`);
       throw unreadable();
     }
-    const next = await this.nextState(
-      org,
-      { ...existing, identityReviewRequired: false },
-      read,
-      read.status,
-    );
+    let next: NextState;
+    try {
+      next = await this.nextState(
+        org,
+        { ...existing, identityReviewRequired: false },
+        read,
+        read.status,
+        true,
+      );
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      this.logger.warn(`users.resolve: ZITADEL unreadable (kind=${(error as Error).name})`);
+      throw unreadable();
+    }
     return { read, roles, next };
   }
 
@@ -600,6 +607,8 @@ export class UserMirror {
       });
     }
     await this.store.clearIdentityReview(tx, current.id);
+    // An admin has read ZITADEL: a failed invite's pending marker no longer keeps this person out.
+    await this.store.clearInvitePending(tx, current.zitadelUserId);
     await this.write(
       tx,
       org,
@@ -623,6 +632,12 @@ export class UserMirror {
       this.logger.warn(
         `users.apply skipped ${read.id}: unknown state from ZITADEL; left unchanged`,
       );
+      return false;
+    }
+    // An invite whose database write never committed: nothing here creates a row or opens one for this identity (a
+    // closing state is still written). The marker clears when the invite commits or an admin resolves it.
+    if (read.status !== 'inactive' && (await this.store.isInvitePending(read.id))) {
+      this.logger.warn(`users.apply skipped ${read.id}: its invite has not committed`);
       return false;
     }
     const scope = await this.entityScope(org.tenantId);
@@ -653,6 +668,7 @@ export class UserMirror {
     existing: UserRow | null,
     read: ZitadelUser,
     readStatus: MirroredStatus,
+    strict = false,
   ): Promise<NextState> {
     let user = read;
     let status = readStatus;
@@ -664,7 +680,15 @@ export class UserMirror {
       // `user` may have been read before `existing`. An admin status action may have finished in between, and
       // writing the older state back would undo it: a deactivated leaver active again until the next pass. So a
       // status or lock change is re-read now, after `existing`; apply writes only if the row is still that version.
-      const fresh = await this.zitadel.getUser(user.id).catch(() => null);
+      // Resolving a flagged person (strict) must not guess: an unconfirmed read propagates, so nothing is cleared.
+      const fresh = strict
+        ? await this.zitadel.getUser(user.id)
+        : await this.zitadel.getUser(user.id).catch(() => null);
+      if (strict && !fresh?.status) {
+        throw new ServiceUnavailableException(
+          'The sign-in service does not answer for this person right now. Try again later.',
+        );
+      }
       if (fresh?.status) {
         user = fresh;
         status = fresh.status;
