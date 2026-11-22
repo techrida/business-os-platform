@@ -2329,9 +2329,9 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     const { partyId } = await createParty(db.$client, { tenantId: f.tenantId, kind: 'customer' });
     await withTx(db, scopeA, systemActor('test'), (tx) =>
       tx.execute(
-        sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+        sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
             VALUES (${partyId}, ${f.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Credit Pvt. Ltd.', 'credit',
-                    '{"line1":"Ring Road","city":"Kathmandu","country":"NP"}'::jsonb)`,
+                    'Ring Road', 'Kathmandu')`,
       ),
     );
     party = partyId;

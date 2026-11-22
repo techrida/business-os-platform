@@ -275,10 +275,11 @@ async function partyOfA(ownerType: 'customer_logo' | 'vendor_logo'): Promise<str
   await withTx(db, a, systemActor('test'), (tx) =>
     kind === 'customer'
       ? tx.execute(sql`
-          INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+          INSERT INTO app.customers
+            (id, tenant_id, number, legal_name, name_norm, country, address_line, address_city)
           VALUES (${partyId}::uuid, ${a.tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`},
                   ${`Customer ${partyId.slice(0, 6)}`}, ${`customer ${partyId.slice(0, 6)}`},
-                  '{"line1":"Thamel 4","country":"NP"}'::jsonb)`)
+                  'NP', 'Thamel 4', 'Kathmandu')`)
       : tx.execute(sql`
           INSERT INTO app.vendors (id, tenant_id, legal_name, pan, status, created_by)
           VALUES (${partyId}::uuid, ${a.tenantId}::uuid, ${`Vendor ${partyId.slice(0, 6)}`},

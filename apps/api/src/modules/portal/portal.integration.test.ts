@@ -63,7 +63,7 @@ class MemoryLinkStore implements LinkStore {
   }
 }
 
-const ADDRESS = { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' };
+const ADDRESS = { line: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' } as const;
 
 let testDb: TestDatabase;
 let pool: Pool;
@@ -169,9 +169,9 @@ async function seedCustomer(scope: TxScope, name: string): Promise<Party> {
   const { partyId } = party;
   await withTx(db, scope, seedActor(), (tx) =>
     tx.execute(sql`
-      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
       VALUES (${partyId}::uuid, ${scope.tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`},
-              ${name}, ${name.toLowerCase()}, ${JSON.stringify(ADDRESS)}::jsonb)`),
+              ${name}, ${name.toLowerCase()}, ${ADDRESS.line}, ${ADDRESS.city})`),
   );
   return party;
 }

@@ -20,7 +20,9 @@ import { join } from 'node:path';
 import {
   ApprovalRequestDtoSchema,
   ChainVerifyDtoSchema,
+  ContactDtoSchema,
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
+  CustomerDtoSchema,
   CustomerQuotationViewSchema,
   ErrorBodySchema,
   LeadDtoSchema,
@@ -28,7 +30,10 @@ import {
   PreviewResultSchema,
   QuotationDtoSchema,
   QuotationVersionDtoSchema,
+  type AddressLines,
   type ApprovalRequestDto,
+  type PartyPhoneInput,
+  type PrintAddress,
   type QuotationVersionDto,
 } from '@bos/contracts';
 import { createParty, userRoles } from '@bos/db';
@@ -55,7 +60,10 @@ const e2e = inject('e2e');
 
 const PORTAL = 'http://portal.e2e.test';
 const USD_RATE = '133.5';
-const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+// The entity's address prints with its country; a customer's address holds only the lines, its country is its own
+// field (FX9).
+const ENTITY_ADDRESS: PrintAddress = { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const CUSTOMER_ADDRESS: AddressLines = { line: '1 Durbar Marg', city: 'Kathmandu' };
 const BUYER_EMAIL = 'buyer@himal-traders.test';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -276,7 +284,7 @@ describe('P2 exit: lead to won over HTTP', () => {
       .http()
       .put('/v1/admin/settings/entity.address')
       .set('authorization', founder)
-      .send({ value: ADDRESS });
+      .send({ value: ENTITY_ADDRESS });
     expect([200, 204], show(address)).toContain(address.status);
 
     const rate = await t
@@ -294,6 +302,7 @@ describe('P2 exit: lead to won over HTTP', () => {
       source: 'referral',
       companyName: 'Himal Traders Pvt. Ltd.',
       contactName: 'Sita Rai',
+      country: 'NP',
       email: BUYER_EMAIL,
     });
     expect(created.status, show(created)).toBe(201);
@@ -325,9 +334,16 @@ describe('P2 exit: lead to won over HTTP', () => {
       .send({
         customer: {
           mode: 'create',
-          customer: { legalName: 'Himal Traders Pvt. Ltd.', address: ADDRESS },
+          customer: {
+            legalName: 'Himal Traders Pvt. Ltd.',
+            country: 'NP',
+            address: CUSTOMER_ADDRESS,
+          },
         },
-        contact: { mode: 'create', contact: { fullName: 'Sita Rai', email: BUYER_EMAIL } },
+        contact: {
+          mode: 'create',
+          contact: { fullName: 'Sita Rai', email: BUYER_EMAIL, country: 'NP' },
+        },
         opportunityName: 'Himal Traders website',
         expectedVersion: lead.version,
       });
@@ -653,5 +669,59 @@ describe('P2 exit: lead to won over HTTP', () => {
       firstBadSeq: null,
     });
     expect(chain.rows).toBeGreaterThan(0);
+  });
+
+  // FX9: a foreign party needs no Nepal PAN, and each phone of a person carries its own country. Self-contained (its
+  // own customer and contact, after the journey), so a failed journey step cannot hide it.
+  it('11. a US customer without a PAN is created and read back; its contact keeps a US and a Nepal phone', async () => {
+    const sales = await auth('sales');
+    const phones: PartyPhoneInput[] = [
+      { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
+      { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: false },
+    ];
+    const created = await t
+      .http()
+      .post('/v1/customers')
+      .set('authorization', sales)
+      .set('idempotency-key', randomUUID())
+      .send({
+        legalName: 'Pacific Coast Imports Inc.',
+        country: 'US',
+        address: { line: '500 Market Street', city: 'San Francisco' },
+        contact: {
+          fullName: 'Dana Whitfield',
+          email: 'dana@pacific-coast-imports.test',
+          country: 'US',
+          phones,
+        },
+      });
+    expect(created.status, show(created)).toBe(201);
+    const customer = CustomerDtoSchema.parse(created.body);
+    expect(customer).toMatchObject({
+      legalName: 'Pacific Coast Imports Inc.',
+      panVatNo: null,
+      country: 'US',
+      address: { line: '500 Market Street', city: 'San Francisco' },
+    });
+
+    const read = await t.http().get(`/v1/customers/${customer.id}`).set('authorization', sales);
+    expect(read.status, show(read)).toBe(200);
+    expect(CustomerDtoSchema.parse(read.body)).toMatchObject({
+      id: customer.id,
+      panVatNo: null,
+      country: 'US',
+      address: { line: '500 Market Street', city: 'San Francisco' },
+    });
+
+    const contacts = await t
+      .http()
+      .get(`/v1/customers/${customer.id}/contacts`)
+      .set('authorization', sales);
+    expect(contacts.status, show(contacts)).toBe(200);
+    const list = (contacts.body as unknown[]).map((c) => ContactDtoSchema.parse(c));
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ fullName: 'Dana Whitfield', country: 'US', isPrimary: true });
+    // Primary first, then the saved order: the same two rows, each with its own country.
+    expect(list[0]!.phones).toEqual(phones);
   });
 });

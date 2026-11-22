@@ -43,14 +43,7 @@ function fakeSettings(values: Values): LetterheadSettings {
   };
 }
 
-const address = {
-  line1: 'Balaju',
-  city: 'Kathmandu',
-  district: 'Kathmandu',
-  province: 'Bagmati',
-  postalCode: '44600',
-  country: 'NP',
-};
+const address = { line: 'Balaju', city: 'Kathmandu', country: 'NP' };
 
 const settingsValues = (over: Values = {}): Values => ({
   'entity.address': address,
@@ -75,46 +68,25 @@ describe('buildMemoLetterhead', () => {
       'live',
       quietLog(),
     );
-    // The footer's parts (city and district, province and postal code, country name), one per line.
+    // The footer's parts (the address line, the city, the country name), one per line.
     expect(letterhead).toEqual({
-      addressLines: ['Balaju', 'Kathmandu, Kathmandu', 'Bagmati 44600', 'Nepal'],
+      addressLines: ['Balaju', 'Kathmandu', 'Nepal'],
       logoDataUrl: PNG,
       primaryColour: '#0f766e',
     });
   });
 
-  it('joins a fifth address part onto the fourth line, so the lines still read as the footer', async () => {
-    const letterhead = await buildMemoLetterhead(
-      fakeSettings(settingsValues({ 'entity.address': { ...address, line2: 'Ward 16' } })),
-      scope,
-      resolvesTo(PNG),
-      'live',
-      quietLog(),
-    );
-    expect(letterhead?.addressLines).toEqual([
-      'Balaju',
-      'Ward 16',
-      'Kathmandu, Kathmandu',
-      'Bagmati 44600, Nepal',
-    ]);
-  });
-
-  it('freezes an address whose city and district are each at their 100-character cap', async () => {
+  it('freezes an address whose line and city are each at their cap', async () => {
+    const line = 'L'.repeat(300);
     const city = 'C'.repeat(100);
-    const district = 'D'.repeat(100);
     const letterhead = await buildMemoLetterhead(
-      fakeSettings(
-        settingsValues({
-          'entity.address': { ...address, line2: 'L'.repeat(200), city, district },
-        }),
-      ),
+      fakeSettings(settingsValues({ 'entity.address': { ...address, line, city } })),
       scope,
       resolvesTo(PNG),
       'freeze',
       quietLog(),
     );
-    expect(letterhead?.addressLines[2]).toBe(`${city}, ${district}`);
-    expect(letterhead?.addressLines[2]).toHaveLength(202);
+    expect(letterhead?.addressLines).toEqual([line, city, 'Nepal']);
   });
 
   it('has no address lines when no address is set, and the default colour when no style is', async () => {
@@ -173,7 +145,7 @@ describe('buildMemoLetterhead', () => {
       log,
     );
     expect(letterhead).toMatchObject({ logoDataUrl: null, primaryColour: '#0f766e' });
-    expect(letterhead?.addressLines).toHaveLength(4);
+    expect(letterhead?.addressLines).toHaveLength(3);
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('kind=unavailable'));
     // Fixed words only: nothing from the failure reaches the log.
     expect(String(log.warn.mock.calls[0]?.[0])).not.toContain('disk gone');
@@ -287,7 +259,7 @@ describe('directory carries the live letterhead', () => {
       ...people,
       approverRule,
       letterhead: {
-        addressLines: ['Balaju', 'Kathmandu, Kathmandu', 'Bagmati 44600', 'Nepal'],
+        addressLines: ['Balaju', 'Kathmandu', 'Nepal'],
         logoDataUrl: PNG,
         primaryColour: '#0f766e',
       },
@@ -317,14 +289,14 @@ describe('submit freezes the letterhead (frozenTemplate)', () => {
     const frozen = await freeze(template);
     const before = structuredClone(frozen);
     expect(frozen.letterhead).toEqual({
-      addressLines: ['Balaju', 'Kathmandu, Kathmandu', 'Bagmati 44600', 'Nepal'],
+      addressLines: ['Balaju', 'Kathmandu', 'Nepal'],
       logoDataUrl: PNG,
       primaryColour: '#0f766e',
     });
     // The rest of the template is carried unchanged.
     expect({ ...frozen, letterhead: undefined }).toEqual({ ...template, letterhead: undefined });
 
-    values['entity.address'] = { line1: 'Lalitpur', city: 'Lalitpur', country: 'NP' };
+    values['entity.address'] = { line: 'Lalitpur', city: 'Lalitpur', country: 'NP' };
     values['document.style'] = { layout: 'ledger', primaryColour: '#be123c' };
     resolve.current = resolvesTo(NEW_PNG);
     expect(frozen).toEqual(before);

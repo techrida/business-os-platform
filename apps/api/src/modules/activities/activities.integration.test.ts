@@ -90,7 +90,9 @@ const LEAD_BODY = {
   source: 'referral' as const,
   companyName: 'Acme Pvt. Ltd.',
   contactName: 'Sita Rai',
+  country: 'NP' as const,
   currency: 'NPR' as const,
+  phones: [{ country: 'NP' as const, e164: '+9779812345678', isPrimary: true }],
 };
 /** A lead of the current acting user and entity. */
 const seedLead = async () => LeadDtoSchema.parse(await leadsService.create(LEAD_BODY));

@@ -67,7 +67,7 @@ const NOW = new Date('2026-11-09T06:00:00Z');
 /** One request id on every probe, so the error bodies can be compared byte for byte. */
 const REQUEST_ID = 'portal-billing-probe-0001';
 const SIGNED_PATH = /^\/v1\/files\/[A-Za-z0-9._~-]+$/;
-const ADDRESS = { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' };
+const ADDRESS = { line: 'Durbar Marg 1', city: 'Kathmandu' };
 
 class MemoryLinkStore implements LinkStore {
   private readonly keys = new Set<string>();
@@ -173,9 +173,9 @@ async function seedWorld(): Promise<World> {
     const { partyId } = await createParty(pool, { tenantId, kind: 'customer' });
     await withTx(db, scopeA, seedActor, (tx) =>
       tx.execute(sql`
-        INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+        INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
         VALUES (${partyId}::uuid, ${tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`}, ${name},
-                ${`${name.toLowerCase()}-${partyId}`}, ${JSON.stringify(ADDRESS)}::jsonb)`),
+                ${`${name.toLowerCase()}-${partyId}`}, ${ADDRESS.line}, ${ADDRESS.city})`),
     );
     parties.push(partyId);
   }
@@ -480,7 +480,7 @@ describe('portal invoice reads over HTTP on a real database', () => {
       await settings.set(tx, 'entity.profile', {
         displayName: 'Techrida',
         logoDocumentId: null,
-        phones: ['+97715550100'],
+        phones: [{ country: 'NP', e164: '+97715550100', label: null }],
         email: 'billing@techrida.example',
         website: 'https://techrida.example',
         panVatNo: null,
@@ -534,7 +534,8 @@ describe('portal invoice reads over HTTP on a real database', () => {
       format,
       // Only the four contact keys: no display name, logo or website.
       sellerContact: {
-        phones: ['+97715550100'],
+        // Stored as E.164 with its country; the view prints it in the Nepal form.
+        phones: ['+977 1-5550100'],
         email: 'billing@techrida.example',
         signatoryName: 'Asha Shrestha',
         signatoryTitle: 'Director',

@@ -165,9 +165,9 @@ beforeAll(async () => {
   });
   await withTx(db, scopeA, systemActor('test'), (tx) =>
     tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
           VALUES (${otherCustomerId}, ${f.tenantId}, ${`CUS-${otherCustomerId.slice(0, 8)}`},
-                  'Other Pvt. Ltd.', 'other', '{"line1":"2 New Road","city":"Kathmandu","country":"NP"}'::jsonb)`,
+                  'Other Pvt. Ltd.', 'other', '2 New Road', 'Kathmandu')`,
     ),
   );
   otherCustomerContactId = await seedContact(otherCustomerId, 'someone@other.example');
@@ -424,7 +424,7 @@ describe('QuotationSendService.send', () => {
     const settings = new SettingsService(db);
     await withTx(db, scopeA, systemActor('test'), (tx) =>
       settings.set(tx, 'entity.address', {
-        line1: 'Durbar Marg 1',
+        line: 'Durbar Marg 1',
         city: 'Kathmandu',
         country: 'NP',
       }),

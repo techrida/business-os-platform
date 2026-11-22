@@ -115,9 +115,9 @@ beforeAll(async () => {
     const { partyId } = await createParty(appPool, { tenantId: t.tenantId, kind: 'customer' });
     await withTx(db, t, systemActor('test'), (tx) =>
       tx.execute(sql`
-        INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+        INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
         VALUES (${partyId}::uuid, ${t.tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`}, 'Himal Traders',
-                'himal traders', '{"line1":"Thamel 4","country":"NP"}'::jsonb)`),
+                'himal traders', 'Thamel 4', 'Kathmandu')`),
     );
     return { tenantId: t.tenantId, organizationId: t.organizationId, customerId: partyId };
   };

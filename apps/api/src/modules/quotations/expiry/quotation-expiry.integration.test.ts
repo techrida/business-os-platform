@@ -49,7 +49,7 @@ import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const ADDRESS = { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' };
+const ADDRESS = { line: 'Durbar Marg 1', city: 'Kathmandu' };
 
 /** 12:00 on 2026-11-09 in Kathmandu. */
 const NOW = new Date('2026-11-09T06:15:00.000Z');
@@ -123,9 +123,9 @@ async function newScope(): Promise<TestScope> {
   const { userId } = await createStaffUser(pool, { ...tenant });
   await withTx(db, scope, seedActor(), (tx) =>
     tx.execute(sql`
-      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
       VALUES (${partyId}::uuid, ${tenant.tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`},
-              'Himal Traders Pvt. Ltd.', 'himal traders', ${JSON.stringify(ADDRESS)}::jsonb)`),
+              'Himal Traders Pvt. Ltd.', 'himal traders', ${ADDRESS.line}, ${ADDRESS.city})`),
   );
   return { ...scope, customerId: partyId, ownerUserId: userId };
 }

@@ -159,7 +159,7 @@ const settings = {
   get: (_scope: unknown, k: string) =>
     Promise.resolve(
       k === 'entity.address'
-        ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+        ? { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
         : k === 'entity.pan_vat_no'
           ? '301234567'
           : null,
@@ -535,11 +535,11 @@ describe('credit notes: the cap per original line and per tax code (U12D)', () =
       typedLine('Design', '2', '500.00', f.taxCodeVat13Id),
       typedLine('Build', '2', '500.00', f.taxCodeVat13Id),
     ]);
-    const [line1, line2] = await linesOf(original);
+    const [firstLine, secondLine] = await linesOf(original);
 
     const first = await creditLines(original, [{ originalLineNo: 1, quantity: '2' }]);
     expect(first.invoice.totals).toMatchObject({ total: '1130.00' });
-    expect((await linesOf(first.invoice.id)).map((l) => l.originalLineId)).toEqual([line1!.id]);
+    expect((await linesOf(first.invoice.id)).map((l) => l.originalLineId)).toEqual([firstLine!.id]);
 
     for (const quantity of ['2', '1']) {
       const err = await creditLines(original, [{ originalLineNo: 1, quantity }]).catch(
@@ -555,7 +555,9 @@ describe('credit notes: the cap per original line and per tax code (U12D)', () =
 
     const second = await creditLines(original, [{ originalLineNo: 2, quantity: '2' }]);
     expect(second.invoice.totals).toMatchObject({ total: '1130.00' });
-    expect((await linesOf(second.invoice.id)).map((l) => l.originalLineId)).toEqual([line2!.id]);
+    expect((await linesOf(second.invoice.id)).map((l) => l.originalLineId)).toEqual([
+      secondLine!.id,
+    ]);
     expect(await liveCreditNotes(original)).toHaveLength(2);
   });
 
