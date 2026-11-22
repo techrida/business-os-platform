@@ -5,6 +5,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { Alert } from '@/components/portal/alert';
 import styles from '@/components/portal/page.module.css';
+import { isQuotationClosed, QuotationClosed } from '@/components/portal/quotation-closed';
 import { QuotationNextStep } from '@/components/portal/quotation-next-step';
 import { canRespond, todayInKathmandu } from '@/components/portal/quotation-status';
 import { QuotationView } from '@/components/portal/quotation-view';
@@ -47,6 +48,8 @@ export default async function QuotationPage({
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 403)) notFound();
     if (err instanceof ApiError && err.status === 401) redirect(returnTo);
+    // A sent quotation the company cancelled (a Lost deal): say so, since the customer got the link by mail.
+    if (isQuotationClosed(err)) return <QuotationClosed />;
     throw err;
   }
 

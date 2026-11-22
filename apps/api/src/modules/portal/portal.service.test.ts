@@ -13,6 +13,7 @@ import {
   type PortalDisplay,
 } from '@bos/contracts';
 import {
+  ConflictException,
   ForbiddenException,
   HttpException,
   NotFoundException,
@@ -67,6 +68,8 @@ interface Seed {
   documentStyle?: unknown;
   /** On an accepted seed: staff have confirmed the portal acceptance's evidence (F1-Q28). */
   evidenceConfirmed?: boolean;
+  /** When it was sent; absent means sent for a status only a sent version reaches, never sent otherwise. */
+  sentAt?: Date | null;
 }
 
 /** A whole internal source; internal columns ride along so a leak shows up in the output. */
@@ -124,6 +127,12 @@ function sourceOf(s: Seed): PortalViewSource {
     issuerLegalName: 'Techrida Pvt. Ltd.',
     documentStyle: s.documentStyle ?? null,
     renderAttempts: 0,
+    sentAt:
+      s.sentAt !== undefined
+        ? s.sentAt
+        : ['sent', 'accepted', 'expired'].includes(s.status) || s.rejectionSource === 'customer'
+          ? new Date('2026-11-08T10:00:00Z')
+          : null,
   };
 }
 
@@ -449,6 +458,52 @@ describe('PortalService.get', () => {
       },
     ]);
     for (const id of [vid(2), vid(3), vid(4), vid(5), vid(6), vid(10), vid(99)]) {
+      await expect(service.get(id), id).rejects.toBeInstanceOf(NotFoundException);
+    }
+  });
+
+  it('answers 409 quotation_closed for a cancelled version the customer was sent, before any document lookup', async () => {
+    const { service, documents } = setup([
+      {
+        versionId: vid(6),
+        quotationId: qid(6),
+        number: 'QT-6',
+        revisionNo: 1,
+        status: 'cancelled',
+        rendered: true,
+        sentAt: new Date('2026-11-08T10:00:00Z'),
+      },
+    ]);
+    const error = await service.get(vid(6)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toEqual({
+      code: 'quotation_closed',
+      message: 'This quotation is no longer open',
+    });
+    expect(documents.listForOwner).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a cancelled version that was never sent, and for a sent-then-cancelled one of another party', async () => {
+    const { service } = setup([
+      {
+        versionId: vid(6),
+        quotationId: qid(6),
+        number: 'QT-6',
+        revisionNo: 1,
+        status: 'cancelled',
+        sentAt: null,
+      },
+      {
+        versionId: vid(10),
+        quotationId: qid(8),
+        number: 'QT-8',
+        revisionNo: 1,
+        status: 'cancelled',
+        partyId: OTHER_PARTY,
+        sentAt: new Date('2026-11-08T10:00:00Z'),
+      },
+    ]);
+    for (const id of [vid(6), vid(10)]) {
       await expect(service.get(id), id).rejects.toBeInstanceOf(NotFoundException);
     }
   });

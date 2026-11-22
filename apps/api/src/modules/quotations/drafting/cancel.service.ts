@@ -31,6 +31,7 @@ import {
 } from '@bos/contracts';
 import {
   approvalRequests,
+  outbox,
   quotationLines,
   quotations,
   quotationStatusHistory,
@@ -306,6 +307,18 @@ export class CancelService {
       )
       .returning();
     if (cancelled === undefined) throw changed();
+
+    // (2b) The "ready to review" mail of this version, if it still waits in the outbox, is dropped: the customer
+    // must not be invited to a quotation that is no longer open. A row a drainer already claimed is on its way.
+    await tx
+      .delete(outbox)
+      .where(
+        and(
+          eq(outbox.tenantId, scope.tenantId),
+          eq(outbox.dedupeKey, `quotation.sent:${old.id}`),
+          eq(outbox.status, 'pending'),
+        ),
+      );
 
     // (3) The quotation's derived status changed: its row moves too.
     await tx

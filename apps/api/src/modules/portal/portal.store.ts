@@ -48,6 +48,8 @@ export type PortalViewSource = Omit<
   documentStyle: unknown;
   /** Failed render tries since the last success or Retry: with render_state, tells a given-up render apart. */
   renderAttempts: number;
+  /** When the version was sent to the customer; null if never. A cancelled version that was sent shows "no longer open". */
+  sentAt: Date | null;
 };
 
 /**
@@ -264,6 +266,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         },
         documentStyle: quotationVersions.documentStyle,
         renderAttempts: quotationVersions.renderAttempts,
+        sentAt: quotationVersions.sentAt,
         contactId: quotationVersions.contactId,
         paymentTermId: quotationVersions.paymentTermId,
         tenantId: quotationVersions.tenantId,
@@ -363,6 +366,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       issuerLegalName: issuer.legalName,
       documentStyle: head.documentStyle,
       renderAttempts: head.renderAttempts,
+      sentAt: head.sentAt,
     };
   }
 }
