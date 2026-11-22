@@ -274,6 +274,128 @@ export const PARTY_FLOWS = [
   },
 ];
 
+export const LEAD_FLOWS = [
+  {
+    area: 'parties',
+    flow: 'lead-form',
+    persona: 'Dev Sales',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const n = String((Date.now() % 9000) + 1000);
+      const t1 = `FQA2 lead A ${S.tag}`;
+      const t2 = `FQA2 lead B ${S.tag}`;
+      const fillBasics = async (title, company, person = 'FQA2 Contact') => {
+        await c.s.fill(p().getByRole('textbox', { name: 'Lead title', exact: true }), title);
+        await c.s.choose(c.s.select(/(^| )Lead source$/), 'Referral');
+        await c.s.fill(p().getByRole('textbox', { name: 'Company or organization', exact: true }), company);
+        await c.s.fill('Contact person', person);
+      };
+      await step('1-as', 'Sign in as Dev Sales', async (c) => {
+        await c.as('Dev Sales');
+      });
+      await step('2-new', 'Leads > New lead opens the form with Country Nepal', async (c) => {
+        await goNav(c, S, 'Leads', '/leads');
+        await c.s.click(p().getByRole('link', { name: /Add lead/ }).first(), 'Add lead');
+        await c.see(p().getByRole('textbox', { name: 'Lead title', exact: true }), 'textbox Lead title');
+        await c.see(p().getByRole('combobox', { name: 'Country', exact: true }), 'combobox Country');
+        await noSideScroll(c, '/leads/new');
+      });
+      await step('3-needs-contact', 'A lead with no email and no phone is refused', async (c) => {
+        await fillBasics(t1, `${t1} Co`);
+        const before = await p().locator('main').innerText();
+        await c.s.click(c.btn('Create lead'), 'Create lead');
+        await p().waitForTimeout(1500);
+        c.ok(new URL(p().url()).pathname === '/leads/new', 'nothing saved (still on /leads/new)');
+        const added = (await p().locator('main').innerText()).split('\n').filter((l) => !before.includes(l) && /email|phone/i.test(l));
+        c.ok(added.length > 0, 'a message about the email-or-phone rule appears', added.join(' | ') || 'no new line');
+      });
+      await step('4-two-phones-save', 'Two phones (Nepal, US) with the US one primary; the lead saves and shows the number', async (c) => {
+        await c.s.fill(phone(c, 1), '9812345678');
+        await c.s.click(c.btn('Add phone number'), 'Add phone number');
+        await pickCountry(c, p().getByRole('combobox', { name: 'Phone 2 country' }), 'United States');
+        await c.s.fill(phone(c, 2), `415555${n}`);
+        await p().getByRole('radio', { name: 'Phone 2 primary' }).check();
+        await reachable(c, p().getByRole('button', { name: 'Move phone 2 up' }), 'Move phone 2 up');
+        await c.s.click(c.btn('Create lead'), 'Create lead');
+        await p().waitForURL((u) => /^\/leads\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 90000 });
+        S.leadA = new URL(p().url()).pathname;
+        ledger({ kind: `lead ${t1}`, path: S.leadA, size: S.size });
+        await c.see(p().getByText(/\+1\s+415\s+555\s+\d{4}/).first(), 'a +1 415 555 phone on the lead', 30000);
+        c.ok((await p().locator('main').innerText()).replace(/[^\d+]/g, '').includes(`+1415555${n}`), 'the primary phone +1 415 555 ' + n + ' is shown on the lead');
+      });
+      await step('5-duplicate-hint', 'A second lead with the same primary phone shows the duplicate hint; moving primary to another number clears it', async (c) => {
+        await c.open('/leads/new');
+        await fillBasics(t2, `Unrelated Quokka ${S.tag}`, 'Pat Otherwise');
+        await c.s.fill(phone(c, 1), `415555${n}`);
+        // the first row is Nepal: the +1 prefix switches it to US
+        const hint = p().locator('[data-duplicate-hint]');
+        await c.s.fill(phone(c, 1), `+1 415555${n}`);
+        await p().waitForTimeout(800);
+        await c.see(hint.getByText(/matches[^)]*phone/i).first(), 'a duplicate hint that matches on the phone', 30000);
+        await c.s.click(c.btn('Add phone number'), 'Add phone number');
+        await c.s.fill(phone(c, 2), `+1 415556${n}`);
+        await p().getByRole('radio', { name: 'Phone 2 primary' }).check();
+        await p().waitForTimeout(2500);
+        const gone = (await hint.getByText(/matches[^)]*phone/i).count()) === 0;
+        c.ok(gone, 'the hint went away after another number became primary');
+        await p().getByRole('radio', { name: 'Phone 1 primary' }).check();
+        await p().waitForTimeout(800);
+        await c.see(hint.getByText(/matches[^)]*phone/i).first(), 'the hint is back when the first number is primary again', 30000);
+      });
+      await step('6-save-b', 'Save the second lead (US contact)', async (c) => {
+        await p().getByRole('radio', { name: 'Phone 2 primary' }).check();
+        await c.s.click(c.btn('Create lead'), 'Create lead');
+        await p().waitForURL((u) => /^\/leads\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 90000 });
+        S.leadB = new URL(p().url()).pathname;
+        ledger({ kind: `lead ${t2}`, path: S.leadB, size: S.size });
+      });
+      await step('7-edit-country-phones', 'Lead page: Edit country and phones changes the country and a phone', async (c) => {
+        await c.s.click(c.btn('Edit country and phones'), 'Edit country and phones');
+        const ctry = p().getByRole('combobox', { name: 'Country', exact: true });
+        await c.see(ctry, 'Country combobox in the editor');
+        await pickCountry(c, ctry, 'United States');
+        await c.s.click(c.btn('Add phone number'), 'Add phone number');
+        await pickCountry(c, p().getByRole('combobox', { name: /^Phone \d country$/ }).last(), 'India');
+        await c.s.fill(p().getByRole('textbox', { name: /^Phone \d number$/ }).last(), `98${n}4321`);
+        await c.s.click(p().getByRole('button', { name: /^Save/ }).first(), 'Save');
+        await c.see(p().getByText('United States').first(), 'Country United States shown on the lead', 30000);
+        await noSideScroll(c, 'lead page');
+      });
+      await step('8-contacted-qualified', 'Mark contacted (with a note) and Qualify', async (c) => {
+        await c.s.click(c.btn('Mark contacted'), 'Mark contacted');
+        const d = p().getByRole('dialog', { name: 'Mark this lead contacted?' });
+        await d.getByLabel('Note').fill('FQA2 call');
+        await d.getByRole('button', { name: 'Mark contacted', exact: true }).click();
+        await c.see(p().getByText('Moved to Contacted.'), 'toast Moved to Contacted', 45000);
+        await c.s.click(c.btn('Qualify'), 'Qualify');
+        await p().getByRole('dialog', { name: 'Qualify this lead?' }).getByRole('button', { name: 'Qualify lead', exact: true }).click();
+        await c.see(p().getByText('Moved to Qualified.'), 'toast Moved to Qualified', 45000);
+      });
+      await step('9-convert-foreign', 'Convert a US lead to a new US organization with no PAN; phones arrive pre-filled', async (c) => {
+        await c.s.click(c.btn('Convert to opportunity'), 'Convert to opportunity');
+        const d = p().getByRole('dialog', { name: 'Convert lead to opportunity' });
+        await c.see(d, 'the Convert dialog');
+        await d.getByLabel('Create a new organization').check();
+        await c.see(d.getByRole('textbox', { name: /^Phone \d number$/ }).first(), 'phone rows in the dialog');
+        const filled = await d.getByRole('textbox', { name: /^Phone \d number$/ }).evaluateAll((els) => els.map((e) => e.value).filter(Boolean).length);
+        c.ok(filled >= 1, `the lead's phones are pre-filled in the dialog (${filled} filled)`);
+        await d.getByLabel('Legal name', { exact: true }).fill(`FQA2 Convert Inc ${S.tag}`);
+        await d.getByLabel('Address', { exact: true }).fill('9 Convert Ave');
+        await d.getByLabel('City', { exact: true }).fill('Denver');
+        await pickCountry(c, d.getByRole('combobox', { name: 'Country', exact: true }).last(), 'United States');
+        await d.getByLabel('Contact name', { exact: true }).fill('FQA2 Contact');
+        await d.getByRole('textbox', { name: 'Email', exact: true }).fill(`fqa2conv-${S.tag}@bos-demo.example.com`);
+        await d.getByRole('button', { name: 'Convert', exact: true }).click();
+        await p().waitForURL((u) => /^\/opportunities\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 60000 });
+        c.controls.push('Convert opened the new opportunity ' + new URL(p().url()).pathname);
+        await c.see(p().getByText(/FQA2 Convert Inc/).first(), 'the new US organization named on the opportunity', 30000);
+        ledger({ kind: `convert ${S.leadB} to FQA2 Convert Inc`, path: S.leadB, size: S.size });
+      });
+    },
+  },
+];
+
 export const FLOWS = [
   {
     area: 'payments',
@@ -442,4 +564,5 @@ export const FLOWS = [
     },
   },
   ...PARTY_FLOWS,
+  ...LEAD_FLOWS,
 ];
