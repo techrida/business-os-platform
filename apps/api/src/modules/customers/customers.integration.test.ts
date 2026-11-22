@@ -204,6 +204,8 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------------------------- helpers
 
 const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+/** A customer abroad keeps the loose tax id (letters and hyphens allowed). */
+const abroad = { line1: 'MG Road', city: 'Bengaluru', country: 'IN' };
 /** Every new customer comes with its first contact, which needs an email. */
 const firstContact = () => ({
   fullName: 'First Contact',
@@ -229,7 +231,8 @@ async function createCustomer(over: Record<string, unknown> = {}) {
 
 const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
 
-const panOf = () => `PAN${Math.floor(Math.random() * 1e9)}`;
+/** A Nepal PAN: nine digits. */
+const panOf = () => String(100_000_000 + Math.floor(Math.random() * 899_999_999));
 
 // ---------------------------------------------------------------------------------------------- tests
 
@@ -245,6 +248,7 @@ describe('create a customer and read it back', () => {
     const body = customerBody({
       legalName: 'Himalayan Construction Pvt. Ltd.',
       panVatNo: 'ab-123456',
+      address: abroad,
       industry: 'Construction',
       defaultCurrency: 'NPR',
     });
@@ -527,10 +531,15 @@ describe('"Create anyway" on a customer of the same name (F1-Q55)', () => {
     const first = await createCustomer({
       legalName: `Kailash ${tag} Pvt. Ltd.`,
       panVatNo: '123456789',
+      address: abroad,
     });
 
     const refused = await post(
-      customerBody({ legalName: `Different ${tag} Pvt. Ltd.`, panVatNo: '123-456-789' }),
+      customerBody({
+        legalName: `Different ${tag} Pvt. Ltd.`,
+        panVatNo: '123-456-789',
+        address: abroad,
+      }),
     );
     expect(refused.status, JSON.stringify(refused.body)).toBe(400);
     expect(errorOf(refused.body)).toMatchObject({
@@ -543,6 +552,7 @@ describe('"Create anyway" on a customer of the same name (F1-Q55)', () => {
       customerBody({
         legalName: `Different ${tag} Pvt. Ltd.`,
         panVatNo: '123-456-789',
+        address: abroad,
         duplicateOverrideReason: 'Sister company sharing the group PAN',
       }),
     );
@@ -781,23 +791,27 @@ describe('contacts', () => {
     expect(Number(audited.rows[0]?.n)).toBeGreaterThanOrEqual(2);
   });
 
-  it.each(['9812345678', '+0123456789', '+97798'])(
-    'is 400 for the invalid phone %s',
-    async (phone) => {
-      const customer = await createCustomer();
-      const res = await request(baseUrl)
-        .post(`/v1/customers/${customer.id}/contacts`)
-        .set('Idempotency-Key', newKey())
-        .send({ fullName: 'Sita Rai', phone });
-      expect(res.status).toBe(400);
-      const rows = await db
-        .select()
-        .from(customerContacts)
-        .where(eq(customerContacts.customerId, customer.id));
-      // Only the first contact made with the customer.
-      expect(rows.map((r) => r.fullName)).toEqual(['First Contact']);
-    },
-  );
+  it.each([
+    '9812345678',
+    '+0123456789',
+    '+97798',
+    // Nepal rules (FX8): a +977 number is a 10-digit mobile starting 9 or a 7 to 9 digit landline.
+    '+9778123456789',
+    '+977012345678',
+  ])('is 400 for the invalid phone %s', async (phone) => {
+    const customer = await createCustomer();
+    const res = await request(baseUrl)
+      .post(`/v1/customers/${customer.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({ fullName: 'Sita Rai', phone });
+    expect(res.status).toBe(400);
+    const rows = await db
+      .select()
+      .from(customerContacts)
+      .where(eq(customerContacts.customerId, customer.id));
+    // Only the first contact made with the customer.
+    expect(rows.map((r) => r.fullName)).toEqual(['First Contact']);
+  });
 
   it('is also enforced by the database CHECKs, whatever the API does', async () => {
     const customer = await createCustomer();
@@ -1233,5 +1247,76 @@ describe('a customer portal caller', () => {
       .set('Idempotency-Key', newKey())
       .send(customerBody());
     expect(res.status).toBe(403);
+  });
+});
+
+describe('the Nepal PAN rule on the server (FX8)', () => {
+  const patch = (id: string, body: object) =>
+    request(baseUrl).patch(`/v1/customers/${id}`).send(body);
+
+  it('refuses a short PAN for a Nepal customer on create and accepts nine digits', async () => {
+    const short = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(customerBody({ panVatNo: '12345' }));
+    expect(short.status, JSON.stringify(short.body)).toBe(400);
+    expect(errorOf(short.body).message).toContain('PAN');
+    await createCustomer({ panVatNo: panOf() });
+  });
+
+  const foreignPanOf = () => `AAACH${Math.floor(Math.random() * 1e6)}C`;
+
+  it('holds createInTx (import, lead conversion) to the same rule', async () => {
+    const now = new Date('2026-11-08T04:00:00Z');
+    const create = (panVatNo: string, addr: typeof address) =>
+      withTx(db, a, systemActor('test'), (tx) =>
+        service.createInTx(
+          tx,
+          a,
+          {
+            legalName: `Direct ${randomUUID().slice(0, 8)}`,
+            panVatNo,
+            relationship: 'prospect',
+            address: addr,
+          },
+          now,
+        ),
+      );
+    await expect(create('AB-12345', address)).rejects.toThrow(/9 digits/);
+    await expect(create(foreignPanOf(), abroad)).resolves.toBeDefined();
+  });
+
+  it('keeps the loose tax id for a customer abroad', async () => {
+    const foreignPan = foreignPanOf();
+    const customer = await createCustomer({ panVatNo: foreignPan, address: abroad });
+    expect(customer.panVatNo).toBe(foreignPan);
+  });
+
+  it('checks a PAN sent alone against the stored country, and a country sent alone against the stored PAN', async () => {
+    const nepali = await createCustomer({ panVatNo: panOf() });
+    const shortPan = await patch(nepali.id, { expectedVersion: nepali.version, panVatNo: '12345' });
+    expect(shortPan.status, JSON.stringify(shortPan.body)).toBe(400);
+
+    const foreign = await createCustomer({ panVatNo: foreignPanOf(), address: abroad });
+    const toNepal = await patch(foreign.id, { expectedVersion: foreign.version, address });
+    expect(toNepal.status, JSON.stringify(toNepal.body)).toBe(400);
+    const fixed = await patch(foreign.id, {
+      expectedVersion: foreign.version,
+      address,
+      panVatNo: panOf(),
+    });
+    expect(fixed.status, JSON.stringify(fixed.body)).toBe(200);
+  });
+
+  it('does not judge a legacy tax id while neither the PAN nor the country changes', async () => {
+    const created = await createCustomer({ address: abroad });
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx
+        .update(customers)
+        .set({ panVatNo: 'LEGACY-1', address })
+        .where(eq(customers.id, created.id)),
+    );
+    const res = await patch(created.id, { expectedVersion: created.version, industry: 'Retail' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
   });
 });

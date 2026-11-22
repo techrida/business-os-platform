@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 import { createTenantWithEntity, organizations } from '@bos/db';
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -122,6 +123,47 @@ describe('SettingsService', () => {
       [1, 'MEMO', userId],
     ]);
     expect(history[0]?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('writes the company PAN and phones strictly, and still reads a row written before the rules (FX8)', async () => {
+    const scope = await newScope();
+    const system = systemActor('test');
+    const profile = { ...SETTING_DEFAULTS['entity.profile'] };
+
+    await expect(
+      withTx(db, scope, system, (tx) => settingsService.set(tx, 'entity.pan_vat_no', '12345')),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      withTx(db, scope, system, (tx) =>
+        settingsService.set(tx, 'entity.profile', { ...profile, phones: ['01-4123456'] }),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      withTx(db, scope, system, (tx) =>
+        settingsService.set(tx, 'entity.profile', { ...profile, panVatNo: 'AB-1234' }),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(await settingsService.history(scope, 'entity.pan_vat_no')).toEqual([]);
+    expect(await settingsService.history(scope, 'entity.profile')).toEqual([]);
+
+    await withTx(db, scope, system, async (tx) => {
+      await settingsService.set(tx, 'entity.pan_vat_no', '301234567');
+      await settingsService.set(tx, 'entity.profile', {
+        ...profile,
+        phones: ['+9779812345678', '+97714123456'],
+        panVatNo: '301234567',
+      });
+    });
+    expect(await settingsService.get(scope, 'entity.pan_vat_no')).toBe('301234567');
+
+    // A row written before the rules: GET returns it as stored instead of failing.
+    await withTx(db, scope, system, (tx) =>
+      tx.execute(sql`
+        INSERT INTO app.settings (tenant_id, organization_id, key, version, value)
+        VALUES (${scope.tenantId}::uuid, ${scope.organizationId}::uuid, 'entity.pan_vat_no', 9,
+                '"AB-1234"'::jsonb)`),
+    );
+    expect(await settingsService.get(scope, 'entity.pan_vat_no')).toBe('AB-1234');
   });
 
   it('rejects an invalid value and writes nothing', async () => {

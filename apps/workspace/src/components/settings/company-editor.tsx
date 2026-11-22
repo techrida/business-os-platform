@@ -8,6 +8,8 @@ import { FormStatus } from '@/app/(app)/settings/form-status';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { PanInput } from '@/components/ui/pan-input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Panel } from '@/components/ui/panel';
 
 import {
@@ -201,6 +203,9 @@ export function CompanyEditor({
       }),
     [],
   );
+  // Each phone row keeps its own key, so removing one row leaves the others' boxes (and their edit state) alone.
+  const [phoneIds, setPhoneIds] = useState<(number | string)[]>([]);
+  const nextPhoneId = useRef(0);
   const dirty = (card: keyof CompanyDrafts) =>
     edits[card] !== undefined && !sameDraft(edits[card], base[card]);
 
@@ -210,6 +215,9 @@ export function CompanyEditor({
   const contact = draft.contact;
   const signatory = draft.signatory;
   const phoneRows = contact.phones.length === 0 ? [''] : contact.phones;
+  // A stored row has no key yet (`stored-n`, stable while the list is only edited); every row added or left after a
+  // removal gets a fresh counter key, never an index, so a new field mounts in the Nepal mode.
+  const rowKeys = phoneRows.map((_, i) => phoneIds[i] ?? `stored-${i}`);
   const setContact = (patch: Partial<typeof contact>) => edit('contact', { ...contact, ...patch });
 
   // The undo icon is drawn only while what is SAVED for the card differs from empty. A reset that
@@ -259,16 +267,15 @@ export function CompanyEditor({
                 )}
               </Field>
               <Field
-                label="PAN or VAT number"
-                hint="5 to 20 letters, digits or hyphens."
+                label="PAN number"
+                hint="Your company's PAN: exactly 9 digits."
                 error={errors['panVatNo']}
               >
                 {(control) => (
-                  <Input
+                  <PanInput
                     name="panVatNo"
-                    autoComplete="off"
                     value={identity.panVatNo}
-                    onChange={(e) => edit('identity', { ...identity, panVatNo: e.target.value })}
+                    onValueChange={(panVatNo) => edit('identity', { ...identity, panVatNo })}
                     {...control}
                   />
                 )}
@@ -393,22 +400,24 @@ export function CompanyEditor({
               <fieldset className={styles.phones}>
                 <legend className={styles.legend}>Phone numbers</legend>
                 {phoneRows.map((phone, index) => (
-                  <div key={index} className={styles.phoneRow}>
-                    <Input
+                  <div key={rowKeys[index]} className={styles.phoneRow}>
+                    <PhoneInput
                       name="phone"
-                      type="tel"
-                      autoComplete="tel"
                       aria-label={`Phone number ${index + 1}`}
                       value={phone}
-                      onChange={(e) =>
-                        setContact({ phones: setPhone(phoneRows, index, e.target.value) })
+                      onValueChange={(posted) =>
+                        setContact({ phones: setPhone(phoneRows, index, posted) })
                       }
                     />
                     <Button
                       variant="ghost"
                       size="small"
                       aria-label={`Remove phone number ${index + 1}`}
-                      onClick={() => setContact({ phones: removePhone(phoneRows, index) })}
+                      onClick={() => {
+                        const left = rowKeys.filter((_, i) => i !== index);
+                        setPhoneIds(left.length === 0 ? [nextPhoneId.current++] : left);
+                        setContact({ phones: removePhone(phoneRows, index) });
+                      }}
                     >
                       <Icon name="x" size={16} />
                     </Button>
@@ -424,7 +433,10 @@ export function CompanyEditor({
                   size="small"
                   className={styles.addPhone}
                   disabled={!canAddPhone(phoneRows)}
-                  onClick={() => setContact({ phones: addPhone(phoneRows) })}
+                  onClick={() => {
+                    setPhoneIds([...rowKeys, nextPhoneId.current++]);
+                    setContact({ phones: addPhone(phoneRows) });
+                  }}
                 >
                   Add phone number
                 </Button>

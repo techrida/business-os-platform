@@ -229,11 +229,18 @@ describe('renderInvoiceHtml', () => {
 
 describe('renderInvoiceHtml: words, signatory and contact (U16-Q4)', () => {
   const contact = {
-    phones: ['01-4000000'],
+    phones: ['+97714000000'],
     email: 'billing@techrida.example',
     signatoryName: 'Sita <Sharma>',
     signatoryTitle: 'Finance Manager',
   };
+
+  it('prints an E.164 phone in the Nepal form and a number saved as free text as it was saved', () => {
+    const html = renderInvoiceHtml(sample(), {
+      sellerContact: { ...contact, phones: ['+9779812345678', '01-4000000'] },
+    });
+    expect(html).toContain('Phones +977 9812345678, 01-4000000');
+  });
 
   it('spells the total in the number system of the print', () => {
     expect(renderInvoiceHtml(sample())).toContain(
@@ -253,7 +260,7 @@ describe('renderInvoiceHtml: words, signatory and contact (U16-Q4)', () => {
     const foot = html.slice(html.indexOf('<footer'));
     const order = [
       'Techrida Pvt. Ltd.',
-      'Phone 01-4000000',
+      'Phone +977 1-4000000',
       'Durbar Marg 1',
       'Email billing@',
       'PAN/VAT 301234567',

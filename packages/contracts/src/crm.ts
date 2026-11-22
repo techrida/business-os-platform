@@ -17,10 +17,33 @@ const NonNegativeDecimal = DecimalString.refine((s) => !s.startsWith('-'), 'must
 
 const ProbabilitySchema = z.number().int().min(0).max(100);
 
-/** E.164: a plus sign, then 7 to 15 digits. The server normalises before storing. */
+/** Nepal's country code. */
+const NEPAL_CODE = '+977';
+
+/**
+ * Why a Nepal (`+977`) number is not one, or null. A mobile is ten national digits starting with 9; a landline is 7
+ * to 9 national digits that do not start with 0 (the trunk 0 is not part of E.164). A number from another country
+ * is not judged here: the generic E.164 rule covers it.
+ */
+export function nepalPhoneProblem(phone: string): string | null {
+  if (!phone.startsWith(NEPAL_CODE)) return null;
+  const national = phone.slice(NEPAL_CODE.length);
+  if (national.startsWith('0')) return 'leave out the leading 0 of a Nepal number';
+  if (national.length === 10) {
+    return national.startsWith('9') ? null : 'a Nepal mobile number starts with 9';
+  }
+  if (national.length >= 7 && national.length <= 9) return null;
+  return 'a Nepal number is a 10-digit mobile starting with 9 or a 7 to 9 digit landline';
+}
+
+/** E.164: a plus sign, then 7 to 15 digits; a `+977` number must also be a Nepal mobile or landline. */
 export const PhoneSchema = z
   .string()
-  .regex(/^\+[1-9]\d{6,14}$/, 'must be an E.164 number such as +9779812345678');
+  .regex(/^\+[1-9]\d{6,14}$/, 'must be an E.164 number such as +9779812345678')
+  .superRefine((phone, ctx) => {
+    const problem = nepalPhoneProblem(phone);
+    if (problem !== null) ctx.addIssue({ code: 'custom', message: problem });
+  });
 export const EmailSchema = z.email().max(254);
 
 // ---------------------------------------------------------------------------------------------
@@ -41,6 +64,18 @@ export type CustomerRelationship = z.infer<typeof CustomerRelationshipSchema>;
 export const PanVatNoSchema = z
   .string()
   .regex(/^[A-Za-z0-9-]{5,20}$/, 'must be 5 to 20 letters, digits or hyphens');
+
+/** A Nepal PAN: exactly nine digits. The loose `PanVatNoSchema` stays for foreign tax ids. */
+export const NepalPanSchema = z.string().regex(/^[0-9]{9}$/, 'a PAN is 9 digits');
+
+/** Why `pan` is not acceptable for a party in `country`, or null. Only a Nepal party is held to nine digits. */
+export function nepalPanProblem(
+  country: string | null | undefined,
+  pan: string | null | undefined,
+): string | null {
+  if (country !== 'NP' || pan === null || pan === undefined) return null;
+  return NepalPanSchema.safeParse(pan).success ? null : 'a Nepal PAN is 9 digits';
+}
 
 export const AddressSchema = z.strictObject({
   line1: text(200),
@@ -71,6 +106,18 @@ export const CustomerFieldsSchema = z.strictObject({
 export type CustomerFields = z.infer<typeof CustomerFieldsSchema>;
 
 /**
+ * A Nepal customer (address country NP) has a 9-digit PAN. Sent together, the two are checked here; an update that
+ * sends only one of them is checked by the service against the stored other (`CustomersService.update`).
+ */
+function refineNepalPan(
+  body: { panVatNo?: string | undefined; address?: { country: string } | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  const problem = nepalPanProblem(body.address?.country, body.panVatNo);
+  if (problem !== null) ctx.addIssue({ code: 'custom', message: problem, path: ['panVatNo'] });
+}
+
+/**
  * A contact that carries an email. A quotation is sent by email, so a customer must always have at
  * least one contact with an address: its first contact, and a contact created by lead conversion.
  */
@@ -96,13 +143,15 @@ export const CreateCustomerBodySchema = CustomerFieldsSchema.extend({
    * (`customer.duplicate_override`, with the rules each match met).
    */
   duplicateOverrideReason: text(500).optional(),
-});
+}).superRefine(refineNepalPan);
 export type CreateCustomerBody = z.infer<typeof CreateCustomerBodySchema>;
 
-export const UpdateCustomerBodySchema = CustomerFieldsSchema.partial().extend({
-  /** The row version the client saw; a different current version means 409. */
-  expectedVersion: z.number().int().min(1),
-});
+export const UpdateCustomerBodySchema = CustomerFieldsSchema.partial()
+  .extend({
+    /** The row version the client saw; a different current version means 409. */
+    expectedVersion: z.number().int().min(1),
+  })
+  .superRefine(refineNepalPan);
 export type UpdateCustomerBody = z.infer<typeof UpdateCustomerBodySchema>;
 
 export const CustomerDtoSchema = z.object({
@@ -801,7 +850,10 @@ export type LeadDto = z.infer<typeof LeadDtoSchema>;
 
 const ConvertCustomerChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), customerId: z.guid() }),
-  z.strictObject({ mode: z.literal('create'), customer: CustomerFieldsSchema }),
+  z.strictObject({
+    mode: z.literal('create'),
+    customer: CustomerFieldsSchema.superRefine(refineNepalPan),
+  }),
 ]);
 const ConvertContactChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), contactId: z.guid() }),

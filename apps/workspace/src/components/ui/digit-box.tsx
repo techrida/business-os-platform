@@ -36,6 +36,11 @@ export interface DigitRules {
   cleanPaste(pasted: string, whole: boolean): string;
   /** A reason these digits may not be typed, or null (a leading 0 where a country code is shown). */
   refuseDigits?(digits: string): string | null;
+  /**
+   * True for a stored value whose digits the box can show but that must keep posting as stored until the user edits
+   * it, because posting the box's own form would change what the value means (an unprefixed `4123456` is not `+4123456`).
+   */
+  keepsStored?(stored: string): boolean;
   /** The reason typing past the limit is refused. */
   tooLong(digits: string): string;
   /** What is wrong with the digits as a finished value, or null. Empty is the caller's `required`. */
@@ -118,9 +123,25 @@ export function DigitBox({
   const [notice, setNotice] = useState({ text: '', seq: 0 });
   const [, setCaretTick] = useState(0);
 
+  const touched = useRef(edited ?? false);
+
   /** True when the box holds something typing could not produce (letters, too many digits). */
   const foreign = (shown: string) => !DIGITS.test(shown) || shown.length > rules.maxFor(shown);
-  const postedOf = (shown: string) => (foreign(shown) ? shown : rules.post(shown));
+  // A stored value the box would rewrite into a different number keeps posting as stored until the user makes an accepted edit (even one that ends on the same digits).
+  const [asStored] = useState(() => {
+    const raw = (controlled ? value : defaultValue) ?? '';
+    return raw !== '' && rules.keepsStored?.(raw) === true
+      ? { shown: rules.parse(raw), raw }
+      : null;
+  });
+  // State, not the `touched` ref, because the hidden input reads it while rendering.
+  const [keepStored, setKeepStored] = useState(!(edited ?? false));
+  const postedOf = (shown: string, keep = keepStored) =>
+    asStored !== null && keep && shown === asStored.shown
+      ? asStored.raw
+      : foreign(shown)
+        ? shown
+        : rules.post(shown);
 
   // A controlled parent that holds a different value wins: it refused the edit or set a new one.
   if (controlled && postedOf(text) !== value) {
@@ -139,7 +160,6 @@ export function DigitBox({
   });
 
   // True once the user has edited the box. A stored value nobody touched is never blocked at submit.
-  const touched = useRef(edited ?? false);
   const pendingCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -153,10 +173,10 @@ export function DigitBox({
     setCaretTick((tick) => tick + 1);
   }
 
-  function commit(next: string) {
+  function commit(next: string, keep = false) {
     textRef.current = next;
     setText(next);
-    const posted = postedOf(next);
+    const posted = postedOf(next, keep);
     if (posted !== emitted.current) {
       emitted.current = posted;
       onValueChange?.(posted);
@@ -186,6 +206,7 @@ export function DigitBox({
   function accept(next: string, caret: number | null) {
     if (!touched.current) onEditedChange?.(true);
     touched.current = true;
+    setKeepStored(false);
     clearNotice();
     commit(next);
     if (caret !== null) placeCaret(caret);
@@ -197,16 +218,17 @@ export function DigitBox({
   useFormReset(rootRef, () => {
     if (touched.current) onEditedChange?.(false);
     touched.current = false;
+    setKeepStored(true);
     clearNotice();
     const next = rules.parse(controlled ? value : (defaultValue ?? ''));
     setError(null);
     if (controlled) {
       textRef.current = next;
-      emitted.current = postedOf(next);
+      emitted.current = postedOf(next, true);
       setText(next);
       return;
     }
-    commit(next);
+    commit(next, true);
   });
 
   // The forms that hold these boxes are `noValidate` and the contracts accept a shorter number, so a

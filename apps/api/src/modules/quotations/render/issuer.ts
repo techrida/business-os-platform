@@ -6,6 +6,8 @@
 import {
   DocumentStyleSnapshotSchema,
   SETTINGS,
+  StoredCompanyProfileSchema,
+  StoredEntityPanVatNoSchema,
   snapshotProfileFrom,
   type CompanyProfile,
   type DocumentStyleSnapshot,
@@ -41,7 +43,7 @@ export async function buildIssuer(
   // Rows are validated when written; this guards a row that was edited by hand. Invalid counts as not set.
   const address = SETTINGS['entity.address'].safeParse(rawAddress);
   if (!address.success || address.data === null) throw new IssuerIncompleteError('address');
-  const pan = SETTINGS['entity.pan_vat_no'].safeParse(rawPan);
+  const pan = StoredEntityPanVatNoSchema.safeParse(rawPan);
   return {
     legalName,
     // A missing PAN prints nothing; it is not an error (a new entity may be pre-registration).
@@ -121,8 +123,8 @@ export async function buildDocumentStyleSnapshot(
     settings.get(scope, 'format.date'),
     settings.get(scope, 'entity.pan_vat_no'),
   ]);
-  const pan = SETTINGS['entity.pan_vat_no'].safeParse(entityPan);
-  const rawProfile = SETTINGS['entity.profile'].safeParse(profile);
+  const pan = StoredEntityPanVatNoSchema.safeParse(entityPan);
+  const rawProfile = StoredCompanyProfileSchema.safeParse(profile);
   if (!rawProfile.success) throw new DocumentStyleInvalidError();
   const logo = await resolveSnapshotLogo(rawProfile.data, resolveLogo);
   const parsed = DocumentStyleSnapshotSchema.safeParse({

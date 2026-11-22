@@ -785,6 +785,13 @@
       "when": 1783000000157,
       "tag": "0190_users_identity_review_denies",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1783000000158,
+      "tag": "0187_company_contacts_strict",
+      "breakpoints": true
     }
   ]
 }

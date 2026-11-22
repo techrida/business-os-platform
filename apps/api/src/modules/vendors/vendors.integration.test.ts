@@ -367,6 +367,13 @@ describe('create', () => {
     expect(ok.body.pan).toBeNull();
   });
 
+  it('answers 400 for a domestic vendor whose PAN is not nine digits (FX8)', async () => {
+    for (const pan of ['12345', 'AB1234567', '12345678901']) {
+      const res = await createVendor({ pan });
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+    }
+  });
+
   it('is refused without vendor.write (accountant)', async () => {
     as('accountant', 'accountant');
     expect((await createVendor()).status).toBe(403);
@@ -728,6 +735,10 @@ describe('contacts', () => {
       role: 'Accounts',
       isPrimary: true,
     });
+    for (const phone of ['+9778123456789', '+97798123456789', '+977012345678']) {
+      const bad = await post(`/v1/vendors/${v.id}/contacts`, { name: 'Bad Phone', phone });
+      expect(bad.status, `${phone}: ${JSON.stringify(bad.body)}`).toBe(400);
+    }
     const b = await post(`/v1/vendors/${v.id}/contacts`, { name: 'Ram Karki' });
     expect(b.body.isPrimary).toBe(false);
 

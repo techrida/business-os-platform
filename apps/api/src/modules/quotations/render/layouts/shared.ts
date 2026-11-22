@@ -7,6 +7,7 @@
 // footer itself is `position: fixed`, so Chromium paints it at the bottom of every page, the last one included,
 // without ever covering a row. The items table repeats its own header; rows and blocks do not split.
 import {
+  formatPhoneForPrint,
   richTextToHtml,
   trimPercent,
   type BrandPalette,
@@ -335,7 +336,11 @@ export function footer(ctx: RenderContext): string {
       : '';
   const contact = [p.email, p.website].filter((v): v is string => Boolean(v)).map(breakableAddress);
   return `<footer class="foot">
-    ${col('tel', ICON_PHONE, p.phones.map(esc))}
+    ${col(
+      'tel',
+      ICON_PHONE,
+      p.phones.map((phone) => esc(formatPhoneForPrint(phone))),
+    )}
     ${col('addr', ICON_PIN, [addressInline(ctx.view.issuer.address)])}
     ${col('mail', ICON_MAIL, contact)}
     ${col('pan', ICON_ID, pan ? [`PAN/VAT No. ${esc(pan)}`] : [])}

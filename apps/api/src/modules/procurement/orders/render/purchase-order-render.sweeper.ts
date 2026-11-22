@@ -34,6 +34,7 @@ import {
   DEFAULT_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
   SETTINGS,
+  StoredEntityPanVatNoSchema,
   type DocumentFormatSnapshot,
 } from '@bos/contracts';
 import {
@@ -284,7 +285,7 @@ export class PurchaseOrderRenderSweeper {
       const { buyerLegalName, ...rows } = source;
       // A missing PAN prints nothing; it is not an error (a new entity may be pre-registration). A row that was
       // edited by hand and no longer fits the setting counts as not set.
-      const pan = SETTINGS['entity.pan_vat_no'].safeParse(
+      const pan = StoredEntityPanVatNoSchema.safeParse(
         await this.settings.get(scope, 'entity.pan_vat_no'),
       );
       // An invalid value (a hand-edited row) prints the default grouping or date; it never fails the render.

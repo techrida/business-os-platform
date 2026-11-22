@@ -77,11 +77,14 @@ describe('phones', () => {
 
   it('rejects a fifth number when parsing, and drops empty rows', () => {
     const base = { email: '', website: '' };
-    expect(parseContact({ ...base, phones: ['1', '', ' 2 '] })).toEqual({
+    expect(parseContact({ ...base, phones: ['+9779812345678', '', ' +97714123456 '] })).toEqual({
       ok: true,
-      value: { phones: ['1', '2'], email: null, website: null },
+      value: { phones: ['+9779812345678', '+97714123456'], email: null, website: null },
     });
-    const five = parseContact({ ...base, phones: ['1', '2', '3', '4', '5'] });
+    const five = parseContact({
+      ...base,
+      phones: ['+97714123456', '+97714123457', '+97714123458', '+97714123459', '+97714123450'],
+    });
     expect(five).toMatchObject({ ok: false, errors: { phones: anyString } });
   });
 });
@@ -98,11 +101,11 @@ describe('profile merge', () => {
   };
 
   it('replaces only the fields of the card that saved', () => {
-    const contact = parseContact({ phones: ['9800000000'], email: '', website: 'acme.test' });
+    const contact = parseContact({ phones: ['+9779800000000'], email: '', website: 'acme.test' });
     if (!contact.ok) throw new Error('expected ok');
     expect(mergeProfile(stored, contact.value)).toEqual({
       ...stored,
-      phones: ['9800000000'],
+      phones: ['+9779800000000'],
       email: null,
       website: 'acme.test',
     });
@@ -179,9 +182,16 @@ describe('parsers', () => {
         return v === undefined ? [] : Array.isArray(v) ? v : [v];
       },
     });
-    expect(planCard('contact', form({ phone: ['1', '2'], email: '', website: '' }))).toEqual({
+    expect(
+      planCard(
+        'contact',
+        form({ phone: ['+9779812345678', '+97714123456'], email: '', website: '' }),
+      ),
+    ).toEqual({
       ok: true,
-      value: { profile: { phones: ['1', '2'], email: null, website: null } },
+      value: {
+        profile: { phones: ['+9779812345678', '+97714123456'], email: null, website: null },
+      },
     });
     expect(planCard('address', form({ line1: '', city: '', country: 'NP' }))).toEqual({
       ok: true,

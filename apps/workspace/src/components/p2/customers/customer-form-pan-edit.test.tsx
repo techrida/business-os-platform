@@ -52,3 +52,62 @@ it('still stops a short PAN after the country is switched away from Nepal and ba
   expect(reached).toHaveBeenCalledWith(true);
   expect(document.activeElement).toBe(panBox());
 });
+
+async function mountCustomer(initial: typeof EMPTY_CUSTOMER_VALUES) {
+  mounted = await mountForm(
+    <CustomerForm
+      action={(prev) => Promise.resolve(prev)}
+      initial={initial}
+      enabledCurrencies={['NPR']}
+      mode="edit"
+      customerId="11111111-1111-4111-8111-111111111111"
+      version={1}
+      cancelHref="/customers"
+      reloadHref="/customers/1/edit"
+    />,
+  );
+  const { container } = mounted;
+  const reached = vi.fn();
+  container.querySelector('form')!.addEventListener('submit', (event) => {
+    reached(event.defaultPrevented);
+    event.preventDefault();
+  });
+  const panBox = () =>
+    container
+      .querySelector('input[name="panVatNo"]')!
+      .parentElement!.querySelector<HTMLInputElement>('input:not([type="hidden"])')!;
+  const country = container.querySelector<HTMLInputElement>('input[name="country"]')!;
+  return { container, reached, panBox, country };
+}
+
+it('stops a short tax id typed under another country once the country becomes Nepal', async () => {
+  const { container, reached, panBox, country } = await mountCustomer({
+    ...EMPTY_CUSTOMER_VALUES,
+    country: 'IN',
+  });
+
+  // Typed in the foreign tax-id box, not the PAN box.
+  await typeKeys(panBox(), '12345');
+  await fill(country, 'NP');
+  expect(panBox().value).toBe('12345');
+
+  await submit(container);
+  expect(reached).toHaveBeenCalledWith(true);
+  expect(panBox().getAttribute('aria-invalid')).toBe('true');
+  expect(document.activeElement).toBe(panBox());
+});
+
+it('does not stop a stored short tax id nobody edited when the country becomes Nepal', async () => {
+  const { container, reached, panBox, country } = await mountCustomer({
+    ...EMPTY_CUSTOMER_VALUES,
+    country: 'IN',
+    panVatNo: '12345',
+  });
+
+  await fill(country, 'NP');
+  expect(panBox().value).toBe('12345');
+
+  await submit(container);
+  expect(reached).toHaveBeenCalledWith(false);
+  expect(panBox().getAttribute('aria-invalid')).toBeNull();
+});
