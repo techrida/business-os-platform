@@ -74,6 +74,7 @@ export async function getMe(session: Pick<Session, 'accessToken'>): Promise<MeRe
   const body = await readBody(res);
   if (!res.ok) throw new ApiError(res.status, `GET /v1/me failed with ${res.status}`, body);
   // A newer API may send a permission or scope this build has no name for: drop those rows, warn, keep signing in.
+  // A malformed row (null, {}, a non-string permission or scope) is kept, so the parse below fails with a 502.
   const { body: known, dropped } = dropUnknownGrants(body);
   if (dropped.length > 0) {
     console.warn(JSON.stringify({ event: 'me.unknown_grants_dropped', dropped }));

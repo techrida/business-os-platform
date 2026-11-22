@@ -29,7 +29,7 @@ export function draftBlockerText(draft: SalesOrderDraftState | null | undefined)
 }
 
 /** The API's error code from a failed call's body, or ''. */
-function codeOf(err: unknown): string {
+export function codeOf(err: unknown): string {
   if (typeof err !== 'object' || err === null) return '';
   const body = (err as { body?: unknown }).body;
   if (typeof body !== 'object' || body === null) return '';
@@ -53,6 +53,11 @@ export function confirmRefusalText(err: unknown): string | undefined {
   }
   if (status === 409 && code === 'draft_of_other_revision') {
     return 'A draft order from another revision of this quotation is already waiting. Open that draft from the sales orders list instead. Nothing was confirmed.';
+  }
+  if (status === 409 && code === 'evidence_not_filed') {
+    // Someone confirmed the order first (another tab or person): the confirm did not run again, so the
+    // file named with it stays unfiled. Never "Order confirmed": this click confirmed nothing.
+    return 'This order was already confirmed, so your file was not filed with it. Open the order from the sales orders list; you can add evidence when you mark a billing step billable.';
   }
   return undefined;
 }

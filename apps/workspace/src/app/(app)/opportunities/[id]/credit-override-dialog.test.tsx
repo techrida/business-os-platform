@@ -24,6 +24,19 @@ vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error
 const { CreditOverrideDialog } = await import('./credit-override-dialog');
 
 const OPP = '11111111-1111-4111-8111-111111111111';
+const VERSION = '44444444-4444-4444-8444-444444444444';
+
+/** What the dialog shows of the position; its `orderValue` is the value the override is given for. */
+const POSITION = {
+  orderValue: '90400.00',
+  rows: [
+    { label: 'Credit limit', value: 'NPR 1,00,000.00' },
+    { label: 'Open receivables', value: 'NPR 0.00' },
+    { label: 'Confirmed orders not yet invoiced', value: 'NPR 90,400.00' },
+    { label: 'This order', value: 'NPR 90,400.00' },
+    { label: 'Total against the limit', value: 'NPR 1,80,800.00' },
+  ],
+};
 
 /** The POST's answer, through the contract. */
 const overridden = CreditHoldDtoSchema.parse({
@@ -33,7 +46,8 @@ const overridden = CreditHoldDtoSchema.parse({
   creditLimit: '500000.00',
   exposure: '512345.50',
   uninvoiced: '0.00',
-  orderValue: '0.00',
+  orderValue: '90400.00',
+  pendingQuotationVersionId: VERSION,
   exposureWithOrder: '512345.50',
   held: true,
   override: {
@@ -41,7 +55,8 @@ const overridden = CreditHoldDtoSchema.parse({
     byUserId: '33333333-3333-4333-8333-333333333333',
     byName: 'Gita Karki',
     at: '2026-11-20T05:45:00.000Z',
-    orderValue: '0.00',
+    orderValue: '90400.00',
+    quotationVersionId: VERSION,
   },
   overrideCovers: true,
 });
@@ -79,7 +94,14 @@ async function typeReason(value: string) {
 }
 
 async function open() {
-  const mounted = await mountForm(<CreditOverrideDialog opportunityId={OPP} number="DEAL-0042" />);
+  const mounted = await mountForm(
+    <CreditOverrideDialog
+      opportunityId={OPP}
+      number="DEAL-0042"
+      quotationVersionId={VERSION}
+      position={POSITION}
+    />,
+  );
   await click(mounted.container.querySelector('button'));
   return mounted;
 }
@@ -101,8 +123,11 @@ it('refuses a blank reason in the dialog, then sends the trimmed reason and toas
   await typeReason('  Paid by cheque today.  ');
   await click(footerButton('Override hold'));
   await settle();
+  // R5 FU10: the override names the quotation version and the order value it covers, always.
   expect(mocks.overrideCreditHold).toHaveBeenCalledExactlyOnceWith(expect.anything(), OPP, {
     reason: 'Paid by cheque today.',
+    quotationVersionId: VERSION,
+    orderValue: '90400.00',
   });
   expect(mocks.success).toHaveBeenCalledWith(
     'Credit hold overridden. DEAL-0042 can go to a sales order.',
@@ -136,15 +161,9 @@ it('shows what the hold is made of, and why an earlier override no longer applie
     <CreditOverrideDialog
       opportunityId={OPP}
       number="DEAL-0042"
+      quotationVersionId={VERSION}
       position={{
-        orderValue: '90400.00',
-        rows: [
-          { label: 'Credit limit', value: 'NPR 1,00,000.00' },
-          { label: 'Open receivables', value: 'NPR 0.00' },
-          { label: 'Confirmed orders not yet invoiced', value: 'NPR 90,400.00' },
-          { label: 'This order', value: 'NPR 90,400.00' },
-          { label: 'Total against the limit', value: 'NPR 1,80,800.00' },
-        ],
+        ...POSITION,
         note: 'An earlier override on this deal was for an order of NPR 5,000.00; this order is worth more.',
       }}
     />,
@@ -166,7 +185,44 @@ it('shows what the hold is made of, and why an earlier override no longer applie
   await settle();
   expect(mocks.overrideCreditHold).toHaveBeenCalledExactlyOnceWith(expect.anything(), OPP, {
     reason: 'Advance received.',
+    quotationVersionId: VERSION,
     orderValue: '90400.00',
   });
+  await mounted.unmount();
+});
+
+it('says the override covers this quotation version at this order value only (R5 FU10)', async () => {
+  const mounted = await open();
+  const text = dialog()?.textContent ?? '';
+  expect(text).toContain('this quotation version at this order value only');
+  expect(text).not.toMatch(/up to|a bigger one/);
+  await mounted.unmount();
+});
+
+it('offers no override when the deal has no accepted quotation waiting (R5 FU10)', async () => {
+  const mounted = await mountForm(
+    <CreditOverrideDialog
+      opportunityId={OPP}
+      number="DEAL-0042"
+      quotationVersionId={null}
+      position={POSITION}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  expect(dialog()?.textContent).toContain('no accepted quotation waiting to become a sales order');
+  expect(footerButton('Override hold')).toBeNull();
+  expect(dialog()?.querySelector('textarea')).toBeNull();
+  expect(mocks.overrideCreditHold).not.toHaveBeenCalled();
+  await mounted.unmount();
+});
+
+it('offers no override when the position, and so the order value, could not be read (R5 FU10)', async () => {
+  const mounted = await mountForm(
+    <CreditOverrideDialog opportunityId={OPP} number="DEAL-0042" quotationVersionId={VERSION} />,
+  );
+  await click(mounted.container.querySelector('button'));
+  expect(dialog()?.textContent).toContain('could not be read');
+  expect(footerButton('Override hold')).toBeNull();
+  expect(mocks.overrideCreditHold).not.toHaveBeenCalled();
   await mounted.unmount();
 });
