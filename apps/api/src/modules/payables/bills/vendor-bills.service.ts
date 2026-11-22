@@ -830,7 +830,8 @@ export class VendorBillsService {
         tx,
         { command: 'payables.bill.match', key: idempotencyKey, body: { id } },
         async () => {
-          await this.lockEnterable(tx, scope, principal, id);
+          const bill = await this.lockEnterable(tx, scope, principal, id);
+          assertInvoiceDateByToday(bill.invoiceDate, now);
           await this.runMatch(tx, scope, id, principal.userId, tolerance, now);
           return { status: 200, response: await this.dto(tx, scope, id) };
         },
@@ -1087,6 +1088,8 @@ export class VendorBillsService {
                 `A ${bill.status} bill (match ${bill.matchStatus}) cannot be submitted: every line must match or a match exception must be approved`,
               );
             }
+            // A draft saved before the date rule, or edited outside the API, can carry a later date.
+            assertInvoiceDateByToday(bill.invoiceDate, now);
             await this.assertInvoiceClean(tx, scope, bill.documentId);
             const facts = billFactsOf({
               poMatched: bill.purchaseOrderId !== null,

@@ -2170,4 +2170,50 @@ describe('invoice date (FX6 #6): today in Kathmandu at the latest', () => {
       codeOf(await httpErrorOf(svc.create(dated(documentId, '2026-11-11'), randomUUID()))),
     ).toBe('BILL_DATE_IN_FUTURE');
   });
+
+  // A draft saved before the rule, or edited outside the API, can carry a later date.
+  const postDate = (billId: string) =>
+    exec(scopeA, sql`UPDATE app.vendor_bills SET invoice_date = '2026-11-10' WHERE id = ${billId}`);
+  const billRow = async (billId: string) =>
+    (await read((tx) => tx.select().from(vendorBills).where(eq(vendorBills.id, billId))))[0]!;
+
+  it('refuses to submit a draft dated after the day it is submitted, and submits it once that day comes', async () => {
+    const bill = await billWithoutPo(await doc(['clean']));
+    await postDate(bill.id);
+
+    const refused = await httpErrorOf(clocked(lastSecondOfNov9).submit(bill.id, randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'BILL_DATE_IN_FUTURE',
+      details: { invoiceDate: '2026-11-10', today: '2026-11-09' },
+    });
+    expect(await billRow(bill.id)).toMatchObject({
+      status: 'draft',
+      number: null,
+      approvalRequestId: null,
+    });
+
+    expect(await clocked(firstSecondOfNov10).submit(bill.id, randomUUID())).toMatchObject({
+      status: 'pending_approval',
+    });
+  });
+
+  it('refuses to match a draft dated after the day it is matched, and matches it once that day comes', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    await postDate(bill.id);
+    const runsOf = () =>
+      read((tx) =>
+        tx.select().from(matchResults).where(eq(matchResults.vendorBillId, bill.id)),
+      ).then((rows) => rows.length);
+    const runsBefore = await runsOf();
+
+    const refused = await httpErrorOf(clocked(lastSecondOfNov9).match(bill.id, randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('BILL_DATE_IN_FUTURE');
+    expect(await runsOf()).toBe(runsBefore);
+
+    await clocked(firstSecondOfNov10).match(bill.id, randomUUID());
+    expect(await runsOf()).toBeGreaterThan(runsBefore);
+  });
 });
