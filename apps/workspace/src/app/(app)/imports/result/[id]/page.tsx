@@ -52,6 +52,8 @@ export default async function ImportResultPage({
   const slug = slugOfKind(batch.kind);
   const meta = IMPORT_KINDS[slug];
   const committed = batch.status === 'committed';
+  // A preview left for 7 days was cleared by the worker: its rows are gone, so there is nothing to review or import.
+  const expired = batch.status === 'expired';
   const refused = batch.rowCount - batch.validCount - batch.createdCount;
   return (
     <Page>
@@ -63,11 +65,19 @@ export default async function ImportResultPage({
         ]}
       />
       <PageHeader
-        title={committed ? `Imported ${batch.fileName}` : `Check ${batch.fileName}`}
+        title={
+          committed
+            ? `Imported ${batch.fileName}`
+            : expired
+              ? `Expired ${batch.fileName}`
+              : `Check ${batch.fileName}`
+        }
         description={
           committed
             ? `Imported ${batch.committedAt?.slice(0, 16).replace('T', ' ') ?? ''}. This record stays as it is.`
-            : `Nothing has been created yet. Review the rows, then import the ${batch.validCount} that are ready.`
+            : expired
+              ? 'Nothing was created. The preview was not imported within 7 days, so its rows were deleted.'
+              : `Nothing has been created yet. Review the rows, then import the ${batch.validCount} that are ready.`
         }
       />
       <div className={styles.stack}>
@@ -91,7 +101,7 @@ export default async function ImportResultPage({
           <StatCard label="Need fixing (skipped)" value={batch.errorCount} icon="alert-triangle" />
         </section>
         <div className={styles.actions}>
-          {!committed && batch.validCount > 0 ? (
+          {!committed && !expired && batch.validCount > 0 ? (
             <form action={commitImportAction}>
               <input type="hidden" name="id" value={batch.id} />
               <Button type="submit">
@@ -99,7 +109,7 @@ export default async function ImportResultPage({
               </Button>
             </form>
           ) : null}
-          {refused > 0 ? (
+          {refused > 0 && !expired ? (
             <LinkButton variant="secondary" href={`/imports/result/${batch.id}/errors`}>
               Download the error report
             </LinkButton>
@@ -108,51 +118,62 @@ export default async function ImportResultPage({
             {committed ? `Back to ${meta.plural}` : 'Upload a different file'}
           </LinkButton>
         </div>
-        {!committed && batch.validCount === 0 ? (
+        {expired ? (
+          <Alert tone="warning" title="This preview expired.">
+            Upload the file again to check it and import it.
+          </Alert>
+        ) : null}
+        {!committed && !expired && batch.validCount === 0 ? (
           <Alert tone="warning">
             No row is ready to import. Fix the rows listed below in your file and upload it again.
           </Alert>
         ) : null}
-        <Panel title="Rows">
-          <Table caption="Rows of the import" minWidth={760}>
-            <thead>
-              <tr>
-                <Th>Line</Th>
-                <Th>Name / PAN</Th>
-                <Th>Result</Th>
-                <Th>Problems</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {batch.rows.map((row) => (
-                <tr key={row.line}>
-                  <Td nowrap>{row.line}</Td>
-                  <Td>
-                    <span className={styles.long}>{row.name === '' ? '(no name)' : row.name}</span>
-                    <div className={styles.quiet}>{row.pan ?? 'No PAN'}</div>
-                  </Td>
-                  <Td>
-                    <Badge tone={TONE[row.status]}>{STATUS_LABEL[row.status]}</Badge>
-                  </Td>
-                  <Td>
-                    {row.issues.length === 0 ? (
-                      <span className={styles.quiet}>None</span>
-                    ) : (
-                      <ul className={styles.issues}>
-                        {row.issues.map((issue, index) => (
-                          <li key={index} className={styles.long}>
-                            {issue.column === null ? '' : `${issue.column.replaceAll('_', ' ')}: `}
-                            {issue.message}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </Td>
+        {expired ? null : (
+          <Panel title="Rows">
+            <Table caption="Rows of the import" minWidth={760}>
+              <thead>
+                <tr>
+                  <Th>Line</Th>
+                  <Th>Name / PAN</Th>
+                  <Th>Result</Th>
+                  <Th>Problems</Th>
                 </tr>
-              ))}
-            </tbody>
-          </Table>
-        </Panel>
+              </thead>
+              <tbody>
+                {batch.rows.map((row) => (
+                  <tr key={row.line}>
+                    <Td nowrap>{row.line}</Td>
+                    <Td>
+                      <span className={styles.long}>
+                        {row.name === '' ? '(no name)' : row.name}
+                      </span>
+                      <div className={styles.quiet}>{row.pan ?? 'No PAN'}</div>
+                    </Td>
+                    <Td>
+                      <Badge tone={TONE[row.status]}>{STATUS_LABEL[row.status]}</Badge>
+                    </Td>
+                    <Td>
+                      {row.issues.length === 0 ? (
+                        <span className={styles.quiet}>None</span>
+                      ) : (
+                        <ul className={styles.issues}>
+                          {row.issues.map((issue, index) => (
+                            <li key={index} className={styles.long}>
+                              {issue.column === null
+                                ? ''
+                                : `${issue.column.replaceAll('_', ' ')}: `}
+                              {issue.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </Panel>
+        )}
       </div>
     </Page>
   );

@@ -8,6 +8,7 @@ import { PurchaseOrderRenderWorkerModule } from './modules/procurement/orders/re
 import { QuotationExpiryWorkerModule } from './modules/quotations/expiry/quotation-expiry.worker.module';
 import { QuotationRenderWorkerModule } from './modules/quotations/render/quotation-render.worker.module';
 import { PaymentPromiseWorkerModule } from './modules/receivables/promises/payment-promise.worker.module';
+import { PartyImportExpiryWorkerModule } from './modules/party-imports/party-import-expiry.worker.module';
 import { VendorKycExpiryJobsModule } from './modules/vendors/vendor-kyc-expiry.worker.module';
 import { AuditWorkerModule } from './platform/audit/audit.worker.module';
 import { ConfigModule } from './platform/config/config.module';
@@ -47,6 +48,7 @@ import { WorkerHealth } from './platform/queue/worker-health';
     PortalLoginPolicyWorkerModule,
     VendorKycExpiryJobsModule,
     PaymentPromiseWorkerModule,
+    PartyImportExpiryWorkerModule,
   ],
   providers: [SystemProcessor, HeartbeatScheduler, WorkerHealth],
 })

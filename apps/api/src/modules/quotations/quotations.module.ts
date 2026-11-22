@@ -3,7 +3,8 @@
 // DocumentsModule, SettingsModule (MoneyService, NumberingService, SettingsService), ApprovalsModule (preview
 // route, approval cancel on revise), AuditModule, OpportunitiesModule (Won on acceptance) and NotifyModule (the
 // owner's notice); the database is global. Q3b adds the outcome route and exports its accept/reject core. Round 5
-// (S3) adds QuotationRenderNudgeModule: an approved version's render is enqueued once the approval commits.
+// (S3) adds QuotationRenderNudgeModule: an approved version's render is enqueued once the approval commits. Round 5
+// (FU12) registers QuotationLostHandler with OpportunitiesService at start, so a Lost deal cancels its quotations.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -15,6 +16,7 @@ import { NotifyModule } from '../../platform/notify/notify.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { ApprovalsService } from '../approvals/requests.service';
 import { OpportunitiesModule } from '../opportunities/opportunities.module';
+import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { QuotationVersionSubject } from './approval/quotation-version.subject';
 import { QuotationSubmitCaller } from './approval/quotation-submit.caller';
 import { QuotationSubmitController } from './approval/quotation-submit.controller';
@@ -31,6 +33,7 @@ import { CancelController } from './drafting/cancel.controller';
 import { CancelService } from './drafting/cancel.service';
 import { ReviseController } from './drafting/revise.controller';
 import { ReviseService } from './drafting/revise.service';
+import { QuotationLostHandler } from './lost/quotation-lost.handler';
 import { PricingService } from './pricing/pricing.service';
 import { QuotationPreviewCaller } from './preview/quotation-preview.caller';
 import { QuotationPreviewController } from './preview/quotation-preview.controller';
@@ -84,6 +87,7 @@ import { QuotationRenderNudge, QuotationRenderNudgeModule } from './render/quota
     QuotationPreviewCaller,
     ReviseService,
     CancelService,
+    QuotationLostHandler,
     QuotationSubmitService,
     QuotationSubmitStore,
     QuotationSubmitCaller,
@@ -104,14 +108,18 @@ export class QuotationsModule implements OnModuleInit {
     private readonly documents: DocumentsService,
     private readonly approvals: ApprovalsService,
     private readonly renderNudge: QuotationRenderNudge,
+    private readonly opportunities: OpportunitiesService,
+    private readonly lostHandler: QuotationLostHandler,
   ) {}
 
   /**
    * Both registries throw on a duplicate, so this runs once, when the module starts. onDecided is only called from
-   * ApprovalsService.act, which is an API route, so the worker never needs the subject.
+   * ApprovalsService.act, which is an API route, so the worker never needs the subject. The Lost handler goes to the
+   * same OpportunitiesService instance the opportunity routes use (the module is a singleton, exported once).
    */
   onModuleInit(): void {
     this.documents.registerOwner(new QuotationOwnerPolicy(drizzleHeadLoader(this.db)));
     this.approvals.registerSubject(new QuotationVersionSubject(undefined, this.renderNudge));
+    this.opportunities.registerLostHandler(this.lostHandler);
   }
 }

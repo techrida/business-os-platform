@@ -134,6 +134,7 @@ export class DocumentsController {
         'Send the file with its own Content-Type (for example application/pdf), not as JSON or a form',
       );
     }
+    // A ScanQueueDeferredError (bytes kept, only the scan waits for the queue) becomes a 202 in the global error filter.
     return this.docs.receiveContent(versionId, req, length, { documentId: id });
   }
 

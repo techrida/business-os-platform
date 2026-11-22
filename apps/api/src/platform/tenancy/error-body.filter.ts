@@ -18,6 +18,7 @@ import type { Response } from 'express';
 import { PinoLogger } from 'nestjs-pino';
 import { z } from 'zod';
 
+import { ScanQueueDeferredError } from '../documents/scan-queue-deferred.error';
 import { STEP_UP_REQUIRED } from '../auth/step-up';
 import { DB_BUSY_RETRY_AFTER_SECONDS, type DbBusyKind, dbBusyKindOf } from '../db/busy';
 import { newCorrelationId } from '../obs/correlation';
@@ -751,6 +752,13 @@ export class ErrorBodyFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const req = http.getRequest<CorrelatedRequest>();
     const res = http.getResponse<Response>();
+
+    // An upload whose bytes were kept and only its scan could not be queued yet: accepted (202) with the quarantined
+    // version, on every upload route (the sweeper queues the scan). Sent here because Nest resets a status set in a handler.
+    if (exception instanceof ScanQueueDeferredError) {
+      res.status(202).json(exception.version);
+      return;
+    }
 
     let status: number;
     let exposedMessage: string | undefined;

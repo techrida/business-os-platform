@@ -137,3 +137,15 @@ it('commits through the API for a valid id and lands on the result page, or back
   await expect(commitImportAction(bad)).rejects.toThrow('REDIRECT:/customers');
   expect(api.commitImport).not.toHaveBeenCalled();
 });
+
+it('says an expired preview was cleared, offers no import and shows no rows (FU11)', async () => {
+  api.getImport.mockResolvedValue({ ...base, status: 'expired', rows: [] });
+  const html = await render();
+  expect(html).toContain('Expired people.csv');
+  expect(html).toContain('This preview expired.');
+  expect(html).toContain('its rows were deleted');
+  expect(html).not.toContain('Import 1 customer');
+  expect(html).not.toContain('Rows of the import');
+  expect(html).not.toContain('error report');
+  expect(html).toContain('Upload a different file');
+});
