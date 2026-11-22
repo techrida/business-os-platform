@@ -7,6 +7,7 @@ import {
   expenseAccountErrors,
   parseActiveAccountIds,
   parseBillLines,
+  withholdingOption,
   type LineRow,
 } from './forms';
 
@@ -146,5 +147,30 @@ describe('parseActiveAccountIds', () => {
     );
     expect(parseActiveAccountIds('')).toEqual(new Set());
     expect(parseActiveAccountIds(null)).toBeUndefined();
+  });
+});
+
+describe('withholding code options', () => {
+  const code = (rateBp: number) =>
+    withholdingOption({ id: TDS, code: 'TDS-5', name: 'Rent', rateBp });
+
+  it('names each code with its rate as a percent, without trailing zeros, and keeps the id', () => {
+    // Fails on the old code: the option read "TDS-5 - Rent", with no rate.
+    expect(code(500)).toEqual({ id: TDS, label: 'TDS-5 - Rent (5%)' });
+    expect(code(150).label).toBe('TDS-5 - Rent (1.5%)');
+    expect(code(25).label).toBe('TDS-5 - Rent (0.25%)');
+    expect(code(0).label).toBe('TDS-5 - Rent (0%)');
+    expect(code(10000).label).toBe('TDS-5 - Rent (100%)');
+  });
+
+  it('asks for a code from the list, not a pasted id, when the posted value is not one', () => {
+    const out = parseBillLines([
+      row({ quantity: '1', unitPrice: '10', accountId: ACCOUNT, taxCodeId: TAX, tdsCodeId: 'x' }),
+    ]);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors['0.tdsCodeId']).toBe(
+      'Choose a withholding code from the list, or No withholding.',
+    );
   });
 });

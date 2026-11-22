@@ -1,4 +1,10 @@
-import type { PaymentRequestStatus } from '@bos/contracts';
+import {
+  RequestPaymentBodySchema,
+  type Currency,
+  type PaymentRequestStatus,
+  type RequestPaymentBody,
+} from '@bos/contracts';
+import { Dec } from '@bos/locale';
 
 import type { PaymentRequestItem } from '@/lib/api-payables';
 
@@ -63,4 +69,89 @@ export function vendorsWithoutBankAccount(
     if (!seen.has(item.vendorPartyId)) seen.set(item.vendorPartyId, item.vendorName);
   }
   return [...seen].map(([id, name]) => ({ id, name }));
+}
+
+/** Most payable items one request takes, as the contract allows. */
+export const MAX_REQUEST_ITEMS = 200;
+
+/**
+ * The request the entry form posts, read the same way by the create action and by the review step, so what the
+ * review shows is what the action sends. `lineCount` is null when the count is not a whole number from 1 to 200.
+ */
+export function readPaymentRequestForm(form: FormData): {
+  lineCount: number | null;
+  allocations: { openItemId: string; amount: string }[];
+  body: Record<string, unknown>;
+} {
+  const text = (name: string) => {
+    const value = form.get(name);
+    return typeof value === 'string' ? value.trim() : '';
+  };
+  const count = Number(text('lineCount'));
+  const lineCount =
+    Number.isInteger(count) && count >= 1 && count <= MAX_REQUEST_ITEMS ? count : null;
+  const allocations = Array.from({ length: lineCount ?? 0 }, (_, i) => ({
+    openItemId: text(`allocation:${i}:openItemId`),
+    amount: text(`allocation:${i}:amount`),
+  }));
+  const purchaseOrderId = text('purchaseOrderId');
+  return {
+    lineCount,
+    allocations,
+    body: {
+      vendorPartyId: text('vendorPartyId'),
+      fromBankAccountId: text('fromBankAccountId'),
+      currency: text('currency'),
+      paymentType: 'settlement',
+      ...(purchaseOrderId === '' ? {} : { purchaseOrderId }),
+      allocations,
+    },
+  };
+}
+
+/** What the review step shows before a payment request is created: names, not ids. */
+export interface PaymentRequestReview {
+  payee: string;
+  payFrom: string;
+  /** The purchase order's label, or null when the request names none. */
+  purchaseOrder: string | null;
+  currency: Currency;
+  /** The sum of the lines, as a plain decimal string. */
+  total: string;
+  lines: { reference: string; amount: string }[];
+}
+
+/**
+ * The review of a filled-in entry form, or null when the request is not complete enough to send (the contract
+ * refuses it). The names come from the lists the form offered; an id the lists do not know shows as "Unknown".
+ */
+export function reviewPaymentRequest(
+  form: FormData,
+  names: {
+    vendor: (id: string) => string | undefined;
+    bankAccount: (id: string) => string | undefined;
+    purchaseOrder: (id: string) => string | undefined;
+    bill: (openItemId: string) => string | undefined;
+  },
+): PaymentRequestReview | null {
+  const read = readPaymentRequestForm(form);
+  if (read.lineCount === null) return null;
+  const parsed = RequestPaymentBodySchema.safeParse(read.body);
+  if (!parsed.success) return null;
+  const body: RequestPaymentBody = parsed.data;
+  const total = body.allocations.reduce((sum, line) => sum.plus(line.amount), new Dec(0));
+  return {
+    payee: names.vendor(body.vendorPartyId) ?? 'Unknown vendor',
+    payFrom: names.bankAccount(body.fromBankAccountId) ?? 'Unknown account',
+    purchaseOrder:
+      body.purchaseOrderId === undefined
+        ? null
+        : (names.purchaseOrder(body.purchaseOrderId) ?? 'Unknown purchase order'),
+    currency: body.currency,
+    total: total.toFixed(),
+    lines: body.allocations.map((line) => ({
+      reference: names.bill(line.openItemId) ?? 'Unknown bill',
+      amount: line.amount,
+    })),
+  };
 }
