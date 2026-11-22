@@ -123,6 +123,29 @@ describe('getMe', () => {
     warn.mockRestore();
   });
 
+  it('signs in with a known permission at an unknown scope: drops the row and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const known = { permission: 'customer.read', scope: 'own' };
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ...validMe,
+        permissions: [known, { permission: 'customer.read', scope: 'galaxy' }],
+      }),
+    );
+    expect((await getMe({ accessToken: TOKEN })).permissions).toEqual([known]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('customer.read@galaxy');
+    warn.mockRestore();
+  });
+
+  it('throws ApiError 502 for a malformed grant row', async () => {
+    fetchMock.mockResolvedValue(Response.json({ ...validMe, permissions: [null] }));
+    await expect(getMe({ accessToken: TOKEN })).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 502,
+    });
+  });
+
   it('returns the parsed /v1/me body', async () => {
     fetchMock.mockResolvedValue(Response.json(validMe));
     await expect(getMe({ accessToken: TOKEN })).resolves.toEqual(validMe);

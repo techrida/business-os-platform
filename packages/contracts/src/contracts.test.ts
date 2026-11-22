@@ -58,17 +58,38 @@ describe('dropUnknownGrants', () => {
       known,
       { permission: 'vat.future.read', scope: 'all' },
       { permission: 'customer.read', scope: 'galaxy' },
-      'junk',
-      { permission: 'customer.read', scope: { toString: null } },
     ];
     const { body, dropped } = dropUnknownGrants({ ...validMe, permissions });
-    expect(dropped).toEqual([
-      'vat.future.read@all',
-      'customer.read@galaxy',
-      'malformed',
-      'customer.read@?',
-    ]);
+    expect(dropped).toEqual(['vat.future.read@all', 'customer.read@galaxy']);
     expect(MeResponseSchema.parse(body).permissions).toEqual([known]);
+  });
+
+  it.each([
+    ['null', null],
+    ['an empty object', {}],
+    ['a string', 'junk'],
+    ['a number', 7],
+    ['an array', ['customer.read', 'own']],
+    ['a row without a scope', { permission: 'customer.read' }],
+    ['a row without a permission', { scope: 'own' }],
+    ['a non-string permission', { permission: 7, scope: 'own' }],
+    ['a hostile non-string scope', { permission: 'customer.read', scope: { toString: null } }],
+  ])('leaves a malformed row (%s) for the schema to reject, without throwing', (_name, row) => {
+    const unknownRow = { permission: 'vat.future.read', scope: 'all' };
+    const { body, dropped } = dropUnknownGrants({
+      ...validMe,
+      permissions: [known, unknownRow, row],
+    });
+    // The well-formed unknown row is still dropped; the malformed one is not, so the body fails.
+    expect(dropped).toEqual(['vat.future.read@all']);
+    expect((body as { permissions: unknown[] }).permissions).toEqual([known, row]);
+    expect(MeResponseSchema.safeParse(body).success).toBe(false);
+  });
+
+  it('leaves a permissions value that is not a list for the schema to reject', () => {
+    const body = { ...validMe, permissions: 'customer.read' };
+    expect(dropUnknownGrants(body)).toEqual({ body, dropped: [] });
+    expect(MeResponseSchema.safeParse(body).success).toBe(false);
   });
 
   it('leaves a body with only known grants, and any other shape, untouched', () => {
