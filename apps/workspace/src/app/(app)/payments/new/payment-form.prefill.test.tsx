@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Currency } from '@bos/contracts';
 
-import { click, fill, mountForm, submit } from '@/test/form-interactions';
+import { click, fill, mountForm, paste, submit } from '@/test/form-interactions';
 
 import { CUSTOMER_ID } from '../_lib/fixtures';
 
@@ -189,6 +189,22 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       // Old code compared the text with the open amount, took the padded 750.00 for it and cleared the box.
       expect(Number(value(box, 'amount'))).toBe(750);
       expect(box.textContent).toContain('The cash that arrived');
+    } finally {
+      await mounted.unmount();
+    }
+  }, 15_000);
+
+  it('counts a pasted amount as typed, so a currency change keeps it', async () => {
+    const mounted = await mount();
+    try {
+      const box = mounted.container;
+      const amountBox = boxFor(box, 'Amount received');
+      amountBox?.focus();
+      amountBox?.select();
+      await paste(amountBox, '20000');
+      expect(box.textContent).toContain('The cash that arrived');
+      await pick(box, 'Currency', 'INR (Indian rupee)');
+      expect(Number(value(box, 'amount'))).toBe(20000);
     } finally {
       await mounted.unmount();
     }
