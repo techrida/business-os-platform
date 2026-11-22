@@ -283,8 +283,7 @@ const draftDialog = () => document.querySelector('[role="dialog"]')!;
 const fileInput = () => draftDialog().querySelector<HTMLInputElement>('input[type="file"]') ?? null;
 const evidenceField = () =>
   draftDialog().querySelector<HTMLInputElement>('input[name="evidenceDocumentIds"]')!;
-const submitButton = () =>
-  draftDialog().querySelector<HTMLButtonElement>('button[type="submit"]')!;
+const submitButton = () => draftDialog().querySelector<HTMLButtonElement>('button[type="submit"]')!;
 const deletes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE');
 const FILE_URL = `/api/evidence/quotation-version/${VERSION}`;
 
@@ -381,7 +380,8 @@ it('says the file was not filed when the order was already confirmed, never "Ord
           ErrorBodySchema.parse({
             error: {
               code: 'evidence_not_filed',
-              message: 'This order was already confirmed, so the named files were not filed with it',
+              message:
+                'This order was already confirmed, so the named files were not filed with it',
               correlationId: 'corr-2',
             },
           }),

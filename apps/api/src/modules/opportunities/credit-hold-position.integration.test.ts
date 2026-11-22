@@ -104,8 +104,7 @@ async function confirmedOrder(
   const quotation = on ?? (await acceptedVersion(partyId, await deal(partyId), total));
   seq += 1;
   const amountNpr = (Number(total) * Number(fxRate)).toFixed(2);
-  const fx =
-    currency === 'NPR' ? sql`NULL, NULL` : sql`'nrb', '2026-11-19'::date`;
+  const fx = currency === 'NPR' ? sql`NULL, NULL` : sql`'nrb', '2026-11-19'::date`;
   return asSystem(async (tx) => {
     const { rows } = await tx.execute<{ id: string }>(sql`
       INSERT INTO app.sales_orders (tenant_id, organization_id, number, seq, fiscal_year, customer_party_id,
@@ -295,7 +294,9 @@ describe("the deal's pending order is read with the receivables and the orders",
     const party = await customer();
     const id = randomUUID();
     expect(
-      await positionOf(party, { version: { id, currency: 'NPR', total: '10.00', amountNpr: null } }),
+      await positionOf(party, {
+        version: { id, currency: 'NPR', total: '10.00', amountNpr: null },
+      }),
     ).toMatchObject({ orderValue: '10.00', pendingQuotationVersionId: id });
     expect(await positionOf(party)).toMatchObject({ pendingQuotationVersionId: null });
   });
