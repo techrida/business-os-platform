@@ -3,7 +3,8 @@
 // workspace (settings screens, live previews), so a preview can never draw something the PDF cannot.
 import { z } from 'zod';
 
-import { NepalPanSchema, PanVatNoSchema, PhoneSchema, nepalPhoneProblem } from './crm.js';
+import { NepalPanSchema, PanVatNoSchema, PhoneSchema } from './crm.js';
+import { nepalPhoneProblem } from './phones.js';
 import { CURRENCIES, type Currency } from './money.js';
 import { richTextSchema } from './rich-text.js';
 
