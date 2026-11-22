@@ -1266,6 +1266,26 @@ describe('the Nepal PAN rule on the server (FX8)', () => {
 
   const foreignPanOf = () => `AAACH${Math.floor(Math.random() * 1e6)}C`;
 
+  it('holds createInTx (import, lead conversion) to the same rule', async () => {
+    const now = new Date('2026-11-08T04:00:00Z');
+    const create = (panVatNo: string, addr: typeof address) =>
+      withTx(db, a, systemActor('test'), (tx) =>
+        service.createInTx(
+          tx,
+          a,
+          {
+            legalName: `Direct ${randomUUID().slice(0, 8)}`,
+            panVatNo,
+            relationship: 'prospect',
+            address: addr,
+          },
+          now,
+        ),
+      );
+    await expect(create('AB-12345', address)).rejects.toThrow(/9 digits/);
+    await expect(create(foreignPanOf(), abroad)).resolves.toBeDefined();
+  });
+
   it('keeps the loose tax id for a customer abroad', async () => {
     const foreignPan = foreignPanOf();
     const customer = await createCustomer({ panVatNo: foreignPan, address: abroad });

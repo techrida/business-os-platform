@@ -8,6 +8,7 @@ import {
   PARTY_IMPORT_MAX_ROWS,
   PARTY_IMPORT_REQUIRED,
   PhoneSchema,
+  nepalPanProblem,
   VENDOR_KINDS,
   VendorPanSchema,
   type PartyImportIssue,
@@ -222,7 +223,10 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     if (raw === '') return '';
     if (!PhoneSchema.safeParse(raw).success) {
       issues.push(
-        issue('contact_phone', 'contact phone must be an E.164 number such as +9779812345678'),
+        issue(
+          'contact_phone',
+          'contact phone must be an E.164 number such as +9779812345678 (a +977 number is a 10-digit mobile starting with 9, or a landline of 7 to 9 digits)',
+        ),
       );
       return '';
     }
@@ -247,6 +251,8 @@ export function checkLine(kind: PartyImportKind, cells: Record<string, string>):
     if (!/^[A-Z]{2}$/.test(country))
       issues.push(issue('address_country', 'address country must be a 2-letter code such as NP'));
     out.address_country = country;
+    if (pan !== null && nepalPanProblem(country, pan) !== null)
+      issues.push(issue('pan_vat_no', 'a PAN for a customer in Nepal must be exactly 9 digits'));
     out.contact_email = email(true);
     out.contact_name = text('contact_name', 200, false) || legalName;
     out.contact_phone = phone();

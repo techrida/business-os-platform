@@ -640,6 +640,9 @@ export class CustomersService {
     body: CustomerFields,
     now: Date,
   ): Promise<CustomerDto> {
+    // Reached by import and lead conversion as well, which skip the request schema.
+    const panProblem = nepalPanProblem(body.address.country, body.panVatNo);
+    if (panProblem !== null) throw new BadRequestException(panProblem);
     const pan = body.panVatNo === undefined ? null : normalizePan(body.panVatNo);
     if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
     if (body.ownerUserId !== undefined) {
