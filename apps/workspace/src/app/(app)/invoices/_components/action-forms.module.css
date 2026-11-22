@@ -18,3 +18,24 @@
   line-height: var(--line-height-body-small);
   overflow-wrap: anywhere;
 }
+
+/* What the dialog says once its action is done, until Done reloads the invoice. */
+.done {
+  display: grid;
+  gap: 8px;
+}
+
+.done p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.doneResult {
+  font-weight: var(--font-weight-semibold);
+}
+
+.doneNext {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
