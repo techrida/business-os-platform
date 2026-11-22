@@ -37,7 +37,6 @@ import {
 } from './users.store';
 import {
   ZitadelAdminClient,
-  ZitadelHttpError,
   type MirroredStatus,
   ZitadelNotConfiguredError,
   type ZitadelUser,

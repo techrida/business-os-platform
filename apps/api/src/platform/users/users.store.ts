@@ -244,7 +244,11 @@ export abstract class UsersStore {
    * One statement, so two requests cannot both win. A lease older than `ttlSeconds` is dead (its holder crashed) and is
    * taken over. It spans the ZITADEL call of a Founder-removing action, which no transaction or row lock may.
    */
-  abstract claimFounderLease(tenantId: string, leaseId: string, ttlSeconds: number): Promise<boolean>;
+  abstract claimFounderLease(
+    tenantId: string,
+    leaseId: string,
+    ttlSeconds: number,
+  ): Promise<boolean>;
   /** Frees the lease when `leaseId` still holds it; a lease taken over after its TTL is left alone. */
   abstract releaseFounderLease(tenantId: string, leaseId: string): Promise<void>;
 }
