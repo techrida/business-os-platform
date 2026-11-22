@@ -141,7 +141,8 @@ function VendorField({
           {problem}
         </Alert>
       ) : null}
-      {errors['acknowledgeVatWarning'] !== undefined ? (
+      {errors['acknowledgeVatWarning'] !== undefined &&
+      errors['acknowledgeVatWarningVendor'] === vendorId ? (
         <VatAcknowledge message={errors['acknowledgeVatWarning']} />
       ) : null}
       <Field

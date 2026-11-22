@@ -83,10 +83,14 @@ const vatWarningOf = (err: unknown): boolean =>
   err instanceof ApiError &&
   err.status === 409 &&
   ErrorBodySchema.safeParse(err.body).data?.error.code === 'VENDOR_NOT_VAT_REGISTERED';
-function vatWarned(o: Opened, err: unknown): ActionState {
+function vatWarned(o: Opened, err: unknown, vendorId: string): ActionState {
   return {
     key: randomUUID(),
-    errors: { acknowledgeVatWarning: poFailure(err, 'changeVendor').message },
+    errors: {
+      acknowledgeVatWarning: poFailure(err, 'changeVendor').message,
+      // The tick belongs to the vendor that raised the warning, never to one chosen afterwards.
+      acknowledgeVatWarningVendor: vendorId,
+    },
   };
 }
 
@@ -205,7 +209,7 @@ export async function changeVendorAction(prev: ActionState, form: FormData): Pro
       text(form, 'acknowledgeVatWarning') === 'on',
     );
   } catch (err) {
-    return vatWarningOf(err) ? vatWarned(r.o, err) : refused(r.o, err, 'changeVendor');
+    return vatWarningOf(err) ? vatWarned(r.o, err, vendorId) : refused(r.o, err, 'changeVendor');
   }
   return settled(
     r.o,
