@@ -111,9 +111,11 @@ export function workflow(cfg) {
   const u = uniqueValues(cfg.runKey);
   const v = {
     leadTitle: `BOS Demo — Business OS service${u.suffix}`,
-    company: `BOS Demo Himalayan Labs${u.suffix}`,
+    // FQA2: SALES_EXISTING_CUSTOMER names an existing organization: the run links its lead to that customer
+    // instead of creating a new one (the portal fixture).
+    company: process.env.SALES_EXISTING_CUSTOMER || `BOS Demo Himalayan Labs${u.suffix}`,
     contact: 'Anu Shrestha',
-    email: `${u.emailLocal}@bos-demo.example.com`,
+    email: process.env.SALES_EXISTING_CONTACT_EMAIL || `${u.emailLocal}@bos-demo.example.com`,
     legacyEmail: `${u.legacyEmailLocal}@bos-demo.example.com`,
     pan: u.pan,
     pay1: u.bankRef(1),
@@ -144,10 +146,14 @@ export function workflow(cfg) {
   const approve = async (s, persona, match, comment, isDone) => {
     await as(s, persona);
     await s.caption(`${s.captionText.split(' — ')[0]} — ${persona}: Inbox → approve`);
-    await s.goto('/inbox', (p) => p.getByRole('heading', { name: 'Inbox', exact: true }));
+    // Round 5: the inbox is a searchable list of links (the "Waiting approvals" table is gone).
+    const needle = typeof match === 'string' ? match : match.source;
+    const q = (needle.match(/[A-Z]{2}-\d{4}\/\d{2}-\d{5}/) ?? [needle])[0];
+    await s.goto(`/inbox?q=${encodeURIComponent(q)}`, (p) =>
+      p.getByRole('heading', { name: 'Inbox', exact: true }),
+    );
     const row = s.page
-      .getByRole('table', { name: 'Waiting approvals' })
-      .getByRole('row')
+      .locator('main a[href^="/inbox/"]')
       .filter({ hasText: typeof match === 'string' ? runMatch(match) : match });
     for (
       let i = 0;
@@ -180,7 +186,7 @@ export function workflow(cfg) {
       );
     }
     await s.see(row, `${persona}'s inbox row for ${match}`);
-    await s.click(row.first().getByRole('link').first(), 'the inbox row');
+    await s.click(row.first(), 'the inbox row');
     await s.page.waitForURL(/\/inbox\/[0-9a-f-]{36}/);
     await s.pause();
     const dialog = s.page.getByRole('dialog', { name: 'Approve request' });
@@ -307,7 +313,13 @@ export function workflow(cfg) {
       (await send.first().getAttribute('aria-disabled')) !== 'true',
       'the PDF is clean (Send is enabled)',
     );
-    const file = await s.download(s.page.getByRole('link', { name: /^Download/ }), s.dirs.files);
+    const file = await s.download(
+      s.page
+        .getByRole('button', { name: /^Download/ })
+        .or(s.page.getByRole('link', { name: /^Download/ }))
+        .first(),
+      s.dirs.files,
+    );
     s.expect(isPdf(file.bytes), 'the quotation download is a PDF');
     s.record('quotationPdf', file.path);
     const pdf = pdfText(file.path);
@@ -317,7 +329,10 @@ export function workflow(cfg) {
     await s.click(send, 'Send to customer');
     const dialog = s.page.getByRole('dialog', { name: /^Send / });
     await s.see(dialog.getByText(/never sent as a file/), 'the dialog says the file is never sent');
-    await s.choose(s.select('Send to', { scope: dialog }), new RegExp(escapeRe(v.contact)));
+    await s.choose(
+      s.select('Send to', { scope: dialog }),
+      process.env.SALES_EXISTING_CUSTOMER ? /Dev Customer/ : new RegExp(escapeRe(v.contact)),
+    );
     await s.pause(400);
     await dialog.locator('footer').getByRole('button', { name: 'Send to customer' }).click();
     await s.see(dialog.getByRole('status').filter({ hasText: 'Sent to' }), 'Sent to …', 60000);
@@ -645,6 +660,8 @@ export function workflow(cfg) {
             v.company,
           );
           await s.fill('Contact person', v.contact);
+          // FX9: a lead needs an e-mail or a phone number.
+          await s.fill(s.page.getByRole('textbox', { name: 'Email', exact: true }), v.email);
           await s.pause();
           await s.click(s.button('Create lead'), 'Create lead');
           await s.see(h1(s.page, L), 'the saved lead', cfg.navTimeout);
@@ -664,8 +681,11 @@ export function workflow(cfg) {
           );
 
           await s.caption('sales-1 — Move to Contacted, then Qualify → Qualify lead');
-          await s.choose(s.select('stage', { byName: true }), 'Contacted');
-          await s.click(s.button('Move'), 'Move');
+          // Round 5: the header offers Mark contacted (the Move select is gone).
+          await s.click(s.button('Mark contacted'), 'Mark contacted');
+          const contacted = s.page.getByRole('dialog', { name: 'Mark this lead contacted?' });
+          await contacted.getByLabel('Note').fill('Demo discovery call completed.');
+          await contacted.getByRole('button', { name: 'Mark contacted', exact: true }).click();
           await s.seeText('Moved to Contacted.');
           await s.click(s.button('Qualify'), 'Qualify');
           await s.page
@@ -713,28 +733,51 @@ export function workflow(cfg) {
             await s.click(s.button('Convert to opportunity'), 'Convert to opportunity');
             const d = s.page.getByRole('dialog', { name: 'Convert lead to opportunity' });
             await s.see(d, 'the Convert dialog');
-            await d.getByLabel('Create a new organization').check();
-            const fill = async (label, value) => {
-              await d.getByLabel(label, { exact: true }).fill(value);
-            };
-            await fill('Legal name', v.company);
-            await fill('PAN or VAT number', v.pan);
-            await fill('Address', '17 Demo Marg');
-            await fill('City', 'Kathmandu');
-            // FX9: Country is the AddressFields CountrySelect, a searchable combobox. Typing highlights the best
-            // match and Enter takes it; the list is in a popover outside the dialog, so no option click is scoped to d.
-            const country = d.getByRole('combobox', { name: 'Country', exact: true });
-            await country.fill('Nepal');
-            await country.press('Enter');
-            s.expect((await country.inputValue()) === 'Nepal', 'the Country box shows Nepal');
-            const newContact = d.getByLabel('Create a new contact');
-            if (await newContact.count()) await newContact.check();
-            await fill('Contact name', v.contact);
-            await fill('Email', v.email);
-            s.record('contactEmail', v.email);
-            await fill('Opportunity name', v.leadTitle);
-            await s.pause();
-            await d.getByRole('button', { name: 'Convert', exact: true }).click();
+            if (process.env.SALES_EXISTING_CUSTOMER) {
+              await d.getByLabel('Link to an existing organization').check();
+              await d.getByLabel('Find an organization', { exact: true }).fill(v.company);
+              await d.getByRole('button', { name: 'Search', exact: true }).click();
+              await s.choose(
+                d
+                  .locator('button[aria-haspopup="listbox"]')
+                  .filter({ hasText: 'Choose a customer' }),
+                new RegExp(escapeRe(v.company)),
+              );
+              s.record('contactEmail', v.email);
+              await d.getByLabel('Link to an existing contact').check();
+              await s.choose(
+                d
+                  .locator('button[aria-haspopup="listbox"]')
+                  .filter({ hasText: 'Choose a contact' }),
+                /Dev Customer/,
+              );
+              await d.getByLabel('Opportunity name', { exact: true }).fill(v.leadTitle);
+              await s.pause();
+              await d.getByRole('button', { name: 'Convert', exact: true }).click();
+            } else {
+              await d.getByLabel('Create a new organization').check();
+              const fill = async (label, value) => {
+                await d.getByLabel(label, { exact: true }).fill(value);
+              };
+              await fill('Legal name', v.company);
+              await fill('PAN or VAT number', v.pan);
+              await fill('Address', '17 Demo Marg');
+              await fill('City', 'Kathmandu');
+              // FX9: Country is the AddressFields CountrySelect, a searchable combobox. Typing highlights the best
+              // match and Enter takes it; the list is in a popover outside the dialog, so no option click is scoped to d.
+              const country = d.getByRole('combobox', { name: 'Country', exact: true });
+              await country.fill('Nepal');
+              await country.press('Enter');
+              s.expect((await country.inputValue()) === 'Nepal', 'the Country box shows Nepal');
+              const newContact = d.getByLabel('Create a new contact');
+              if (await newContact.count()) await newContact.check();
+              await fill('Contact name', v.contact);
+              await fill('Email', v.email);
+              s.record('contactEmail', v.email);
+              await fill('Opportunity name', v.leadTitle);
+              await s.pause();
+              await d.getByRole('button', { name: 'Convert', exact: true }).click();
+            }
             // Older builds redirect to the opportunity; round 3 shows the Converted lead instead.
             const outcome = await Promise.race([
               s.page
@@ -1075,7 +1118,7 @@ export function workflow(cfg) {
           await add.getByLabel('Description').fill('BOS Demo implementation service');
           await add.getByLabel('Unit', { exact: true }).fill('lot');
           await add.getByRole('spinbutton', { name: 'Quantity' }).fill('2');
-          await add.getByRole('spinbutton', { name: /^Rate \(/ }).fill('60000.00');
+          await add.getByLabel(/^Rate/).first().fill('60000.00');
           await s.choose(s.select('Tax code', { scope: add }), /VAT13|VAT 13/);
           await s.pause(400);
           await add.getByRole('button', { name: 'Add line', exact: true }).click();
@@ -1316,7 +1359,7 @@ export function workflow(cfg) {
             s.checks.push('note: acceptance was recorded by an earlier attempt of this run');
           } else {
             await s.click(s.button('Record outcome'), 'Record outcome');
-            const d = s.page.getByRole('dialog', { name: /^Record the outcome of / });
+            const d = s.page.getByRole('dialog', { name: /^Record outcome for / });
             await d.getByLabel('Accepted').check();
             await d.getByLabel('Signed quotation').check();
             await d
@@ -1354,7 +1397,7 @@ export function workflow(cfg) {
             if (n !== 1)
               throw new StepFailure(`${n} sales orders list quotation ${qt}; expected exactly one`);
             await s.click(
-              orderRow.getByRole('link', { name: SO }).first(),
+              orderRow.getByRole('link', { name: new RegExp(`${SO.source}|Draft order`) }).first(),
               'this run’s sales order',
             );
             await s.page.waitForURL(/\/sales-orders\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
@@ -1398,6 +1441,16 @@ export function workflow(cfg) {
             if (outcome === 'order')
               s.record('salesOrderUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
             else await openOrder();
+          }
+          // Round 5: accepting a quotation creates a Draft order; the Founder confirms it from its page.
+          if (await visible(s.button('Confirm order'))) {
+            await s.click(s.button('Confirm order'), 'Confirm order');
+            const confirm = s.page
+              .getByRole('dialog')
+              .getByRole('button', { name: /^Confirm/ })
+              .last();
+            if (await confirm.isVisible({ timeout: 3000 }).catch(() => false))
+              await confirm.click();
           }
           await s.see(status(s, 'Confirmed'), 'order Confirmed');
           const text = await main(s);
