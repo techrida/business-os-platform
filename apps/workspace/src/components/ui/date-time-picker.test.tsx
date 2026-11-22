@@ -209,3 +209,58 @@ it('restores the default time of an uncontrolled picker when the form resets', a
   expect(segment('hour').textContent).toBe('2');
   expect(posted('dueAt')).toBe('2026-11-21T14:30');
 });
+
+it('shows "Enter the date and time" when a required, empty picker blocks a plain form', async () => {
+  mounted = await mountForm(
+    <form method="get">
+      <DateTimePicker aria-label="Due" name="dueAt" required />
+    </form>,
+  );
+  await submit(mounted.container);
+  const alerts = () =>
+    Array.from(mounted.container.querySelectorAll('[role="alert"]')).filter(
+      (node) => node.textContent === 'Enter the date and time',
+    );
+  expect(alerts()).toHaveLength(1);
+  const message = alerts()[0]!;
+  expect(message.closest('[hidden], [aria-hidden="true"]')).toBeNull();
+  const focused = document.activeElement!;
+  expect(focused.hasAttribute('data-placeholder')).toBe(true);
+  expect(focused.getAttribute('aria-describedby')?.split(' ')).toContain(message.id);
+  // The time field shares the message.
+  expect(segment('hour').getAttribute('aria-describedby')?.split(' ')).toContain(message.id);
+  await typeSegment(segment('day'), '21');
+  await typeSegment(segment('month'), '11');
+  await typeSegment(segment('year'), '2026');
+  expect(alerts()).toHaveLength(1);
+  await typeSegment(segment('hour'), '2');
+  await typeSegment(segment('minute'), '30');
+  await typeSegment(segment('dayPeriod'), 'P');
+  expect(posted('dueAt')).not.toBe('');
+  expect(alerts()).toHaveLength(0);
+  expect(mounted.container.querySelector(`[aria-describedby~="${message.id}"]`)).toBeNull();
+});
+
+it('describes the cleared day with both messages when it blocks a plain form, and drops both once it is typed', async () => {
+  mounted = await mountForm(
+    <form method="get">
+      <DateTimePicker aria-label="Due" name="dueAt" defaultValue="2026-11-21T14:30" />
+    </form>,
+  );
+  await clearSegment(segment('day'));
+  await act(() => Promise.resolve((segment('hour') as HTMLElement).focus()));
+  await submit(mounted.container);
+  const alerts = () => Array.from(mounted.container.querySelectorAll('[role="alert"]'));
+  expect(alerts().map((node) => node.textContent)).toEqual([
+    'Finish the date',
+    'Enter the date and time',
+  ]);
+  expect(document.activeElement).toBe(segment('day'));
+  const described = segment('day').getAttribute('aria-describedby')?.split(' ') ?? [];
+  for (const node of alerts()) expect(described).toContain(node.id);
+  await typeSegment(segment('day'), '21');
+  expect(posted('dueAt')).toBe('2026-11-21T14:30');
+  expect(alerts()).toHaveLength(0);
+  expect(mounted.container.querySelector('form')!.checkValidity()).toBe(true);
+  expect(mounted.container.querySelector('[aria-invalid="true"]')).toBeNull();
+});

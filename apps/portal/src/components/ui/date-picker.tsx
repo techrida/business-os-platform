@@ -16,6 +16,7 @@ import {
   useState,
   type RefObject,
 } from 'react';
+import { flushSync } from 'react-dom';
 import {
   Button,
   Calendar,
@@ -80,38 +81,65 @@ function CompletenessWatch({
 }
 
 /**
+ * State for the message an `UnfinishedBlocker` shows once it has blocked a submit. The message stays
+ * until the field is finished; `shown` is false whenever the blocker is not mounted.
+ */
+export function useUnfinishedMessage(active: boolean) {
+  const id = useId();
+  const [blocked, setBlocked] = useState(false);
+  if (blocked && !active) setBlocked(false);
+  const onBlocked = useCallback(() => setBlocked(true), []);
+  return { id, shown: blocked && active, onBlocked };
+}
+
+/**
  * Keeps a native-validated form from submitting a partly typed date, as a native date input does.
- * Nameless, so it posts nothing; the browser cannot point at a hidden field, so the empty segment
- * takes the focus instead.
+ * Nameless, so it posts nothing. The browser cannot point at a hidden field, so its bubble is
+ * cancelled: the message shows beside the field instead and the empty segment takes the focus.
  */
 export function UnfinishedBlocker({
   message,
   root,
   disabled,
+  messageId,
+  shown,
+  onBlocked,
 }: {
   message: string;
   root: RefObject<HTMLElement | null>;
   disabled?: boolean | undefined;
+  messageId: string;
+  shown: boolean;
+  onBlocked: () => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
     ref.current?.setCustomValidity(message);
   }, [message]);
   return (
-    <input
-      ref={ref}
-      type="text"
-      hidden
-      tabIndex={-1}
-      aria-hidden="true"
-      value=""
-      disabled={disabled === true}
-      onChange={() => {}}
-      onInvalid={(event) => {
-        event.preventDefault();
-        root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
-      }}
-    />
+    <>
+      <input
+        ref={ref}
+        type="text"
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        value=""
+        disabled={disabled === true}
+        onChange={() => {}}
+        onInvalid={(event) => {
+          event.preventDefault();
+          // Committed first, so the segment is described by the message when it takes the focus.
+          flushSync(onBlocked);
+          root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
+        }}
+      />
+      {shown ? (
+        <span id={messageId} role="alert" className={styles.unfinished}>
+          {message}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -235,11 +263,19 @@ export function DatePicker({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `refills` forces a new object.
   const fedDate = useMemo(() => toCalendarDate(fed), [fed, refills]);
   const bs = showBs ? bsLongOfDay(chosen) : null;
+  const unfinishedMessage = useUnfinishedMessage(validation === 'native' && unfinished);
   const describedBy =
-    [aria['aria-describedby'], bs ? bsId : undefined].filter(Boolean).join(' ') || undefined;
+    [
+      aria['aria-describedby'],
+      unfinishedMessage.shown ? unfinishedMessage.id : undefined,
+      bs ? bsId : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
   const contextContainer = usePopoverContainer();
   const container = popoverContainer ?? contextContainer;
-  const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
+  const isInvalid =
+    invalid === true || ariaInvalid === true || ariaInvalid === 'true' || unfinishedMessage.shown;
   const minValue = toCalendarDate(min);
   const maxValue = toCalendarDate(max);
   const optional = defined({
@@ -375,7 +411,14 @@ export function DatePicker({
         <input type="hidden" name={name} value="" disabled={disabled} />
       ) : null}
       {validation === 'native' && unfinished ? (
-        <UnfinishedBlocker message="Finish the date" root={rootRef} disabled={disabled} />
+        <UnfinishedBlocker
+          message="Finish the date"
+          root={rootRef}
+          disabled={disabled}
+          messageId={unfinishedMessage.id}
+          shown={unfinishedMessage.shown}
+          onBlocked={unfinishedMessage.onBlocked}
+        />
       ) : null}
       {bs ? (
         <span id={bsId} className={styles.bs}>
