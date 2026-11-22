@@ -27,6 +27,7 @@
     "@tiptap/react": "catalog:",
     "@tiptap/starter-kit": "catalog:",
     "ioredis": "catalog:",
+    "libphonenumber-js": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",
     "pdfkit": "catalog:",

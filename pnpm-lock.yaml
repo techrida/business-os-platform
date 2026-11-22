@@ -135,6 +135,9 @@ catalogs:
     jsdom:
       specifier: ^31.0.0
       version: 31.0.0
+    libphonenumber-js:
+      specifier: 1.13.17
+      version: 1.13.17
     nepali-date-converter:
       specifier: ^3.4.2
       version: 3.4.2
@@ -478,6 +481,9 @@ importers:
       ioredis:
         specifier: 'catalog:'
         version: 5.11.1(supports-color@7.2.0)
+      libphonenumber-js:
+        specifier: 'catalog:'
+        version: 1.13.17
       next:
         specifier: 'catalog:'
         version: 16.4.5(@babel/core@7.29.13(supports-color@7.2.0))(@opentelemetry/api@1.10.0)(@playwright/test@1.65.0)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -548,6 +554,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      libphonenumber-js:
+        specifier: 'catalog:'
+        version: 1.13.17
       zod:
         specifier: 'catalog:'
         version: 4.6.7
@@ -4726,6 +4735,9 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
+
+  libphonenumber-js@1.13.17:
+    resolution: {integrity: sha512-V92dxRHhYTsHF5B6IjR8rtKW6qL7xKuERPFFqZt7XQl8A+NikbwEzjhxGpM+R6JnWjaL7/wokWSdTG/eyYAscQ==}
 
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
@@ -10261,6 +10273,8 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
+
+  libphonenumber-js@1.13.17: {}
 
   lightningcss-android-arm64@1.33.0:
     optional: true
