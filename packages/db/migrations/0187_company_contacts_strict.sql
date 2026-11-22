@@ -11,7 +11,9 @@
 --     Nepal number written with `+977`, `00977` or `977` in front, with a trunk 0 (`01-4123456`), or as a bare
 --     10-digit mobile starting with 9. A bare 7 to 9 digit number with no trunk 0 is not guessed at: it is ambiguous
 --     (a local Kathmandu number, or another country's), so it is left as it is.
---   * A PAN converts when it is nine digits once spaces and hyphens are removed.
+--   * A PAN converts when it is nine digits once spaces and hyphens are removed. The profile's own panVatNo (no screen
+--     edits it) is set to null when it does not, and reported; `entity.pan_vat_no` is left as stored.
+--   * A number written 00 and another country's code is not a Nepal trunk 0 and is left as stored.
 --   * A value that does not convert is left exactly as stored and reported in a NOTICE naming the tenant, the
 --     entity and the value. A profile with some convertible phones gets those converted and keeps the rest.
 --   * Idempotent: a converted row needs no change, so a second run inserts nothing.
@@ -50,7 +52,7 @@ BEGIN
 		nat_no := substr(t, 6);
 	ELSIF t ~ '^977[0-9]{8,12}$' THEN
 		nat_no := substr(t, 4);
-	ELSIF t ~ '^0[0-9]+$' THEN
+	ELSIF t ~ '^0[1-9][0-9]+$' THEN
 		nat_no := substr(t, 2);
 	ELSIF t ~ '^9[0-9]{9}$' THEN
 		nat_no := t;
@@ -118,8 +120,11 @@ BEGIN
 			IF cleaned ~ '^[0-9]{9}$' THEN
 				new_profile := jsonb_set(new_profile, '{panVatNo}', to_jsonb(cleaned));
 			ELSE
+				-- Not editable on any screen (the PAN is its own setting) and documents fall back to entity.pan_vat_no, so a value
+				-- that is not nine digits would only block every later write of the profile. It is cleared and reported.
 				v_left := v_left + 1;
-				RAISE NOTICE 'migration-0187: tenant % entity % entity.profile panVatNo % left as stored',
+				new_profile := jsonb_set(new_profile, '{panVatNo}', 'null'::jsonb);
+				RAISE NOTICE 'migration-0187: tenant % entity % entity.profile panVatNo % cleared (not nine digits)',
 					target."tenant_id", target."organization_id", latest."value" ->> 'panVatNo';
 			END IF;
 		END IF;

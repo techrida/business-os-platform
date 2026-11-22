@@ -89,6 +89,15 @@ describe('review fixes', () => {
     expect(() => readPartyCsv('vendor', 'legal_name\nAcme\tCo\n')).not.toThrow();
   });
 
+  it('holds a customer in Nepal to a nine-digit PAN and leaves a foreign tax id loose (FX8)', () => {
+    const issues = (over: Record<string, string>) =>
+      checkLine('customer', customerLine(over)).issues.map((i) => i.column);
+    expect(issues({ pan_vat_no: 'AB-12345', address_country: 'NP' })).toEqual(['pan_vat_no']);
+    expect(issues({ pan_vat_no: 'AB-12345' })).toEqual(['pan_vat_no']);
+    expect(issues({ pan_vat_no: 'AB-12345', address_country: 'IN' })).toEqual([]);
+    expect(issues({ pan_vat_no: '123456789' })).toEqual([]);
+  });
+
   it('refuses a PAN with no letter or digit, and keeps a vendor contact name within 120 characters', () => {
     expect(
       checkLine('customer', customerLine({ pan_vat_no: '-----' })).issues.map((i) => i.column),
@@ -154,13 +163,16 @@ describe('second review fixes', () => {
 });
 
 describe('checkLine, customers', () => {
-  it('normalises a good line: PAN upper-case, e-mail lower-case, country NP, contact name from the company', () => {
-    const checked = checkLine('customer', customerLine({ pan_vat_no: 'ab-12345' }));
+  it('normalises a good line: PAN upper-case, e-mail lower-case, country as given, contact name from the company', () => {
+    const checked = checkLine(
+      'customer',
+      customerLine({ pan_vat_no: 'ab-12345', address_country: 'IN' }),
+    );
     expect(checked.issues).toEqual([]);
     expect(checked.values).toMatchObject({
       pan_vat_no: 'AB-12345',
       contact_email: 'accounts@example.com',
-      address_country: 'NP',
+      address_country: 'IN',
       contact_name: 'Himal Traders',
     });
   });
@@ -269,7 +281,7 @@ describe('buildRows and identityKey', () => {
   it('marks a repeat inside the file as a duplicate of the first line, and counts the statuses', () => {
     const rows = buildRows('customer', [
       rec(2, { legal_name: 'A One', pan_vat_no: '111111111' }),
-      rec(3, { legal_name: 'A Two', pan_vat_no: '111-111-111' }),
+      rec(3, { legal_name: 'A Two', pan_vat_no: '111111111' }),
       rec(4, { legal_name: 'B', pan_vat_no: '' }),
       rec(5, { legal_name: 'b Pvt Ltd', pan_vat_no: '' }),
       rec(6, { legal_name: '', pan_vat_no: '' }),
