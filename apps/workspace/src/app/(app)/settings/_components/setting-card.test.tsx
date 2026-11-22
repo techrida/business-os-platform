@@ -118,10 +118,9 @@ describe('SettingCard markup and typed controls', () => {
     expect(box).toContain('type="text"');
     expect(box).toContain('inputMode="decimal"');
     expect(box).toContain('value="13"');
-    expect(box).not.toContain('name=');
-    const hidden = html.match(/<input[^>]*name="v:tax\.vat_rate"[^>]*>/)?.[0] ?? '';
-    expect(hidden).toContain('type="hidden"');
-    expect(hidden).toContain('value="13"');
+    // Until the page's script has run, the visible box carries the name; then it moves to a hidden input.
+    expect(box).toContain('name="v:tax.vat_rate"');
+    expect(html).not.toContain('type="hidden" name="v:tax.vat_rate"');
     expect(html).toContain('>%</span>');
   });
 

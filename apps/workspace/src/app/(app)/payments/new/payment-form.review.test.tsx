@@ -203,4 +203,19 @@ describe('payment form review step', () => {
       await mounted.unmount();
     }
   });
+
+  it('does not review an amount of zero: the action answers with its message', async () => {
+    const mounted = await mount();
+    try {
+      const root = mounted.container;
+      await fillIn(root);
+      await fill(boxFor(root, 'Amount received'), '0');
+      await click(button(root, 'Record payment'));
+      // Old code opened the review for a zero the action was about to refuse.
+      expect(dialog()).toBeNull();
+      expect(mocks.action).toHaveBeenCalledTimes(1);
+    } finally {
+      await mounted.unmount();
+    }
+  });
 });

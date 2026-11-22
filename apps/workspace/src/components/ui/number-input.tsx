@@ -61,6 +61,11 @@ export interface NumberInputCommonProps {
   defaultValue?: string | undefined;
   /** Called with the plain decimal string whenever the posted value changes. */
   onValueChange?: ((plain: string) => void) | undefined;
+  /**
+   * Called with the plain value after every edit the person makes, even one that leaves the amount
+   * as it was (typing `100` over a shown `100.00`), which onValueChange does not report.
+   */
+  onUserEdit?: ((plain: string) => void) | undefined;
   /** Bounds as plain decimal strings, compared exactly. A keystroke past `max` is refused. */
   min?: string | undefined;
   max?: string | undefined;
@@ -274,6 +279,7 @@ function NumberBox({
   value,
   defaultValue,
   onValueChange,
+  onUserEdit,
   min,
   max,
   required,
@@ -428,6 +434,7 @@ function NumberBox({
   function accept(next: string, caret: number | null) {
     clearNotice();
     commit(next);
+    onUserEdit?.(postedOf(next));
     if (caret !== null) placeCaret(caret);
     // A standing error is checked again: cleared once the value is fine, kept while it still
     // applies, replaced when it no longer describes the value. A min error is never brought in

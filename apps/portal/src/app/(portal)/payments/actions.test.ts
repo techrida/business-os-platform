@@ -108,7 +108,7 @@ describe('submitPaymentAction submit', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       currency: 'NPR',
       amount: '2018180',
-      tdsWithheld: '0.00',
+      tdsWithheld: '0',
       method: 'bank_transfer',
       receivedOn: '2026-01-15',
       bankReference: 'TXN-1',

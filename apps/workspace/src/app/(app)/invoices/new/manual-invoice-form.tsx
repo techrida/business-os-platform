@@ -287,6 +287,7 @@ export function ManualInvoiceForm({
                   name={discountMode === 'pct' ? 'discountValue' : undefined}
                   value={percentShown}
                   onValueChange={editDiscount('pct')}
+                  onUserEdit={editDiscount('pct')}
                 />
               )}
             </Field>
@@ -303,6 +304,7 @@ export function ManualInvoiceForm({
                   max={base?.toFixed(2)}
                   value={amountShown}
                   onValueChange={editDiscount('amount')}
+                  onUserEdit={editDiscount('amount')}
                 />
               )}
             </Field>

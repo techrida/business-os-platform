@@ -138,7 +138,7 @@ export async function submitPaymentAction(
     amount: normalizeAmount(text(form, 'amount')),
     method: text(form, 'method'),
     receivedOn: text(form, 'receivedOn'),
-    tdsWithheld: tds === '' ? '0.00' : tds,
+    tdsWithheld: tds === '' ? '0' : tds,
     proofDocumentIds,
     ...(bankReference === '' ? {} : { bankReference }),
     ...(withholdingCode === '' ? {} : { withholdingCode }),
