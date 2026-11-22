@@ -10,6 +10,7 @@ import {
   MATCH_EXCEPTION_WORKFLOW_SPEC as SEEDED_MATCH_EXCEPTION_SPEC,
   PAYMENT_REQUEST_WORKFLOW_SPEC as SEEDED_PAYMENT_REQUEST_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC as SEEDED_PO_AMENDMENT_SPEC,
+  PO_VENDOR_CHANGE_WORKFLOW_SPEC as SEEDED_PO_VENDOR_CHANGE_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC as SEEDED_PR_COMMITMENT_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC as SEEDED_PURCHASE_REQUEST_SPEC,
   VENDOR_BILL_WORKFLOW_SPEC as SEEDED_VENDOR_BILL_SPEC,
@@ -28,6 +29,10 @@ import {
   EMERGENCY_REVIEW_DOCUMENT_TYPE,
   EMERGENCY_REVIEW_WORKFLOW_SPEC,
 } from './receipts/emergency-review';
+import {
+  PO_VENDOR_CHANGE_DOCUMENT_TYPE,
+  PO_VENDOR_CHANGE_WORKFLOW_SPEC,
+} from './orders/po-vendor-change.rules';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
@@ -70,6 +75,16 @@ describe('seed workflow parity', () => {
     );
     expect(WorkflowSpecSchema.parse(SEEDED_PO_AMENDMENT_SPEC).documentType).toBe(
       PO_AMENDMENT_DOCUMENT_TYPE,
+    );
+  });
+
+  it('seeds po_vendor_change with exactly the spec the API publishes', () => {
+    expect(SEEDED_PO_VENDOR_CHANGE_SPEC).toStrictEqual(PO_VENDOR_CHANGE_WORKFLOW_SPEC);
+    expect(WorkflowSpecSchema.parse(SEEDED_PO_VENDOR_CHANGE_SPEC)).toStrictEqual(
+      WorkflowSpecSchema.parse(PO_VENDOR_CHANGE_WORKFLOW_SPEC),
+    );
+    expect(WorkflowSpecSchema.parse(SEEDED_PO_VENDOR_CHANGE_SPEC).documentType).toBe(
+      PO_VENDOR_CHANGE_DOCUMENT_TYPE,
     );
   });
 
