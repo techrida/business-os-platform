@@ -46,11 +46,23 @@ const canOf = (over: Partial<Can>): Can =>
     ...over,
   });
 
-/** An error body exactly as the API's error filter emits it: no `reason` or `allowedRoles` survive it. */
-const refusal = (status: number, code: string, message: string) => () =>
+/**
+ * An error body exactly as the API's error filter emits it. A `reason` survives only when it is one of the
+ * contract's ERROR_REASONS (the delivery-hold 403s and the small-team 400 are); `allowedRoles` never does.
+ */
+const refusal = (status: number, code: string, message: string, reason?: string) => () =>
   Promise.resolve(
     new Response(
-      JSON.stringify(ErrorBodySchema.parse({ error: { code, message, correlationId: 'corr-1' } })),
+      JSON.stringify(
+        ErrorBodySchema.parse({
+          error: {
+            code,
+            message,
+            correlationId: 'corr-1',
+            ...(reason === undefined ? {} : { reason }),
+          },
+        }),
+      ),
       { status },
     ),
   );
@@ -185,16 +197,21 @@ describe('releasing a delivery', () => {
     await mounted.unmount();
   });
 
-  it('explains a 403 with a reload link and sends a new key on the next try', async () => {
+  it('says the creator cannot release on requester_cannot_release, with a reload link, and sends a new key on the next try', async () => {
     mocks.apiFetch.mockImplementation(
-      refusal(403, 'forbidden', 'The person who created this order cannot release its delivery'),
+      refusal(
+        403,
+        'forbidden',
+        'The person who created this order cannot release its delivery',
+        'requester_cannot_release',
+      ),
     );
     const mounted = await mountAllowed();
     await typeReason('Customer collects on site today');
     await send();
     const alert = dialog()?.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain(
-      'You cannot release this delivery: you created this order, or your role cannot release an order of this amount.',
+      'You created this order, so someone else must release it. Reload this page to see who can.',
     );
     expect(alert?.querySelector('a')?.getAttribute('href')).toBe(`/sales-orders/${ORDER}`);
     expect(mocks.success).not.toHaveBeenCalled();
@@ -203,6 +220,72 @@ describe('releasing a delivery', () => {
     const [first, second] = sentKeys();
     expect(first).toBe(KEY);
     expect(second).not.toBe(KEY);
+    await mounted.unmount();
+  });
+
+  it.each([
+    [
+      'role_cannot_release_amount',
+      'Only Management or Founder may release the delivery of an order of this amount',
+      'Your role cannot release an order of this amount. The amount set in Sales settings may have changed; reload this page to see who can.',
+    ],
+    [
+      'no_permission',
+      'Forbidden',
+      'Only Finance, Management or the Founder can release a delivery. Ask an administrator if you need to.',
+    ],
+    [
+      'out_of_scope',
+      'Forbidden',
+      'Your release access does not reach this order, so someone else must release its delivery.',
+    ],
+  ] as const)('words a 403 with reason %s, with a reload link', async (reason, message, words) => {
+    mocks.apiFetch.mockImplementation(refusal(403, 'forbidden', message, reason));
+    const mounted = await mountAllowed();
+    await typeReason('Customer collects on site today');
+    await send();
+    const alert = dialog()?.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(words);
+    expect(alert?.querySelector('a')?.getAttribute('href')).toBe(`/sales-orders/${ORDER}`);
+    expect(mocks.success).not.toHaveBeenCalled();
+    await mounted.unmount();
+  });
+
+  const GENERIC =
+    'You cannot release this delivery: you created this order, or your role cannot release an order of this amount.';
+
+  it('falls back to the general refusal for a 403 with no reason', async () => {
+    mocks.apiFetch.mockImplementation(refusal(403, 'forbidden', 'Forbidden'));
+    const mounted = await mountAllowed();
+    await typeReason('Customer collects on site today');
+    await send();
+    const alert = dialog()?.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(GENERIC);
+    expect(alert?.querySelector('a')?.getAttribute('href')).toBe(`/sales-orders/${ORDER}`);
+    await mounted.unmount();
+  });
+
+  it('falls back to the general refusal for a 403 with a reason this workspace does not know', async () => {
+    // Raw JSON: a newer API's reason is outside the contract's enum, so the body is built by hand.
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'forbidden',
+              message: 'Forbidden',
+              correlationId: 'corr-1',
+              reason: 'some_future_reason',
+            },
+          }),
+          { status: 403 },
+        ),
+      ),
+    );
+    const mounted = await mountAllowed();
+    await typeReason('Customer collects on site today');
+    await send();
+    expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain(GENERIC);
     await mounted.unmount();
   });
 
@@ -335,29 +418,14 @@ describe('releasing an order only its creator, the Founder, can release (small-t
 });
 
 describe('refusals that are not about the release rule', () => {
-  it('uses the kernel words for a 403 with an allow-listed reason and for another 409 code', async () => {
-    mocks.apiFetch.mockImplementation(() =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify(
-            ErrorBodySchema.parse({
-              error: {
-                code: 'forbidden',
-                message: 'Forbidden',
-                correlationId: 'corr-1',
-                reason: 'no_permission',
-              },
-            }),
-          ),
-          { status: 403 },
-        ),
-      ),
-    );
+  it('uses the kernel words for a 403 with a contract reason the release does not map and for another 409 code', async () => {
+    // Not a release-rule reason, so the kernel words it.
+    mocks.apiFetch.mockImplementation(refusal(403, 'forbidden', 'Forbidden', 'mfa_required'));
     const mounted = await mountAllowed();
     await typeReason('Customer collects on site today');
     await send();
     const first = dialog()?.querySelector('[role="alert"]')?.textContent ?? '';
-    expect(first).not.toBe('');
+    expect(first).toContain('This action needs a second sign-in step (MFA).');
     expect(first).not.toContain('you created this order');
 
     mocks.apiFetch.mockImplementation(refusal(409, 'stale_access', 'Your access changed'));
