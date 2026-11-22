@@ -206,3 +206,18 @@
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }
+
+.reviewLines {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reviewLines li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+}

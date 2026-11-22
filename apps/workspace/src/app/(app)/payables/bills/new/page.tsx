@@ -31,7 +31,7 @@ import { PO_STATUS_LABEL, qtyText } from '../../../procurement/orders/_lib/model
 import { BillEntryForm, type OrderLine } from '../../_components/bill-entry-form';
 import { amountText, duplicateText } from '../../_lib/duplicates';
 import { billFailure } from '../../_lib/failure';
-import { NEW_BILL_HEADING } from '../../_lib/forms';
+import { NEW_BILL_HEADING, withholdingOption } from '../../_lib/forms';
 import { fileStatusLabel } from '../../_lib/model';
 import styles from '../../payables.module.css';
 
@@ -195,10 +195,7 @@ export default async function NewBillPage({
         id: tax.id,
         label: tax.label,
       }));
-      standaloneWithholding = (await listWithholdingCodes(session)).map((code) => ({
-        id: code.id,
-        label: `${code.code} - ${code.name}`,
-      }));
+      standaloneWithholding = (await listWithholdingCodes(session)).map(withholdingOption);
     } catch (err) {
       return (
         <Shell>
@@ -379,10 +376,7 @@ export default async function NewBillPage({
   let withholdingCodes: { id: string; label: string }[] = [];
   try {
     taxCodes = (await listTaxCodes(session)).map((t) => ({ id: t.id, label: t.label }));
-    withholdingCodes = (await listWithholdingCodes(session)).map((code) => ({
-      id: code.id,
-      label: `${code.code} - ${code.name}`,
-    }));
+    withholdingCodes = (await listWithholdingCodes(session)).map(withholdingOption);
     if (taxCodes.length === 0) taxProblem = 'No VAT codes are set up yet. Ask an administrator.';
   } catch (err) {
     taxProblem = billFailure(err, 'load').message;

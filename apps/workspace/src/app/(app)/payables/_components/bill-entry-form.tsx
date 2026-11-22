@@ -235,7 +235,7 @@ export function BillEntryForm({
                         />
                       )}
                     </Field>
-                    <Field label="Unit price (NPR)" error={errors[`${i}.unitPrice`]}>
+                    <Field label="Unit price" error={errors[`${i}.unitPrice`]}>
                       {(control) => (
                         <MoneyInput
                           {...control}

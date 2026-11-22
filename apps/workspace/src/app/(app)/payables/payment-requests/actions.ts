@@ -20,6 +20,7 @@ import { getGrants, hasGrant } from '@/lib/grants';
 import { parseReason } from '../../procurement/orders/_lib/forms';
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import { paymentRequestFailure, paymentRequestFieldError } from './failure';
+import { readPaymentRequestForm } from './model';
 
 const BASE = '/payables/payment-requests';
 const text = (form: FormData, name: string) => {
@@ -47,22 +48,9 @@ export async function createPaymentRequestAction(
   // Live grants, as the entry page is gated on: a grant at any scope, `own` included, may make a request.
   if (!hasGrant(await getGrants(session), 'payables.payment.request'))
     return { key, error: noPermission };
-  const count = Number(text(form, 'lineCount'));
-  if (!Number.isInteger(count) || count < 1 || count > 200)
-    return { key, error: 'Add between 1 and 200 payable items.' };
-  const purchaseOrderId = text(form, 'purchaseOrderId');
-  const allocations = Array.from({ length: count }, (_, i) => ({
-    openItemId: text(form, `allocation:${i}:openItemId`),
-    amount: text(form, `allocation:${i}:amount`),
-  }));
-  const parsed = RequestPaymentBodySchema.safeParse({
-    vendorPartyId: text(form, 'vendorPartyId'),
-    fromBankAccountId: text(form, 'fromBankAccountId'),
-    currency: text(form, 'currency'),
-    paymentType: 'settlement',
-    ...(purchaseOrderId === '' ? {} : { purchaseOrderId }),
-    allocations,
-  });
+  const { lineCount, allocations, body } = readPaymentRequestForm(form);
+  if (lineCount === null) return { key, error: 'Add between 1 and 200 payable items.' };
+  const parsed = RequestPaymentBodySchema.safeParse(body);
   if (!parsed.success) {
     const errors: Record<string, string> = {};
     for (const issue of parsed.error.issues) {
