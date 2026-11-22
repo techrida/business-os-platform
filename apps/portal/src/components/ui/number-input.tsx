@@ -45,8 +45,10 @@ import styles from './number-input.module.css';
 // plain string: no grouping commas, no bare trailing point and no trailing fractional zeros, and
 // onValueChange reports the same string. Padding (`100.00`) is only in the box, so blur never
 // changes what is sent: a retry after a lost response posts the same body. Until the page's script
-// has run, the visible box carries the name instead, so text typed before hydration is what posts
-// (grouped, as shown: `12,50,000.00`).
+// has run, the visible box carries the name instead, so a form sent before hydration posts the
+// server value as shown (grouped: `12,50,000.00`); actions that take a keyed post must canonicalise
+// it. Text typed before hydration finishes is not kept: React writes the state back when the name
+// moves.
 
 /** Props every number input takes. Values are plain decimal strings (`"1250000.5"`), `""` when empty. */
 export interface NumberInputCommonProps {
