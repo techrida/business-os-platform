@@ -332,6 +332,7 @@ describe('the override body needs the quotation version and the order value', ()
 
   it('answers 400 without the order value or without the quotation version, and passes a full body on', async () => {
     const quotationVersionId = randomUUID();
+    expect(await statusOf({ reason: 'Advance received' })).toBe(400);
     expect(await statusOf({ reason: 'Advance received', quotationVersionId })).toBe(400);
     expect(await statusOf({ reason: 'Advance received', orderValue: '22600.00' })).toBe(400);
     expect(
