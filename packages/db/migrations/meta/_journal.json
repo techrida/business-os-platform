@@ -757,6 +757,13 @@
       "when": 1783000000153,
       "tag": "0183_credit_override_quotation_version",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1783000000154,
+      "tag": "0181_po_vendor_change_workflow",
+      "breakpoints": true
     }
   ]
 }
