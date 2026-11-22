@@ -7,10 +7,13 @@
 --     acting entity (as 0013 does); bos.organization_id is reset to '' after each tenant.
 --   * leads.phones_search: the lead's numbers, space-separated in sort order (only leads that got a number).
 -- The number's country comes from its calling code, through the short list in pg_temp.fx9_phone_country below
--- (longest code first). A +977 number is NP only when its national part passes FX8's Nepal rules (a 10-digit mobile
--- starting with 9, or a 7 to 9 digit landline with no leading 0). A number whose code is not on the list, or a +977
--- number that breaks those rules, is not copied (Kuu: dev data may be cleared, so nothing is kept unconverted). A
--- country is never guessed from digits without a code: every old value is already E.164 (the old CHECK).
+-- (longest code first), and only when the national part has a plausible length and leading digits for that country
+-- (+1 must be a NANP number: a 2-9 area code and a 2-9 exchange). A +977 number is NP only when its national part
+-- passes FX8's Nepal rules (a 10-digit mobile starting with 9, or a 7 to 9 digit landline with no leading 0). A number
+-- whose code is not on the list, or whose national part fails its country's check, is not copied (Kuu: dev data may
+-- be cleared, so nothing is kept unconverted). The check is a conservative pre-filter of the app's libphonenumber
+-- validation, not a copy of it. A country is never guessed from digits without a code: every old value is already
+-- E.164 (the old CHECK).
 --
 -- Idempotent: an owner that already has a phone row is skipped, and phones_search is written only when it differs,
 -- so a second run writes nothing. It has to run before 0194 drops the old columns. The short lock_timeout gives up
@@ -27,8 +30,12 @@ SELECT
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
 
--- The country of an E.164 number from its calling code, or NULL when the code is not on this list or a +977 number
--- breaks FX8's Nepal rules. +1 is read as US (the rest of the North American plan is not told apart here).
+-- The country of an E.164 number from its calling code, or NULL when the code is not on this list, the national part
+-- has an implausible length or leading digits for that country (`national` below), or a +977 number breaks FX8's
+-- Nepal rules. +1 is read as US (the rest of the North American plan is not told apart here) and must be a NANP
+-- number: area code and exchange each start with 2-9.
+-- This is a conservative pre-filter only: the app's libphonenumber check (phoneProblem in @bos/contracts) is the
+-- authority, and a number this keeps may still be refused by the app (for example an unassigned area code).
 CREATE OR REPLACE FUNCTION pg_temp.fx9_phone_country(e164 text) RETURNS char(2)
 LANGUAGE sql IMMUTABLE AS $$
 	SELECT CASE
@@ -36,13 +43,24 @@ LANGUAGE sql IMMUTABLE AS $$
 		WHEN e164 LIKE '+977%' THEN
 			CASE WHEN substr(e164, 5) ~ '^(9[0-9]{9}|[1-9][0-9]{6,8})$' THEN 'NP' END
 		ELSE (
-			SELECT m.country
+			-- The longest matching code wins first; a national part that breaks its pattern then gives NULL rather
+			-- than falling through to a shorter code.
+			SELECT CASE WHEN substr(e164, 2 + length(m.code)) ~ m.national THEN m.country END
 			  FROM (VALUES
-				('880', 'BD'), ('971', 'AE'),
-				('91', 'IN'), ('44', 'GB'), ('86', 'CN'), ('61', 'AU'), ('92', 'PK'), ('94', 'LK'),
-				('49', 'DE'), ('33', 'FR'), ('81', 'JP'), ('65', 'SG'),
-				('1', 'US')
-			  ) AS m(code, country)
+				('880', 'BD', '^(1[0-9]{9}|[2-9][0-9]{7,8})$'),
+				('971', 'AE', '^[2-9][0-9]{7,8}$'),
+				('91', 'IN', '^[6-9][0-9]{9}$'),
+				('44', 'GB', '^[1-9][0-9]{9}$'),
+				('86', 'CN', '^(1[0-9]{10}|[2-9][0-9]{8,9})$'),
+				('61', 'AU', '^[2-478][0-9]{8}$'),
+				('92', 'PK', '^[2-9][0-9]{9}$'),
+				('94', 'LK', '^[1-9][0-9]{8}$'),
+				('49', 'DE', '^[1-9][0-9]{9,10}$'),
+				('33', 'FR', '^[1-9][0-9]{8}$'),
+				('81', 'JP', '^[1-9][0-9]{8,9}$'),
+				('65', 'SG', '^[3689][0-9]{7}$'),
+				('1', 'US', '^[2-9][0-9]{2}[2-9][0-9]{6}$')
+			  ) AS m(code, country, national)
 			 WHERE substr(e164, 2) LIKE m.code || '%'
 			 ORDER BY length(m.code) DESC
 			 LIMIT 1)
