@@ -1,5 +1,7 @@
 // Unit tests of the pure vendor rules (no database).
 import {
+  CreateVendorBodySchema,
+  PartyPhonesSchema,
   VENDOR_KINDS,
   VENDOR_STATUSES,
   canTransitionVendor,
@@ -8,6 +10,8 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  addressColumns,
+  addressFromRow,
   isoDay,
   kindCountryProblem,
   kybReadyForReview,
@@ -16,8 +20,12 @@ import {
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  phoneRowsOf,
+  phonesOfRows,
+  rowCountry,
   sameNameVendors,
   submitKycMove,
+  vendorPanProblem,
   vendorPartyCode,
   vendorNameKey,
   type LifecycleCommand,
@@ -28,6 +36,76 @@ describe('kind mapping', () => {
     expect(kindToRow('sole_proprietor')).toBe('proprietor');
     expect(kindFromRow('proprietor')).toBe('sole_proprietor');
     for (const kind of VENDOR_KINDS) expect(kindFromRow(kindToRow(kind))).toBe(kind);
+  });
+});
+
+describe('vendorPanProblem (FX9)', () => {
+  it('holds a Nepal vendor to nine digits and lets a foreign vendor keep a loose tax id', () => {
+    expect(vendorPanProblem('NP', '123456789')).toBeUndefined();
+    expect(vendorPanProblem('NP', '12345')).toMatch(/9 digits/);
+    expect(vendorPanProblem('NP', 'AB1234567')).toMatch(/9 digits/);
+    expect(vendorPanProblem('DE', 'DE-123456789')).toBeUndefined();
+    expect(vendorPanProblem('US', '12345')).toBeUndefined();
+    expect(vendorPanProblem('NP', undefined)).toBeUndefined();
+    expect(vendorPanProblem('NP', null)).toBeUndefined();
+  });
+});
+
+describe('vendor address (FX9)', () => {
+  it('maps line and city to the two columns and back, and no address to both null', () => {
+    const address = { line: 'Thamel Marg 12', city: 'Kathmandu' };
+    const columns = addressColumns(address);
+    expect(columns).toEqual({ addressLine: 'Thamel Marg 12', addressCity: 'Kathmandu' });
+    expect(addressFromRow(columns)).toEqual(address);
+    expect(addressColumns(null)).toEqual({ addressLine: null, addressCity: null });
+    expect(addressColumns(undefined)).toEqual({ addressLine: null, addressCity: null });
+    expect(addressFromRow({ addressLine: null, addressCity: null })).toBeNull();
+  });
+
+  it('refuses an address with only a line, or only a city, on create', () => {
+    const base = {
+      legalName: 'Himal Traders',
+      kind: 'company',
+      pan: '123456789',
+      vatRegistered: true,
+    };
+    const ok = { ...base, country: 'NP', address: { line: 'Thamel Marg 12', city: 'Kathmandu' } };
+    expect(CreateVendorBodySchema.safeParse(ok).success).toBe(true);
+    expect(CreateVendorBodySchema.safeParse({ ...base, country: 'NP' }).success).toBe(true);
+    for (const address of [
+      { line: 'Thamel Marg 12' },
+      { city: 'Kathmandu' },
+      { line: ' ', city: 'Kathmandu' },
+    ]) {
+      expect(
+        CreateVendorBodySchema.safeParse({ ...ok, address }).success,
+        JSON.stringify(address),
+      ).toBe(false);
+    }
+  });
+});
+
+describe('contact phones (FX9)', () => {
+  const phones = PartyPhonesSchema.parse([
+    { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false },
+    { country: 'NP', e164: '+9779812345678', isPrimary: true },
+  ]);
+
+  it('stores the list in the order sent and reads it back primary first, with each country kept', () => {
+    const rows = phoneRowsOf(phones);
+    expect(rows).toEqual([
+      { country: 'US', e164: '+14155552671', label: 'work', sortOrder: 0, isPrimary: false },
+      { country: 'NP', e164: '+9779812345678', label: null, sortOrder: 1, isPrimary: true },
+    ]);
+    expect(phonesOfRows([...rows].reverse())).toEqual([
+      { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
+      { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false },
+    ]);
+  });
+
+  it('refuses a stored country the contract does not know', () => {
+    expect(rowCountry('NP')).toBe('NP');
+    expect(() => rowCountry('XX')).toThrow(/unknown country/);
   });
 });
 

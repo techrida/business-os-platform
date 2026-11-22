@@ -1,7 +1,18 @@
 // Pure rules of the vendors service (no database): the kind mapping between the API and the table, the foreign
 // versus country rule, the party code, the KYC expiry check and the lifecycle moves. Kept apart from the service
 // so each rule has a unit test that needs no Postgres.
-import { canTransitionVendor, type VendorKind, type VendorStatus } from '@bos/contracts';
+import {
+  type AddressLines,
+  canTransitionVendor,
+  type CountryCode,
+  isCountryCode,
+  nepalPanProblem,
+  type PartyPhone,
+  type PartyPhoneInput,
+  type PhoneLabel,
+  type VendorKind,
+  type VendorStatus,
+} from '@bos/contracts';
 
 import { normalizeName } from '../customers/customers.normalize';
 import { kathmanduDay } from '../quotations/reference/reference.types';
@@ -23,6 +34,75 @@ export function kindCountryProblem(kind: VendorKind, country: string): string | 
   if (kind !== 'foreign' && country !== 'NP')
     return 'a vendor outside Nepal must have kind foreign';
   return undefined;
+}
+
+/**
+ * Why `pan` is not a PAN for a vendor in `country`, or undefined (FX9). Only a Nepal vendor is held to nine digits;
+ * a foreign vendor's tax id keeps the loose `PanVatNoSchema` shape. A 400, so the answer is not a 500.
+ */
+export function vendorPanProblem(
+  country: string,
+  pan: string | null | undefined,
+): string | undefined {
+  return nepalPanProblem(country, pan) ?? undefined;
+}
+
+/** A stored ISO country as the contract's type. The columns CHECK the shape; an unknown code is a bug, not data. */
+export function rowCountry(code: string): CountryCode {
+  if (!isCountryCode(code)) throw new Error(`unknown country code ${code} on a stored vendor row`);
+  return code;
+}
+
+/** The vendor's address as the DTO carries it: both columns, or null when the vendor has none (FX9). */
+export function addressFromRow(row: {
+  addressLine: string | null;
+  addressCity: string | null;
+}): AddressLines | null {
+  return row.addressLine === null || row.addressCity === null
+    ? null
+    : { line: row.addressLine, city: row.addressCity };
+}
+
+/** The address columns for `address`: both set, or both null (`vendors_address_check`). */
+export function addressColumns(address: AddressLines | null | undefined): {
+  addressLine: string | null;
+  addressCity: string | null;
+} {
+  return address === null || address === undefined
+    ? { addressLine: null, addressCity: null }
+    : { addressLine: address.line, addressCity: address.city };
+}
+
+/** One stored phone row of a contact, as far as the API reads it back. */
+export interface PhoneRow {
+  country: string;
+  e164: string;
+  label: PhoneLabel | null;
+  sortOrder: number;
+  isPrimary: boolean;
+}
+
+/** The phone rows a contact's phone list is stored as, in the order sent (`sortOrder` is the position). */
+export function phoneRowsOf(phones: readonly PartyPhoneInput[]): PhoneRow[] {
+  return phones.map((phone, index) => ({
+    country: phone.country,
+    e164: phone.e164,
+    label: phone.label ?? null,
+    sortOrder: index,
+    isPrimary: phone.isPrimary,
+  }));
+}
+
+/** A contact's phones as the DTO carries them: the primary first, then the rest in their stored order. */
+export function phonesOfRows(rows: readonly PhoneRow[]): PartyPhone[] {
+  return [...rows]
+    .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.sortOrder - b.sortOrder)
+    .map((row) => ({
+      country: rowCountry(row.country),
+      e164: row.e164,
+      label: row.label,
+      isPrimary: row.isPrimary,
+    }));
 }
 
 /**

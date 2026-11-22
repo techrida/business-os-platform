@@ -11,7 +11,9 @@
 //   hand and the caller's grant scope is applied by visibleWhere() (the twin of can() for a record without an
 //   entity); the entity-owned vendor_accounts follow the acting entity, so another entity's account is a 404.
 import {
+  type CountryCode,
   type CreateVendorBody,
+  type PartyPhoneInput,
   type Permission,
   type VendorAccountDto,
   type VendorCapabilities,
@@ -25,6 +27,7 @@ import {
   userEntities,
   users,
   vendorAccounts,
+  vendorContactPhones,
   vendorContacts,
   vendors,
 } from '@bos/db';
@@ -52,6 +55,8 @@ import { VerificationService } from '../verification/verification.service';
 import { VendorsCaller } from './vendors.caller';
 import { kybCaseOf, lockVendor, type VendorRow } from './vendors.queries';
 import {
+  addressColumns,
+  addressFromRow,
   isoDay,
   kindCountryProblem,
   kybReadyForReview,
@@ -60,9 +65,14 @@ import {
   lapsedTaxClearance,
   LIFECYCLE,
   lifecycleAllowed,
+  phoneRowsOf,
+  phonesOfRows,
+  type PhoneRow,
+  rowCountry,
   sameNameVendors,
   vendorNameKey,
   submitKycMove,
+  vendorPanProblem,
   vendorPartyCode,
   type LifecycleCommand,
 } from './vendors.rules';
@@ -146,7 +156,8 @@ export function toVendorDto(row: VendorRow, principal?: Principal, kyb?: VendorK
     kind: kindFromRow(row.kind),
     pan: row.pan,
     vatRegistered: row.vatRegistered,
-    country: row.country,
+    country: rowCountry(row.country),
+    address: addressFromRow(row),
     status: row.status,
     version: row.version,
     approvedAt: null,
@@ -155,13 +166,15 @@ export function toVendorDto(row: VendorRow, principal?: Principal, kyb?: VendorK
   };
 }
 
-export function toContactDto(row: ContactRow): VendorContactDto {
+/** A contact and its phone rows (any order: the DTO lists the primary first). */
+export function toContactDto(row: ContactRow, phones: readonly PhoneRow[]): VendorContactDto {
   return {
     id: row.id,
     vendorPartyId: row.vendorId,
     name: row.fullName,
     email: row.emailNorm,
-    phone: row.phoneE164,
+    country: rowCountry(row.country),
+    phones: phonesOfRows(phones),
     role: row.title,
     isPrimary: row.isPrimary,
     version: row.version,
@@ -342,7 +355,8 @@ export class VendorsService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     this.authz.assert('vendor.write');
-    const problem = kindCountryProblem(body.kind, body.country);
+    const problem =
+      kindCountryProblem(body.kind, body.country) ?? vendorPanProblem(body.country, body.pan);
     if (problem !== undefined)
       throw new BadRequestException({ code: 'bad_request', message: problem });
     const now = this.clock();
@@ -360,14 +374,15 @@ export class VendorsService {
    * The vendor insert of create(), inside a transaction that withTx opened for the caller's scope: the PAN pre-check,
    * the party and vendors rows (status `draft`, so an unverified vendor like a hand-created one), the account with the
    * acting entity, the same-name audit note and, when given, the first contact. It has no idempotency and no caller
-   * checks and does not look at the kind and country pairing (create() does); the caller of this method decides who
-   * may write. The CSV import (round 5, K1) calls it once per row inside its own batch transaction.
+   * checks and does not look at the kind and country pairing or the Nepal PAN rule (create() does); the caller of this
+   * method decides who may write. The CSV import (round 5, K1) calls it once per row inside its own batch
+   * transaction. The contact's country and phones are required, so a caller cannot drop them by leaving them out.
    */
   async createInTx(
     tx: DbTransaction,
     body: CreateVendorBody,
     now: Date,
-    contact?: { name: string; email?: string; phone?: string },
+    contact?: { name: string; email?: string; country: CountryCode; phones: PartyPhoneInput[] },
     nameIndex?: Map<string, string[]>,
   ): Promise<VendorDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -394,6 +409,7 @@ export class VendorsService {
           pan,
           vatRegistered: body.vatRegistered,
           country: body.country,
+          ...addressColumns(body.address),
           status: 'draft',
           ownerUserId: actor.id,
           createdBy: actor.id,
@@ -414,18 +430,22 @@ export class VendorsService {
       });
       await this.recordSameName(tx, scope.tenantId, id, body.legalName, nameIndex);
       if (contact !== undefined) {
-        await tx.insert(vendorContacts).values({
-          tenantId: scope.tenantId,
-          vendorId: id,
-          fullName: contact.name,
-          emailNorm: contact.email === undefined ? null : normalizeEmail(contact.email),
-          phoneE164: contact.phone ?? null,
-          title: null,
-          isPrimary: true,
-          version: 1,
-          createdAt: now,
-          updatedAt: now,
-        });
+        const [created] = await tx
+          .insert(vendorContacts)
+          .values({
+            tenantId: scope.tenantId,
+            vendorId: id,
+            fullName: contact.name,
+            emailNorm: contact.email === undefined ? null : normalizeEmail(contact.email),
+            country: contact.country,
+            title: null,
+            isPrimary: true,
+            version: 1,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning({ id: vendorContacts.id });
+        await this.replacePhones(tx, scope.tenantId, created!.id, contact.phones, now);
       }
       return toVendorDto(row!, principal);
     } catch (error) {
@@ -469,11 +489,10 @@ export class VendorsService {
         });
       }
       if (fields.pan !== undefined) {
-        if (row.kind === 'foreign') {
-          throw new BadRequestException({
-            code: 'bad_request',
-            message: 'A foreign vendor has no Nepali PAN',
-          });
+        // A Nepal vendor's PAN is nine digits; a foreign vendor's tax id keeps the loose shape (FX9).
+        const panProblem = vendorPanProblem(row.country, fields.pan);
+        if (panProblem !== undefined) {
+          throw new BadRequestException({ code: 'bad_request', message: panProblem });
         }
         await this.assertPanFree(tx, scope.tenantId, fields.pan, id);
       }
@@ -484,6 +503,7 @@ export class VendorsService {
         const updated = await updateVersioned(tx, vendors, id, expectedVersion, {
           ...(fields.legalName !== undefined && { legalName: fields.legalName }),
           ...(fields.pan !== undefined && { pan: fields.pan }),
+          ...(fields.address !== undefined && addressColumns(fields.address)),
           ...(fields.vatRegistered !== undefined && { vatRegistered: fields.vatRegistered }),
           ...(fields.ownerUserId !== undefined && { ownerUserId: fields.ownerUserId }),
           updatedAt: now,
@@ -656,7 +676,12 @@ export class VendorsService {
         asc(vendorContacts.fullName),
         asc(vendorContacts.id),
       );
-    return rows.map(toContactDto);
+    const phones = await this.phonesOf(
+      this.db,
+      scope.tenantId,
+      rows.map((row) => row.id),
+    );
+    return rows.map((row) => toContactDto(row, phones.get(row.id) ?? []));
   }
 
   /** The first contact of a vendor is its primary one (the body has no flag for it). */
@@ -693,7 +718,7 @@ export class VendorsService {
               vendorId,
               fullName: body.name,
               emailNorm: body.email === undefined ? null : normalizeEmail(body.email),
-              phoneE164: body.phone ?? null,
+              country: body.country,
               title: body.role ?? null,
               isPrimary: (existing?.n ?? 0) === 0,
               version: 1,
@@ -701,7 +726,8 @@ export class VendorsService {
               updatedAt: now,
             })
             .returning();
-          return { status: 201, response: toContactDto(row!) };
+          const phones = await this.replacePhones(tx, scope.tenantId, row!.id, body.phones, now);
+          return { status: 201, response: toContactDto(row!, phones) };
         },
       );
       return done.response;
@@ -745,12 +771,17 @@ export class VendorsService {
           ...(fields.email !== undefined && {
             emailNorm: fields.email === null ? null : normalizeEmail(fields.email),
           }),
-          ...(fields.phone !== undefined && { phoneE164: fields.phone }),
+          ...(fields.country !== undefined && { country: fields.country }),
           ...(fields.role !== undefined && { title: fields.role }),
           ...(fields.isPrimary !== undefined && { isPrimary: fields.isPrimary }),
           updatedAt: now,
         });
-        return toContactDto(updated);
+        // The list is replaced as a whole, inside the contact's transaction, only when the client sent it.
+        const phones =
+          fields.phones === undefined
+            ? ((await this.phonesOf(tx, scope.tenantId, [contactId])).get(contactId) ?? [])
+            : await this.replacePhones(tx, scope.tenantId, contactId, fields.phones, now);
+        return toContactDto(updated, phones);
       } catch (error) {
         if (isUnique(error, PRIMARY_CONTACT_INDEX)) {
           throw new ConflictException({
@@ -1012,6 +1043,66 @@ export class VendorsService {
       .from(vendors)
       .where(and(eq(vendors.tenantId, tenantId), eq(vendors.id, id)));
     return row;
+  }
+
+  /**
+   * Replaces a contact's phone numbers with `phones`, in the order sent, inside the caller's transaction. The list
+   * was checked by `PartyPhonesSchema` (one primary, no repeats); the table's unique indexes are the backstop.
+   */
+  private async replacePhones(
+    tx: DbTransaction,
+    tenantId: string,
+    contactId: string,
+    phones: readonly PartyPhoneInput[],
+    now: Date,
+  ): Promise<PhoneRow[]> {
+    await tx
+      .delete(vendorContactPhones)
+      .where(
+        and(
+          eq(vendorContactPhones.tenantId, tenantId),
+          eq(vendorContactPhones.contactId, contactId),
+        ),
+      );
+    const rows = phoneRowsOf(phones);
+    if (rows.length > 0) {
+      await tx
+        .insert(vendorContactPhones)
+        .values(rows.map((row) => ({ ...row, tenantId, contactId, createdAt: now })));
+    }
+    return rows;
+  }
+
+  /** The phone rows of `contactIds`, by contact id. One query for a whole contact list. */
+  private async phonesOf(
+    q: Q,
+    tenantId: string,
+    contactIds: readonly string[],
+  ): Promise<Map<string, PhoneRow[]>> {
+    const byContact = new Map<string, PhoneRow[]>();
+    if (contactIds.length === 0) return byContact;
+    const rows = await q
+      .select({
+        contactId: vendorContactPhones.contactId,
+        country: vendorContactPhones.country,
+        e164: vendorContactPhones.e164,
+        label: vendorContactPhones.label,
+        sortOrder: vendorContactPhones.sortOrder,
+        isPrimary: vendorContactPhones.isPrimary,
+      })
+      .from(vendorContactPhones)
+      .where(
+        and(
+          eq(vendorContactPhones.tenantId, tenantId),
+          inArray(vendorContactPhones.contactId, [...contactIds]),
+        ),
+      );
+    for (const { contactId, ...phone } of rows) {
+      const list = byContact.get(contactId) ?? [];
+      list.push(phone);
+      byContact.set(contactId, list);
+    }
+    return byContact;
   }
 
   private async requireContact(
