@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CoreConfig } from '../config/config';
+import { runWithOperationDeadline } from './operation-deadline';
 import {
   PORTAL_LOGIN_POLICY,
   ZITADEL_ENDPOINTS,
@@ -430,5 +431,58 @@ describe('listGrants (FU8)', () => {
 
     answers.push({ status: 200, body: { details: { totalResult: '0' } } });
     expect(await c.listGrants('u-1', 'o-1')).toEqual([]);
+  });
+});
+
+describe('operation deadline (round 4)', () => {
+  const past = <T>(fn: () => Promise<T>) =>
+    runWithOperationDeadline(5, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return fn();
+    });
+
+  it('starts no mutating request once the deadline has passed, also inside setGrants after its read', async () => {
+    const c = client();
+    answers.push(
+      { status: 200, body: { projects: [{ projectId: 'p1', name: 'business-os' }] } },
+      {
+        status: 200,
+        body: {
+          authorizations: [{ id: 'a1', organization: { id: 'o-1' }, roles: [{ key: 'sales' }] }],
+        },
+      },
+    );
+
+    // The read runs, then the deadline check stops the write.
+    await expect(
+      runWithOperationDeadline(40, async () => {
+        const read = c.listGrants('u-1', 'o-1');
+        await read;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return c.setGrants('u-1', 'o-1', ['finance']);
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(
+      calls.every(
+        (x) =>
+          !/Authorization(Update|Create|Delete)|UpdateAuthorization|DeleteAuthorization|CreateAuthorization/.test(
+            x.path,
+          ),
+      ),
+    ).toBe(true);
+
+    calls.length = 0;
+    const mutations: Array<() => Promise<unknown>> = [
+      () => c.lockUser('u-1'),
+      () => c.unlockUser('u-1'),
+      () => c.deactivateUser('u-1'),
+      () => c.reactivateUser('u-1'),
+      () => c.sendInviteCode('u-1'),
+      () => c.createHuman('o-1', { email: 'a@b.test', givenName: 'A', familyName: 'B' }),
+    ];
+    for (const call of mutations) {
+      await expect(past(call)).rejects.toMatchObject({ status: 503 });
+    }
+    expect(calls).toEqual([]);
   });
 });

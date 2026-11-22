@@ -683,6 +683,9 @@ describe('inviting again after a half-finished invite', () => {
 
     // A second user ahead of the first in the org, so the lookup has to page past it.
     const [created] = [...zitadel.users.values()];
+    // The failed invite deactivated the new identity (best effort); an admin reopens it as an open invite in the console.
+    expect(created).toMatchObject({ status: 'inactive' });
+    created!.status = 'invited';
     zitadel.users.clear();
     zitadel.users.set('z-other', {
       id: 'z-other',
@@ -884,6 +887,21 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     joinEntity(FOUNDER_ONE);
   });
 
+  it('refuses any role edit of the only active Founder, also one that keeps Founder, before ZITADEL (round 4)', async () => {
+    const error = await asAdmin(['admin.roles.write'], () =>
+      controller.setRoles(FOUNDER_ONE, { roles: ['founder', 'finance'] }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'last_founder',
+      message: expect.stringContaining('Add another Founder first.'),
+    });
+    expect(zitadel.grants.has('z-founder-1')).toBe(false);
+    expect(store.users.find((u) => u.id === FOUNDER_ONE)?.identityReviewRequired).toBeFalsy();
+    expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
+  });
+
   it('refuses removing Founder from the only active Founder and does not touch ZITADEL', async () => {
     // An invited (not yet active) second Founder does not satisfy the guard.
     store.users.push({
@@ -909,8 +927,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(caught).toBeInstanceOf(ConflictException);
     expect((caught as ConflictException).getResponse()).toEqual({
       code: 'last_founder',
-      message:
-        'Kiran Thapa is the only Founder of Techrida Nepal. Make someone else a Founder there first.',
+      message: 'Kiran Thapa is the only Founder of Techrida Nepal. Add another Founder first.',
     });
     expect(zitadel.grants.has('z-founder-1')).toBe(false);
     expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);
@@ -952,7 +969,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       expect(caught).toBeInstanceOf(ConflictException);
       const body = (caught as ConflictException).getResponse() as { message: string };
       expect(body.message).toBe(
-        'This person is the only Founder of Techrida Nepal. Make someone else a Founder there first.',
+        'This person is the only Founder of Techrida Nepal. Add another Founder first.',
       );
       expect(body.message).not.toContain('kiran@techrida.test');
     },
@@ -998,8 +1015,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
       expect(caught).toBeInstanceOf(ConflictException);
       expect((caught as ConflictException).getResponse()).toEqual({
         code: 'last_founder',
-        message:
-          'Kiran Thapa is the only Founder of Techrida India. Make someone else a Founder there first.',
+        message: 'Kiran Thapa is the only Founder of Techrida India. Add another Founder first.',
       });
       expect(zitadel.grants.has('z-founder-1')).toBe(false);
       expect(store.roles.get(FOUNDER_ONE)).toEqual(['founder']);

@@ -1103,6 +1103,9 @@ describe('Admin invite and setRoles outside any tx against Postgres (FU1)', () =
       'createHuman:rollback@techrida.test',
       `setGrants:sales:${zId}`,
       `sendInviteCode:${zId}`,
+      // The close: deactivate is refused for an invited identity, so it is locked instead (best effort).
+      `getUser:${zId}`,
+      `lock:${zId}`,
     ]);
     // A flagged, role-less row stands in for the failed invite: the person cannot be opened by a sync or a sign-in.
     const row = await store.findByZitadelId(db, zId);
@@ -1714,8 +1717,10 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     ).rejects.toThrow('placement boom');
 
     const zId = `z-new-${f.zitadelOrgId}-1`;
-    expect(zitadel.users.get(zId)).toMatchObject({ status: 'invited' });
+    expect(zitadel.users.get(zId)).toMatchObject({ status: 'inactive', locked: true });
     expect(zitadel.grants.get(zId)).toEqual(['sales']);
+    // An admin puts the identity back as an open invite in the console; the retry then reuses it.
+    Object.assign(zitadel.users.get(zId)!, { status: 'invited', locked: false });
     expect(zitadel.calls.filter((c) => c.startsWith('deleteUser'))).toEqual([]);
     expect(await store.findByZitadelId(db, zId)).toMatchObject({ identityReviewRequired: true });
 
@@ -2054,5 +2059,81 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     zitadel.users.get(f.zitadelUserId)!.status = 'active';
     await mirror.syncUser(f.zitadelUserId);
     expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'active' });
+  }, 60_000);
+
+  it('when the invite write and the denial write both fail, the identity is still deactivated in ZITADEL and a sign-in creates no row (round 4)', async () => {
+    const f = await fixture('active');
+    const zitadel = new RecordingZitadel();
+    const { users, mirror } = services(zitadel);
+    const insert = vi.spyOn(store, 'insertUser').mockRejectedValue(new Error('db down'));
+
+    await expect(
+      users.invite(f.scope, adminActor(f.adminId), {
+        email: 'ghost@techrida.test',
+        givenName: 'Ghost',
+        familyName: 'Invitee',
+        roles: ['sales'],
+      }),
+    ).rejects.toThrow('db down');
+    insert.mockRestore();
+
+    const zId = `z-new-${f.zitadelOrgId}-1`;
+    expect(zitadel.users.get(zId)).toMatchObject({ status: 'inactive' });
+    expect(await store.findByZitadelId(db, zId)).toBeNull();
+    // /v1/me (resolve) refuses and creates no row for an invite that never committed.
+    await expect(
+      mirror.resolve({ zitadelUserId: zId, tenantId: f.scope.tenantId, idpOrgId: f.idpOrgId }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(await store.findByZitadelId(db, zId)).toBeNull();
+  }, 60_000);
+
+  it.each([
+    ['getUser', 'getUser'],
+    ['listGrants', 'listGrants'],
+  ] as const)(
+    'resolve answers 503 and leaves the flag set when ZITADEL cannot be read (%s)',
+    async (_label, method) => {
+      const f = await fixture('active');
+      const zitadel = zitadelFor(f, 'active');
+      const { users } = services(zitadel);
+      await timedOutDeactivate(f, zitadel);
+      const spy = vi.spyOn(zitadel, method).mockRejectedValue(new Error('ZITADEL down'));
+
+      const error = await users
+        .resolveIdentityReview(f.scope, adminActor(f.adminId), f.userId)
+        .catch((e: unknown) => e);
+      spy.mockRestore();
+
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      const row = await store.findById(db, f.scope, f.userId);
+      expect(row).toMatchObject({ identityReviewRequired: true });
+      expect(row!.status).not.toBe('active');
+    },
+    60_000,
+  );
+
+  it('resolve answers 409 and keeps the flag when the person was flagged again while ZITADEL was read', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    const { users } = services(zitadel);
+    await timedOutDeactivate(f, zitadel);
+    zitadel.users.get(f.zitadelUserId)!.status = 'active'; // what the read will report
+    let flagged = false;
+    zitadel.onCall = async (op) => {
+      if (op !== 'listGrants' || flagged) return;
+      flagged = true;
+      await withTx(db, f.scope, systemActor('another-failure'), (tx) =>
+        store.flagIdentityReview(tx, f.userId),
+      );
+    };
+
+    const error = await users
+      .resolveIdentityReview(f.scope, adminActor(f.adminId), f.userId)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    const row = await store.findById(db, f.scope, f.userId);
+    expect(row).toMatchObject({ identityReviewRequired: true });
+    expect(row!.status).not.toBe('active');
   }, 60_000);
 });
