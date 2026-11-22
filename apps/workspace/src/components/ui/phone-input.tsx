@@ -166,7 +166,9 @@ export function PhoneInput(props: PhoneInputProps) {
   function toggle() {
     const next = !international;
     const back = left.current?.international === next ? left.current : null;
-    const restored = back?.posted ?? '';
+    const kept = back?.posted ?? '';
+    // A mode change is an edit: a stored number without a plus comes back normalised in the international box.
+    const restored = next && /^\d+$/.test(kept) ? `+${kept}` : kept;
     const restoredEdited = back?.edited ?? false;
     left.current = { international, posted: current.current, edited };
     current.current = restored;

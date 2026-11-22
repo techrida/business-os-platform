@@ -136,7 +136,15 @@ beforeAll(async () => {
   mixed = await newEntity();
   await save(mixed, 'entity.profile', [
     profile(
-      ['+977 9812345678', 'front desk', '4123456', '00960 3323456', '977 1412345', '9771412345'],
+      [
+        '+977 9812345678',
+        'front desk',
+        '4123456',
+        '00960 3323456',
+        '977 1412345',
+        '(977) 1412345',
+        '9771412345',
+      ],
       'AB-1234',
     ),
   ]);
@@ -190,7 +198,15 @@ describe('0187 company contacts strict', () => {
     expect(rows).toHaveLength(2);
     expect(rows[1]?.value).toStrictEqual(
       profile(
-        ['+9779812345678', 'front desk', '4123456', '00960 3323456', '+9771412345', '9771412345'],
+        [
+          '+9779812345678',
+          'front desk',
+          '4123456',
+          '00960 3323456',
+          '+9771412345',
+          '+9771412345',
+          '9771412345',
+        ],
         null,
       ),
     );

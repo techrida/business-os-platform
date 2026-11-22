@@ -3,7 +3,7 @@ import { PhoneSchema } from '@bos/contracts';
 import { act, useState, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, paste, submit, typeKeys } from '@/test/form-interactions';
+import { click, fill, mountForm, paste, softKey, submit, typeKeys } from '@/test/form-interactions';
 import { Field } from './field';
 import { PhoneInput } from './phone-input';
 
@@ -332,6 +332,23 @@ describe('PhoneInput, drafts and pastes that used to slip through', () => {
     expect(phone.hidden()).toBe('4123456');
     await typeKeys(phone.box(), '8');
     expect(phone.hidden()).toBe('+41234568');
+  });
+
+  it('posts the normalised number after a correction that ends on the stored digits', async () => {
+    const pasted = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="4123456" />,
+    );
+    pasted.box().setSelectionRange(0, 7);
+    await paste(pasted.box(), '+4123456');
+    expect(pasted.hidden()).toBe('+4123456');
+    await mounted.unmount();
+    const typed = await mount(
+      <PhoneInput aria-label="Phone" name="phone" defaultValue="4123456" />,
+    );
+    await typeKeys(typed.box(), '8');
+    await softKey(typed.box(), 'deleteContentBackward');
+    expect(typed.box().value).toBe('4123456');
+    expect(typed.hidden()).toBe('+4123456');
   });
 
   it('keeps a stored short Nepal number untouched after another country is typed in and left', async () => {

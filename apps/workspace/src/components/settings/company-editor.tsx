@@ -215,7 +215,9 @@ export function CompanyEditor({
   const contact = draft.contact;
   const signatory = draft.signatory;
   const phoneRows = contact.phones.length === 0 ? [''] : contact.phones;
-  const rowKeys = phoneRows.map((_, i) => phoneIds[i] ?? `row-${i}`);
+  // A stored row has no key yet (`stored-n`, stable while the list is only edited); every row added or left after a
+  // removal gets a fresh counter key, never an index, so a new field mounts in the Nepal mode.
+  const rowKeys = phoneRows.map((_, i) => phoneIds[i] ?? `stored-${i}`);
   const setContact = (patch: Partial<typeof contact>) => edit('contact', { ...contact, ...patch });
 
   // The undo icon is drawn only while what is SAVED for the card differs from empty. A reset that
@@ -412,7 +414,8 @@ export function CompanyEditor({
                       size="small"
                       aria-label={`Remove phone number ${index + 1}`}
                       onClick={() => {
-                        setPhoneIds(rowKeys.filter((_, i) => i !== index));
+                        const left = rowKeys.filter((_, i) => i !== index);
+                        setPhoneIds(left.length === 0 ? [nextPhoneId.current++] : left);
                         setContact({ phones: removePhone(phoneRows, index) });
                       }}
                     >
