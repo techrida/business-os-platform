@@ -1,14 +1,15 @@
 // Integration test for migrations 0191-0195 (FX9): party country, three-field addresses and phone tables.
 //   * 0191: a customer's jsonb address becomes address_line (line1 + ', ' + line2, at most 500 characters) and
-//     address_city, its country comes from the address, contacts take their parent's country; written as
-//     system:migration-0191.
-//   * 0192/0193: each old phone_e164 becomes its owner's one primary phone row, the country read from the calling
-//     code through the generated table of every calling code (+47 -> NO; +977 under the Nepal rule); an unknown
-//     code, or a national part implausible for its country (a short or non-NANP +1 number, a 7-digit +977 number
-//     starting with 9), is dropped; leads.phones_search is filled.
+//     address_city, its country comes from the address ('UK' read as GB), contacts take their parent's country;
+//     written as system:migration-0191.
+//   * 0192/0193: each old phone_e164 becomes its owner's one primary phone row when the app's libphonenumber check
+//     accepts it, with its country (+47 -> NO, +49 -> DE; +977 under the Nepal rule); an unknown code or a number
+//     the app refuses (a short or non-NANP +1 number, +47 1..., a 7-digit +977 number starting with 9) is dropped;
+//     a valid number the old hand-written patterns refused (an 8-digit German fixed line) is kept;
+//     leads.phones_search is filled.
 //   * 0194: the old phone_e164 columns are gone.
 //   * 0195: the latest entity.address and entity.profile get a next version in the new shapes (a non-ISO country
-//     gives a null address); the latest entity.pan_vat_no becomes nine digits or null; a previewed import batch is
+//     gives a null address, 'uk' becomes GB); the latest entity.pan_vat_no becomes nine digits or null; a previewed import batch is
 //     expired.
 //   * 0193 and 0195 run a second time without writing anything.
 // Migrates to just before 0191, seeds the old shapes, then runs 0191-0193 and 0194-0195 in two stages so 0193 can
@@ -66,6 +67,7 @@ const ids = {
   npCustomer: '',
   inCustomer: '',
   longCustomer: '',
+  ukCustomer: '',
   npMobileContact: '',
   usContact: '',
   unmappableContact: '',
@@ -81,6 +83,9 @@ const ids = {
   shortUsLead: '',
   badAreaUsLead: '',
   noLead: '',
+  badNoLead: '',
+  deFixedLead: '',
+  deMobileLead: '',
   shortNepalMobileLead: '',
   batch: '',
 };
@@ -268,6 +273,8 @@ beforeAll(async () => {
     city: 'Pokhara',
     country: 'NP',
   });
+  // The old workspace took the country as free text: 'UK' is read as GB.
+  ids.ukCustomer = await customer({ line1: '221B Baker Street', city: 'London', country: 'UK' });
   ids.npMobileContact = await customerContact(ids.npCustomer, 'Sita', '+9779812345678');
   ids.usContact = await customerContact(ids.npCustomer, 'John', '+14155552671');
   // +999 is no calling code (nor is +99 or +9): not copied.
@@ -300,6 +307,11 @@ beforeAll(async () => {
   ids.badAreaUsLead = await lead('+11235550123');
   // A valid Norway number, a code with no hand-written pattern: its 8 national digits are a possible NO length.
   ids.noLead = await lead('+4740612345');
+  // Eight digits too, but no Norwegian number starts with 1: libphonenumber refuses it, so it is not copied.
+  ids.badNoLead = await lead('+4712345678');
+  // A German fixed line with 8 national digits and a German mobile: both valid for libphonenumber, so both copied.
+  ids.deFixedLead = await lead('+4930123456');
+  ids.deMobileLead = await lead('+4915123456789');
   // A +977 national number starting with 9 is a mobile only with exactly 10 digits: not copied.
   ids.shortNepalMobileLead = await lead('+9779812345');
 
@@ -331,7 +343,7 @@ beforeAll(async () => {
     signatoryTitle: null,
   });
   // Entities of their own: a 150 + 150 character address and a PAN that is not nine digits; a PAN with spaces and
-  // a non-ISO address country; a PAN that is already nine digits.
+  // a non-ISO address country; a PAN that is already nine digits and an address in "uk".
   longEntity = await createTenantWithEntity(pool);
   spacedPanEntity = await createTenantWithEntity(pool);
   strictPanEntity = await createTenantWithEntity(pool);
@@ -350,6 +362,12 @@ beforeAll(async () => {
     spacedPanEntity,
   );
   await setting('entity.pan_vat_no', 1, '301234567', strictPanEntity);
+  await setting(
+    'entity.address',
+    1,
+    { line1: '10 Downing Street', city: 'London', country: 'uk' },
+    strictPanEntity,
+  );
   ids.batch = await exec(
     `INSERT INTO app.party_import_batches
        (tenant_id, organization_id, kind, file_name, row_count, valid_count, duplicate_count, error_count, rows, created_by)
@@ -403,6 +421,12 @@ describe('0191 party country and address', () => {
       country: 'IN',
     });
     expect(await auditedBy('system:migration-0191', ids.npCustomer)).toBe('1');
+  });
+
+  it("reads the free-text country 'UK' as GB", async () => {
+    expect(
+      await count('SELECT country AS n FROM app.customers WHERE id = $1', [ids.ukCustomer]),
+    ).toBe('GB');
   });
 
   it('joins a 150 + 150 character line1 and line2 into a 302 character line within the 500 limit', async () => {
@@ -472,6 +496,8 @@ describe('0192-0194 phones', () => {
     expect(leadRows.rows).toEqual([
       { lead_id: ids.usLead, country: 'US', e164: '+14155552671' },
       { lead_id: ids.noLead, country: 'NO', e164: '+4740612345' },
+      { lead_id: ids.deMobileLead, country: 'DE', e164: '+4915123456789' },
+      { lead_id: ids.deFixedLead, country: 'DE', e164: '+4930123456' },
       { lead_id: ids.lead, country: 'IN', e164: '+919812345678' },
     ]);
   });
@@ -483,7 +509,7 @@ describe('0192-0194 phones', () => {
        UNION ALL SELECT id FROM app.lead_phones WHERE tenant_id = $1`,
       [org.tenantId],
     );
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(8);
     for (const row of rows) expect(await auditedBy('system:migration-0193', row.id)).toBe('1');
   });
 
@@ -500,7 +526,12 @@ describe('0192-0194 phones', () => {
     expect(
       await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [ids.noLead]),
     ).toBe('+4740612345');
-    for (const id of [ids.shortUsLead, ids.badAreaUsLead, ids.shortNepalMobileLead]) {
+    for (const id of [
+      ids.shortUsLead,
+      ids.badAreaUsLead,
+      ids.shortNepalMobileLead,
+      ids.badNoLead,
+    ]) {
       expect(await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [id])).toBe(
         'null',
       );
@@ -570,6 +601,13 @@ describe('0195 entity settings and import previews', () => {
     expect(await latest('entity.address', spacedPanEntity)).toEqual({ version: 2, value: null });
   });
 
+  it("writes an entity address country 'uk' as GB", async () => {
+    expect(await latest('entity.address', strictPanEntity)).toEqual({
+      version: 2,
+      value: { line: '10 Downing Street', city: 'London', country: 'GB' },
+    });
+  });
+
   it('writes entity.pan_vat_no as nine digits or null', async () => {
     expect(await latest('entity.pan_vat_no', longEntity)).toEqual({ version: 2, value: null });
     expect(await latest('entity.pan_vat_no', spacedPanEntity)).toEqual({
@@ -601,5 +639,63 @@ describe('0195 entity settings and import previews', () => {
 
   it('writes nothing when 0195 runs a second time', () => {
     expect(rerun0195).toEqual(after0195);
+  });
+});
+
+describe('pg_temp.fx9_phone_country', () => {
+  /** The function block of a migration: its comment through the end of CREATE FUNCTION. */
+  const functionBlock = async (tag: string): Promise<string> => {
+    const sql = await readFile(join(MIGRATIONS_FOLDER, `${tag}.sql`), 'utf8');
+    const from = sql.indexOf('-- pg_temp.fx9_phone_country(e164):');
+    const to = sql.indexOf(
+      '$$;',
+      sql.indexOf('CREATE OR REPLACE FUNCTION pg_temp.fx9_phone_country'),
+    );
+    expect(from, `${tag} has the function`).toBeGreaterThanOrEqual(0);
+    return sql.slice(from, to + 3);
+  };
+
+  it('is the same in 0193 and 0195, and every embedded pattern compiles in Postgres', async () => {
+    const block = await functionBlock('0193_party_phones_backfill');
+    expect(await functionBlock('0195_entity_settings_address_phones')).toBe(block);
+    // The generated rows hold the patterns (national, leading digits, prefix, types); the migration run only
+    // compiles those its data reaches.
+    const rows = block.slice(block.indexOf('AS (VALUES'), block.indexOf('), n AS ('));
+    // A transform rule (`9\1`) is a replacement, not a pattern.
+    const patterns = [...rows.matchAll(/'([^']*)'/g)]
+      .map((match) => match[1] ?? '')
+      .filter((text) => /[\\[(|]/.test(text) && !/^\d*\\\d$/.test(text));
+    expect(patterns.length).toBeGreaterThan(300);
+    const { rows: compiled } = await pool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM unnest($1::text[]) AS p WHERE ('0' ~ ('^(?:' || p || ')$')) IS NOT NULL`,
+      [patterns],
+    );
+    expect(compiled[0]?.n).toBe(String(patterns.length));
+  });
+
+  it('gives the country the app picks, and drops a number whose national prefix libphonenumber cuts', async () => {
+    const block = await functionBlock('0193_party_phones_backfill');
+    const cases: [string, string | null][] = [
+      ['+441234', null], // not E.164: too short
+      ['9779812345678', null], // not E.164: no plus sign
+      ['+4407911123456', null], // the trunk 0 is cut: the app refuses it ("leave out the leading 0")
+      ['+447911123456', 'GG'], // +44 is shared: libphonenumber puts 7911 on Guernsey
+      ['+13684641234', 'CA'],
+      ['+77123456789', 'KZ'],
+      ['+78121234567', 'RU'],
+      ['+390669812345', 'VA'],
+      ['+2908999', 'SH'], // libphonenumber says TA, which is no ISO 3166-1 code: SH, the code's ISO country
+    ];
+    const client = await pool.connect();
+    try {
+      await client.query(block.slice(block.indexOf('CREATE OR REPLACE FUNCTION')));
+      const { rows } = await client.query<{ e164: string; country: string | null }>(
+        'SELECT e164, pg_temp.fx9_phone_country(e164) AS country FROM unnest($1::text[]) AS e164',
+        [cases.map(([e164]) => e164)],
+      );
+      expect(rows.map((row) => [row.e164, row.country])).toEqual(cases);
+    } finally {
+      client.release();
+    }
   });
 });

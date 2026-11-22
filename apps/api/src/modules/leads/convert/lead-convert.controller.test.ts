@@ -56,7 +56,7 @@ describe('LeadConvertController', () => {
         // The schema's defaults: not the main contact, and no numbers (the service then copies the lead's).
         contact: {
           mode: 'create',
-          contact: { ...EXISTING.contact.contact, phones: [], isPrimary: false },
+          contact: { ...EXISTING.contact.contact, isPrimary: false },
         },
       },
       'key-1',

@@ -11,10 +11,11 @@
 -- acting entity, as 0013 does, and bos.organization_id is reset to '' after each tenant):
 --   * customers: address_line = line1, or line1 || ', ' || line2 when line2 is set, cut at 500 characters (the
 --     contract's limit; two old 200-character lines joined are 402, so the cut is only a safeguard); address_city =
---     city; country = address->>'country'. district, province and postalCode are dropped (no screen shows them any
---     more). A customer whose address has no line1, no city or a country outside the ISO 3166-1 alpha-2 list below
---     is not guessed at: the migration RAISEs and rolls back (Kuu: dev data may be reset, so a blank address or an
---     unknown country is never written).
+--     city; country = address->>'country', with 'UK' in any case (the old workspace took free text) read as 'GB', the
+--     United Kingdom's ISO code. district, province and postalCode are dropped (no screen shows them any more). A
+--     customer whose address has no line1, no city or another country outside the ISO 3166-1 alpha-2 list below is
+--     not guessed at: the migration RAISEs, naming the tenant and customer, and rolls back (Kuu: dev data may be
+--     reset, so a blank address or an unknown country is never written).
 --   * customer_contacts and vendor_contacts take their parent's country when it is not NP (NP is the default).
 --   * leads keep the default NP: a lead has no address to read a country from.
 --
@@ -90,7 +91,8 @@ BEGIN
 	    OR btrim(c."address" ->> 'line1') = ''
 	    OR jsonb_typeof(c."address" -> 'city') IS DISTINCT FROM 'string'
 	    OR btrim(c."address" ->> 'city') = ''
-	    OR NOT (coalesce(c."address" ->> 'country', '') = ANY (v_iso))
+	    OR NOT (CASE WHEN upper(btrim(c."address" ->> 'country')) = 'UK' THEN 'GB'
+	                 ELSE coalesce(c."address" ->> 'country', '') END = ANY (v_iso))
 	 ORDER BY c."tenant_id", c."id"
 	 LIMIT 1;
 	IF FOUND THEN
@@ -110,7 +112,9 @@ BEGIN
 		                          ELSE btrim(c."address" ->> 'line1') || ', ' || btrim(c."address" ->> 'line2')
 		                        END, 500)),
 		       "address_city" = btrim(c."address" ->> 'city'),
-		       "country" = c."address" ->> 'country'
+		       -- 'UK' is no ISO code (the old workspace took free text); the United Kingdom is GB.
+		       "country" = CASE WHEN upper(btrim(c."address" ->> 'country')) = 'UK' THEN 'GB'
+		                        ELSE c."address" ->> 'country' END
 		 WHERE c."tenant_id" = v_tenant AND c."address_line" IS NULL;
 		GET DIAGNOSTICS n = ROW_COUNT;
 		v_customers := v_customers + n;
