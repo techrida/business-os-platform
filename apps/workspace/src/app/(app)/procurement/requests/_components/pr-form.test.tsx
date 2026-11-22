@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { choose, click, fill, mountForm, submit, typeKeys } from '@/test/form-interactions';
@@ -347,5 +348,47 @@ describe('needed by', () => {
     expect(field.value).toBe('2026-12-01');
     await submit(mounted.container);
     expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the typed segments and says "Finish the date" when Save draft is pressed with the day cleared', async () => {
+    const action = vi.fn(() => Promise.resolve({ key: PROJECT, errors: {} }));
+    mounted = await mountForm(
+      <PrForm
+        action={action}
+        departments={[]}
+        enabledCurrencies={['NPR']}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
+        initial={{ ...EMPTY_PR_VALUES, requiredBy: '2027-12-15' }}
+        mode="create"
+        idempotencyKey={PROJECT}
+        cancelHref="/"
+        reloadHref="/"
+      />,
+    );
+    const segment = (type: string) =>
+      mounted.container.querySelector<HTMLElement>(`[data-type="${type}"]`)!;
+    await act(() => Promise.resolve(segment('day').focus()));
+    for (let i = 0; i < 4 && !segment('day').hasAttribute('data-placeholder'); i++) {
+      await act(() =>
+        Promise.resolve(
+          segment('day').dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }),
+          ),
+        ),
+      );
+    }
+    expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+    await submit(mounted.container);
+
+    // Old code sent the form on with an empty date; the action reset it and every segment came back empty.
+    expect(action).not.toHaveBeenCalled();
+    expect(
+      Array.from(mounted.container.querySelectorAll('[role="alert"]')).some(
+        (node) => node.textContent === 'Finish the date',
+      ),
+    ).toBe(true);
+    expect(document.activeElement).toBe(segment('day'));
+    expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
+    expect(segment('year').textContent).toBe('2027');
   });
 });

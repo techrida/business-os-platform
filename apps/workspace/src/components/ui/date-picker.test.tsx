@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, useState } from 'react';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { click, mountForm, settle, submit } from '@/test/form-interactions';
 import { DatePicker } from './date-picker';
@@ -434,6 +434,42 @@ it('shows "Finish the date" beside the picker when an incomplete date blocks a p
   expect(mounted.container.querySelector('form')!.checkValidity()).toBe(true);
   expect(mounted.container.querySelector('[aria-invalid="true"]')).toBeNull();
   expect(mounted.container.querySelector(`[aria-describedby~="${message.id}"]`)).toBeNull();
+});
+
+it('holds the submit of a noValidate action form that asks for it (validation="hold") while a date is partly typed, keeps the segments and shows "Finish the date"', async () => {
+  const action = vi.fn(async () => {});
+  const onSubmit = vi.fn();
+  mounted = await mountForm(
+    <form action={action} onSubmit={onSubmit} noValidate>
+      <DatePicker
+        aria-label="Needed by"
+        name="neededBy"
+        defaultValue="2027-12-15"
+        validation="hold"
+      />
+    </form>,
+  );
+  await clearSegment(segment('day'));
+  await act(() => Promise.resolve((segment('month') as HTMLElement).focus()));
+  await submit(mounted.container);
+
+  // Without `hold` (the default) the browser was never asked to validate, so the form went to its action with '' and was
+  // reset, which left every segment empty and the generic server message.
+  expect(action).not.toHaveBeenCalled();
+  expect(onSubmit).not.toHaveBeenCalled();
+  const alerts = Array.from(mounted.container.querySelectorAll('[role="alert"]')).filter(
+    (node) => node.textContent === 'Finish the date',
+  );
+  expect(alerts).toHaveLength(1);
+  expect(document.activeElement).toBe(segment('day'));
+  expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
+  expect(segment('year').hasAttribute('data-placeholder')).toBe(false);
+
+  // Finishing the date lets the form through again.
+  await typeSegment(segment('day'), '15');
+  await submit(mounted.container);
+  expect(action).toHaveBeenCalledTimes(1);
 });
 
 it('focuses the first date segment when its Field label is clicked', async () => {

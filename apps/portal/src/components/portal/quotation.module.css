@@ -31,6 +31,9 @@
 /* ---- Tables ----------------------------------------------------------------------------- */
 
 .tableFrame {
+  /* A scroll box is not a containing block by itself: without this, the table's visually hidden
+     cells (absolute) sit outside the box and widen the whole page. */
+  position: relative;
   overflow-x: auto;
   border: var(--border-width-thin) solid var(--border-default);
   border-radius: var(--radius-lg);

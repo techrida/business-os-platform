@@ -1,8 +1,27 @@
 .wrap {
+  /* A scroll box is not a containing block by itself: without this, the table's visually hidden
+     cells (absolute) sit outside the box and widen the whole page. */
+  position: relative;
   overflow-x: auto;
   border: var(--border-width-thin) solid var(--card-border);
   border-radius: var(--radius-xl);
   background: var(--table-row-bg);
+}
+
+/* A table wider than its card scrolls inside the card. Overlay scrollbars hide until touched, so a
+   clipped last column (a Score, an Action) gave no sign that there was more. A styled scrollbar is
+   always drawn, which shows the table can be scrolled. */
+.wrap::-webkit-scrollbar {
+  height: 10px;
+}
+
+.wrap::-webkit-scrollbar-track {
+  background: var(--surface-muted);
+}
+
+.wrap::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-md);
+  background: var(--border-strong);
 }
 
 .table {
