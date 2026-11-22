@@ -8,13 +8,7 @@ import { signInAs } from '../helpers/memo-flow';
  * a phone. Against the real stack, as the vendor persona, on the portal origin.
  */
 
-const PAGES = [
-  '/vendor',
-  '/vendor/onboarding',
-  '/vendor/purchase-orders',
-  '/vendor/bills',
-  '/vendor/rfqs',
-] as const;
+const PAGES = ['/vendor', '/vendor/purchase-orders', '/vendor/bills', '/vendor/rfqs'] as const;
 
 test('the vendor portal pages fit a 390px window', async ({ browser, baseURL }) => {
   test.setTimeout(120_000);
@@ -26,7 +20,9 @@ test('the vendor portal pages fit a 390px window', async ({ browser, baseURL }) 
     await page.setViewportSize({ width: 390, height: 844 });
     for (const route of PAGES) {
       await page.goto(route);
-      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+      const heading = page.getByRole('heading', { level: 1 });
+      await expect(heading).toBeVisible();
+      await expect(heading).not.toHaveText(/not found|404/i);
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );

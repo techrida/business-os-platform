@@ -104,13 +104,13 @@
 }
 
 /* The rows switch to a table on the card's own width, not the window's: with the sidebar open a 1280px
-   window leaves the card narrower than the window suggests. 940px is the narrowest card whose five
+   window leaves the card narrower than the window suggests. 59rem (rem, so a larger browser font switches later with the floors) is the narrowest card whose five
    columns keep their minimums, so a number box always has room for its unit, steppers and a value. */
 .invoice {
   container-type: inline-size;
 }
 
-@container (min-width: 940px) {
+@container (min-width: 59rem) {
   .invoice .head {
     display: grid;
     grid-template-columns: 3.5rem minmax(0, 1fr) 2.5rem;

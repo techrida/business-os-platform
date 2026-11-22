@@ -14,18 +14,18 @@ import { signInAs } from '../helpers/memo-flow';
 const MIN_CONTROL_WIDTH = 60;
 const WIDTHS = [390, 834, 1100, 1280, 1440] as const;
 
+// Forms whose line items show on the bare route. Others need a record id or a query (receipts need a
+// purchase order, quotations an opportunity) or have no editable line items (a new RFQ), so they are
+// not measured here.
 const FORMS = [
   { persona: 'procurement', route: '/procurement/requests/new' },
-  { persona: 'procurement', route: '/procurement/rfqs/new' },
-  { persona: 'procurement', route: '/procurement/receipts/new' },
   { persona: 'finance', route: '/invoices/new' },
-  { persona: 'finance', route: '/payables/bills/new' },
-  { persona: 'sales', route: '/quotations/new' },
 ] as const;
 
 interface Measure {
   narrow: string[];
   overflow: number;
+  numberBoxes: number;
 }
 
 /** Visible text-like controls under main that are narrower than a readable value, and sideways overflow. */
@@ -49,6 +49,9 @@ async function measure(page: Page): Promise<Measure> {
     }
     return {
       narrow,
+      numberBoxes: document.querySelectorAll(
+        'main input[inputmode="decimal"], main input[inputmode="numeric"]',
+      ).length,
       overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
   }, MIN_CONTROL_WIDTH);
@@ -70,6 +73,11 @@ for (const form of FORMS) {
         // The number boxes swap their server-rendered input for the live one on hydration; measure that one.
         await page.waitForTimeout(1_500);
         const result = await measure(page);
+        // Quantity and Unit price are number boxes: without them nothing line-item was measured.
+        expect(
+          result.numberBoxes,
+          `${form.route} shows its line items at ${width}px`,
+        ).toBeGreaterThanOrEqual(2);
         expect(result.narrow, `${form.route} at ${width}px`).toEqual([]);
         expect(result.overflow, `${form.route} scrolls sideways at ${width}px`).toBeLessThanOrEqual(
           0,

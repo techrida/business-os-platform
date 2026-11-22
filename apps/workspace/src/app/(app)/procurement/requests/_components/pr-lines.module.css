@@ -85,9 +85,9 @@
   display: none;
 }
 
-/* 900px is the narrowest card whose five columns all keep their minimums (below), so the number boxes
+/* 57rem (rem, so a larger browser font switches later with the floors) is the narrowest card whose five columns all keep their minimums (below), so the number boxes
    always have room for their unit, steppers and a readable value. Narrower cards stack the fields. */
-@container (min-width: 900px) {
+@container (min-width: 57rem) {
   .head {
     display: grid;
     grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem;
