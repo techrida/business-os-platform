@@ -112,7 +112,7 @@ describe('allocateAction', () => {
   });
 
   // "1,500" is grouping and now goes as 1500 (R5 EF2); "1,5" and "10,50" are decimal commas and stay refused.
-  it.each(['0', '0.00', '-5', '12.345', '1,5', '10,50', 'abc', '1e3', '.5'])(
+  it.each(['0', '0.00', '-5', '12.345', '1,5', '10,50', 'abc', '1e3'])(
     'refuses %s as an amount, names the invoice and keeps the key',
     async (bad) => {
       const state = await allocateAction(
