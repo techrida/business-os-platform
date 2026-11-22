@@ -142,11 +142,13 @@ describe('quotation statuses and the transition table', () => {
         'returned>submitted',
         'returned>cancelled',
         'approved>sent',
+        'approved>cancelled',
         'approved>expired',
         'approved>superseded',
         'approved>rejected',
         'sent>accepted',
         'sent>rejected',
+        'sent>cancelled',
         'sent>expired',
         'sent>superseded',
       ].sort(),
@@ -168,7 +170,7 @@ describe('quotation statuses and the transition table', () => {
   it('needs a reason to return, reject, or cancel, and none to approve or submit', () => {
     const needs = (action: string) =>
       QUOTATION_TRANSITIONS.filter((t) => t.action === action).map((t) => t.reasonRequired);
-    for (const a of ['return', 'reject', 'customer_reject', 'cancel', 'revise']) {
+    for (const a of ['return', 'reject', 'customer_reject', 'cancel', 'cancel_on_lost', 'revise']) {
       expect(needs(a).length, a).toBeGreaterThan(0);
       expect(needs(a).every(Boolean), a).toBe(true);
     }
@@ -184,6 +186,20 @@ describe('quotation statuses and the transition table', () => {
     // No dead body schema is left for a route that does not exist.
     const contracts: Record<string, unknown> = await import('./index.js');
     expect(Object.keys(contracts).filter((k) => /withdrawquotation/i.test(k))).toEqual([]);
+  });
+
+  it('lets a Lost opportunity end exactly the live statuses, as the system', () => {
+    const edges = QUOTATION_TRANSITIONS.filter((x) => x.action === 'cancel_on_lost');
+    expect(edges.map((t) => t.from).sort()).toEqual(
+      [...QUOTATION_REVISION_RULES.liveStatuses].sort(),
+    );
+    for (const t of edges) {
+      expect(t.by).toBe('system');
+      expect(t.to).toBe('cancelled');
+    }
+    // A user's Cancel button is unchanged: it never reaches an Approved or Sent version.
+    expect(canCancelQuotation('sent')).toBe(false);
+    expect(canCancelQuotation('approved')).toBe(false);
   });
 
   it('lets only the system expire a version', () => {
