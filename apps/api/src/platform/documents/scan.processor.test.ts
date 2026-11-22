@@ -286,16 +286,23 @@ describe('R7: the sweeper', () => {
     // A scan job that arrives anyway (an old one) does not publish the bytes either.
     expect(
       await processorFor({
-        scan: () => Promise.resolve({ kind: 'clean' }),
+        scan: () => Promise.resolve({ verdict: 'clean', ms: 1 }),
       } as unknown as ClamdClient).scanVersion(s.job, true),
     ).toBe('skipped');
     expect((await row(s.versionId)).status).toBe('quarantined');
   });
 
-  it('reopens an upload that never finished validating after 2 hours, so a retry starts clean', async () => {
+  it('fails closed: an upload that never recorded its validation is never scanned, published or served, however old', async () => {
     const s = await seed('quarantined', { unvalidated: true });
-    await sweeperFor(new FakeQueue()).sweep(new Date(Date.now() + 2 * 60 * MINUTE + MINUTE));
-    expect((await row(s.versionId)).status).toBe('awaiting_content');
+    const queue = new FakeQueue();
+    const long = new Date(Date.now() + 30 * 24 * 60 * MINUTE);
+    await sweeperFor(queue).sweep(long);
+    expect(queue.added(s.versionId)).toHaveLength(0);
+    const never = vi.fn();
+    expect(await processorFor({ scan: never } as unknown as ClamdClient).scanVersion(s.job, true)).toBe('skipped');
+    expect(never).not.toHaveBeenCalled();
+    // Still quarantined, with no verdict, and the document never points at it.
+    expect(await row(s.versionId)).toMatchObject({ status: 'quarantined', scan_engine: null, current_version_id: null });
   });
 
   it('leaves alone a quarantined version younger than 15 minutes', async () => {
