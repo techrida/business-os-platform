@@ -50,6 +50,12 @@ export interface UserRow {
   /** When a `failed_sign_ins` lock ends, as an ISO timestamp; null otherwise. */
   lockedUntil?: string | null;
   /**
+   * A failed or ambiguous write to ZITADEL left this person's state unsure (migration 0189): the row is closed, and a
+   * trigger keeps it from ever being 'active'. Sync never clears it; an admin resolves it. The SQL store always returns
+   * it; fakes may leave it out.
+   */
+  identityReviewRequired?: boolean;
+  /**
    * `updated_at` as text, from findById and findByZitadelId only: the row version a sync compares under the row lock
    * before it writes what it read from ZITADEL outside the transaction.
    */
@@ -161,6 +167,13 @@ export abstract class UsersStore {
   /** Inserts, or returns the existing row's id when a concurrent insert won. */
   abstract insertUser(tx: DbTransaction, scope: TxScope, u: UserFields): Promise<string>;
   abstract updateUser(tx: DbTransaction, userId: string, u: UserUpdate): Promise<void>;
+  /**
+   * Closes the row and flags it for review: an active person becomes inactive, `lock` (when given) is stored, and the
+   * flag stays until `clearIdentityReview`. Callers hold the user row lock and bump the authz version.
+   */
+  abstract flagIdentityReview(tx: DbTransaction, userId: string, lock?: UserLock): Promise<void>;
+  /** Clears the review flag; the caller then writes the status ZITADEL reports (updateUser). */
+  abstract clearIdentityReview(tx: DbTransaction, userId: string): Promise<void>;
   abstract notInactiveInIdpOrg(q: Queryable, org: IdpOrgRow): Promise<UserRow[]>;
   /** Up to `limit` `failed_sign_ins` locks that ended by `now`, across tenants, oldest first (the lock-expiry job). */
   abstract expiredLocks(q: Queryable, now: Date, limit: number): Promise<ExpiredLock[]>;
@@ -236,9 +249,35 @@ export abstract class UsersStore {
 
   /** True when the event is new; false when this (instance, aggregate, sequence) was seen before. */
   abstract recordEvent(e: ZitadelEventKey): Promise<boolean>;
+  /**
+   * Marks a ZITADEL identity whose invite has not committed in the database yet. Set before the invite's first grant or
+   * mail, cleared in the transaction that writes the invited row. While it is set, no sign-in creates or activates a row
+   * for that identity (a failed invite whose database writes all failed leaves no other trace).
+   */
+  abstract markInvitePending(zitadelUserId: string): Promise<void>;
+  abstract clearInvitePending(tx: DbTransaction, zitadelUserId: string): Promise<void>;
+  abstract isInvitePending(zitadelUserId: string): Promise<boolean>;
   abstract getCursor(name: string): Promise<string | null>;
   abstract setCursor(name: string, cursor: string): Promise<void>;
+
+  /**
+   * Takes the tenant's Founder-removal lease: true when this `leaseId` now holds it, false when another live lease does.
+   * One statement, so two requests cannot both win. A lease older than `ttlSeconds` is dead (its holder crashed) and is
+   * taken over. It spans the ZITADEL call of a Founder-removing action, which no transaction or row lock may.
+   */
+  abstract claimFounderLease(
+    tenantId: string,
+    leaseId: string,
+    ttlSeconds: number,
+    timeoutMs: number,
+  ): Promise<boolean>;
+  /** Frees the lease when `leaseId` still holds it; a lease taken over after its TTL is left alone. */
+  abstract releaseFounderLease(tenantId: string, leaseId: string): Promise<void>;
 }
+
+const invitePendingName = (zitadelUserId: string) => `users.invite-pending:${zitadelUserId}`;
+const founderLeaseName = (tenantId: string) => `users.founder-lease:${tenantId}`;
+const FOUNDER_LEASE_FREE = 'free';
 
 async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL): Promise<T[]> {
   // Db and DbTransaction share execute(); the cast only picks one of the two identical signatures.
@@ -248,7 +287,7 @@ async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL)
 
 const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.idp_org_id AS "idpOrgId",
   u.zitadel_user_id AS "zitadelUserId", u.email, u.display_name AS "displayName", u.status,
-  u.lock_reason AS "lockReason",
+  u.lock_reason AS "lockReason", u.identity_review_required AS "identityReviewRequired",
   to_char(u.locked_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lockedUntil"`;
 
 const FOUND_USER_COLUMNS = sql`${USER_COLUMNS}, u.updated_at::text AS "version"`;
@@ -388,6 +427,26 @@ export class SqlUsersStore extends UsersStore {
     );
   }
 
+  async flagIdentityReview(tx: DbTransaction, userId: string, lock?: UserLock): Promise<void> {
+    const lockSet =
+      lock === undefined
+        ? sql``
+        : sql`, lock_reason = ${lock.reason}, locked_at = ${lock.lockedAt.toISOString()}::timestamptz,
+            locked_until = ${lock.until?.toISOString() ?? null}::timestamptz`;
+    await tx.execute(
+      sql`UPDATE app.users SET identity_review_required = true, identity_review_at = now(), updated_at = now(),
+            status = CASE WHEN status = 'active' THEN 'inactive' ELSE status END ${lockSet}
+          WHERE id = ${userId}`,
+    );
+  }
+
+  async clearIdentityReview(tx: DbTransaction, userId: string): Promise<void> {
+    await tx.execute(
+      sql`UPDATE app.users SET identity_review_required = false, identity_review_at = NULL, updated_at = now()
+          WHERE id = ${userId}`,
+    );
+  }
+
   async postponeLock(tx: DbTransaction, userId: string, until: Date): Promise<void> {
     await tx.execute(
       sql`UPDATE app.users SET locked_until = ${until.toISOString()}::timestamptz, updated_at = now()
@@ -400,6 +459,7 @@ export class SqlUsersStore extends UsersStore {
       q,
       sql`SELECT u.id, u.tenant_id AS "tenantId" FROM app.users u
           WHERE u.lock_reason = 'failed_sign_ins' AND u.locked_until <= ${now.toISOString()}::timestamptz
+            AND NOT u.identity_review_required
           ORDER BY u.locked_until, u.id
           LIMIT ${limit}`,
     );
@@ -688,6 +748,18 @@ export class SqlUsersStore extends UsersStore {
     return inserted.length > 0;
   }
 
+  async markInvitePending(zitadelUserId: string): Promise<void> {
+    await this.setCursor(invitePendingName(zitadelUserId), 'pending');
+  }
+  async clearInvitePending(tx: DbTransaction, zitadelUserId: string): Promise<void> {
+    await tx.execute(
+      sql`UPDATE ops.sync_cursors SET cursor = 'done', updated_at = now() WHERE name = ${invitePendingName(zitadelUserId)}`,
+    );
+  }
+  async isInvitePending(zitadelUserId: string): Promise<boolean> {
+    return (await this.getCursor(invitePendingName(zitadelUserId))) === 'pending';
+  }
+
   async getCursor(name: string): Promise<string | null> {
     const [row] = await rows<{ cursor: string | null }>(
       this.db,
@@ -696,6 +768,45 @@ export class SqlUsersStore extends UsersStore {
     return row?.cursor ?? null;
   }
 
+  async claimFounderLease(
+    tenantId: string,
+    leaseId: string,
+    ttlSeconds: number,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    // The statement may wait on the row of a holder that is releasing it; it never waits longer than the caller's own
+    // wait for the lease, so that wait is real. A timeout counts as "not claimed".
+    const ms = Math.max(100, Math.floor(timeoutMs));
+    try {
+      const claimed = await this.db.transaction(async (tx) => {
+        await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${ms}`));
+        await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${ms}`));
+        return rows<{ name: string }>(
+          tx,
+          sql`INSERT INTO ops.sync_cursors (name, cursor, updated_at)
+              VALUES (${founderLeaseName(tenantId)}, ${leaseId}, now())
+              ON CONFLICT (name) DO UPDATE SET cursor = EXCLUDED.cursor, updated_at = EXCLUDED.updated_at
+              WHERE ops.sync_cursors.cursor = ${FOUNDER_LEASE_FREE}
+                 OR ops.sync_cursors.cursor = EXCLUDED.cursor
+                 OR ops.sync_cursors.updated_at < now() - make_interval(secs => ${ttlSeconds})
+              RETURNING name`,
+        );
+      });
+      return claimed.length > 0;
+    } catch (error) {
+      const code =
+        (error as { code?: string; cause?: { code?: string } }).code ??
+        (error as { cause?: { code?: string } }).cause?.code;
+      if (code === '57014' || code === '55P03') return false;
+      throw error;
+    }
+  }
+  async releaseFounderLease(tenantId: string, leaseId: string): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE ops.sync_cursors SET cursor = ${FOUNDER_LEASE_FREE}, updated_at = now()
+          WHERE name = ${founderLeaseName(tenantId)} AND cursor = ${leaseId}`,
+    );
+  }
   async setCursor(name: string, cursor: string): Promise<void> {
     await this.db.execute(
       sql`INSERT INTO ops.sync_cursors (name, cursor, updated_at) VALUES (${name}, ${cursor}, now())

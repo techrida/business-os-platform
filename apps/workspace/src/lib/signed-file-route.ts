@@ -3,6 +3,7 @@ import { SignedLinkDtoSchema, type SignedLinkDto } from '@bos/contracts';
 import { ApiError, apiFetch } from '@/lib/api';
 import { failureOf, openSignedFile } from '@/lib/api-kernel';
 import { routeSession } from '@/lib/bff';
+import { dbBusyOf } from '@/lib/db-busy';
 import type { Session } from '@/lib/session';
 import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 
@@ -113,6 +114,14 @@ export async function signedFileResponse(options: SignedFileOptions): Promise<Re
     }
     return new Response(file.body, { status: 200, headers });
   } catch (err) {
+    // The API rolled back and says it is safe to retry (503 db_busy + Retry-After): a download is a navigation, so the
+    // browser shows the plain 503 and its wait instead of reading the busy database as a gateway fault (502).
+    const busy = dbBusyOf(err);
+    if (busy !== null) {
+      const response = plain('Busy, please try again.', 503);
+      response.headers.set('retry-after', String(busy.retryAfterSeconds));
+      return response;
+    }
     const f = failureOf(err);
     return plain(
       UNAVAILABLE_MESSAGES[f.status] ?? f.message,

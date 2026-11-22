@@ -13,6 +13,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
 import { CoreConfig } from '../config/config';
+import { assertWithinOperationDeadline } from './operation-deadline';
 
 /** Connect-protocol paths (`POST /zitadel.<pkg>.v2.<Service>/<Method>`), as in the seed. */
 export const ZITADEL_ENDPOINTS = {
@@ -28,9 +29,6 @@ export const ZITADEL_ENDPOINTS = {
   deactivateUser: '/zitadel.user.v2.UserService/DeactivateUser',
   reactivateUser: '/zitadel.user.v2.UserService/ReactivateUser',
   lockUser: '/zitadel.user.v2.UserService/LockUser',
-  // VERIFIED at v4.20.1 (2026-11-20): exists and takes { userId } (an unknown id answers 404 "User could not be
-  // found"). Used only to take back an identity an invite created a moment ago (UserMirror.takeBackInvite).
-  deleteUser: '/zitadel.user.v2.UserService/DeleteUser',
   unlockUser: '/zitadel.user.v2.UserService/UnlockUser',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
   // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
@@ -207,7 +205,10 @@ const AuthorizationList = z.object({
         organizationId: Str.optional(),
       }),
     )
-    .default([]),
+    .optional(),
+  // Either envelope may carry the count; the field is checked only to refuse an omitted list that should not be empty.
+  details: z.object({ totalResult: z.union([Str, z.number()]).optional() }).optional(),
+  pagination: z.object({ totalResult: z.union([Str, z.number()]).optional() }).optional(),
 });
 // Protobuf JSON omits false booleans and empty lists. Every other field is carried over (CARRY_OVER).
 const LoginPolicyResponse = z.object({
@@ -388,6 +389,7 @@ export class ZitadelAdminClient {
 
   /** Creates a human with an unverified email and no password; returns the ZITADEL user id. */
   async createHuman(zitadelOrgId: string, input: CreateHumanInput): Promise<string> {
+    assertWithinOperationDeadline();
     const res = parse(
       IdOnly,
       await this.post(ZITADEL_ENDPOINTS.createUser, {
@@ -417,6 +419,10 @@ export class ZitadelAdminClient {
       (a) => (a.organization?.id ?? a.organizationId) === zitadelOrgId,
     );
     const roleKeys = [...new Set(roles)].sort();
+    // The project id is resolved first (it may need a request of its own), so the deadline check sits immediately before
+    // the write.
+    const projectId = !existing && roleKeys.length > 0 ? await this.bosProjectId() : null;
+    if (existing || roleKeys.length > 0) assertWithinOperationDeadline();
     if (existing && roleKeys.length === 0) {
       await this.post(ZITADEL_ENDPOINTS.deleteAuthorization, { id: existing.id });
     } else if (existing) {
@@ -424,7 +430,7 @@ export class ZitadelAdminClient {
     } else if (roleKeys.length > 0) {
       await this.post(ZITADEL_ENDPOINTS.createAuthorization, {
         userId: zitadelUserId,
-        projectId: await this.bosProjectId(),
+        projectId,
         organizationId: zitadelOrgId,
         roleKeys,
       });
@@ -542,31 +548,31 @@ export class ZitadelAdminClient {
 
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
   async sendInviteCode(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
   }
 
   /** Shuts the user out of every sign-in (state INACTIVE) until reactivated. */
   async deactivateUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.deactivateUser, { userId: zitadelUserId });
   }
 
   /** Lets a deactivated user sign in again (state ACTIVE). */
   async reactivateUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.reactivateUser, { userId: zitadelUserId });
-  }
-
-  /** Removes the user from ZITADEL for good: their invite link and sign-in stop working. */
-  async deleteUser(zitadelUserId: string): Promise<void> {
-    await this.post(ZITADEL_ENDPOINTS.deleteUser, { userId: zitadelUserId });
   }
 
   /** Shuts the user out of every sign-in (state LOCKED) until unlocked. */
   async lockUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.lockUser, { userId: zitadelUserId });
   }
 
   /** Lets a locked user sign in again (state ACTIVE) and resets their failed attempts. */
   async unlockUser(zitadelUserId: string): Promise<void> {
+    assertWithinOperationDeadline();
     await this.post(ZITADEL_ENDPOINTS.unlockUser, { userId: zitadelUserId });
   }
 
@@ -615,7 +621,7 @@ export class ZitadelAdminClient {
   }
 
   private async authorizations(zitadelUserId: string) {
-    return parse(
+    const res = parse(
       AuthorizationList,
       await this.post(ZITADEL_ENDPOINTS.listAuthorizations, {
         filters: [
@@ -624,7 +630,14 @@ export class ZitadelAdminClient {
         ],
       }),
       'ListAuthorizations',
-    ).authorizations;
+    );
+    // Protobuf JSON omits an empty list, but a positive count with no list is a broken answer, not "no roles": reading
+    // it as none would strip every role of the person (fail closed means an error here, not an empty set).
+    const total = totalOrNull(res.pagination?.totalResult ?? res.details?.totalResult);
+    if (res.authorizations === undefined && total !== null && total > 0) {
+      throw new Error('ListAuthorizations answered a positive count without the authorizations');
+    }
+    return res.authorizations ?? [];
   }
 
   /** Found by name once per process; the project id never changes after the seed created it. */
