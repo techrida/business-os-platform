@@ -21,6 +21,7 @@ import {
 } from '@bos/contracts';
 import {
   approvalRequests,
+  opportunities,
   quotationLines,
   quotations,
   quotationStatusHistory,
@@ -540,5 +541,107 @@ describe('ReviseService.revise', () => {
         service.revise(q.id, { reason: REASON, expectedVersion }, `revise-${randomUUID()}`),
       ),
     ).toBe(404);
+  });
+});
+
+// ------------------------------------------------------------------------------------ Lost deal
+
+/**
+ * Resolves once `pending` waits on a row lock in this database (or has already settled, as code that takes no lock
+ * does), so the test commits the blocking transaction only after the call queued behind it.
+ */
+async function queuedBehindLock(pending: Promise<unknown>): Promise<void> {
+  let settled = false;
+  pending.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  for (let i = 0; i < 200 && !settled; i++) {
+    const { rows } = await ownerPool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE NOT l.granted AND a.datname = current_database()`,
+    );
+    if (rows[0]!.n > 0) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+describe('ReviseService.revise on a Lost deal', () => {
+  /**
+   * A quotation on its own deal whose Sent version has Expired: the Lost cascade cancels only live versions, so an
+   * expired one stays revisable unless revise itself checks the deal.
+   */
+  const expiredOnOwnDeal = async (): Promise<{ q: QuotationDto; dealId: string; version: number }> => {
+    const [deal] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Deal that is lost',
+          customerId: f.customerPartyId,
+          ownerUserId: f.ownerUserId,
+          stage: 'quotation_sent',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    const q = await drafting.create(
+      goldenCreateBody(f, { opportunityId: deal!.id }),
+      `create-${randomUUID()}`,
+    );
+    await advance(q.currentVersionId, 'sent');
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.quotation_versions SET status = 'expired', version = version + 1
+             WHERE id = ${q.currentVersionId}`,
+      ),
+    );
+    return { q, dealId: deal!.id, version: (await versionRow(q.currentVersionId)).version };
+  };
+  /** Mark Lost's write to the deal row: stage, its reason and note, the row version. */
+  const markLostSql = (id: string) =>
+    sql`UPDATE app.opportunities
+           SET stage = 'lost', stage_reason = 'Price', stage_note = 'Went elsewhere', version = version + 1
+         WHERE id = ${id}`;
+
+  it('revises an expired version while the deal is open', async () => {
+    const { q, version } = await expiredOnOwnDeal();
+    const dto = await service.revise(
+      q.id,
+      { reason: REASON, expectedVersion: version },
+      `revise-${randomUUID()}`,
+    );
+    expect(dto).toMatchObject({ revisionNo: 2, status: 'draft' });
+  });
+
+  it('answers 409 once the deal is Lost, and adds no revision', async () => {
+    const { q, dealId, version } = await expiredOnOwnDeal();
+    await withTx(db, scopeA, systemActor('test'), (tx) => tx.execute(markLostSql(dealId)));
+    const error = await service
+      .revise(q.id, { reason: REASON, expectedVersion: version }, `revise-${randomUUID()}`)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect(JSON.stringify((error as ConflictException).getResponse())).toContain(
+      'This deal is Lost; a quotation on it cannot be revised',
+    );
+    expect(await versionRow(q.currentVersionId)).toMatchObject({ status: 'expired', version });
+    expect((await parentRow(q.id)).currentVersionId).toBe(q.currentVersionId);
+  });
+
+  it('refuses a revise queued behind Mark Lost once Mark Lost commits', async () => {
+    const { q, dealId, version } = await expiredOnOwnDeal();
+    let revise!: Promise<unknown>;
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.execute(sql`SELECT id FROM app.opportunities WHERE id = ${dealId} FOR UPDATE`);
+      await tx.execute(markLostSql(dealId));
+      revise = service.revise(
+        q.id,
+        { reason: REASON, expectedVersion: version },
+        `revise-${randomUUID()}`,
+      );
+      await queuedBehindLock(revise);
+    });
+    expect(await statusOf(revise)).toBe(409);
+    expect((await parentRow(q.id)).currentVersionId).toBe(q.currentVersionId);
   });
 });
