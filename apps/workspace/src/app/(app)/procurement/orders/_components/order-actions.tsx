@@ -17,6 +17,7 @@ import {
   shortCloseAction,
 } from '../actions';
 import { qtyText } from '../_lib/model';
+import { storedNumberText } from '../../_lib/stored-number';
 import styles from '../orders.module.css';
 
 import { ProcurementActionDialog } from '../../action-dialog';
@@ -245,7 +246,10 @@ function AmendFields({
   // Controlled, so a refusal does not wipe what the person typed.
   const [values, setValues] = useState(() =>
     Object.fromEntries(
-      lines.map((l) => [l.id, { quantity: qtyText(l.orderedQuantity), unitPrice: l.unitPrice }]),
+      lines.map((l) => [
+        l.id,
+        { quantity: qtyText(l.orderedQuantity), unitPrice: storedNumberText(l.unitPrice, 2) },
+      ]),
     ),
   );
   const [terms, setTerms] = useState(String(paymentTermsDays));
@@ -284,7 +288,7 @@ function AmendFields({
                 />
               )}
             </Field>
-            <Field label={`Unit price (${currency})`} error={errors[`${l.id}.unitPrice`]}>
+            <Field label="Unit price" error={errors[`${l.id}.unitPrice`]}>
               {(control) => (
                 <MoneyInput
                   name={`price:${l.id}`}

@@ -450,7 +450,7 @@ export function PrForm({
                       )}
                     </Field>
                     <Field
-                      label={`Estimated unit price (${values.currency})`}
+                      label="Estimated unit price"
                       error={err[`lines.${i}.estimatedUnitPrice`]}
                     >
                       {(control) => (

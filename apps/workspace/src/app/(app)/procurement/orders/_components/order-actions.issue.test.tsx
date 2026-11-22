@@ -174,3 +174,71 @@ it('amends through formatted quantity, money and whole-day terms boxes that post
     await mounted.unmount();
   }
 });
+
+it('starts the amend price from a stored 100000.000 without the extra zeros and leaves it unsent', async () => {
+  const LINE = '55555555-5555-4555-8555-555555555555';
+  api.getPurchaseOrder.mockResolvedValue({
+    paymentTermsDays: 30,
+    lines: [{ id: LINE, orderedQuantity: '4.0000', unitPrice: '100000.000' }],
+  });
+  api.amendPurchaseOrder.mockResolvedValue({
+    outcome: 'pending_approval',
+    purchaseOrder: { currentVersion: 1 },
+  });
+  const mounted = await mountForm(
+    <AmendDialog
+      purchaseOrderId={PO}
+      number="PO-2082-0002"
+      idempotencyKey={KEY}
+      reloadHref={`/procurement/orders/${PO}`}
+      currency="NPR"
+      paymentTermsDays={30}
+      lines={[
+        {
+          id: LINE,
+          lineNo: 1,
+          description: 'Server',
+          uom: 'pcs',
+          orderedQuantity: '4.0000',
+          unitPrice: '100000.000',
+          received: '0.0000',
+          cancelledQuantity: '0.0000',
+        },
+      ]}
+    />,
+  );
+  try {
+    await click(mounted.container.querySelector('button'));
+    const posted = document.querySelector<HTMLInputElement>(
+      `input[type="hidden"][name="price:${LINE}"]`,
+    )!;
+    const price = posted.parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
+    expect(price.value).toBe('1,00,000.00');
+    expect(posted.value).toBe('100000.00');
+    // The currency is shown by the box, so the label does not repeat it.
+    expect(document.querySelector(`label[for="${price.id}"]`)?.textContent).toBe('Unit price');
+
+    const terms = document
+      .querySelector('input[type="hidden"][name="paymentTerms"]')!
+      .parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
+    await typeKeys(terms, '{Backspace}{Backspace}45');
+    const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="reason"]')!;
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        reason,
+        'Longer terms',
+      );
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+      return Promise.resolve();
+    });
+    await click(document.querySelector<HTMLButtonElement>('footer button[type="submit"]'));
+    expect(api.amendPurchaseOrder).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      PO,
+      { reason: 'Longer terms', paymentTermsDays: 45, lines: [] },
+      KEY,
+    );
+  } finally {
+    await mounted.unmount();
+  }
+});
