@@ -91,9 +91,10 @@ it('explains the vendor columns: one country with a Nepal default, the phones an
   const html = await render('vendors');
   expect(html).toContain('Required columns: legal_name.');
   expect(html).toContain(
-    'pan, vat_registered, country, address_line, address_city, contact_name, contact_email, contact_phone.',
+    'pan, vat_registered, country, address_line, address_city, contact_name, contact_email, contact_phone, contact_country.',
   );
   expect(html).toContain('leave it empty for a vendor in Nepal');
+  expect(html).toContain('contact_country is optional');
   expect(html).toContain('separate several numbers with semicolons');
   expect(html).toContain('its line and city go together');
   expect(api.listImports).toHaveBeenCalledWith(session, 'vendor');

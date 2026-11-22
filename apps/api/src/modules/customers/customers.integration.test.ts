@@ -1533,4 +1533,37 @@ describe('the Nepal PAN rule on the server (FX8)', () => {
       city: 'Pokhara',
     });
   });
+
+  it('changes only the city when the edit sends the unchanged country, and keeps a migrated 402-character line', async () => {
+    // What the edit form sends for a city-only change. The line is as long as an old line1 (200) and line2 (200)
+    // joined with ', ' by the FX9 migration, so an edit that keeps it must not be refused for its length.
+    const line = `${'a'.repeat(200)}, ${'b'.repeat(200)}`;
+    const customer = await createCustomer({ ...nepal, address: { line, city: 'Kathmandu' } });
+    expect(customer.address).toEqual({ line, city: 'Kathmandu' });
+
+    const refused = await patch(customer.id, {
+      expectedVersion: customer.version,
+      address: { line, city: 'Lalitpur' },
+    });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(errorOf(refused.body).message).toContain('country');
+    const [untouched] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    expect(untouched).toMatchObject({ addressCity: 'Kathmandu', version: customer.version });
+
+    const res = await patch(customer.id, {
+      expectedVersion: customer.version,
+      country: 'NP',
+      address: { line, city: 'Lalitpur' },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const read = await request(baseUrl).get(`/v1/customers/${customer.id}`);
+    expect(read.status).toBe(200);
+    expect(CustomerDtoSchema.parse(read.body)).toMatchObject({
+      country: 'NP',
+      address: { line, city: 'Lalitpur' },
+      version: customer.version + 1,
+    });
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    expect(row).toMatchObject({ addressLine: line, addressCity: 'Lalitpur', country: 'NP' });
+  });
 });

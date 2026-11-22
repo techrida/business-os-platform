@@ -189,8 +189,9 @@ export interface CheckedLine {
 }
 
 /**
- * Checks one data line. Every problem of the line is listed, not only the first. The address, the countries, the
- * phones and the Nepal PAN rule are `checkPartyImportPlace`'s (contracts, FX9), so the import and the forms agree.
+ * Checks one data line. Every problem of the line is listed, not only the first. The address, the countries (a
+ * vendor's optional contact_country included), the phones and the Nepal PAN rule are `checkPartyImportPlace`'s
+ * (contracts, FX9), so the import and the forms agree.
  */
 export function checkLine(kind: PartyImportKind, cells: Record<string, string>): CheckedLine {
   const issues: PartyImportIssue[] = [];

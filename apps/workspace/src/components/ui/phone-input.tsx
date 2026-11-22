@@ -68,7 +68,9 @@ export const NEPAL_RULES: DigitRules = {
         ? null
         : `A mobile number has ${MOBILE_DIGITS} digits; this has ${digits.length}.`;
     }
-    return digits.length >= LANDLINE_MIN
+    // The contracts' `nepalPhoneProblem` draws the same lines: a stored landline longer than the box
+    // allows is flagged too, not only one typed into it.
+    return digits.length >= LANDLINE_MIN && digits.length <= LANDLINE_MAX
       ? null
       : `A landline number has ${LANDLINE_MIN} to ${LANDLINE_MAX} digits; this has ${digits.length}.`;
   },

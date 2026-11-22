@@ -34,7 +34,7 @@ export interface AddressFieldsProps {
 }
 
 /** The longest address and city the contracts accept (`AddressLinesSchema`). */
-const LINE_MAX = 300;
+const LINE_MAX = 500;
 const CITY_MAX = 100;
 
 /**

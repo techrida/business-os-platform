@@ -34,7 +34,7 @@ export const IMPORT_KINDS = {
     grant: 'vendor.write',
     help: 'Each row creates one vendor, unverified like a vendor you add by hand: it still needs its documents, verification and approval. A row is matched on its PAN, or on the company name when a foreign vendor has none; a match is skipped, so uploading the same file twice creates nothing the second time.',
     format:
-      'Write the country as a two-letter ISO code, such as NP or US; leave it empty for a vendor in Nepal. Write each phone as + and the country code, then the number (+977 9812345678), and separate several numbers with semicolons. The address is optional, but its line and city go together.',
+      'Write the country as a two-letter ISO code, such as NP or US; leave it empty for a vendor in Nepal. contact_country is optional, also a two-letter code; leave it empty to place the contact in the country of the vendor. Write each phone as + and the country code, then the number (+977 9812345678), and separate several numbers with semicolons. The address is optional, but its line and city go together.',
   },
 } as const satisfies Record<
   string,

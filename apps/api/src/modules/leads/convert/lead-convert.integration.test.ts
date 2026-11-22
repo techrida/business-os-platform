@@ -20,7 +20,7 @@ import {
   leads,
   opportunities,
 } from '@bos/db';
-import { type INestApplication } from '@nestjs/common';
+import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { asc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -31,6 +31,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { configureApp } from '../../../app.setup';
 import { AuditService } from '../../../platform/audit/audit.service';
 import type { AuthzService } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
 import { systemActor, withTx } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
@@ -336,6 +337,29 @@ describe('POST /v1/leads/:id/convert', () => {
     ]);
   });
 
+  it('gives a new contact no numbers when the body sends an empty list, the lead’s numbers removed (FX9 A2)', async () => {
+    const lead = await qualifiedLead({
+      phones: [phoneRow(phone()), phoneRow(usPhone(), 'US', false)],
+    });
+    const res = await convert(
+      lead.id,
+      createCustomerBody(customerBody({ panVatNo: panOf() }), {
+        contact: {
+          mode: 'create',
+          contact: {
+            fullName: 'Sita Rai',
+            email: `none.${tag()}@convert.example`,
+            country: 'NP',
+            phones: [],
+          },
+        },
+      }),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { customerId } = res.body as { customerId: string };
+    expect((await contactOf(customerId)).phones).toEqual([]);
+  });
+
   it('converts a lead abroad: customer and contact keep its country, and no Nepal PAN is asked (FX9)', async () => {
     const abroad = usPhone();
     const lead = await qualifiedLead({ country: 'US', phones: [phoneRow(abroad, 'US')] });
@@ -414,6 +438,101 @@ describe('POST /v1/leads/:id/convert', () => {
     expect(wire.error.duplicates).toEqual([
       expect.objectContaining({ kind: 'contact', id: contactId, customerId, matchedOn: 'phone' }),
     ]);
+  });
+
+  it('never names a contact of a customer the caller cannot read, even through its second number (FX9 A1)', async () => {
+    // Seeded under Sales (every customer readable): a contact of salesB's customer and one of salesA's, each with a
+    // second number.
+    const hidden = await h.seedCustomer(h.users.salesB);
+    const mine = await h.seedCustomer(h.users.salesA);
+    const hiddenSecond = phone();
+    const mineSecond = phone();
+    const contactOn = async (customerId: string, fullName: string, second: string) => {
+      const lead = await qualifiedLead();
+      const res = await convert(lead.id, {
+        customer: { mode: 'existing', customerId },
+        contact: {
+          mode: 'create',
+          contact: {
+            fullName,
+            email: `seed.${tag()}@convert.example`,
+            country: 'NP',
+            phones: [phoneRow(phone()), phoneRow(second, 'NP', false)],
+          },
+        },
+        opportunityName: fullName,
+        expectedVersion: 3,
+      });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      return (await leadRow(lead.id)).contactId!;
+    };
+    const hiddenContact = await contactOn(hidden, 'Hiddenmark Buyer', hiddenSecond);
+    const mineContact = await contactOn(mine, 'Visible Buyer', mineSecond);
+    const both = await qualifiedLead();
+    const onlyHidden = await qualifiedLead();
+
+    // The same salesperson, now allowed to convert but to read and write only the customers they own.
+    const originalCurrent = h.caller.current;
+    const originalAssert = h.authz.assert;
+    const scoped = () => {
+      const c = originalCurrent();
+      const grants = new Map(c.principal.grants);
+      grants.set('customer.read', 'own');
+      grants.set('customer.write', 'own');
+      return { ...c, principal: { ...c.principal, grants } };
+    };
+    h.caller.current = scoped;
+    h.authz.assert = (action, ref) => {
+      const d = can(scoped().principal, action, ref);
+      if (!d.allowed) {
+        throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+      }
+    };
+    try {
+      const body = (numbers: string[]) => ({
+        customer: { mode: 'existing', customerId: mine },
+        contact: {
+          mode: 'create',
+          contact: {
+            fullName: 'New Buyer',
+            email: `new.${tag()}@convert.example`,
+            country: 'NP',
+            phones: numbers.map((n, i) => phoneRow(n, 'NP', i === 0)),
+          },
+        },
+        opportunityName: 'Scoped',
+        expectedVersion: 3,
+      });
+      const expectNoLeak = (text: string) => {
+        expect(text).not.toContain(hidden);
+        expect(text).not.toContain(hiddenContact);
+        expect(text).not.toContain('Hiddenmark');
+      };
+
+      // Both second numbers match: only the readable customer's contact is named.
+      const warned = await convert(both.id, body([hiddenSecond, mineSecond]));
+      expect(warned.status, JSON.stringify(warned.body)).toBe(409);
+      const wire = warned.body as { error: { code: string; duplicates: unknown[] } };
+      expect(wire.error.code).toBe('duplicate_found');
+      expect(wire.error.duplicates).toEqual([
+        expect.objectContaining({
+          kind: 'contact',
+          id: mineContact,
+          customerId: mine,
+          matchedOn: 'phone',
+        }),
+      ]);
+      expectNoLeak(JSON.stringify(warned.body));
+
+      // Only the hidden contact's second number matches: no warning, the conversion goes through.
+      const done = await convert(onlyHidden.id, body([hiddenSecond]));
+      expect(done.status, JSON.stringify(done.body)).toBe(201);
+      expect((done.body as { customerId: string }).customerId).toBe(mine);
+      expectNoLeak(JSON.stringify(done.body));
+    } finally {
+      h.caller.current = originalCurrent;
+      h.authz.assert = originalAssert;
+    }
   });
 
   it('links an existing customer and a new contact, and numbers deals one after the other', async () => {

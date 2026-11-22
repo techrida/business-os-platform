@@ -236,11 +236,12 @@ describe('parseUpdateCustomer', () => {
     expect(out).toEqual({ ok: true, data: { industry: 'Hydropower', expectedVersion: 2 } });
   });
 
-  it('sends the whole address when its line or city changed, without the country', () => {
+  it('sends the whole address with the unchanged country when only the city changed', () => {
+    // The API refuses an address without its country, so a city-only edit must carry the form's country.
     const out = parseUpdateCustomer({ ...same, city: 'Lalitpur' }, existing);
     expect(out).toEqual({
       ok: true,
-      data: { address: { line: 'Balaju', city: 'Lalitpur' }, expectedVersion: 2 },
+      data: { country: 'NP', address: { line: 'Balaju', city: 'Lalitpur' }, expectedVersion: 2 },
     });
   });
 

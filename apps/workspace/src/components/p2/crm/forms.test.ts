@@ -548,6 +548,19 @@ describe('parseConvert', () => {
     });
   });
 
+  it('posts an empty phone list when every row was removed, so the lead’s numbers are not copied back (FX9 A2)', () => {
+    // The list keeps one blank row once the last number is removed; a list with no rows posts nothing.
+    for (const rows of [{ 'contactPhones.0.number': '', 'contactPhones.0.country': 'NP' }, {}]) {
+      const r = parseConvert(form({ ...create, ...withContact, ...rows }));
+      expect(r.ok, JSON.stringify(rows)).toBe(true);
+      if (r.ok && r.data.contact.mode === 'create') {
+        expect(r.data.contact.contact.phones).toEqual([]);
+        // The empty list survives the JSON the server action sends; it is not dropped as "unset".
+        expect(JSON.stringify(r.data)).toContain('"phones":[]');
+      }
+    }
+  });
+
   it('puts a refused phone under its row and needs a contact country', () => {
     const r = parseConvert(
       form({

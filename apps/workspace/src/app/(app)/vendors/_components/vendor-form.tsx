@@ -224,7 +224,7 @@ export function VendorForm({
             {...control}
             name="address.line"
             rows={2}
-            maxLength={300}
+            maxLength={500}
             autoComplete="street-address"
             value={values.addressLine}
             onChange={set('addressLine')}

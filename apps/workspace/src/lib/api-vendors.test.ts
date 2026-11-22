@@ -264,6 +264,34 @@ describe('contacts and portal access', () => {
     expect(contact?.phones[0]?.e164).toBe('+14155552671');
   });
 
+  it('answers 502 for a contact whose phones have no primary, two primaries or one number twice (FX9 A2)', async () => {
+    const us = { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true } as const;
+    const other = { country: 'US', e164: '+14155552672', label: null, isPrimary: false } as const;
+    for (const phones of [
+      [{ ...us, isPrimary: false }, other],
+      [us, { ...other, isPrimary: true }],
+      [us, { ...us, label: 'home', isPrimary: false }],
+    ]) {
+      answer(
+        reply([
+          {
+            id: ID_B,
+            vendorPartyId: ID_A,
+            name: 'Sita',
+            email: null,
+            country: 'US',
+            phones,
+            role: null,
+            isPrimary: true,
+            version: 1,
+          },
+        ]),
+      );
+      const e = await listVendorContacts(session, ID_A).catch((x: unknown) => x);
+      expect((e as ApiError).status, JSON.stringify(phones)).toBe(502);
+    }
+  });
+
   it('grants portal access to a contact with the key', async () => {
     answer(
       reply(

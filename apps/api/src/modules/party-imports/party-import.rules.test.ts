@@ -315,6 +315,26 @@ describe('checkLine, vendors', () => {
     ).toEqual(['contact_phone']);
   });
 
+  it("reads the contact's own country from an optional contact_country column and refuses an unknown code", () => {
+    const header =
+      'legal_name,kind,country,contact_name,contact_email,contact_phone,contact_country';
+    const { records } = readPartyCsv(
+      'vendor',
+      `${header}\nMumbai Metals,foreign,IN,Ann Lee,ann@example.com,+1 4155552671; +91 9812345678,US\n`,
+    );
+    const checked = checkLine('vendor', records[0]!.cells);
+    expect(checked.issues).toEqual([]);
+    expect(checked.values).toMatchObject({
+      country: 'IN',
+      contact_country: 'US',
+      contact_phone: '+14155552671;+919812345678',
+    });
+    expect(
+      checkLine('vendor', vendor({ contact_country: 'ZZ' })).issues.map((i) => i.column),
+    ).toEqual(['contact_country']);
+    expect(checkLine('vendor', vendor({ contact_country: '' })).values?.contact_country).toBe('');
+  });
+
   it('defaults to a Nepal company that is not VAT registered', () => {
     const checked = checkLine('vendor', vendor({ vat_registered: '' }));
     expect(checked.issues).toEqual([]);

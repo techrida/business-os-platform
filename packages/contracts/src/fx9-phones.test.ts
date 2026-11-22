@@ -90,6 +90,18 @@ describe('phoneProblem', () => {
     expect(phoneProblem('NP', '+9778812345678')).not.toBeNull();
   });
 
+  it('reads a short Nepal number starting with 9 as a mobile missing digits, not a landline', () => {
+    // No Nepal landline area code starts with 9, and the workspace box will not save one.
+    expect(phoneProblem('NP', '+9779812345')).toMatch(/starting with 9 is a 10-digit mobile/);
+    expect(phoneProblem('NP', '+97798123456')).not.toBeNull();
+    expect(phoneProblem('NP', '+977981234567')).not.toBeNull();
+    expect(phoneProblem('NP', '+97798123456789')).not.toBeNull();
+    expect(phoneProblem('NP', '+97714123456')).toBeNull();
+    expect(phoneProblem('NP', '+9778123456')).toBeNull();
+    expect(phoneProblem('NP', '+9779812345678')).toBeNull();
+    expect(phoneProblem('NP', '+9771412345678')).toMatch(/starts with 9/);
+  });
+
   it('refuses spaces and punctuation, so one number has one spelling', () => {
     expect(phoneProblem('US', '+1 415 555 2671')).not.toBeNull();
     expect(phoneProblem('NP', '+977 9812345678')).not.toBeNull();

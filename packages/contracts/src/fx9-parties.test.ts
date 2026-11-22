@@ -29,6 +29,13 @@ const npMobile = {
 } as const;
 const usWork = { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false } as const;
 
+/** Lists a response DTO must refuse too (FX9 A2): no primary, two primaries, one number twice. */
+const brokenLists = [
+  ['no primary', [{ ...npMobile, isPrimary: false }, usWork]],
+  ['two primaries', [npMobile, { ...usWork, isPrimary: true }]],
+  ['one number twice', [npMobile, { ...npMobile, label: 'work', isPrimary: false }]],
+] as const;
+
 const issuePaths = (result: { success: boolean; error?: { issues: { path: PropertyKey[] }[] } }) =>
   (result.error?.issues ?? []).map((issue) => issue.path.join('.'));
 
@@ -51,6 +58,22 @@ describe('contacts carry a country and several phones (FX9)', () => {
       ['US', '+14155552671'],
     ]);
     expect(ContactDtoSchema.parse(JSON.parse(JSON.stringify(parsed)))).toEqual(parsed);
+  });
+
+  it.each(brokenLists)('refuses a contact DTO whose phones have %s', (_case, phones) => {
+    const dto = {
+      id: ID,
+      customerId: ID,
+      fullName: 'Sita Rai',
+      email: null,
+      country: 'NP',
+      phones,
+      title: null,
+      isPrimary: true,
+      version: 1,
+    };
+    expect(ContactDtoSchema.safeParse(dto).success).toBe(false);
+    expect(ContactDtoSchema.safeParse({ ...dto, phones: [] }).success).toBe(true);
   });
 
   it('takes the same two phones on a new contact, and refuses a number that is not its row country', () => {
@@ -143,6 +166,33 @@ describe('customers: a country of their own and a three-field address (FX9)', ()
     expect(ConvertLeadBodySchema.safeParse(body('NP', '12345')).success).toBe(false);
     expect(ConvertLeadBodySchema.safeParse(body('US', '12345')).success).toBe(true);
   });
+
+  it('keeps an omitted contact phone list apart from an explicit empty one on conversion (FX9 A2)', () => {
+    const body = (phones?: unknown) => ({
+      customer: { mode: 'existing', customerId: ID },
+      contact: {
+        mode: 'create',
+        contact: {
+          fullName: 'Sita',
+          email: 'sita@himal.example',
+          country: 'NP',
+          ...(phones === undefined ? {} : { phones }),
+        },
+      },
+      opportunityName: 'Order',
+      expectedVersion: 1,
+    });
+    const contactOf = (parsed: ReturnType<typeof ConvertLeadBodySchema.parse>) =>
+      parsed.contact.mode === 'create' ? parsed.contact.contact : undefined;
+    // Omitted: the API copies the lead's numbers. Empty: the user removed them all.
+    const omitted = contactOf(ConvertLeadBodySchema.parse(body()));
+    expect(omitted).toBeDefined();
+    expect('phones' in omitted!).toBe(false);
+    expect(contactOf(ConvertLeadBodySchema.parse(body([])))?.phones).toEqual([]);
+    for (const [, phones] of brokenLists) {
+      expect(ConvertLeadBodySchema.safeParse(body(phones)).success).toBe(false);
+    }
+  });
 });
 
 describe('leads: a country, several phones, and an email or a phone (FX9)', () => {
@@ -209,6 +259,10 @@ describe('leads: a country, several phones, and an email or a phone (FX9)', () =
       updatedAt: AT,
     };
     expect(LeadDtoSchema.parse(dto).phones).toHaveLength(2);
+    // The list invariants hold on the response too (FX9 A2).
+    for (const [, phones] of brokenLists) {
+      expect(LeadDtoSchema.safeParse({ ...dto, phones }).success).toBe(false);
+    }
   });
 
   it('accepts a website lead with a US number and refuses a short Nepal one', () => {

@@ -101,10 +101,10 @@ const sentence = (problem: string) => `${problem.charAt(0).toUpperCase()}${probl
 const labelText = (label: PhoneLabel) => `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
 
 /**
- * Why `e164` is not a number the list may save for `country`, as a sentence, or null. Stricter than the contracts'
- * `phoneProblem` in two places, so the box never calls a number fine that FX8 or E.164 would not: a Nepal number
- * starting with 9 is a ten-digit mobile (the contract also passes `+9779812345` as a landline), and the number must be
- * written the one E.164 way (libphonenumber reads `+4407911…` as valid by dropping the trunk 0, which E.164 leaves out).
+ * Why `e164` is not a number the list may save for `country`, as a sentence, or null. A Nepal number is judged by the
+ * box's own rules first for their friendlier wording; they accept exactly what the contracts' `phoneProblem` does (a
+ * number starting with 9 is a ten-digit mobile, a landline 7 to 9 digits). The number must also be written the one
+ * E.164 way (libphonenumber reads `+4407911…` as valid by dropping the trunk 0, which E.164 leaves out).
  */
 function problemOf(country: CountryCode, e164: string): string | null {
   if (e164 === '') return null;

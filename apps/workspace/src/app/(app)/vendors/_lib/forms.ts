@@ -27,7 +27,7 @@ export type FieldErrors<K extends string> = Partial<Record<K, string>>;
 const PAN = /^[0-9]{9}$/;
 /** A foreign vendor's tax id: the contracts' loose `PanVatNoSchema` shape. */
 const TAX_ID = /^[A-Za-z0-9-]{5,20}$/;
-const LINE_MAX = 300;
+const LINE_MAX = 500;
 const CITY_MAX = 100;
 
 function formText(form: FormData, name: string): string {
