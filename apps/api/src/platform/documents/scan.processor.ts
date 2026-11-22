@@ -496,7 +496,9 @@ export class ScanSweepProcessor extends WorkerHost {
             ),
         );
       } catch (error) {
-        this.logger.error(`could not reopen unfinished upload ${v.id}: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger.error(
+          `could not reopen unfinished upload ${v.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
   }

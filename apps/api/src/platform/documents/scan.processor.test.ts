@@ -284,7 +284,11 @@ describe('R7: the sweeper', () => {
     await sweeperFor(queue).sweep(later());
     expect(queue.added(s.versionId)).toHaveLength(0);
     // A scan job that arrives anyway (an old one) does not publish the bytes either.
-    expect(await processorFor({ scan: () => Promise.resolve({ kind: 'clean' }) } as unknown as ClamdClient).scanVersion(s.job, true)).toBe('skipped');
+    expect(
+      await processorFor({
+        scan: () => Promise.resolve({ kind: 'clean' }),
+      } as unknown as ClamdClient).scanVersion(s.job, true),
+    ).toBe('skipped');
     expect((await row(s.versionId)).status).toBe('quarantined');
   });
 
