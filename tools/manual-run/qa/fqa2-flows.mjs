@@ -396,6 +396,148 @@ export const LEAD_FLOWS = [
   },
 ];
 
+export const VENDOR_FLOWS = [
+  {
+    area: 'parties',
+    flow: 'vendor-form',
+    persona: 'Dev Procurement',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const n = String((Date.now() % 9000) + 1000);
+      const vname = `FQA2 Foreign Vendor ${S.tag}`;
+      await step('1-as', 'Sign in as Dev Procurement', async (c) => {
+        await c.as('Dev Procurement');
+      });
+      await step('2-new', 'Vendors > Add vendor opens the form', async (c) => {
+        await goNav(c, S, 'Vendors', '/vendors');
+        await c.s.click(p().getByRole('link', { name: /Add vendor/ }).first(), 'Add vendor');
+        await c.see(p().getByRole('textbox', { name: 'Legal name' }), 'textbox Legal name');
+        await noSideScroll(c, '/vendors/new');
+      });
+      await step('3-foreign', 'Foreign vendor: no PAN box, a loose Tax ID, address with a foreign country; saves', async (c) => {
+        await c.s.fill(p().getByRole('textbox', { name: 'Legal name' }), vname);
+        await c.s.choose(c.s.select(/(^| )Kind$/), /Foreign/);
+        await c.absent(p().getByRole('textbox', { name: 'PAN', exact: true }), 'textbox PAN (a foreign vendor has none)');
+        await c.see(p().getByRole('textbox', { name: /Tax ID/ }), 'textbox Tax ID (optional)');
+        await c.s.fill(p().getByRole('textbox', { name: /Tax ID/ }), `GSTIN-${n}-AB`);
+        await c.s.fill(p().getByRole('textbox', { name: /^Address/ }), '12 Industrial Road');
+        await c.s.fill(p().getByRole('textbox', { name: /^City/ }), 'Mumbai');
+        await pickCountry(c, p().getByRole('combobox', { name: 'Country', exact: true }), 'India');
+        await c.s.click(c.btn('Add vendor'), 'Add vendor');
+        await p().waitForURL((u) => /^\/vendors\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 90000 });
+        S.vendor = new URL(p().url()).pathname;
+        ledger({ kind: `vendor ${vname}`, path: S.vendor, size: S.size });
+      });
+      await step('4-contact', 'A vendor contact with two phones in different countries and its own country', async (c) => {
+        await c.s.fill(p().getByRole('textbox', { name: 'Name', exact: true }), 'FQA2 Vendor Contact');
+        await c.s.fill(p().getByRole('textbox', { name: 'Email', exact: true }), `fqa2v-${S.tag}@bos-demo.example.com`);
+        await pickCountry(c, p().getByRole('combobox', { name: 'Country', exact: true }).first(), 'India');
+        await c.s.fill(phone(c, 1), `98${n}5678`);
+        await c.s.click(c.btn('Add phone number'), 'Add phone number');
+        await pickCountry(c, p().getByRole('combobox', { name: 'Phone 2 country' }), 'United States');
+        await c.s.fill(phone(c, 2), `415557${n}`);
+        await reachable(c, p().getByRole('button', { name: 'Move phone 2 up' }), 'Move phone 2 up');
+        await noSideScroll(c, 'vendor contact form');
+        await c.s.click(c.btn('Add contact'), 'Add contact');
+        await c.see(p().getByText('FQA2 Vendor Contact').first(), 'the contact FQA2 Vendor Contact is listed', 45000);
+      });
+      await step('5-detail', 'Vendor page: address with city and country name; primary phone shown', async (c) => {
+        await p().reload({ waitUntil: 'domcontentloaded' });
+        await c.see(p().getByText(/12 Industrial Road, Mumbai, India/), 'address "12 Industrial Road, Mumbai, India"', 30000);
+        c.ok((await p().locator('a[href^="tel:"]').count()) >= 1, 'a tel: link for the contact phone');
+        await noSideScroll(c, 'vendor page');
+      });
+      await step('6-list', 'Vendors list shows the vendor', async (c) => {
+        await c.open(`/vendors?q=${encodeURIComponent('FQA2 Foreign')}`);
+        await c.see(p().getByRole('link', { name: new RegExp(vname) }).first(), `row ${vname}`, 30000);
+        await noSideScroll(c, '/vendors list');
+      });
+    },
+  },
+];
+
+export const COMPANY_FLOWS = [
+  {
+    area: 'parties',
+    flow: 'company-profile',
+    persona: 'Dev Founder',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      await step('1-as', 'Sign in as Dev Founder', async (c) => {
+        await c.as('Dev Founder');
+      });
+      await step('2-open', 'Settings > Company profile opens with Address, City, Country and the phone list', async (c) => {
+        await goNav(c, S, 'Settings', '/settings');
+        await c.s.click(p().getByRole('link', { name: 'Company profile' }).first(), 'Company profile');
+        await p().waitForURL((u) => u.pathname === '/settings/company', { timeout: 60000 });
+        await c.see(p().getByRole('textbox', { name: 'PAN number' }), 'textbox PAN number');
+        await c.see(p().getByRole('textbox', { name: 'Address', exact: true }), 'textbox Address');
+        await c.see(p().getByRole('textbox', { name: 'City', exact: true }), 'textbox City');
+        await c.see(p().getByRole('combobox', { name: 'Country', exact: true }), 'combobox Country');
+        await noSideScroll(c, '/settings/company');
+        // A leftover from an interrupted earlier run: put the list back to one empty row first.
+        const extra = await p().locator('input[aria-label^="Phone "][aria-label$=" number"]').count();
+        if (extra > 1 || (await phone(c, 1).inputValue().catch(() => '')) !== '') {
+          while ((await p().locator('input[aria-label="Phone 2 number"]').count()) > 0)
+            await p().getByRole('button', { name: 'Remove phone 2' }).click();
+          await phone(c, 1).fill('');
+          const card0 = p().locator('form').filter({ has: p().locator('input[aria-label="Phone 1 number"]') });
+          await card0.getByRole('button', { name: 'Save', exact: true }).click();
+          await p().waitForTimeout(2500);
+          await p().reload({ waitUntil: 'domcontentloaded' });
+          c.controls.push('note: an earlier run had left company phones; they were cleared first');
+        }
+      });
+      await step('3-pan-box', 'PAN number: letters are refused and a tenth digit is refused', async (c) => {
+        const pan = p().getByRole('textbox', { name: 'PAN number' });
+        const keep = await pan.inputValue();
+        await pan.click();
+        await p().keyboard.type('30a1234567890', { delay: 30 });
+        const v = await pan.inputValue();
+        c.ok(/^\d{0,9}$/.test(v.replace(/\s/g, '')) && v.replace(/\D/g, '').length <= 9, `the PAN box holds only digits, at most nine (${v})`);
+        await pan.fill(keep);
+      });
+      await step('4-four-phones', 'Phones: up to 4 rows, each with its own country, and no Primary control', async (c) => {
+        await c.s.fill(phone(c, 1), '9812345678');
+        for (let k = 2; k <= 4; k++) {
+          await c.s.click(c.btn('Add phone number'), 'Add phone number');
+          if (k === 3) await pickCountry(c, p().getByRole('combobox', { name: `Phone ${k} country` }), 'United States');
+          await c.s.fill(phone(c, k), k === 2 ? '14123456' : k === 3 ? '4155552671' : '9812345670');
+        }
+        c.ok((await c.btn('Add phone number').count()) === 0 || (await c.btn('Add phone number').isDisabled()), 'the add button stops at 4 rows');
+        c.ok((await p().getByRole('radio', { name: /primary/i }).count()) === 0, 'no Primary control on the company phone list');
+        await noSideScroll(c, 'company phones');
+      });
+      await step('5-save-and-reload', 'Saving the contact card keeps the numbers after a reload; the letterhead preview shows no country for Nepal', async (c) => {
+        const card = p().locator('form').filter({ has: p().locator('input[aria-label="Phone 1 number"]') });
+        await c.s.click(card.getByRole('button', { name: 'Save', exact: true }), 'Save (contact card)');
+        await p().waitForTimeout(2500);
+        await p().reload({ waitUntil: 'domcontentloaded' });
+        await c.see(p().locator('input[aria-label="Phone 4 number"]'), 'four phone rows after a reload', 45000);
+        S.companyChanged = true;
+        ledger({ kind: 'settings: company contact phones set to four numbers (restored in the next step)', path: '/settings/company', size: S.size });
+        const preview = await p().evaluate(() => [...document.querySelectorAll('*')].filter((e) => e.children.length === 0 && /12 Durbar Marg/.test(e.textContent || '')).map((e) => (e.parentElement?.innerText || '').replace(/\s+/g, ' ')).filter((t) => t.length < 400));
+        c.ok(preview.length === 0 || preview.every((t) => !/Nepal/.test(t)), 'the letterhead address line does not print Nepal', preview.join(' | ').slice(0, 200));
+      });
+      await step('6-restore', 'Restore: remove the added numbers and save; the list is back to what it was', async (c) => {
+        for (const k of [4, 3, 2]) await p().getByRole('button', { name: `Remove phone ${k}` }).click();
+        await p().getByRole('button', { name: 'Remove phone 1' }).click().catch(() => {});
+        await p().locator('input[aria-label="Phone 1 number"]').fill('').catch(() => {});
+        const card = p().locator('form').filter({ has: p().locator('input[aria-label="Phone 1 number"]') });
+        await c.s.click(card.getByRole('button', { name: 'Save', exact: true }), 'Save (contact card)');
+        await p().waitForTimeout(2500);
+        await p().reload({ waitUntil: 'domcontentloaded' });
+        await c.see(p().locator('input[aria-label="Phone 1 number"]'), 'the phone list after a reload', 45000);
+        c.ok((await p().locator('input[aria-label="Phone 2 number"]').count()) === 0, 'only one (empty) phone row is left');
+        c.ok((await p().locator('input[aria-label="Phone 1 number"]').inputValue()) === '', 'phone 1 is empty again (the original state)');
+        S.companyChanged = false;
+      });
+    },
+  },
+];
+
 export const FLOWS = [
   {
     area: 'payments',
@@ -565,4 +707,6 @@ export const FLOWS = [
   },
   ...PARTY_FLOWS,
   ...LEAD_FLOWS,
+  ...VENDOR_FLOWS,
+  ...COMPANY_FLOWS,
 ];
