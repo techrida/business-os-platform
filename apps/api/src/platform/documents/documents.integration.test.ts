@@ -487,13 +487,11 @@ describe('PUT .../content (raw streamed upload)', () => {
       expect(again.status, JSON.stringify(again.body)).toBe(409);
       expect((await row(c.versionId)).status).toBe('quarantined');
 
-      const next = await request(baseUrl)
-        .post(`/v1/documents/${c.documentId}/versions`)
-        .send({
-          filename: 'invoice.pdf',
-          declaredMime: 'application/pdf',
-          sizeBytes: PDF().length,
-        });
+      const next = await request(baseUrl).post(`/v1/documents/${c.documentId}/versions`).send({
+        filename: 'invoice.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: PDF().length,
+      });
       expect(next.status, JSON.stringify(next.body)).toBe(201);
       const retry = next.body as Created;
       expect(retry.versionId).not.toBe(c.versionId);
