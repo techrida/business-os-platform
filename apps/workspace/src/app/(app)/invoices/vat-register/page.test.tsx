@@ -175,7 +175,10 @@ it('shows the frozen rate digit for digit, not a float', async () => {
   const row = register.rows[1]!;
   api.getSalesVatRegister.mockResolvedValue({
     ...register,
-    rows: [{ ...row, fxRate: '133.123457' }, { ...row, number: 'CN-2', fxRate: '100.000000' }],
+    rows: [
+      { ...row, fxRate: '133.123457' },
+      { ...row, number: 'CN-2', fxRate: '100.000000' },
+    ],
   });
   const html = await render();
   expect(html).toContain('>133.123457<');
