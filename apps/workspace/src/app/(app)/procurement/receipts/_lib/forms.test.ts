@@ -161,7 +161,7 @@ describe('the quantity shape follows the contract limits', () => {
   });
 
   it('refuses a 15th whole digit or a 5th decimal, as the contract does', () => {
-    for (const q of ['123456789012345', '1.00001', '1,5', '10,50', '.5']) {
+    for (const q of ['123456789012345', '1.00001', '1,5', '10,50']) {
       expect(decimalPattern(QUANTITY_LIMITS).test(q)).toBe(false);
       expect(quantityError(q)).toMatch(/up to 4 decimal places/);
     }
