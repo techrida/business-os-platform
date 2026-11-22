@@ -961,7 +961,7 @@ describe('contacts', () => {
       { ...npMobile, isPrimary: false },
     ]);
     const phones = await withTx(db, a, systemActor('test'), (tx) =>
-      loadContactPhones(tx, [contact!.id]),
+      loadContactPhones(tx, a.tenantId, [contact!.id]),
     );
     expect(phones.get(contact!.id)).toEqual([
       { ...usWork, isPrimary: true },

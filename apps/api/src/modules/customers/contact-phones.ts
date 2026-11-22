@@ -59,10 +59,11 @@ export async function replaceContactPhones(
 /**
  * The numbers of each contact in `contactIds`, primary first, then in their saved order. Every id is a key of the
  * result; a contact without numbers maps to an empty list. The table has no row security (tenant-level, like
- * customer_contacts), so the caller passes only ids it has already read under its own tenant filter.
+ * customer_contacts), so the read filters on the tenant itself.
  */
 export async function loadContactPhones(
   db: Db | DbTransaction,
+  tenantId: string,
   contactIds: readonly string[],
 ): Promise<Map<string, PartyPhone[]>> {
   const byContact = new Map<string, PartyPhone[]>(contactIds.map((id) => [id, []]));
@@ -76,7 +77,12 @@ export async function loadContactPhones(
       isPrimary: customerContactPhones.isPrimary,
     })
     .from(customerContactPhones)
-    .where(inArray(customerContactPhones.contactId, [...contactIds]))
+    .where(
+      and(
+        eq(customerContactPhones.tenantId, tenantId),
+        inArray(customerContactPhones.contactId, [...contactIds]),
+      ),
+    )
     .orderBy(
       sql`${customerContactPhones.isPrimary} DESC`,
       asc(customerContactPhones.sortOrder),

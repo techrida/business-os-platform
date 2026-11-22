@@ -349,3 +349,23 @@ describe('PhoneListInput showPrimary and maxRows', () => {
     expect(list.posted('0.isPrimary')).toBe('true');
   });
 });
+
+describe('PhoneListInput duplicate rows block the submit', () => {
+  it('stops the form submit while a number is listed twice, and lets it go once it is not', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '9812345678');
+    await click(list.add());
+    await typeKeys(list.number(2), '9812345678');
+    let submitted = 0;
+    list.container.querySelector('form')!.addEventListener('submit', (event) => {
+      if (!event.defaultPrevented) submitted += 1;
+      event.preventDefault();
+    });
+    await act(() => Promise.resolve(list.container.querySelector('form')!.requestSubmit()));
+    expect(submitted).toBe(0);
+    expect(document.activeElement).toBe(list.number(2));
+    await click(list.button('Remove phone 2'));
+    await act(() => Promise.resolve(list.container.querySelector('form')!.requestSubmit()));
+    expect(submitted).toBe(1);
+  });
+});

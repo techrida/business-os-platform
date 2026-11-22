@@ -975,6 +975,7 @@ export class CustomersService {
       );
     const phones = await loadContactPhones(
       this.db,
+      scope.tenantId,
       rows.map((r) => r.id),
     );
     return rows.map((r) => toContactDto(r, phones.get(r.id) ?? []));
@@ -1058,7 +1059,7 @@ export class CustomersService {
         contactId: row!.id,
         phones: body.phones,
       });
-      const phones = await loadContactPhones(tx, [row!.id]);
+      const phones = await loadContactPhones(tx, scope.tenantId, [row!.id]);
       return toContactDto(row!, phones.get(row!.id) ?? []);
     } catch (error) {
       if (isUnique(error, PRIMARY_CONTACT_INDEX)) {
