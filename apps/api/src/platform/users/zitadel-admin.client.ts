@@ -419,7 +419,9 @@ export class ZitadelAdminClient {
       (a) => (a.organization?.id ?? a.organizationId) === zitadelOrgId,
     );
     const roleKeys = [...new Set(roles)].sort();
-    // The read above can take a while: the deadline is checked again right before the write.
+    // The project id is resolved first (it may need a request of its own), so the deadline check sits immediately before
+    // the write.
+    const projectId = !existing && roleKeys.length > 0 ? await this.bosProjectId() : null;
     if (existing || roleKeys.length > 0) assertWithinOperationDeadline();
     if (existing && roleKeys.length === 0) {
       await this.post(ZITADEL_ENDPOINTS.deleteAuthorization, { id: existing.id });
@@ -428,7 +430,7 @@ export class ZitadelAdminClient {
     } else if (roleKeys.length > 0) {
       await this.post(ZITADEL_ENDPOINTS.createAuthorization, {
         userId: zitadelUserId,
-        projectId: await this.bosProjectId(),
+        projectId,
         organizationId: zitadelOrgId,
         roleKeys,
       });
