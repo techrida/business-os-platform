@@ -4,7 +4,7 @@ import {
   type PaymentRequestStatus,
   type RequestPaymentBody,
 } from '@bos/contracts';
-import { Dec } from '@bos/locale';
+import { Dec, formatKathmandu } from '@bos/locale';
 
 import type { PaymentRequestItem } from '@/lib/api-payables';
 
@@ -119,6 +119,8 @@ export interface PaymentRequestReview {
   /** The sum of the lines, as a plain decimal string. */
   total: string;
   lines: { reference: string; amount: string }[];
+  /** The Kathmandu calendar day the request is created on, e.g. `22 Nov 2026`. */
+  requestDate: string;
 }
 
 /**
@@ -133,6 +135,7 @@ export function reviewPaymentRequest(
     purchaseOrder: (id: string) => string | undefined;
     bill: (openItemId: string) => string | undefined;
   },
+  now: Date = new Date(),
 ): PaymentRequestReview | null {
   const read = readPaymentRequestForm(form);
   if (read.lineCount === null) return null;
@@ -153,5 +156,6 @@ export function reviewPaymentRequest(
       reference: names.bill(line.openItemId) ?? 'Unknown bill',
       amount: line.amount,
     })),
+    requestDate: formatKathmandu(now, 'date'),
   };
 }

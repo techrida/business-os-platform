@@ -3,7 +3,7 @@
 import { CURRENCIES, type CompanyBankAccount, type Currency } from '@bos/contracts';
 import { amountInWords } from '@bos/locale';
 import Link from 'next/link';
-import { useActionState, useId, useRef, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import {
   ActionDialog,
@@ -128,18 +128,16 @@ export function PaymentRequestEntry({
     ) : undefined;
   const formId = useId();
   const formRef = useRef<HTMLFormElement>(null);
-  // Set only by Confirm (or an incomplete form, which the server answers field by field): every other submit,
-  // Enter in a field included, opens the review instead of sending.
+  const opener = useRef<HTMLButtonElement>(null);
+  // Set only by Confirm: every other submit, the opener and Enter in a field included, opens the review instead.
   const confirmed = useRef(false);
   const [review, setReview] = useState<PaymentRequestReview | null>(null);
   const send = () => {
     confirmed.current = true;
     formRef.current?.requestSubmit();
   };
-  const openReview = () => {
-    const form = formRef.current;
-    if (form === null) return;
-    const next = reviewPaymentRequest(new FormData(form), {
+  const reviewOf = (form: HTMLFormElement) =>
+    reviewPaymentRequest(new FormData(form), {
       vendor: (id) => vendors.find(([vendorId]) => vendorId === id)?.[1],
       bankAccount: (id) => bankOptions.find((option) => option.id === id)?.label,
       purchaseOrder: (id) => vendorOrders.find((o) => o.id === id)?.label,
@@ -151,10 +149,15 @@ export function PaymentRequestEntry({
           : `${item.billNumber} · ${item.vendorInvoiceNo}`;
       },
     });
-    // A request the contract refuses goes straight to the server, which names each field to fix.
-    if (next === null) send();
-    else setReview(next);
-  };
+  // The dialog has no Radix trigger (the opener is the form's submit button), so focus goes back to the opener here.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (review !== null) wasOpen.current = true;
+    else if (wasOpen.current) {
+      wasOpen.current = false;
+      opener.current?.focus();
+    }
+  }, [review]);
   return (
     <>
       <PageHeader
@@ -165,19 +168,20 @@ export function PaymentRequestEntry({
             <LinkButton href="/payables/payment-requests" variant="secondary">
               Cancel
             </LinkButton>
+            <Button
+              ref={opener}
+              type="submit"
+              form={formId}
+              disabled={pending || eligible.length === 0}
+              aria-busy={pending || undefined}
+              aria-haspopup="dialog"
+            >
+              Review request
+            </Button>
             <Dialog
-              trigger={
-                <Button
-                  disabled={pending || eligible.length === 0}
-                  aria-busy={pending || undefined}
-                >
-                  Review request
-                </Button>
-              }
               open={review !== null}
               onOpenChange={(open) => {
-                if (open) openReview();
-                else setReview(null);
+                if (!open) setReview(null);
               }}
               title="Review the payment request"
               description="Check the payee and the amount. Create draft request saves it as a draft; it goes to approvers only when you submit it."
@@ -188,6 +192,7 @@ export function PaymentRequestEntry({
                   </DialogClose>
                   <Button
                     onClick={() => {
+                      if (review === null || pending) return;
                       setReview(null);
                       send();
                     }}
@@ -214,8 +219,15 @@ export function PaymentRequestEntry({
               confirmed.current = false;
               return;
             }
+            if (pending || eligible.length === 0) {
+              event.preventDefault();
+              return;
+            }
+            const next = reviewOf(event.currentTarget);
+            // A request the contract refuses goes on to the server, which names each field to fix.
+            if (next === null) return;
             event.preventDefault();
-            if (!pending && eligible.length > 0) openReview();
+            setReview(next);
           }}
         >
           <input type="hidden" name="idempotencyKey" value={state.key} />
@@ -448,6 +460,17 @@ function RequestReviewFacts({ review }: { review: PaymentRequestReview }) {
         { key: 'payee', label: 'Payee', value: review.payee },
         { key: 'from', label: 'Pay from', value: review.payFrom },
         { key: 'currency', label: 'Currency', value: currency },
+        {
+          key: 'date',
+          label: 'Request date',
+          value: (
+            <>
+              {review.requestDate}
+              <br />
+              <span className={styles.quiet}>The day the request is created</span>
+            </>
+          ),
+        },
         {
           key: 'order',
           label: 'Purchase order',

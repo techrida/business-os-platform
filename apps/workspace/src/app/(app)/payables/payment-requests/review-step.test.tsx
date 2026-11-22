@@ -61,6 +61,7 @@ afterEach(async () => {
   await mounted?.unmount();
   mounted = undefined;
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   document.body.innerHTML = '';
 });
 
@@ -80,6 +81,57 @@ const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 const form = () => mounted!.container.querySelector('form')!;
 const posted = () => Object.fromEntries(new FormData(form()).entries());
 
+// The input types whose presence stops a form without a submit button from submitting on Enter (HTML implicit submission).
+const BLOCKS_IMPLICIT_SUBMISSION = new Set([
+  'text',
+  'search',
+  'url',
+  'tel',
+  'email',
+  'password',
+  'date',
+  'month',
+  'week',
+  'time',
+  'datetime-local',
+  'number',
+]);
+/**
+ * Enter in a text field the way a browser handles it (user-event is not a dependency here): keydown, then, unless
+ * a handler cancelled it, a click on the form's default button, the first submit button in `form.elements`, which
+ * includes a button outside the form that names it with `form=`. A disabled default button does nothing. With no
+ * submit button the form is submitted only when it has a single blocking field.
+ */
+async function pressEnter(field: HTMLInputElement) {
+  await act(async () => {
+    field.focus();
+    const proceed = field.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    if (proceed) {
+      const owner = field.form!;
+      const controls = [...owner.elements];
+      const submitter = controls.find(
+        (el): el is HTMLButtonElement | HTMLInputElement =>
+          (el instanceof HTMLButtonElement && el.type === 'submit') ||
+          (el instanceof HTMLInputElement && (el.type === 'submit' || el.type === 'image')),
+      );
+      if (submitter !== undefined) {
+        if (!submitter.disabled) submitter.click();
+      } else if (
+        controls.filter(
+          (el) => el instanceof HTMLInputElement && BLOCKS_IMPLICIT_SUBMISSION.has(el.type),
+        ).length === 1
+      ) {
+        owner.requestSubmit();
+      }
+    }
+    await Promise.resolve();
+  });
+}
+const amountField = () =>
+  form().querySelector<HTMLInputElement>('input[name="allocation:0:amount"]')!;
+
 /** A form started from the bill's "Request payment" link, with the paying account picked. */
 async function filledForm() {
   mounted = await mountForm(
@@ -95,12 +147,12 @@ async function filledForm() {
     .parentElement!.querySelector<HTMLInputElement>('input[role="combobox"]')!;
   bank.focus();
   await fill(bank, '1234');
-  await act(async () => {
-    bank.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-    );
-    await Promise.resolve();
-  });
+  // Enter that chooses the account is the combobox's own: it must not reach the opener as a submit.
+  await pressEnter(bank);
+  await flush();
+  expect(dialog()).toBeNull();
+  expect(actions.createPaymentRequestAction).not.toHaveBeenCalled();
+  expect(posted()['fromBankAccountId']).toBe(ACCOUNT.id);
 }
 
 async function openReview() {
@@ -175,15 +227,53 @@ it('goes back to the form with every value kept and focus on the opener, after B
   expect(actions.createPaymentRequestAction).not.toHaveBeenCalled();
 });
 
-it('opens the review, not a send, when the form is submitted another way (Enter in a field)', async () => {
+it('opens the review, not a send, on Enter in the amount field; Confirm then sends once and Escape returns focus to the opener', async () => {
   await filledForm();
-  await act(async () => {
-    form().requestSubmit();
-    await Promise.resolve();
-  });
+  // Old code: the opener was not a submit button, so with two text fields Enter submitted nothing.
+  await pressEnter(amountField());
   await flush();
   expect(dialog()).not.toBeNull();
   expect(actions.createPaymentRequestAction).not.toHaveBeenCalled();
+
+  await act(async () => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await Promise.resolve();
+  });
+  await flush();
+  expect(dialog()).toBeNull();
+  expect(document.activeElement).toBe(button('Review request'));
+  expect(posted()['allocation:0:amount']).toBe('100000.00');
+
+  await pressEnter(amountField());
+  await flush();
+  await click(button('Create draft request'));
+  await flush();
+  expect(dialog()).toBeNull();
+  expect(actions.createPaymentRequestAction).toHaveBeenCalledTimes(1);
+  expect(actions.createPaymentRequestAction.mock.calls[0]![1].get('allocation:0:amount')).toBe(
+    '100000.00',
+  );
+});
+
+it('makes the opener the submit button of the form it reviews', async () => {
+  await filledForm();
+  const opener = button('Review request');
+  expect(opener.type).toBe('submit');
+  expect(opener.form).toBe(form());
+});
+
+it('shows the request date as the Kathmandu day the request is created', async () => {
+  // 18:30 UTC on 21 Nov is 00:15 on 22 Nov in Kathmandu (UTC+05:45).
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-21T18:30:00Z'));
+  await filledForm();
+  await openReview();
+  const text = dialog()?.textContent ?? '';
+  expect(text).toContain('Request date');
+  expect(text).toContain('22 Nov 2026');
+  expect(text).toContain('The day the request is created');
 });
 
 it('lets the server name the fields when the request is incomplete, without a review', async () => {
