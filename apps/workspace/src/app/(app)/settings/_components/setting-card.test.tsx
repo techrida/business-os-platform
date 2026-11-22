@@ -14,7 +14,7 @@ const { SettingCard } = await import('./setting-card');
 
 const vat = (isDefault: boolean): FieldSpec => ({
   key: 'tax.vat_rate',
-  label: 'Default VAT rate (%)',
+  label: 'Default VAT rate',
   kind: 'percent',
   current: { kind: 'text', value: isDefault ? '13' : '10' },
   defaultValue: { kind: 'text', value: '13' },
@@ -110,9 +110,7 @@ describe('SettingCard markup and typed controls', () => {
     const html = render([vat(true)]);
     // The 0-100 bounds and 2-decimal step are enforced while typing (settings-form.test.tsx).
     expect(html).not.toContain('type="number"');
-    const labelFor = html.match(
-      /<label[^>]*for="([^"]+)"[^>]*>Default VAT rate \(%\)<\/label>/,
-    )?.[1];
+    const labelFor = html.match(/<label[^>]*for="([^"]+)"[^>]*>Default VAT rate<\/label>/)?.[1];
     expect(labelFor).toBeDefined();
     const box = html.match(new RegExp(`<input[^>]*id="${labelFor}"[^>]*>`))?.[0] ?? '';
     expect(box).toContain('type="text"');

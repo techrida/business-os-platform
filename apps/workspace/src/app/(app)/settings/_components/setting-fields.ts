@@ -114,7 +114,7 @@ export const SETTING_COPY: Partial<Record<SettingKey, SettingCopyEntry>> = {
     numberBounds: { min: 1, max: 365, step: '1' },
   },
   'tax.vat_rate': {
-    label: 'Default VAT rate (%)',
+    label: 'Default VAT rate',
     help: 'Enter 0 to 100 with up to two decimal places.',
     kind: 'percent',
     numberBounds: { min: 0, max: 100, step: '0.01' },
@@ -163,13 +163,13 @@ export const SETTING_COPY: Partial<Record<SettingKey, SettingCopyEntry>> = {
     numberBounds: { min: 1, max: 10, step: '1' },
   },
   'procurement.match.qty_pct': {
-    label: 'Quantity tolerance (%)',
+    label: 'Quantity tolerance',
     help: 'How far above the purchase order quantity a bill line may go. 0 means none.',
     kind: 'percent',
     numberBounds: { min: 0, max: 100, step: '0.01' },
   },
   'procurement.match.price_pct': {
-    label: 'Price tolerance (%)',
+    label: 'Price tolerance',
     help: 'How far a bill line price may differ from the purchase order price. The lower of this and the NPR figure applies.',
     kind: 'percent',
     numberBounds: { min: 0, max: 100, step: '0.01' },

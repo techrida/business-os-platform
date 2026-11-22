@@ -31,3 +31,17 @@ export function trimRate(rate: string): string {
   const [whole = '', fraction = ''] = rate.split('.');
   return `${whole}.${fraction.replace(/0+$/, '').padEnd(2, '0')}`;
 }
+
+/**
+ * A stored number with more decimals than its field takes, padded by its database column ("100000.000" in a
+ * 2-decimal field), loses the padding ("100000"), so the editor neither shows nor posts more decimals than the field
+ * allows. A value that already fits, or is not a plain decimal string, is returned unchanged.
+ */
+export function withoutTrailingZeros(value: string, scale: number): string {
+  const match = /^(-?\d+)\.(\d+)$/.exec(value);
+  if (!match) return value;
+  const [, whole = '', fraction = ''] = match;
+  if (fraction.length <= scale) return value;
+  const kept = fraction.replace(/0+$/, '');
+  return kept === '' ? whole : `${whole}.${kept}`;
+}

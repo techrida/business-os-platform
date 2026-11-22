@@ -64,7 +64,7 @@ describe('SettingCard expectedVersion tracking', () => {
           field('procurement.min_quotes', 5, '4', '3'),
           {
             key: 'procurement.match.qty_pct',
-            label: 'Quantity tolerance (%)',
+            label: 'Quantity tolerance',
             kind: 'percent',
             current: { kind: 'text', value: '0' },
             defaultValue: { kind: 'text', value: '0' },
@@ -86,7 +86,7 @@ describe('SettingCard expectedVersion tracking', () => {
 
     // Edit qty_pct as well.
     const qtyLabel = Array.from(mounted.container.querySelectorAll('label')).find(
-      (l) => l.textContent === 'Quantity tolerance (%)',
+      (l) => l.textContent === 'Quantity tolerance',
     );
     await fill(document.getElementById(qtyLabel?.htmlFor ?? ''), '5');
 
