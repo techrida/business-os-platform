@@ -129,7 +129,9 @@ const BODY = {
   source: 'referral',
   companyName: 'Acme Pvt. Ltd.',
   contactName: 'Sita Rai',
+  country: 'NP',
   currency: 'USD',
+  phones: [{ country: 'NP', e164: '+9779812345678', isPrimary: true }],
 };
 
 const dto = (body: unknown) => LeadDtoSchema.parse(body);
@@ -273,6 +275,45 @@ describe('PATCH /v1/leads/:id', () => {
     });
     expect(res.status, JSON.stringify(res.body)).toBe(400);
     expect((await rowOf(lead.id)).version).toBe(1);
+  });
+
+  it('refuses an edit that would leave the lead with neither an email nor a phone (FX9), and changes nothing', async () => {
+    // BODY has a phone and no email.
+    const lead = await seed();
+    const res = await patch(lead.id, { phones: [], expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toMatch(/email or at least one phone/);
+    const read = dto((await request(baseUrl).get(`/v1/leads/${lead.id}`)).body);
+    expect(read.version).toBe(1);
+    expect(read.phones).toEqual([
+      { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
+    ]);
+    // With an email it may drop its numbers.
+    const ok = await patch(lead.id, { email: 'sita@acme.example', phones: [], expectedVersion: 1 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(dto(ok.body)).toMatchObject({ email: 'sita@acme.example', phones: [], version: 2 });
+    expect((await rowOf(lead.id)).phonesSearch).toBeNull();
+  });
+
+  it('replaces the whole phone list on a phones-only edit, bumps the version, and leaves the list alone when phones is not sent', async () => {
+    const lead = await seed();
+    const phones = [
+      { country: 'US', e164: '+12015550123', label: 'work', isPrimary: false },
+      { country: 'NP', e164: '+9779801112233', label: 'mobile', isPrimary: true },
+    ];
+    const res = await patch(lead.id, { phones, country: 'US', expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(dto(res.body)).toMatchObject({
+      country: 'US',
+      version: 2,
+      phones: [phones[1], phones[0]],
+    });
+    expect((await rowOf(lead.id)).phonesSearch).toBe('+12015550123 +9779801112233');
+    // The same list again is no change.
+    expect((await patch(lead.id, { phones, expectedVersion: 2 })).status).toBe(400);
+    const renamed = await patch(lead.id, { title: 'Renamed', expectedVersion: 2 });
+    expect(renamed.status, JSON.stringify(renamed.body)).toBe(200);
+    expect(dto(renamed.body).phones).toEqual([phones[1], phones[0]]);
   });
 
   it('answers 404 for a lead outside the caller scope or entity', async () => {

@@ -19,6 +19,8 @@ const VALID_LEAD = {
   source: 'referral',
   companyName: 'Acme Pvt. Ltd.',
   contactName: 'Sita Rai',
+  country: 'NP',
+  email: 'sita@acme.example',
 };
 
 async function setup() {
@@ -202,15 +204,22 @@ describe('LeadsController', () => {
   it('creates from a valid body with the currency defaulted, and refuses a bad one before the service', async () => {
     const { service, controller } = await setup();
     await controller.create(undefined, VALID_LEAD);
-    expect(service.create).toHaveBeenCalledWith({ ...VALID_LEAD, currency: 'NPR' }, undefined);
+    expect(service.create).toHaveBeenCalledWith(
+      { ...VALID_LEAD, currency: 'NPR', phones: [] },
+      undefined,
+    );
     await controller.create('key-1', VALID_LEAD);
-    expect(service.create).toHaveBeenLastCalledWith({ ...VALID_LEAD, currency: 'NPR' }, 'key-1');
+    expect(service.create).toHaveBeenLastCalledWith(
+      { ...VALID_LEAD, currency: 'NPR', phones: [] },
+      'key-1',
+    );
 
     service.create.mockClear();
     for (const body of [
       { ...VALID_LEAD, source: 'telepathy' },
       { ...VALID_LEAD, stage: 'qualified' },
-      { ...VALID_LEAD, phone: '98123' },
+      { ...VALID_LEAD, phones: [{ country: 'NP', e164: '+97798123', isPrimary: true }] },
+      { ...VALID_LEAD, country: undefined },
       { title: 'x' },
     ]) {
       expect(() => controller.create(undefined, body), JSON.stringify(body)).toThrow(

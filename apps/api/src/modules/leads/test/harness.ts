@@ -54,8 +54,6 @@ export interface Driver {
 }
 type AppPool = Parameters<typeof createParty>[0];
 
-const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
-
 /** The workspace URL the harness's NotifyService renders email links with. */
 export const WORKSPACE_URL = 'https://app.example.test';
 
@@ -341,8 +339,10 @@ async function buildHarness(
       const { partyId } = await createParty(pool, { tenantId, kind: 'customer' });
       await withTx(db, scopeA, systemActor('test'), (tx) =>
         tx.execute(
-          sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address, owner_user_id)
-              VALUES (${partyId}, ${tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme', ${ADDRESS}::jsonb, ${owner ?? null})`,
+          sql`INSERT INTO app.customers
+                (id, tenant_id, number, legal_name, name_norm, country, address_line, address_city, owner_user_id)
+              VALUES (${partyId}, ${tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme', 'NP',
+                '1 Durbar Marg', 'Kathmandu', ${owner ?? null})`,
         ),
       );
       return partyId;

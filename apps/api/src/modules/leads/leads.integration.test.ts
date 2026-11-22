@@ -10,10 +10,10 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { ErrorBodySchema, LEAD_STAGES, LeadDtoSchema } from '@bos/contracts';
-import { activities, leads } from '@bos/db';
+import { activities, leadPhones, leads } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -78,6 +78,7 @@ const BODY = {
   source: 'referral',
   companyName: 'Acme Pvt. Ltd.',
   contactName: 'Sita Rai',
+  country: 'NP',
   email: 'Sita@Acme.example',
 };
 
@@ -148,6 +149,62 @@ describe('POST /v1/leads', () => {
   it('refuses a caller without crm.lead.write on the record at all', async () => {
     h.as('viewer', 'management');
     expect((await post()).status).toBe(403);
+  });
+});
+
+describe('POST /v1/leads phones and country (FX9)', () => {
+  const NP_US = [
+    { country: 'NP', e164: '+9779801112233', label: 'mobile', isPrimary: false },
+    { country: 'US', e164: '+12015550123', label: 'work', isPrimary: true },
+  ];
+
+  it('round-trips a lead with a Nepal and a US number, primary first, with exactly one primary stored', async () => {
+    const created = await seed({ title: 'Two countries', country: 'US', phones: NP_US });
+    const expected = [
+      { country: 'US', e164: '+12015550123', label: 'work', isPrimary: true },
+      { country: 'NP', e164: '+9779801112233', label: 'mobile', isPrimary: false },
+    ];
+    expect(created.country).toBe('US');
+    expect(created.phones).toEqual(expected);
+    const read = dto((await request(baseUrl).get(`/v1/leads/${created.id}`)).body);
+    expect(read.country).toBe('US');
+    expect(read.phones).toEqual(expected);
+    const listed = z
+      .array(LeadDtoSchema)
+      .parse((await request(baseUrl).get('/v1/leads?q=Two%20countries')).body)
+      .find((l) => l.id === created.id);
+    expect(listed?.phones).toEqual(expected);
+
+    const rows = await h.db
+      .select()
+      .from(leadPhones)
+      .where(eq(leadPhones.leadId, created.id))
+      .orderBy(asc(leadPhones.sortOrder));
+    expect(rows.map((r) => [r.e164, r.sortOrder, r.isPrimary])).toEqual([
+      ['+9779801112233', 0, false],
+      ['+12015550123', 1, true],
+    ]);
+    expect(rows.filter((r) => r.isPrimary)).toHaveLength(1);
+    const [row] = await h.db.select().from(leads).where(eq(leads.id, created.id));
+    expect(row?.phonesSearch).toBe('+9779801112233 +12015550123');
+  });
+
+  it('refuses two primaries, no primary, and a number that is not of its country with 400', async () => {
+    const both = NP_US.map((p) => ({ ...p, isPrimary: true }));
+    const none = NP_US.map((p) => ({ ...p, isPrimary: false }));
+    const wrongCountry = [{ country: 'NP', e164: '+12015550123', isPrimary: true }];
+    for (const phones of [both, none, wrongCountry]) {
+      expect((await post({ ...BODY, phones })).status, JSON.stringify(phones)).toBe(400);
+    }
+  });
+
+  it('refuses a lead without a country, and one with neither an email nor a phone, with 400', async () => {
+    const noCountry: Record<string, unknown> = { ...BODY };
+    delete noCountry.country;
+    expect((await post(noCountry)).status).toBe(400);
+    const noContact: Record<string, unknown> = { ...BODY };
+    delete noContact.email;
+    expect((await post(noContact)).status).toBe(400);
   });
 });
 
@@ -412,14 +469,18 @@ describe('GET /v1/leads', () => {
     expect(Number(res.headers['x-total-count'])).toBe(ids.length);
   });
 
-  it('searches the email, phone and campaign columns', async () => {
+  it('searches the email, every phone and the campaign columns', async () => {
     const lead = await seed({
       title: 'Columns',
       email: 'unique.buyer@searchcols.example',
-      phone: '+9779801234567',
+      phones: [
+        { country: 'NP', e164: '+9779801234567', isPrimary: true },
+        { country: 'US', e164: '+12015550123', label: 'work', isPrimary: false },
+      ],
       campaign: 'Dashain Flyer 2082',
     });
-    for (const q of ['searchcols', '9801234567', 'Dashain Flyer']) {
+    // '2015550123' is only the SECOND number: a search over the primary alone would miss it.
+    for (const q of ['searchcols', '9801234567', '2015550123', 'Dashain Flyer']) {
       const res = await request(baseUrl).get(`/v1/leads?q=${encodeURIComponent(q)}`);
       const ids = z
         .array(LeadDtoSchema)
