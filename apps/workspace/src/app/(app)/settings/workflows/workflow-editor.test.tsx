@@ -3,7 +3,7 @@ import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
-import { mountForm, paste, typeKeys } from '@/test/form-interactions';
+import { mountForm, paste, submit, typeKeys } from '@/test/form-interactions';
 
 import { IDLE } from '../action-state';
 
@@ -116,7 +116,7 @@ it('opens the tax invoice route in the form without the JSON toggle (U23-Q4)', (
     /<input[^>]*readOnly=""[^>]*value="tax_invoice"|<input[^>]*value="tax_invoice"[^>]*readOnly=""/,
   );
   // No amount field or amount wording on a fact rule.
-  expect(html).not.toContain('Amount (NPR)');
+  expect(html).not.toContain('>Amount<');
   expect(html).not.toContain('When amountNpr');
   // The saved spec goes out unchanged, false as a boolean.
   expect(html).toContain('&quot;value&quot;:false');
@@ -189,14 +189,14 @@ async function selectAll(input: HTMLInputElement) {
 
 it('saves the stored amount unchanged until the admin edits it', async () => {
   const { box, posted } = await mountEditor(amountRoute);
-  expect(box('Amount (NPR)').value).toBe('100.00');
+  expect(box('Amount').value).toBe('100.00');
   expect(posted().rules[0]!.when.value).toBe('100');
   expect(posted().sla).toMatchObject({ remindAfterHours: 24, escalateAfterHours: 72 });
 });
 
 it('refuses a minus in the amount, so the saved amount is never negative', async () => {
   const { container, box, posted } = await mountEditor(amountRoute);
-  const amount = box('Amount (NPR)');
+  const amount = box('Amount');
   await selectAll(amount);
   await typeKeys(amount, '7');
   expect(amount.value).toBe('7');
@@ -218,7 +218,7 @@ it('refuses a minus in the amount, so the saved amount is never negative', async
 
 it('groups the amount in lakh style and saves the plain number', async () => {
   const { box, posted } = await mountEditor(amountRoute);
-  const amount = box('Amount (NPR)');
+  const amount = box('Amount');
   await selectAll(amount);
   await typeKeys(amount, '1250000');
   expect(amount.value).toBe('12,50,000');
@@ -243,4 +243,31 @@ it('takes whole hours only in the reminder and escalation boxes', async () => {
   await typeKeys(escalate, '4-8.');
   expect(escalate.value).toBe('48');
   expect(posted().sla).toMatchObject({ remindAfterHours: 15, escalateAfterHours: 48 });
+});
+
+const withThreshold = (value: string) => ({
+  ...amountRoute,
+  rules: [{ ...amountRoute.rules[0]!, when: { field: 'amountNpr', op: 'gt', value } }],
+});
+
+it('names the amount once: the label says Amount and the box shows NPR', () => {
+  const html = renderSpec(amountRoute);
+  expect(html).toContain('>Amount<');
+  expect(html).not.toContain('Amount (NPR)');
+  expect(html).toMatch(/<span[^>]*>NPR<\/span>/);
+});
+
+it('opens a stored 100000.000 threshold as 100000 and saves it without the padding', async () => {
+  const { container, box, posted } = await mountEditor(withThreshold('100000.000'));
+  expect(box('Amount').value).toBe('1,00,000.00');
+  expect(posted().rules[0]!.when.value).toBe('100000');
+  await submit(container);
+  expect(container.textContent).not.toContain('Enter an amount');
+});
+
+it('says a stored negative threshold must be zero or more when Save is pressed', async () => {
+  const { container } = await mountEditor(withThreshold('-5'));
+  await submit(container);
+  expect(container.textContent).toContain('Enter an amount of zero or more.');
+  expect(container.textContent).not.toContain('up to two decimal places');
 });

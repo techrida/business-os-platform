@@ -142,6 +142,41 @@ describe('TaxCodesManager', () => {
     await mounted.unmount();
   });
 
+  it('opens a stored 13.0000 rate as 13 and sends 13 when it is not edited', async () => {
+    actions.changeTaxCodeAction.mockResolvedValue({ status: 'ok', message: 'VAT13 changes.' });
+    const padded = period({ rate: '13.0000' });
+    const code: AdminTaxCode = { ...VAT13, periods: [padded], current: padded, latest: padded };
+    const mounted = await mountForm(<TaxCodesManager codes={[code]} today={TODAY} />);
+    await click(buttonByText('Change VAT13'));
+    const dialog = document.querySelector('[role="dialog"]');
+    const rate = dialog?.querySelector<HTMLInputElement>('input[role="spinbutton"]') ?? null;
+    expect(rate?.value).toBe('13');
+    await act(() => {
+      dialog?.querySelector('form')?.requestSubmit();
+      return Promise.resolve();
+    });
+    expect(actions.changeTaxCodeAction).toHaveBeenCalledWith(
+      'VAT13',
+      expect.objectContaining({ rate: '13' }),
+    );
+    await mounted.unmount();
+  });
+
+  it('names the rate once: the label says Rate and the box shows %', async () => {
+    const mounted = await mountForm(<TaxCodesManager codes={[VAT13]} today={TODAY} />);
+    await click(buttonByText('Change VAT13'));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const labels = Array.from(dialog.querySelectorAll('label')).map((l) => l.textContent?.trim());
+    expect(labels).toContain('Rate');
+    expect(labels).not.toContain('Rate (%)');
+    const rate = dialog.querySelector<HTMLInputElement>('input[role="spinbutton"]')!;
+    const affixes = (rate.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .map((id) => document.getElementById(id)?.textContent);
+    expect(affixes).toContain('%');
+    await mounted.unmount();
+  });
+
   it('keeps the dialog open with the refusal when the change is refused', async () => {
     actions.changeTaxCodeAction.mockResolvedValue({
       status: 'error',

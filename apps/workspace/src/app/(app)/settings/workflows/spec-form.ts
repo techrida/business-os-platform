@@ -4,6 +4,7 @@
 // FactCondition) is never flattened: the editor falls back to raw JSON for it, so saving a draft never drops a rule.
 import {
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
+  MONEY_LIMITS,
   ROLE_KEYS,
   SETTING_DEFAULTS,
   WorkflowWriteSpecSchema,
@@ -13,6 +14,8 @@ import {
   type StepSpec,
   type WorkflowSpec,
 } from '@bos/contracts';
+
+import { withoutTrailingZeros } from '../format';
 
 /** The one field the threshold rows can test. Other fields stay in the JSON editor. */
 export const THRESHOLD_FIELD = 'amountNpr';
@@ -140,7 +143,7 @@ function thresholdOf(when: Condition): { op: ThresholdOp; value: string } | null
   if (!('field' in when) || when.field !== THRESHOLD_FIELD) return null;
   if (when.op === 'in') return null;
   if (typeof when.value !== 'string' && typeof when.value !== 'number') return null;
-  return { op: when.op, value: String(when.value) };
+  return { op: when.op, value: withoutTrailingZeros(String(when.value), MONEY_LIMITS.scale) };
 }
 
 /** Null unless `when` is exactly a FactCondition: `fromSchedule` eq a boolean, or `kind` eq a string. */

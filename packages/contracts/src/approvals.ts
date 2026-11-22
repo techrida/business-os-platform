@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { RoleKeySchema } from './authz.js';
 import { DecimalString } from './money.js';
+import { decimalPattern, MONEY_LIMITS } from './number-limits.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 
@@ -133,7 +134,19 @@ export const WorkflowSpecSchema = z
   });
 export type WorkflowSpec = z.infer<typeof WorkflowSpecSchema>;
 
+/** A workflow amount threshold in NPR: at most 2 decimals and never signed, since a document amount is never below 0. */
+export const WorkflowAmountString = z.string().regex(decimalPattern(MONEY_LIMITS));
+
 export const WORKFLOW_AMOUNT_ERROR = 'Enter an amount with up to two decimal places.';
+export const WORKFLOW_AMOUNT_NEGATIVE_ERROR = 'Enter an amount of zero or more.';
+
+/** The message for a threshold value the write schema refuses, or null when it is accepted. */
+export function workflowAmountIssue(value: unknown): string | null {
+  if (WorkflowAmountString.safeParse(value).success) return null;
+  return typeof value === 'string' && value.trim().startsWith('-')
+    ? WORKFLOW_AMOUNT_NEGATIVE_ERROR
+    : WORKFLOW_AMOUNT_ERROR;
+}
 
 /** Published versions retain their original rules. Validate new, edited and newly published specs. */
 export const WorkflowWriteSpecSchema = WorkflowSpecSchema.superRefine((spec, ctx) => {
@@ -144,9 +157,8 @@ export const WorkflowWriteSpecSchema = WorkflowSpecSchema.superRefine((spec, ctx
       condition.any.forEach((child, i) => checkAmount(child, [...path, 'any', i]));
     } else if (condition.field === 'amountNpr') {
       const values = Array.isArray(condition.value) ? condition.value : [condition.value];
-      if (!values.every((value) => DecimalString.safeParse(value).success)) {
-        ctx.addIssue({ code: 'custom', path: [...path, 'value'], message: WORKFLOW_AMOUNT_ERROR });
-      }
+      const message = values.map(workflowAmountIssue).find((issue) => issue !== null);
+      if (message) ctx.addIssue({ code: 'custom', path: [...path, 'value'], message });
     }
   }
 
