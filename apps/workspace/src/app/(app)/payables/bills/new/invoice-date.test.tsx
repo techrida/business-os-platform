@@ -34,6 +34,7 @@ beforeEach(() => {
           pan: '300000001',
           vatRegistered: true,
           country: 'NP',
+          address: null,
           status: 'approved',
           version: 1,
           approvedAt: '2026-11-01T05:45:00.000Z',
