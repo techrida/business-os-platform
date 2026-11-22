@@ -50,6 +50,11 @@ describe('the currencies page', () => {
     expect(box('INR')).toBeDefined();
     expect(box('INR')).not.toContain('checked');
     expect(html).toContain('Oldest exchange rate allowed (days)');
+    // The exchange rate posts from a hidden input; the visible box checks digits itself, with no browser pattern.
+    const rate = html.match(/<input[^>]*name="rateNpr"[^>]*\/>/g);
+    expect(rate).toHaveLength(1);
+    expect(rate?.[0]).toContain('type="hidden"');
+    expect(html).not.toContain('\\d{1,12}');
     // No raw key in the visible text (hidden form fields carry it on purpose).
     expect(html.replace(/<[^>]*>/g, ' ')).not.toContain('currency.enabled');
   });

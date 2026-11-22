@@ -106,6 +106,17 @@ describe('payment request actions', () => {
     expect(api.createPaymentRequest).not.toHaveBeenCalled();
   });
 
+  it('says to remove the space for an amount like "10 50", and keeps the other amount message', async () => {
+    const spaced = await createPaymentRequestAction(prev, form({ 'allocation:0:amount': '10 50' }));
+    // Old code gave the generic amount sentence, which does not say what is wrong.
+    expect(spaced.errors?.['allocations.0.amount']).toBe('Remove the space inside the number.');
+    const zero = await createPaymentRequestAction(prev, form({ 'allocation:0:amount': '0' }));
+    expect(zero.errors?.['allocations.0.amount']).toBe(
+      'Enter an amount above zero, with up to two decimal places.',
+    );
+    expect(api.createPaymentRequest).not.toHaveBeenCalled();
+  });
+
   it('keeps the key on an uncertain submit and rotates after a definite refusal', async () => {
     api.submitPaymentRequest.mockRejectedValueOnce(new ApiError(503, 'unavailable'));
     expect((await submitPaymentRequestAction(prev, form())).key).toBe(key);
