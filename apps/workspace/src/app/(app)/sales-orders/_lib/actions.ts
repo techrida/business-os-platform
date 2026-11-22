@@ -20,7 +20,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
-import { confirmRefusalText } from './confirm-refusal';
+import { codeOf, confirmRefusalText } from './confirm-refusal';
 import { parseConfirm, parseDraft, parseMarkBillable, type FieldErrors } from './forms';
 import { isGuid } from './status';
 import type { ActionState } from './state';
@@ -59,6 +59,8 @@ function failed(err: unknown, key: string): ActionState {
  * deal (read as them; Finance often cannot, since it reads deals only at `own`) and override the
  * hold (`credit.override`). The refusal carries the deal's id only, never amounts: a `credit.override` holder
  * gets the position read from the credit-hold route, so the Override dialog shows what the hold is made of.
+ * The override is for the quotation version the refusal names (`details.quotationVersionId`, R5 FU10), or the
+ * submitted one when the refusal names none.
  */
 async function creditHoldOf(
   session: Session,
@@ -68,6 +70,8 @@ async function creditHoldOf(
   if (describeBillingFailure(err).kind !== 'credit_hold') return undefined;
   const id = apiDetailOf(err, 'opportunityId');
   if (typeof id !== 'string' || !isGuid(id)) return undefined;
+  const refused = apiDetailOf(err, 'quotationVersionId');
+  const versionId = typeof refused === 'string' && isGuid(refused) ? refused : quotationVersionId;
   const [deal, canOverride] = await Promise.all([
     getOpportunity(session, id).catch(() => null),
     getPermissionCheck(session).then(
@@ -85,7 +89,7 @@ async function creditHoldOf(
     number: deal?.number ?? null,
     canOpen: deal !== null,
     canOverride,
-    quotationVersionId,
+    quotationVersionId: versionId,
     ...(position ? { position } : {}),
   };
 }
@@ -146,7 +150,11 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
     orderId = (await confirmSalesOrder(session, parsed.body, key)).order.id;
   } catch (err) {
     const own = confirmRefusalText(err);
-    if (own !== undefined) return { key: keyAfterFailure(err, key), error: own };
+    if (own !== undefined) {
+      // The order was confirmed meanwhile (evidence_not_filed): the page shows a stale draft, so offer a reload.
+      const notFiled = codeOf(err) === 'evidence_not_filed';
+      return { key: keyAfterFailure(err, key), error: own, ...(notFiled ? { reload: true } : {}) };
+    }
     const creditHold = await creditHoldOf(session, err, parsed.body.quotationVersionId);
     return { ...failed(err, key), ...(creditHold ? { creditHold } : {}) };
   }

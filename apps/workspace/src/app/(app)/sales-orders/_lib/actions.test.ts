@@ -236,6 +236,7 @@ describe('confirmOrderAction', () => {
           exposure: '0.00',
           uninvoiced: '90400.00',
           orderValue: '90400.00',
+          pendingQuotationVersionId: IDS.version,
           exposureWithOrder: '180800.00',
           held: true,
           override: {
@@ -244,6 +245,7 @@ describe('confirmOrderAction', () => {
             byName: 'Gita Karki',
             at: '2026-11-20T05:45:00.000Z',
             orderValue: '5000.00',
+            quotationVersionId: IDS.version,
           },
           overrideCovers: false,
         }),
@@ -300,6 +302,26 @@ describe('confirmOrderAction', () => {
     const state = await confirmOrderAction(prev, confirmForm());
     expect(state.error).toMatch(/draft order from another revision/);
     expect(state.reload).toBeUndefined();
+  });
+
+  it('says the named file was not filed when the order was already confirmed (409 evidence_not_filed)', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      refusal(
+        409,
+        'evidence_not_filed',
+        'This order was already confirmed, so the named files were not filed with it',
+      ),
+    );
+    const state = await confirmOrderAction(prev, confirmForm());
+    expect(state.error).toBe(
+      'This order was already confirmed, so your file was not filed with it. Open the order from the sales orders list; you can add evidence when you mark a billing step billable.',
+    );
+    expect(state.done).toBeUndefined();
+    expect(state.reload).toBe(true);
+    // A final answer: the next click is a new decision.
+    expect(state.key).not.toBe(KEY);
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it('words a 403 and does not reload', async () => {

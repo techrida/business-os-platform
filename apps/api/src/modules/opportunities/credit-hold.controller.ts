@@ -19,8 +19,10 @@ export class CreditHoldController {
   }
 
   /**
-   * 200 with the CreditHoldDto after the override (or as it was, when already overridden). 400 without a reason,
-   * 404 for a deal of another entity, 409 when the deal is not on credit hold.
+   * 200 with the CreditHoldDto after the override (or as it was, when already overridden for that version and
+   * value). 400 without a reason, a quotation version id or an order value (R5 FU10); 404 for a deal of another
+   * entity or a version of another deal; 409 when the version is not accepted or already ordered, when the deal is not
+   * on credit hold for it, or when the order is worth something else now.
    */
   @Post(':id/credit-override')
   @Can('credit.override')

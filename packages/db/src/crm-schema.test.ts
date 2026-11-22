@@ -237,6 +237,33 @@ describe('0015_crm and src/schema/crm.ts', () => {
       'utf8',
     ),
   );
+  // 0183 adds the quotation version the override was given for (with its check). Its composite FK to
+  // quotation_versions lives in SQL only (like 0016's won-version FK), so crm.ts need not import quotations.ts:
+  // it is pinned here and then set aside before the comparison with Drizzle.
+  const overrideVersionFk =
+    'opportunities_credit_override_quotation_version_fk (tenant_id,organization_id,credit_override_quotation_version_id) -> quotation_versions(tenant_id,organization_id,id)';
+  applyAlters(
+    parsed,
+    readFileSync(
+      new URL('../migrations/0183_credit_override_quotation_version.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  const opportunityShape = parsed.get('opportunities');
+  const sqlOnlyFks = opportunityShape?.names.foreignKey.filter((e) => e === overrideVersionFk);
+  if (opportunityShape) {
+    opportunityShape.names.foreignKey = opportunityShape.names.foreignKey.filter(
+      (e) => e !== overrideVersionFk,
+    );
+  }
+
+  it('0183 ties the override to one quotation version with a composite FK, kept in SQL only', () => {
+    expect(sqlOnlyFks).toEqual([overrideVersionFk]);
+    expect(opportunityShape?.columns).toContain('credit_override_quotation_version_id');
+    expect(opportunityShape?.names.check).toContain(
+      'opportunities_credit_override_quotation_version_check',
+    );
+  });
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
