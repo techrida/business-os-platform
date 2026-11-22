@@ -283,7 +283,7 @@ describe('PhoneInput, drafts and pastes that used to slip through', () => {
     const phone = await mount(
       <PhoneInput aria-label="Phone" name="phone" defaultValue="+12025550123" />,
     );
-    phone.box().setSelectionRange(8, 12);
+    phone.box().setSelectionRange(7, 11);
     await paste(phone.box(), '0012');
     expect(phone.box().value).toBe('12025550012');
     expect(phone.hidden()).toBe('+12025550012');
