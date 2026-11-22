@@ -290,6 +290,7 @@ function CreditHoldBanner({
           <CreditOverrideDialog
             opportunityId={opp.id}
             number={opp.number}
+            quotationVersionId={hold?.pendingQuotationVersionId ?? null}
             position={hold ? creditPositionView(hold, numberSystems) : undefined}
           />
         ) : undefined

@@ -241,7 +241,10 @@ export function getCreditHold(session: Session, id: string) {
   return call(session, `/v1/opportunities/${seg(id)}/credit-hold`, CreditHoldDtoSchema);
 }
 
-/** Override a deal's credit hold with a reason (`credit.override`). A second override is a no-op. */
+/**
+ * Override a deal's credit hold with a reason (`credit.override`), for one quotation version at one order value
+ * (R5 FU10): another order on the deal, a new version or a different value needs a new override.
+ */
 export function overrideCreditHold(session: Session, id: string, body: CreditOverrideBody) {
   return call(
     session,

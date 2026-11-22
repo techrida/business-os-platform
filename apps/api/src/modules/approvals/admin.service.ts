@@ -59,7 +59,7 @@ export interface WorkflowVersionDto {
   savedByCaller: boolean;
   /**
    * True when the caller may still publish this draft they saved, under the small-team rule (F1-Q11 a): they are a
-   * Founder and nobody else may publish (active, unlocked, holding approvals.definitions.publish in this entity).
+   * Founder and nobody else may publish (active, or only temporarily locked after failed sign-ins, holding approvals.definitions.publish in this entity).
    * The publish then needs a reason. Computed in the list read only; false elsewhere.
    */
   publishSoleEligible: boolean;

@@ -592,18 +592,25 @@ export const OpportunityStageChangeBodySchema = z
   });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
-/** `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26): why the deal may go ahead over the limit, and for which order value. */
+/**
+ * `POST /v1/opportunities/:id/credit-override` (F1-Q20/F1-Q26, R5 FU10): why the deal may go ahead over the limit,
+ * and for which quotation version and order value. The override covers exactly that version and value: a second
+ * order on the deal, or a new version, needs a new override.
+ */
 export const CreditOverrideBodySchema = z.strictObject({
   reason: text(500),
   /**
-   * The pending order's value (NPR, two decimals) the person saw when they gave the override. When sent, the API
-   * refuses the override (409) if the order is worth something else by then, so an override never covers an order
-   * nobody reviewed (R5 FU4). The workspace always sends it.
+   * The deal's pending accepted quotation version the person saw (`CreditHoldDto.pendingQuotationVersionId`). The
+   * API refuses it (404) when the version is not one of this deal's, and (409) when it is not accepted or already has a
+   * confirmed order (R5 FU10).
    */
-  orderValue: z
-    .string()
-    .regex(/^\d+\.\d{2}$/)
-    .optional(),
+  quotationVersionId: z.guid(),
+  /**
+   * The pending order's value (NPR, two decimals) the person saw when they gave the override. Required (R5 FU10):
+   * the API refuses the override (409) if the order is worth something else by then, so an override never covers
+   * an order nobody reviewed (R5 FU4).
+   */
+  orderValue: z.string().regex(/^\d+\.\d{2}$/),
 });
 export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
 
@@ -615,9 +622,11 @@ export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
  * a part-billed one for the rest), so an order is never counted both here and in `exposure`. `orderValue` is the
  * gross NPR value (VAT included) of the deal's accepted quotation that has not become a confirmed sales order yet
  * ('0.00' when none). `held` is `exposureWithOrder > creditLimit`, where
- * `exposureWithOrder = exposure + uninvoiced + orderValue`; never held without a limit. The override, once given for
- * an order of some value (`override.orderValue`), lets the deal's accepted quotation become a sales order as long as
- * the order is not worth more than that; `overrideCovers` says whether it covers `orderValue` now.
+ * `exposureWithOrder = exposure + uninvoiced + orderValue`; never held without a limit. `pendingQuotationVersionId`
+ * is that accepted quotation version (null when none). The override, once given for a quotation version and an
+ * order value (`override.quotationVersionId`, `override.orderValue`), lets that version only become a sales order
+ * while the order is worth exactly that (R5 FU10); `overrideCovers` says whether it covers the pending
+ * version and `orderValue` now.
  */
 export const CreditHoldDtoSchema = z.object({
   opportunityId: z.guid(),
@@ -627,6 +636,8 @@ export const CreditHoldDtoSchema = z.object({
   exposure: z.string().regex(/^-?\d+\.\d{2}$/),
   uninvoiced: z.string().regex(/^\d+\.\d{2}$/),
   orderValue: z.string().regex(/^\d+\.\d{2}$/),
+  /** The deal's pending accepted quotation version that `orderValue` counts; null when there is none. */
+  pendingQuotationVersionId: z.guid().nullable(),
   exposureWithOrder: z.string().regex(/^-?\d+\.\d{2}$/),
   held: z.boolean(),
   override: z
@@ -640,6 +651,8 @@ export const CreditHoldDtoSchema = z.object({
         .string()
         .regex(/^\d+\.\d{2}$/)
         .nullable(),
+      /** The quotation version it was given for; null for one given before that was kept (it covers nothing). */
+      quotationVersionId: z.guid().nullable(),
     })
     .nullable(),
   overrideCovers: z.boolean(),

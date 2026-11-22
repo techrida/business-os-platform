@@ -672,6 +672,45 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('refuses a second confirm naming files it did not file with 409 evidence_not_filed, and stays idempotent without them (R5 FU10)', async () => {
+    const q = await acceptedQuotation();
+    // Uploaded before the confirm: the version takes no uploads once its order is confirmed.
+    const late = await uploadToVersion(q.currentVersionId);
+    const firstKey = `fu10-${randomUUID()}`;
+    const first = await confirm(q, [], firstKey);
+    expect(first.order.status).toBe('confirmed');
+    const evidenceRows = () =>
+      db
+        .select()
+        .from(salesOrderEvidence)
+        .where(eq(salesOrderEvidence.salesOrderId, first.order.id));
+    const filedBefore = (await evidenceRows()).map((r) => r.documentId);
+    expect(filedBefore).not.toContain(late);
+
+    expect(await statusOf(confirm(q, [late]))).toEqual({ status: 409, code: 'evidence_not_filed' });
+    expect((await evidenceRows()).map((r) => r.documentId)).toEqual(filedBefore);
+
+    // No files: the same order, as before. A replay of the first key answers what it answered.
+    expect((await confirm(q, [])).order.id).toBe(first.order.id);
+    expect(await confirm(q, [], firstKey)).toEqual(first);
+    expect(await liveOrders(q.id)).toHaveLength(1);
+  });
+
+  it('answers the order to a second confirm naming only files already filed on it, and refuses a mix (R5 FU10)', async () => {
+    const q = await acceptedQuotation();
+    const doc = await uploadToVersion(q.currentVersionId);
+    const other = await uploadToVersion(q.currentVersionId);
+    const first = await confirm(q, [doc]);
+
+    expect(await statusOf(confirm(q, [doc, other]))).toEqual({
+      status: 409,
+      code: 'evidence_not_filed',
+    });
+    const again = await confirm(q, [doc]);
+    expect(again.order.id).toBe(first.order.id);
+    expect(parsed(again).evidence).toEqual([{ documentId: doc, kind: 'signed_quote' }]);
+  });
+
   it('refuses an evidence file the scan found infected with 409 document_infected and leaves the order a draft (TR-Q12e)', async () => {
     const q = await acceptedQuotation();
     expect(
@@ -2377,6 +2416,18 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
     current.userId = financeUser;
   };
 
+  /**
+   * The override as the workspace sends it (R5 FU10): for the quotation's current version, at the order value Finance
+   * saw (its NPR snapshot, by default).
+   */
+  async function overrideOf(q: QuotationDto, reason: string, orderValue?: string) {
+    return credit.override(q.opportunityId, {
+      reason,
+      quotationVersionId: q.currentVersionId,
+      orderValue: orderValue ?? (await versionRow(q.currentVersionId)).amountNpr!,
+    });
+  }
+
   it('holds over the limit only, lets Finance override with a reason, then confirms with the same key', async () => {
     // NPR 80,000.00 invoiced + USD 200.00 at 133.50 (26,700.00) less a NPR 6,700.00 payment = 100,000.00 owed,
     // and an order of 10,000.00 + 13% VAT = 11,300.00: exactly the limit.
@@ -2411,9 +2462,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       // The draft order the acceptance made is not a sales order yet: the hold still stands in its way.
       expect(deal.creditHold).toEqual({ held: true, overridden: false, ordered: false });
       expect((await statusOf(credit.get(q.opportunityId))).status).toBe(403);
-      expect(
-        (await statusOf(credit.override(q.opportunityId, { reason: 'Sales says fine' }))).status,
-      ).toBe(403);
+      expect((await statusOf(overrideOf(q, 'Sales says fine'))).status).toBe(403);
 
       asFinance();
       const before = CreditHoldDtoSchema.parse(await credit.get(q.opportunityId));
@@ -2427,15 +2476,13 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         held: true,
         override: null,
       });
-      const overridden = CreditHoldDtoSchema.parse(
-        await credit.override(q.opportunityId, { reason: 'Advance cheque received' }),
-      );
+      const overridden = CreditHoldDtoSchema.parse(await overrideOf(q, 'Advance cheque received'));
       expect(overridden.override).toMatchObject({
         reason: 'Advance cheque received',
         byUserId: financeUser,
       });
       // A second override keeps the first one.
-      const again = await credit.override(q.opportunityId, { reason: 'Another reason' });
+      const again = await overrideOf(q, 'Another reason');
       expect(again.override).toEqual(overridden.override);
       const { rows } = await ownerPool.query(
         `SELECT meta FROM audit.audit_events
@@ -2450,6 +2497,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
             exposure: '100000.01',
             uninvoiced: '11300.00',
             orderValue: '11300.00',
+            quotationVersionId: q.currentVersionId,
             currency: 'NPR',
           },
         },
@@ -2461,10 +2509,11 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       expect(released.status).toBe('confirmed');
       expect(released.id).toBe(heldDraft?.id);
       // Ordered: the quotation no longer counts as pending; the order counts as uninvoiced until it is invoiced,
-      // and the customer, now holding two uninvoiced orders over the limit, is still over it for any further deal.
+      // and the customer is still over the limit for any further deal, but this deal has nothing left to hold:
+      // its flag clears once its order is confirmed (R5 FU10).
       expect(
         OpportunityDtoSchema.parse(await opportunitiesService.get(q.opportunityId)).creditHold,
-      ).toEqual({ held: true, overridden: true, ordered: true });
+      ).toEqual({ held: false, overridden: true, ordered: true });
     } finally {
       await setLimit(null);
     }
@@ -2524,7 +2573,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
 
       asFinance();
       const overridden = CreditHoldDtoSchema.parse(
-        await credit.override(q.opportunityId, { reason: 'Director approved the order' }),
+        await overrideOf(q, 'Director approved the order'),
       );
       expect(overridden.override?.reason).toBe('Director approved the order');
       const { rows } = await ownerPool.query(
@@ -2540,6 +2589,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
             exposure: '90000.00',
             uninvoiced: '0.00',
             orderValue: '22600.00',
+            quotationVersionId: q.currentVersionId,
             currency: 'NPR',
           },
         },
@@ -2551,7 +2601,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
 
       // Confirmed: the order is no longer pending; it counts as uninvoiced until an invoice replaces it (below).
       const after = await flagAndPage(q.opportunityId);
-      expect(after.flag).toEqual({ held: true, overridden: true, ordered: true });
+      expect(after.flag).toEqual({ held: false, overridden: true, ordered: true });
       expect(after.page).toMatchObject({
         exposure: '90000.00',
         uninvoiced: '22600.00',
@@ -2600,7 +2650,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       held: false,
       override: null,
     });
-    expect(await statusOf(credit.override(q.opportunityId, { reason: 'Just in case' }))).toEqual({
+    expect(await statusOf(overrideOf(q, 'Just in case'))).toEqual({
       status: 409,
       code: 'conflict',
     });
@@ -2717,9 +2767,10 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       });
       expect(await orderStatuses(second.id)).toEqual(['draft']);
       asFinance();
-      expect(
-        (await credit.override(second.opportunityId, { reason: 'Advance received' })).override,
-      ).toMatchObject({ reason: 'Advance received', orderValue: '90400.00' });
+      expect((await overrideOf(second, 'Advance received')).override).toMatchObject({
+        reason: 'Advance received',
+        orderValue: '90400.00',
+      });
       current.grants = grantsOf('sales');
       current.userId = undefined;
       expect(parsed(await confirm(second)).order.status).toBe('confirmed');
@@ -2832,9 +2883,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       await openItem('debit', 'NPR', '90000.00');
       const q = await accepted({ unitPrice: '20000.00' });
       asFinance();
-      const given = CreditHoldDtoSchema.parse(
-        await credit.override(q.opportunityId, { reason: 'Director approved the order' }),
-      );
+      const given = CreditHoldDtoSchema.parse(await overrideOf(q, 'Director approved the order'));
       expect(given).toMatchObject({
         overrideCovers: true,
         override: { orderValue: '22600.00' },
@@ -2874,7 +2923,7 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         override: { orderValue: '5000.00' },
       });
       const renewed = CreditHoldDtoSchema.parse(
-        await credit.override(q.opportunityId, { reason: 'Approved again for the bigger order' }),
+        await overrideOf(q, 'Approved again for the bigger order'),
       );
       expect(renewed).toMatchObject({
         overrideCovers: true,
@@ -2903,20 +2952,13 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
       const q = await accepted({ unitPrice: '20000.00' });
       asFinance();
       // Finance reviewed an order of 5,000.00; the order is 22,600.00 by the time the override arrives.
-      expect(
-        await statusOf(
-          credit.override(q.opportunityId, {
-            reason: 'Reviewed the small order',
-            orderValue: '5000.00',
-          }),
-        ),
-      ).toEqual({ status: 409, code: 'conflict' });
+      expect(await statusOf(overrideOf(q, 'Reviewed the small order', '5000.00'))).toEqual({
+        status: 409,
+        code: 'conflict',
+      });
       expect((await flagAndPage(q.opportunityId)).flag?.overridden).toBe(false);
       const given = CreditHoldDtoSchema.parse(
-        await credit.override(q.opportunityId, {
-          reason: 'Reviewed the order of 22,600.00',
-          orderValue: '22600.00',
-        }),
+        await overrideOf(q, 'Reviewed the order of 22,600.00', '22600.00'),
       );
       expect(given).toMatchObject({ overrideCovers: true, override: { orderValue: '22600.00' } });
     });
@@ -2929,10 +2971,198 @@ describe('credit hold at the hand-over to a sales order (F1-Q20, F1-Q26)', () =>
         body: { code: 'credit_hold' },
       });
       asFinance();
-      await credit.override(q.opportunityId, { reason: 'Approved again' });
+      await overrideOf(q, 'Approved again');
       current.grants = grantsOf('sales');
       current.userId = undefined;
       expect(parsed(await confirm(q)).order.status).toBe('confirmed');
+    });
+  });
+
+  // R5 FU10 (FU4 Q1). Before: an override covered any order of the deal at or below the value it was given for,
+  // whatever its quotation version, and an override with no recorded version still covered.
+  describe('an override covers exactly one quotation version and order value', () => {
+    /** A customer at 90,000.00 of a 100,000.00 limit, with an accepted 22,600.00 quotation: held. */
+    async function heldDeal() {
+      await setLimit('100000.00');
+      await openItem('debit', 'NPR', '90000.00');
+      return accepted({ unitPrice: '20000.00' });
+    }
+
+    const asSales = () => {
+      current.grants = grantsOf('sales');
+      current.userId = undefined;
+    };
+
+    const overrideRow = async (opportunityId: string) => {
+      const [row] = await db
+        .select({
+          versionId: opportunities.creditOverrideQuotationVersionId,
+          orderValue: opportunities.creditOverrideOrderValue,
+        })
+        .from(opportunities)
+        .where(eq(opportunities.id, opportunityId));
+      return row!;
+    };
+
+    /** Points the deal's override at `versionId` (and `orderValue`), as if it was given for that order. */
+    const setOverrideTarget = (
+      opportunityId: string,
+      versionId: string | null,
+      orderValue = '22600.00',
+    ) =>
+      withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx
+          .update(opportunities)
+          .set({
+            creditOverrideQuotationVersionId: versionId,
+            creditOverrideOrderValue: orderValue,
+          })
+          .where(eq(opportunities.id, opportunityId)),
+      );
+
+    it('ties the override to the version, names it in the refusal and the page, and needs a new one once that version is ordered', async () => {
+      try {
+        const q = await heldDeal();
+        asSales();
+        expect(await holdOf(confirm(q))).toMatchObject({
+          status: 409,
+          body: {
+            code: 'credit_hold',
+            details: { opportunityId: q.opportunityId, quotationVersionId: q.currentVersionId },
+          },
+        });
+        asFinance();
+        expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
+          held: true,
+          orderValue: '22600.00',
+          pendingQuotationVersionId: q.currentVersionId,
+          overrideCovers: false,
+        });
+        const given = CreditHoldDtoSchema.parse(await overrideOf(q, 'Director approved'));
+        expect(given).toMatchObject({
+          pendingQuotationVersionId: q.currentVersionId,
+          overrideCovers: true,
+          override: { orderValue: '22600.00', quotationVersionId: q.currentVersionId },
+        });
+        expect(await overrideRow(q.opportunityId)).toEqual({
+          versionId: q.currentVersionId,
+          orderValue: '22600.00',
+        });
+        const { rows } = await ownerPool.query<{
+          before: Record<string, unknown>;
+          after: Record<string, unknown>;
+        }>(
+          `SELECT before, after FROM audit.audit_events
+            WHERE tenant_id = $1 AND action = 'opportunity.credit_overridden' AND entity_id = $2`,
+          [f.tenantId, q.opportunityId],
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.before).toMatchObject({ creditOverrideQuotationVersionId: null });
+        expect(rows[0]!.after).toMatchObject({
+          creditOverrideQuotationVersionId: q.currentVersionId,
+        });
+
+        asSales();
+        expect(parsed(await confirm(q)).order.status).toBe('confirmed');
+        // Ordered: nothing is pending on the deal, so the override covers nothing more, and the version cannot be
+        // overridden again.
+        asFinance();
+        expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
+          orderValue: '0.00',
+          pendingQuotationVersionId: null,
+          overrideCovers: false,
+        });
+        expect(await statusOf(overrideOf(q, 'Again'))).toEqual({ status: 409, code: 'conflict' });
+      } finally {
+        await setLimit(null);
+      }
+    });
+
+    it('holds another version of the deal at the same value until it has its own override', async () => {
+      try {
+        const q = await heldDeal();
+        const other = await accepted({ unitPrice: '20000.00' });
+        asFinance();
+        await overrideOf(q, 'Director approved');
+        // The deal's override was given for another version (a first order on the deal, or an earlier version of
+        // the quotation) at the same 22,600.00: the real flow lets a won deal accept only one version, so the
+        // override is pointed at it directly.
+        await setOverrideTarget(q.opportunityId, other.currentVersionId);
+        expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
+          pendingQuotationVersionId: q.currentVersionId,
+          overrideCovers: false,
+          override: { quotationVersionId: other.currentVersionId, orderValue: '22600.00' },
+        });
+        asSales();
+        expect(await holdOf(confirm(q))).toMatchObject({
+          status: 409,
+          body: { code: 'credit_hold' },
+        });
+        expect(await orderStatuses(q.id)).toEqual(['draft']);
+
+        asFinance();
+        expect(
+          CreditHoldDtoSchema.parse(await overrideOf(q, 'Approved for this version')),
+        ).toMatchObject({
+          overrideCovers: true,
+          override: { reason: 'Approved for this version', quotationVersionId: q.currentVersionId },
+        });
+        asSales();
+        expect(parsed(await confirm(q)).order.status).toBe('confirmed');
+      } finally {
+        await setLimit(null);
+      }
+    });
+
+    it('fails closed for an override with no recorded version, and for a smaller order than it was given for', async () => {
+      try {
+        const q = await heldDeal();
+        asFinance();
+        await overrideOf(q, 'Director approved');
+        await setOverrideTarget(q.opportunityId, null);
+        expect(CreditHoldDtoSchema.parse(await credit.get(q.opportunityId))).toMatchObject({
+          overrideCovers: false,
+          override: { quotationVersionId: null },
+        });
+        asSales();
+        expect(await holdOf(confirm(q))).toMatchObject({
+          status: 409,
+          body: { code: 'credit_hold' },
+        });
+        // Given for this version at 30,000.00: the order of 22,600.00 is not the order reviewed.
+        await setOverrideTarget(q.opportunityId, q.currentVersionId, '30000.00');
+        expect(await holdOf(confirm(q))).toMatchObject({
+          status: 409,
+          body: { code: 'credit_hold' },
+        });
+        expect(await orderStatuses(q.id)).toEqual(['draft']);
+      } finally {
+        await setLimit(null);
+      }
+    });
+
+    it("answers 404 for a version of another deal and 409 for an order value the version's order does not have", async () => {
+      try {
+        const q = await heldDeal();
+        const other = await accepted({ unitPrice: '20000.00' });
+        asFinance();
+        expect(
+          await statusOf(
+            credit.override(q.opportunityId, {
+              reason: 'Wrong deal',
+              quotationVersionId: other.currentVersionId,
+              orderValue: '22600.00',
+            }),
+          ),
+        ).toEqual({ status: 404, code: 'not_found' });
+        expect(await statusOf(overrideOf(q, 'Reviewed another value', '22600.01'))).toEqual({
+          status: 409,
+          code: 'conflict',
+        });
+        expect(await overrideRow(q.opportunityId)).toEqual({ versionId: null, orderValue: null });
+      } finally {
+        await setLimit(null);
+      }
     });
   });
 });
