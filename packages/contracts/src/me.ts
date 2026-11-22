@@ -61,9 +61,11 @@ export type MeResponse = z.infer<typeof MeResponseSchema>;
  * A `/v1/me` body with the grant rows this build does not know taken out, and what was dropped (FU6). A newer API
  * may report a permission or a scope an older client has no name for (K1 added `vat.sales.read`); the strict
  * schema would refuse the whole body and break sign-in, which would force the workspace to deploy before the API.
- * Only rows of `permissions` that are not a known permission with a known scope are removed: a known row stays
- * strictly typed, and every other field is left for the schema to judge. Anything that is not an object with a
- * `permissions` array is returned as it came.
+ * Only well-formed rows (an object whose `permission` and `scope` are both strings) that are not a known permission
+ * with a known scope are removed: a known row stays strictly typed. A malformed row (`null`, `{}`, a non-object, a
+ * missing or non-string `permission` or `scope`) is not a newer API but a broken one, so it is left in place for
+ * the schema to reject, and the caller answers 502 (FU10). Every other field is left for the schema to judge.
+ * Anything that is not an object with a `permissions` array is returned as it came.
  */
 export function dropUnknownGrants(body: unknown): { body: unknown; dropped: string[] } {
   if (typeof body !== 'object' || body === null || !('permissions' in body)) {
@@ -73,18 +75,12 @@ export function dropUnknownGrants(body: unknown): { body: unknown; dropped: stri
   if (!Array.isArray(permissions)) return { body, dropped: [] };
   const dropped: string[] = [];
   const kept = permissions.filter((row: unknown) => {
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) return true;
+    const { permission, scope } = row as Record<string, unknown>;
+    if (typeof permission !== 'string' || typeof scope !== 'string') return true;
     if (EffectivePermissionSchema.safeParse(row).success) return true;
-    // Only strings go into the label: String() of a hostile value (an object with a null toString) throws.
-    const field = (key: 'permission' | 'scope'): string => {
-      const value =
-        typeof row === 'object' && row !== null ? (row as Record<string, unknown>)[key] : undefined;
-      return typeof value === 'string' ? value : '?';
-    };
-    const label =
-      typeof row === 'object' && row !== null
-        ? `${field('permission')}@${field('scope')}`
-        : 'malformed';
-    dropped.push(label);
+    // Only the two checked strings go into the label: String() of a hostile value can throw.
+    dropped.push(`${permission}@${scope}`);
     return false;
   });
   return dropped.length === 0
