@@ -271,13 +271,83 @@ export abstract class UsersStore {
     ttlSeconds: number,
     timeoutMs: number,
   ): Promise<boolean>;
-  /** Frees the lease when `leaseId` still holds it; a lease taken over after its TTL is left alone. */
+  /**
+   * Frees the lease when `leaseId` still holds it; a lease taken over after its TTL is left alone. An outstanding
+   * Founder removal recorded under it stays on the free lease, and the next holder takes it over with the lease.
+   */
   abstract releaseFounderLease(tenantId: string, leaseId: string): Promise<void>;
+  /**
+   * Records, on the lease row itself, that `leaseId`'s holder is about to change ZITADEL in a way that may remove a
+   * Founder. True when recorded; false when `leaseId` no longer holds the lease (then no provider call may start). One
+   * statement, so a takeover either carries the record or happens before it and makes it fail. The lease age is not
+   * touched.
+   */
+  abstract recordFounderRemoval(
+    tenantId: string,
+    leaseId: string,
+    removal: PendingFounderRemoval,
+  ): Promise<boolean>;
+  /** The outstanding Founder removal carried on the lease `leaseId` holds, or null when there is none. */
+  abstract outstandingFounderRemoval(
+    tenantId: string,
+    leaseId: string,
+  ): Promise<PendingFounderRemoval | null>;
+  /**
+   * Clears any Founder removal recorded on the lease `leaseId` holds. Inside a transaction `q`, it commits with the local
+   * write that makes the removal moot (and is undone with it), and the lease row stays locked until that transaction
+   * ends. Returns whether `leaseId` still holds the lease: false means it was taken over and nothing more may be written.
+   */
+  abstract settleFounderRemoval(tenantId: string, leaseId: string, q?: Queryable): Promise<boolean>;
+}
+
+/** A provider change that may remove a Founder, recorded before it starts and cleared once the database shows it. */
+export interface PendingFounderRemoval {
+  userId: string;
+  zitadelUserId: string;
+  /** The action: a status action ('deactivate', 'lock') or 'set_roles'. */
+  intent: string;
+}
+
+/** The lease row's cursor: `free` or a lease id, then `|` and the outstanding removal as JSON when there is one. */
+const FOUNDER_REMOVAL_SEPARATOR = '|';
+
+export function parseFounderRemoval(
+  cursor: string | null | undefined,
+): PendingFounderRemoval | null {
+  if (!cursor) return null;
+  const at = cursor.indexOf(FOUNDER_REMOVAL_SEPARATOR);
+  if (at < 0) return null;
+  try {
+    const parsed = JSON.parse(cursor.slice(at + 1)) as Partial<PendingFounderRemoval>;
+    if (typeof parsed.userId !== 'string' || typeof parsed.zitadelUserId !== 'string') {
+      throw new Error('malformed');
+    }
+    return {
+      userId: parsed.userId,
+      zitadelUserId: parsed.zitadelUserId,
+      intent: String(parsed.intent),
+    };
+  } catch {
+    // A suffix that cannot be read still names an outstanding removal: refuse rather than drop it.
+    throw new Error('users.founder-lease: unreadable outstanding removal on the lease row');
+  }
+}
+
+export function encodeFounderRemoval(removal: PendingFounderRemoval): string {
+  return `${FOUNDER_REMOVAL_SEPARATOR}${JSON.stringify(removal)}`;
 }
 
 const invitePendingName = (zitadelUserId: string) => `users.invite-pending:${zitadelUserId}`;
 const founderLeaseName = (tenantId: string) => `users.founder-lease:${tenantId}`;
 const FOUNDER_LEASE_FREE = 'free';
+/** The `|<outstanding removal>` part of the lease row's current cursor, or '' when there is none. */
+const REMOVAL_SUFFIX = sql`CASE WHEN position(${FOUNDER_REMOVAL_SEPARATOR}::text in ops.sync_cursors.cursor) > 0
+  THEN substr(ops.sync_cursors.cursor, position(${FOUNDER_REMOVAL_SEPARATOR}::text in ops.sync_cursors.cursor))
+  ELSE '' END`;
+/** The lease row is held by `leaseId`, with or without an outstanding removal. */
+const heldBy = (leaseId: string) =>
+  sql`(ops.sync_cursors.cursor = ${leaseId}
+    OR starts_with(ops.sync_cursors.cursor, ${leaseId + FOUNDER_REMOVAL_SEPARATOR}::text))`;
 
 async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL): Promise<T[]> {
   // Db and DbTransaction share execute(); the cast only picks one of the two identical signatures.
@@ -781,13 +851,18 @@ export class SqlUsersStore extends UsersStore {
       const claimed = await this.db.transaction(async (tx) => {
         await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${ms}`));
         await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${ms}`));
+        // The cursor is `free` or a lease id, optionally followed by `|<outstanding removal>`: a claim keeps that
+        // suffix, so a removal its holder never cleared passes to the next holder with the lease.
         return rows<{ name: string }>(
           tx,
           sql`INSERT INTO ops.sync_cursors (name, cursor, updated_at)
               VALUES (${founderLeaseName(tenantId)}, ${leaseId}, now())
-              ON CONFLICT (name) DO UPDATE SET cursor = EXCLUDED.cursor, updated_at = EXCLUDED.updated_at
+              ON CONFLICT (name) DO UPDATE
+                SET cursor = EXCLUDED.cursor || (${REMOVAL_SUFFIX}), updated_at = EXCLUDED.updated_at
               WHERE ops.sync_cursors.cursor = ${FOUNDER_LEASE_FREE}
+                 OR starts_with(ops.sync_cursors.cursor, ${FOUNDER_LEASE_FREE + FOUNDER_REMOVAL_SEPARATOR}::text)
                  OR ops.sync_cursors.cursor = EXCLUDED.cursor
+                 OR starts_with(ops.sync_cursors.cursor, EXCLUDED.cursor || ${FOUNDER_REMOVAL_SEPARATOR}::text)
                  OR ops.sync_cursors.updated_at < now() - make_interval(secs => ${ttlSeconds})
               RETURNING name`,
         );
@@ -803,9 +878,44 @@ export class SqlUsersStore extends UsersStore {
   }
   async releaseFounderLease(tenantId: string, leaseId: string): Promise<void> {
     await this.db.execute(
-      sql`UPDATE ops.sync_cursors SET cursor = ${FOUNDER_LEASE_FREE}, updated_at = now()
-          WHERE name = ${founderLeaseName(tenantId)} AND cursor = ${leaseId}`,
+      sql`UPDATE ops.sync_cursors SET cursor = ${FOUNDER_LEASE_FREE}::text || (${REMOVAL_SUFFIX}), updated_at = now()
+          WHERE name = ${founderLeaseName(tenantId)} AND ${heldBy(leaseId)}`,
     );
+  }
+  async recordFounderRemoval(
+    tenantId: string,
+    leaseId: string,
+    removal: PendingFounderRemoval,
+  ): Promise<boolean> {
+    // Only on a lease with no outstanding removal: the holder settles an inherited one before it starts.
+    const recorded = await rows<{ name: string }>(
+      this.db,
+      sql`UPDATE ops.sync_cursors SET cursor = ${leaseId + encodeFounderRemoval(removal)}::text
+          WHERE name = ${founderLeaseName(tenantId)} AND cursor = ${leaseId}
+          RETURNING name`,
+    );
+    return recorded.length > 0;
+  }
+  async outstandingFounderRemoval(
+    tenantId: string,
+    leaseId: string,
+  ): Promise<PendingFounderRemoval | null> {
+    const cursor = await this.getCursor(founderLeaseName(tenantId));
+    if (cursor === null || !cursor.startsWith(leaseId + FOUNDER_REMOVAL_SEPARATOR)) return null;
+    return parseFounderRemoval(cursor);
+  }
+  async settleFounderRemoval(
+    tenantId: string,
+    leaseId: string,
+    q: Queryable = this.db,
+  ): Promise<boolean> {
+    const held = await rows<{ name: string }>(
+      q,
+      sql`UPDATE ops.sync_cursors SET cursor = ${leaseId}
+          WHERE name = ${founderLeaseName(tenantId)} AND ${heldBy(leaseId)}
+          RETURNING name`,
+    );
+    return held.length > 0;
   }
   async setCursor(name: string, cursor: string): Promise<void> {
     await this.db.execute(

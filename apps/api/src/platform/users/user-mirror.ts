@@ -30,9 +30,15 @@ import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
 import {
+  assertFounderLeaseHeld,
   assertWithinOperationDeadline,
+  dropOwnFounderRemoval,
+  FounderLeaseLostError,
   IdentityReconciler,
   isDefiniteRefusal,
+  recordedFounderRemovalOf,
+  recordFounderRemoval,
+  type SettleOutstandingRemoval,
   withFounderRemovalLease,
 } from './identity-reconcile';
 import {
@@ -149,6 +155,17 @@ export async function soleFounderEntities(
       !founders.some((o) => o.organizationId === f.organizationId && o.userId !== userId),
   );
   return orphaned.length > 0 ? orphaned.map((f) => f.entityName).join(', ') : null;
+}
+
+/** Whether `userId` is an effective Founder of any legal entity (active, with the role there). */
+export async function holdsFounder(
+  q: DbTransaction,
+  store: UsersStore,
+  tenantId: string,
+  userId: string,
+): Promise<boolean> {
+  const founders = await store.effectiveRoleHolders(q, tenantId, 'founder');
+  return founders.some((f) => f.userId === userId);
 }
 
 @Injectable()
@@ -439,9 +456,19 @@ export class UserMirror {
     roles: RoleKey[],
     assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<void> {
-    return withFounderRemovalLease(this.store, scope.tenantId, () =>
-      this.setRolesOnce(scope, actor, userId, roles, assertAccess),
+    return withFounderRemovalLease(
+      this.store,
+      scope.tenantId,
+      () => this.setRolesOnce(scope, actor, userId, roles, assertAccess),
+      undefined,
+      this.settleOutstandingRemoval(scope, actor),
     );
+  }
+
+  /** Settles a Founder removal inherited with the tenant's lease (see withFounderRemovalLease). */
+  settleOutstandingRemoval(scope: TxScope, actor: Actor): SettleOutstandingRemoval {
+    return (removal, clearRecord) =>
+      this.reconciler.settleOutstandingRemoval(scope, actor, removal, clearRecord);
   }
 
   private async setRolesOnce(
@@ -464,12 +491,15 @@ export class UserMirror {
         if (!user || user.idpOrgId !== org.idpOrgId) throw new NotFoundException('User not found');
         const previousRoles = await this.store.rolesOf(tx, scope.tenantId, userId);
         await this.assertCanSetRoles(tx, scope.tenantId, user, previousRoles);
-        return { user, org, previousRoles };
+        const founder = await holdsFounder(tx, this.store, scope.tenantId, userId);
+        return { user, org, previousRoles, founder };
       },
       READ_ONLY,
     );
 
     assertWithinOperationDeadline();
+    // A role set on a Founder may take the role away (or, failing, close the person): recorded on the lease first.
+    if (plan.founder) await recordFounderRemoval(plan.user, 'set_roles');
     try {
       await this.zitadel.setGrants(plan.user.zitadelUserId, plan.org.zitadelOrgId, roles);
     } catch (error) {
@@ -481,6 +511,8 @@ export class UserMirror {
           zitadelUserId: plan.user.zitadelUserId,
           close: null,
         });
+      } else {
+        await dropOwnFounderRemoval(plan.user.id);
       }
       throw error;
     }
@@ -492,6 +524,8 @@ export class UserMirror {
         actor,
         async (tx) => {
           await lockAccessRevision(tx, scope.tenantId);
+          // The lease must still be held (it clears a recorded removal with this write); a taken-over holder writes nothing.
+          await assertFounderLeaseHeld(tx);
           if (assertAccess) await assertAccess(tx);
           const current = await this.store.findById(tx, scope, userId, true);
           if (!current || current.idpOrgId !== plan.org.idpOrgId) throw userChangedConflict();
@@ -512,6 +546,11 @@ export class UserMirror {
         LOCKS_USER_ROW,
       );
     } catch (error) {
+      // The lease was taken over after this holder recorded a Founder removal: the new holder settles it. Otherwise
+      // the person is flagged here as after any failed role set (no ZITADEL call either way).
+      if (error instanceof FounderLeaseLostError && recordedFounderRemovalOf(plan.user.id)) {
+        throw error;
+      }
       await this.reconciler.denyAfterFailure(scope, actor, {
         reason: 'users.set_roles:phase_c_failed',
         userId: plan.user.id,

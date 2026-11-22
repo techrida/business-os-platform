@@ -271,7 +271,7 @@ export function drizzleImagePointers(): ImagePointerStore {
         .for('update');
       if (doc === undefined) return undefined;
       const [newest] = await tx
-        .select({ status: documentVersions.status })
+        .select({ status: documentVersions.status, sha256: documentVersions.sha256 })
         .from(documentVersions)
         .where(
           and(
@@ -281,7 +281,10 @@ export function drizzleImagePointers(): ImagePointerStore {
         )
         .orderBy(desc(documentVersions.version))
         .limit(1);
-      return { ...doc, status: newest?.status ?? null };
+      // A quarantined version with no sha256 is a failed write (EF3): its bytes never arrived, so it is not usable.
+      if (newest === undefined) return { ...doc, status: null };
+      const received = newest.status !== 'quarantined' || newest.sha256 !== null;
+      return { ...doc, status: received ? newest.status : 'awaiting_content' };
     },
     readPointer: async (tx, scope, ownerType, ownerId) => {
       const p = pointerColumn[ownerType];
