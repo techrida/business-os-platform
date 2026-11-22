@@ -7,14 +7,14 @@ import { type CountryCode, CountryCodeSchema, countryName } from './countries.js
 
 /** The street lines and city of an address. The country lives on the party. */
 export const AddressLinesSchema = z.strictObject({
-  line: z.string().trim().min(1).max(300),
+  line: z.string().trim().min(1).max(500),
   city: z.string().trim().min(1).max(100),
 });
 export type AddressLines = z.infer<typeof AddressLinesSchema>;
 
 /** An address as a document prints it: lines, city and country together. */
 export const PrintAddressSchema = z.strictObject({
-  line: z.string().trim().min(1).max(300),
+  line: z.string().trim().min(1).max(500),
   city: z.string().trim().min(1).max(100),
   country: CountryCodeSchema,
 });

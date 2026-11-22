@@ -47,6 +47,7 @@ export const VENDOR_IMPORT_COLUMNS = [
   'contact_name',
   'contact_email',
   'contact_phone',
+  'contact_country',
 ] as const;
 export const PARTY_IMPORT_COLUMNS = {
   customer: CUSTOMER_IMPORT_COLUMNS,
@@ -91,6 +92,7 @@ export const PARTY_IMPORT_EXAMPLE = {
     'Ram Karki',
     'sales@example.com',
     '+977 9801234567',
+    'NP',
   ],
 } as const satisfies Record<PartyImportKind, readonly string[]>;
 
@@ -156,7 +158,8 @@ const columnLabel = (column: string) => column.replaceAll('_', ' ');
  * The FX9 checks of one import line: the address (line and city), the countries, the phones and the Nepal PAN rule.
  * A customer needs an address and its country (no default); its contact needs a country, and a Nepal customer's PAN
  * is 9 digits (a foreign one keeps the loose tax id). A vendor's address is optional, but line and city come
- * together; its country, kind and PAN stay with the caller. Phones cells are read by `parsePhonesCell` and written
+ * together; its country, kind and PAN stay with the caller. A vendor's contact may name its own country (empty means
+ * the vendor's, which the caller fills in), independent of the countries of its phones. Phones cells are read by `parsePhonesCell` and written
  * back in the canonical form. Cells are expected trimmed; the PAN is judged as passed, so pass the normalised one.
  */
 export function checkPartyImportPlace(
@@ -237,6 +240,8 @@ export function checkPartyImportPlace(
     const hasContact =
       get('contact_name') !== '' || get('contact_email') !== '' || get(phonesColumn) !== '';
     values.contact_country = country('contact_country', hasContact);
+  } else {
+    values.contact_country = country('contact_country', false);
   }
   return { issues, values };
 }

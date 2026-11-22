@@ -9,10 +9,12 @@
 --
 -- Data written (audited as system:migration-0191; the tenant-level tables take each tenant's default entity as the
 -- acting entity, as 0013 does, and bos.organization_id is reset to '' after each tenant):
---   * customers: address_line = line1, or line1 || ', ' || line2 when line2 is set; address_city = city;
---     country = address->>'country'. district, province and postalCode are dropped (no screen shows them any more).
---     A customer whose address has no line1, no city or no ISO-2 country is not guessed at: the migration RAISEs
---     and rolls back (Kuu: dev data may be reset, so a blank address is never written).
+--   * customers: address_line = line1, or line1 || ', ' || line2 when line2 is set, cut at 500 characters (the
+--     contract's limit; two old 200-character lines joined are 402, so the cut is only a safeguard); address_city =
+--     city; country = address->>'country'. district, province and postalCode are dropped (no screen shows them any
+--     more). A customer whose address has no line1, no city or a country outside the ISO 3166-1 alpha-2 list below
+--     is not guessed at: the migration RAISEs and rolls back (Kuu: dev data may be reset, so a blank address or an
+--     unknown country is never written).
 --   * customer_contacts and vendor_contacts take their parent's country when it is not NP (NP is the default).
 --   * leads keep the default NP: a lead has no address to read a country from.
 --
@@ -57,6 +59,23 @@ ALTER TABLE "app"."vendors" ADD COLUMN "address_city" text;
 DO $$
 DECLARE
 	bad record;
+	-- ISO 3166-1 alpha-2, the 249 codes of ISO_COUNTRIES in packages/contracts/src/countries.ts (CountryCodeSchema).
+	v_iso constant text[] := ARRAY[
+		'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AQ', 'AR', 'AS', 'AT', 'AU', 'AW', 'AX', 'AZ', 'BA', 'BB', 'BD',
+		'BE', 'BF', 'BG', 'BH', 'BI', 'BJ', 'BL', 'BM', 'BN', 'BO', 'BQ', 'BR', 'BS', 'BT', 'BV', 'BW', 'BY', 'BZ', 'CA',
+		'CC', 'CD', 'CF', 'CG', 'CH', 'CI', 'CK', 'CL', 'CM', 'CN', 'CO', 'CR', 'CU', 'CV', 'CW', 'CX', 'CY', 'CZ', 'DE',
+		'DJ', 'DK', 'DM', 'DO', 'DZ', 'EC', 'EE', 'EG', 'EH', 'ER', 'ES', 'ET', 'FI', 'FJ', 'FK', 'FM', 'FO', 'FR', 'GA',
+		'GB', 'GD', 'GE', 'GF', 'GG', 'GH', 'GI', 'GL', 'GM', 'GN', 'GP', 'GQ', 'GR', 'GS', 'GT', 'GU', 'GW', 'GY', 'HK',
+		'HM', 'HN', 'HR', 'HT', 'HU', 'ID', 'IE', 'IL', 'IM', 'IN', 'IO', 'IQ', 'IR', 'IS', 'IT', 'JE', 'JM', 'JO', 'JP',
+		'KE', 'KG', 'KH', 'KI', 'KM', 'KN', 'KP', 'KR', 'KW', 'KY', 'KZ', 'LA', 'LB', 'LC', 'LI', 'LK', 'LR', 'LS', 'LT',
+		'LU', 'LV', 'LY', 'MA', 'MC', 'MD', 'ME', 'MF', 'MG', 'MH', 'MK', 'ML', 'MM', 'MN', 'MO', 'MP', 'MQ', 'MR', 'MS',
+		'MT', 'MU', 'MV', 'MW', 'MX', 'MY', 'MZ', 'NA', 'NC', 'NE', 'NF', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NU', 'NZ',
+		'OM', 'PA', 'PE', 'PF', 'PG', 'PH', 'PK', 'PL', 'PM', 'PN', 'PR', 'PS', 'PT', 'PW', 'PY', 'QA', 'RE', 'RO', 'RS',
+		'RU', 'RW', 'SA', 'SB', 'SC', 'SD', 'SE', 'SG', 'SH', 'SI', 'SJ', 'SK', 'SL', 'SM', 'SN', 'SO', 'SR', 'SS', 'ST',
+		'SV', 'SX', 'SY', 'SZ', 'TC', 'TD', 'TF', 'TG', 'TH', 'TJ', 'TK', 'TL', 'TM', 'TN', 'TO', 'TR', 'TT', 'TV', 'TW',
+		'TZ', 'UA', 'UG', 'UM', 'US', 'UY', 'UZ', 'VA', 'VC', 'VE', 'VG', 'VI', 'VN', 'VU', 'WF', 'WS', 'YE', 'YT', 'ZA',
+		'ZM', 'ZW'
+	];
 	v_tenant uuid;
 	v_default uuid;
 	v_customers bigint := 0;
@@ -71,11 +90,11 @@ BEGIN
 	    OR btrim(c."address" ->> 'line1') = ''
 	    OR jsonb_typeof(c."address" -> 'city') IS DISTINCT FROM 'string'
 	    OR btrim(c."address" ->> 'city') = ''
-	    OR coalesce(c."address" ->> 'country', '') !~ '^[A-Z]{2}$'
+	    OR NOT (coalesce(c."address" ->> 'country', '') = ANY (v_iso))
 	 ORDER BY c."tenant_id", c."id"
 	 LIMIT 1;
 	IF FOUND THEN
-		RAISE EXCEPTION 'migration-0191: tenant % customer % has an address without line1, city or an ISO-2 country (%); fix it or reset the dev database',
+		RAISE EXCEPTION 'migration-0191: tenant % customer % has an address without line1, city or an ISO 3166-1 country (%); fix it or reset the dev database',
 			bad."tenant_id", bad."id", bad."address";
 	END IF;
 
@@ -85,10 +104,11 @@ BEGIN
 		PERFORM set_config('bos.organization_id', v_default::text, true);
 
 		UPDATE "app"."customers" c
-		   SET "address_line" = CASE
+		   -- Cut at the contract's 500 characters, a safeguard only (two old 200-character lines joined are 402).
+		   SET "address_line" = rtrim(left(CASE
 		                          WHEN coalesce(btrim(c."address" ->> 'line2'), '') = '' THEN btrim(c."address" ->> 'line1')
 		                          ELSE btrim(c."address" ->> 'line1') || ', ' || btrim(c."address" ->> 'line2')
-		                        END,
+		                        END, 500)),
 		       "address_city" = btrim(c."address" ->> 'city'),
 		       "country" = c."address" ->> 'country'
 		 WHERE c."tenant_id" = v_tenant AND c."address_line" IS NULL;

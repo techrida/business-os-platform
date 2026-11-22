@@ -306,8 +306,9 @@ export class PartyImportsService {
             ? {
                 name: v.contact_name!,
                 ...(v.contact_email ? { email: v.contact_email } : {}),
-                // The template has no contact country: the contact is placed in the vendor's country.
-                country,
+                // The contact's own country (contact_country), independent of its phones; an empty cell, or a
+                // preview stored before the column existed, places it in the vendor's country.
+                country: v.contact_country ? CountryCodeSchema.parse(v.contact_country) : country,
                 phones: storedPhones(v.contact_phone),
               }
             : undefined,

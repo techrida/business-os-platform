@@ -9,7 +9,6 @@ import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
 import {
   nepalPhoneProblem,
-  PartyPhoneSchema,
   PartyPhonesSchema,
   phoneCountryFromE164,
   phoneProblem,
@@ -240,8 +239,8 @@ export const ContactDtoSchema = z.object({
   fullName: z.string(),
   email: z.string().nullable(),
   country: CountryCodeSchema,
-  /** The contact's numbers, primary first, then in their saved order. */
-  phones: z.array(PartyPhoneSchema),
+  /** The contact's numbers, primary first, then in their saved order (one primary, no repeats). */
+  phones: PartyPhonesSchema,
   title: z.string().nullable(),
   isPrimary: z.boolean(),
   version: z.number().int().min(1),
@@ -836,8 +835,11 @@ export const LeadDtoSchema = z.object({
   contactName: z.string(),
   country: CountryCodeSchema,
   email: z.string().nullable(),
-  /** The lead person's numbers, primary first, then in their saved order. A list shows the first. */
-  phones: z.array(PartyPhoneSchema),
+  /**
+   * The lead person's numbers, primary first, then in their saved order (one primary, no repeats). A list shows the
+   * first.
+   */
+  phones: PartyPhonesSchema,
   customerId: z.guid().nullable(),
   contactId: z.guid().nullable(),
   requirement: z.string().nullable(),
@@ -871,7 +873,11 @@ const ConvertCustomerChoiceSchema = z.discriminatedUnion('mode', [
 ]);
 const ConvertContactChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), contactId: z.guid() }),
-  z.strictObject({ mode: z.literal('create'), contact: ContactWithEmailBodySchema }),
+  z.strictObject({
+    mode: z.literal('create'),
+    // No default: an omitted list takes copies of the lead's numbers, an explicit `[]` means none.
+    contact: ContactWithEmailBodySchema.extend({ phones: PartyPhonesSchema.optional() }),
+  }),
 ]);
 
 /**

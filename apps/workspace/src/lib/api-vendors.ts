@@ -6,7 +6,7 @@ import {
   type CreateVendorBody,
   type DocumentVersionDto,
   DocumentVersionDtoSchema,
-  PartyPhoneSchema,
+  PartyPhonesSchema,
   type ProposeBankAccountBody,
   type RejectBankAccountBody,
   type VendorAccountDto,
@@ -48,7 +48,7 @@ const VendorListSchema = z.object({
 
 /**
  * The API returns a contact as `VendorContactDto` (apps/api vendors.types.ts); contracts has the body only. `phones`
- * lists the primary first (FX9).
+ * lists the primary first (FX9), with one primary and no number twice, as the body requires.
  */
 export const VendorContactSchema = z.object({
   id: z.guid(),
@@ -56,7 +56,7 @@ export const VendorContactSchema = z.object({
   name: z.string(),
   email: z.string().nullable(),
   country: CountryCodeSchema,
-  phones: z.array(PartyPhoneSchema),
+  phones: PartyPhonesSchema,
   role: z.string().nullable(),
   isPrimary: z.boolean(),
   version: z.number().int().min(1),

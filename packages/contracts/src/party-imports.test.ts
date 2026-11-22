@@ -174,6 +174,33 @@ describe('import line address, country, phones and PAN (FX9)', () => {
         .values.contact_phone,
     ).toBe('+14155552671');
   });
+
+  it("takes a vendor contact's own optional country, independent of its phones, and refuses an unknown code", () => {
+    const checked = checkPartyImportPlace(
+      'vendor',
+      exampleCells('vendor', {
+        country: 'IN',
+        contact_country: 'us',
+        contact_phone: '+1 4155552671; +91 9812345678',
+      }),
+    );
+    expect(checked.issues).toEqual([]);
+    expect(checked.values).toMatchObject({
+      contact_country: 'US',
+      contact_phone: '+14155552671;+919812345678',
+    });
+    // Empty means the vendor's country, which the caller fills in.
+    const empty = checkPartyImportPlace('vendor', exampleCells('vendor', { contact_country: '' }));
+    expect(empty.issues).toEqual([]);
+    expect(empty.values.contact_country).toBe('');
+    for (const contact_country of ['ZZ', 'India']) {
+      expect(
+        checkPartyImportPlace('vendor', exampleCells('vendor', { contact_country })).issues.map(
+          (i) => i.column,
+        ),
+      ).toEqual(['contact_country']);
+    }
+  });
 });
 
 describe('party import templates', () => {
@@ -203,8 +230,9 @@ describe('party import templates', () => {
       expect.arrayContaining(['address_country', 'contact_country']),
     );
     expect(PARTY_IMPORT_COLUMNS.vendor).toEqual(
-      expect.arrayContaining(['address_line', 'address_city', 'country']),
+      expect.arrayContaining(['address_line', 'address_city', 'country', 'contact_country']),
     );
+    expect(PARTY_IMPORT_REQUIRED.vendor).not.toContain('contact_country');
   });
 
   it('keeps the limits the brief set: 2 MB and 2,000 rows', () => {

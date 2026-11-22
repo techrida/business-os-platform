@@ -33,6 +33,8 @@ describe('PhoneSchema, Nepal numbers', () => {
     ['a national number of 6 digits', '+977123456'],
     ['a national number of 11 digits', '+97798123456789'],
     ['a landline with a trunk 0', '+977014123456'],
+    ['a 7-digit number starting with 9', '+9779812345'],
+    ['a 9-digit number starting with 9', '+977981234567'],
   ])('refuses %s', (_why, phone) => {
     expect(PhoneSchema.safeParse(phone).success).toBe(false);
   });

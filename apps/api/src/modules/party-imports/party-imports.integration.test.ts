@@ -622,7 +622,7 @@ describe('vendor import', () => {
       [`Solo ${tag}`, 'draft', 'individual', false, 'NP', '1', '0'],
     ]);
     expect(rows.every((r) => r.owner_user_id === usersA.founder)).toBe(true);
-    // FX9: the address and the contact phone; the contact is placed in the vendor's country.
+    // FX9: the address and the contact phone; with no contact_country the contact is placed in the vendor's country.
     const everest = await ownerPool.query<{
       address_line: string | null;
       address_city: string | null;
@@ -654,6 +654,64 @@ describe('vendor import', () => {
     expect(again).toMatchObject({ validCount: 0, duplicateCount: 4, errorCount: 1 });
     await request(baseUrl).post(`/v1/imports/${again.id}/commit`).expect(200);
     expect(await vendorsOf(a)).toBe(before + 3);
+  });
+
+  it("keeps a vendor contact's own country from contact_country, independent of its phones (FX9)", async () => {
+    const tag = uniq();
+    const csv = [
+      VENDOR_HEADER,
+      `Mumbai ${tag},foreign,,no,IN,,,Ann Lee,ann-${tag}@example.com,+1 4155552671; +91 9812345678,US`,
+      `Pune ${tag},foreign,,no,IN,,,Raj Rao,raj-${tag}@example.com,+91 9812345679,`,
+    ].join('\n');
+    const preview = detailOf((await upload('vendors', csv)).body);
+    expect(preview.rows.map((r) => [r.status, r.issues])).toEqual([
+      ['valid', []],
+      ['valid', []],
+    ]);
+    await request(baseUrl).post(`/v1/imports/${preview.id}/commit`).expect(200);
+    const { rows } = await ownerPool.query<{
+      legal_name: string;
+      vendor_country: string;
+      contact_country: string;
+      country: string;
+      e164: string;
+      is_primary: boolean;
+    }>(
+      `SELECT v.legal_name, v.country AS vendor_country, k.country AS contact_country, p.country, p.e164, p.is_primary
+         FROM app.vendors v
+         JOIN app.vendor_contacts k ON k.vendor_id = v.id
+         JOIN app.vendor_contact_phones p ON p.contact_id = k.id
+        WHERE v.tenant_id = $1 AND v.legal_name LIKE $2
+        ORDER BY v.legal_name, p.is_primary DESC, p.e164`,
+      [a.tenantId, `%${tag}`],
+    );
+    expect(rows).toEqual([
+      {
+        legal_name: `Mumbai ${tag}`,
+        vendor_country: 'IN',
+        contact_country: 'US',
+        country: 'US',
+        e164: '+14155552671',
+        is_primary: true,
+      },
+      {
+        legal_name: `Mumbai ${tag}`,
+        vendor_country: 'IN',
+        contact_country: 'US',
+        country: 'IN',
+        e164: '+919812345678',
+        is_primary: false,
+      },
+      // An empty contact_country places the contact in the vendor's country.
+      {
+        legal_name: `Pune ${tag}`,
+        vendor_country: 'IN',
+        contact_country: 'IN',
+        country: 'IN',
+        e164: '+919812345679',
+        is_primary: true,
+      },
+    ]);
   });
 
   it('still notes a vendor created under an existing name, once per batch index, without rereading the table per row', async () => {

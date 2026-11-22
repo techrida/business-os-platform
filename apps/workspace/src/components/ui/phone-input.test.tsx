@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { PhoneSchema } from '@bos/contracts';
+import { PhoneSchema, phoneProblem } from '@bos/contracts';
 import { act, useState, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { click, fill, mountForm, paste, softKey, submit, typeKeys } from '@/test/form-interactions';
 import { Field } from './field';
-import { PhoneInput } from './phone-input';
+import { fitsNepalBox, NEPAL_RULES, PhoneInput } from './phone-input';
 
 let mounted: Awaited<ReturnType<typeof mountForm>>;
 beforeEach(() => {
@@ -174,6 +174,31 @@ describe('PhoneInput, Nepal', () => {
     );
     expect(phone.hidden()).toBe('');
     expect(phone.container.querySelector('label')!.getAttribute('for')).toBe(phone.box().id);
+  });
+});
+
+describe('PhoneInput, Nepal box and the contract agree', () => {
+  // Every national length from 5 to 12 digits, for each leading digit: the box must accept exactly
+  // the numbers the contract does, so the API never takes a number the form cannot save.
+  const numbers = ['0', '1', '4', '6', '8', '9'].flatMap((lead) =>
+    [5, 6, 7, 8, 9, 10, 11, 12].map(
+      (length) => `+977${lead}${'812345678901'.slice(0, length - 1)}`,
+    ),
+  );
+
+  it.each(numbers)('%s', (e164) => {
+    const contract = phoneProblem('NP', e164) === null;
+    const box = fitsNepalBox(e164) && NEPAL_RULES.problem(NEPAL_RULES.parse(e164)) === null;
+    expect(box).toBe(contract);
+  });
+
+  it('reads a short number starting with 9 as a mobile, and accepts a landline and a mobile', () => {
+    expect(phoneProblem('NP', '+9779812345')).not.toBeNull();
+    expect(NEPAL_RULES.problem('9812345')).toBe('A mobile number has 10 digits; this has 7.');
+    expect(phoneProblem('NP', '+97714123456')).toBeNull();
+    expect(NEPAL_RULES.problem('14123456')).toBeNull();
+    expect(phoneProblem('NP', '+9779812345678')).toBeNull();
+    expect(NEPAL_RULES.problem('9812345678')).toBeNull();
   });
 });
 

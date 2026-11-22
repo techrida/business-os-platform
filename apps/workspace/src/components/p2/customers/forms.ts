@@ -198,7 +198,7 @@ export const CUSTOMER_FIELDS = Object.keys(EMPTY_CUSTOMER_VALUES) as CustomerFie
 const MAX: Partial<Record<CustomerField, number>> = {
   legalName: 200,
   industry: 100,
-  line: 300,
+  line: 500,
   city: 100,
   contactName: 200,
   contactEmail: 254,
@@ -366,9 +366,11 @@ const CANNOT_CLEAR = 'This cannot be cleared yet. Enter a new value, or put back
  * Checks the edit form and keeps only what changed, plus `expectedVersion` (the version the person
  * opened). The update contract is a shallow partial with no way to send "empty": a field that had a
  * value and is now blank is refused with words rather than silently left as it was. The address is
- * sent whole when its line or city changed, because the contract replaces it as one object; the
- * country is its own field. The PAN is checked against the country on the form, so a Nepal customer
- * cannot keep a PAN that is not 9 digits whichever of the two changed.
+ * sent whole when its line or city changed, because the contract replaces it as one object, and it
+ * goes with the form's country: the API refuses an address without one (an FX9 address is its line,
+ * city and country together), even when only the street or city changed. The PAN is checked against
+ * the country on the form, so a Nepal customer cannot keep a PAN that is not 9 digits whichever of
+ * the two changed.
  */
 export function parseUpdateCustomer(
   raw: CustomerValues,
@@ -401,7 +403,10 @@ export function parseUpdateCustomer(
   ] as const) {
     if (values[field] !== before[field]) data[field] = body[field];
   }
-  if (values.line !== before.line || values.city !== before.city) data.address = body.address;
+  if (values.line !== before.line || values.city !== before.city) {
+    data.address = body.address;
+    data.country = body.country;
+  }
 
   if (Object.keys(data).length === 0) return { ok: false, nothingChanged: true };
   return { ok: true, data: { ...data, expectedVersion: original.version } };

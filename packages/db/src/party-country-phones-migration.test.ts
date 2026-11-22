@@ -1,12 +1,15 @@
 // Integration test for migrations 0191-0195 (FX9): party country, three-field addresses and phone tables.
-//   * 0191: a customer's jsonb address becomes address_line (line1 + ', ' + line2) and address_city, its country
-//     comes from the address, contacts take their parent's country; written as system:migration-0191.
+//   * 0191: a customer's jsonb address becomes address_line (line1 + ', ' + line2, at most 500 characters) and
+//     address_city, its country comes from the address, contacts take their parent's country; written as
+//     system:migration-0191.
 //   * 0192/0193: each old phone_e164 becomes its owner's one primary phone row, the country read from the calling
-//     code (+977 only under FX8's Nepal rules); a code not on the list, or a national part implausible for its
-//     country (a short or non-NANP +1 number), is dropped; leads.phones_search is filled.
+//     code through the generated table of every calling code (+47 -> NO; +977 under the Nepal rule); an unknown
+//     code, or a national part implausible for its country (a short or non-NANP +1 number, a 7-digit +977 number
+//     starting with 9), is dropped; leads.phones_search is filled.
 //   * 0194: the old phone_e164 columns are gone.
-//   * 0195: the latest entity.address and entity.profile get a next version in the new shapes; a previewed import
-//     batch is expired.
+//   * 0195: the latest entity.address and entity.profile get a next version in the new shapes (a non-ISO country
+//     gives a null address); the latest entity.pan_vat_no becomes nine digits or null; a previewed import batch is
+//     expired.
 //   * 0193 and 0195 run a second time without writing anything.
 // Migrates to just before 0191, seeds the old shapes, then runs 0191-0193 and 0194-0195 in two stages so 0193 can
 // be re-run while its source columns still exist. On a database without the new tables or columns it fails.
@@ -48,11 +51,21 @@ let testDb: TestDatabase;
 let pool: Pool;
 const folders: string[] = [];
 let org: TenantWithEntity;
+/** Entities of their own for the settings cases: only the latest version of a key is read. */
+let longEntity: TenantWithEntity;
+let spacedPanEntity: TenantWithEntity;
+let strictPanEntity: TenantWithEntity;
 let userId: string;
+
+/** The 0191/0195 limit of a converted address line (AddressLinesSchema and PrintAddressSchema in @bos/contracts). */
+const LINE_MAX = 500;
+const LONG_LINE1 = 'L'.repeat(150);
+const LONG_LINE2 = 'M'.repeat(150);
 
 const ids = {
   npCustomer: '',
   inCustomer: '',
+  longCustomer: '',
   npMobileContact: '',
   usContact: '',
   unmappableContact: '',
@@ -67,6 +80,8 @@ const ids = {
   usLead: '',
   shortUsLead: '',
   badAreaUsLead: '',
+  noLead: '',
+  shortNepalMobileLead: '',
   batch: '',
 };
 
@@ -85,7 +100,10 @@ let after0195: Snapshot;
 let rerun0195: Snapshot;
 
 /** Runs fn in one transaction as a test actor with the tenant's default entity acting; rolls back on a throw. */
-async function inTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
+async function inTx<T>(
+  fn: (c: PoolClient) => Promise<T>,
+  entity: TenantWithEntity = org,
+): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -94,7 +112,7 @@ async function inTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
               set_config('bos.actor_id', 'party-country-phones-test', true),
               set_config('bos.correlation_id', $1, true),
               set_config('bos.organization_id', $2, true)`,
-      [randomUUID(), org.organizationId],
+      [randomUUID(), entity.organizationId],
     );
     const result = await fn(client);
     await client.query('COMMIT');
@@ -107,11 +125,15 @@ async function inTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   }
 }
 
-async function exec(text: string, params: unknown[] = []): Promise<string> {
+async function exec(
+  text: string,
+  params: unknown[] = [],
+  entity: TenantWithEntity = org,
+): Promise<string> {
   return inTx(async (c) => {
     const { rows } = await c.query<{ id?: string }>(text, params);
     return rows[0]?.id ?? '';
-  });
+  }, entity);
 }
 
 async function customer(address: Record<string, unknown>): Promise<string> {
@@ -138,11 +160,12 @@ const lead = (phone: string) =>
     [org.tenantId, org.organizationId, `LD-${randomUUID().slice(0, 8)}`, phone],
   );
 
-const setting = (key: string, version: number, value: unknown) =>
+const setting = (key: string, version: number, value: unknown, entity: TenantWithEntity = org) =>
   exec(
     `INSERT INTO app.settings (tenant_id, organization_id, key, version, value)
      VALUES ($1, $2, $3, $4, $5::jsonb)`,
-    [org.tenantId, org.organizationId, key, version, JSON.stringify(value)],
+    [entity.tenantId, entity.organizationId, key, version, JSON.stringify(value)],
+    entity,
   );
 
 async function count(text: string, params: unknown[] = []): Promise<string> {
@@ -151,24 +174,28 @@ async function count(text: string, params: unknown[] = []): Promise<string> {
 }
 
 async function snapshot(): Promise<Snapshot> {
-  const t = [org.tenantId];
+  const t = [[org, longEntity, spacedPanEntity, strictPanEntity].map((e) => e.tenantId)];
   return {
     customerPhones: await count(
-      'SELECT count(*) AS n FROM app.customer_contact_phones WHERE tenant_id = $1',
+      'SELECT count(*) AS n FROM app.customer_contact_phones WHERE tenant_id = ANY ($1)',
       t,
     ),
     vendorPhones: await count(
-      'SELECT count(*) AS n FROM app.vendor_contact_phones WHERE tenant_id = $1',
+      'SELECT count(*) AS n FROM app.vendor_contact_phones WHERE tenant_id = ANY ($1)',
       t,
     ),
-    leadPhones: await count('SELECT count(*) AS n FROM app.lead_phones WHERE tenant_id = $1', t),
+    leadPhones: await count(
+      'SELECT count(*) AS n FROM app.lead_phones WHERE tenant_id = ANY ($1)',
+      t,
+    ),
     phonesSearch: await count(
-      `SELECT string_agg(coalesce(phones_search, '-'), '|' ORDER BY id) AS n FROM app.leads WHERE tenant_id = $1`,
+      `SELECT string_agg(coalesce(phones_search, '-'), '|' ORDER BY id) AS n FROM app.leads WHERE tenant_id = ANY ($1)`,
       t,
     ),
-    settings: await count('SELECT count(*) AS n FROM app.settings WHERE tenant_id = $1', t),
+    settings: await count('SELECT count(*) AS n FROM app.settings WHERE tenant_id = ANY ($1)', t),
     audit: await count(
-      `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND actor_id LIKE 'system:migration-019%'`,
+      `SELECT count(*) AS n FROM audit.audit_events
+        WHERE tenant_id = ANY ($1) AND actor_id LIKE 'system:migration-019%'`,
       t,
     ),
   };
@@ -235,9 +262,16 @@ beforeAll(async () => {
     country: 'NP',
   });
   ids.inCustomer = await customer({ line1: 'MG Road 5', city: 'Bengaluru', country: 'IN' });
+  ids.longCustomer = await customer({
+    line1: LONG_LINE1,
+    line2: LONG_LINE2,
+    city: 'Pokhara',
+    country: 'NP',
+  });
   ids.npMobileContact = await customerContact(ids.npCustomer, 'Sita', '+9779812345678');
   ids.usContact = await customerContact(ids.npCustomer, 'John', '+14155552671');
-  ids.unmappableContact = await customerContact(ids.inCustomer, 'Ola', '+4790000000');
+  // +999 is no calling code (nor is +99 or +9): not copied.
+  ids.unmappableContact = await customerContact(ids.inCustomer, 'Ola', '+99912345678');
   ids.inContact = await customerContact(ids.inCustomer, 'Ravi', null);
   // +1 numbers the old CHECK let in but the app's libphonenumber check refuses: too short, an area code starting
   // with 1, an exchange starting with 1. Not copied.
@@ -264,6 +298,10 @@ beforeAll(async () => {
   ids.usLead = await lead('+14155552671');
   ids.shortUsLead = await lead('+1234567');
   ids.badAreaUsLead = await lead('+11235550123');
+  // A valid Norway number, a code with no hand-written pattern: its 8 national digits are a possible NO length.
+  ids.noLead = await lead('+4740612345');
+  // A +977 national number starting with 9 is a mobile only with exactly 10 digits: not copied.
+  ids.shortNepalMobileLead = await lead('+9779812345');
 
   await setting('entity.address', 1, { line1: 'Old Road', city: 'Patan', country: 'NP' });
   await setting('entity.address', 2, {
@@ -277,13 +315,41 @@ beforeAll(async () => {
   await setting('entity.profile', 1, {
     displayName: 'Acme',
     logoDocumentId: null,
-    phones: ['+9779812345678', '+14155552671', '+4790000000', '+1234567', '+11235550123'],
+    phones: [
+      '+9779812345678',
+      '+14155552671',
+      '+47 406 12 345',
+      '+99912345678',
+      '+1234567',
+      '+11235550123',
+      '+9779812345',
+    ],
     email: null,
     website: null,
     panVatNo: null,
     signatoryName: null,
     signatoryTitle: null,
   });
+  // Entities of their own: a 150 + 150 character address and a PAN that is not nine digits; a PAN with spaces and
+  // a non-ISO address country; a PAN that is already nine digits.
+  longEntity = await createTenantWithEntity(pool);
+  spacedPanEntity = await createTenantWithEntity(pool);
+  strictPanEntity = await createTenantWithEntity(pool);
+  await setting(
+    'entity.address',
+    1,
+    { line1: LONG_LINE1, line2: LONG_LINE2, city: 'Pokhara', country: 'NP' },
+    longEntity,
+  );
+  await setting('entity.pan_vat_no', 1, 'AB12345', longEntity);
+  await setting('entity.pan_vat_no', 1, '301 234 567', spacedPanEntity);
+  await setting(
+    'entity.address',
+    1,
+    { line1: 'Somewhere 1', city: 'Nowhere', country: 'ZZ' },
+    spacedPanEntity,
+  );
+  await setting('entity.pan_vat_no', 1, '301234567', strictPanEntity);
   ids.batch = await exec(
     `INSERT INTO app.party_import_batches
        (tenant_id, organization_id, kind, file_name, row_count, valid_count, duplicate_count, error_count, rows, created_by)
@@ -337,6 +403,15 @@ describe('0191 party country and address', () => {
       country: 'IN',
     });
     expect(await auditedBy('system:migration-0191', ids.npCustomer)).toBe('1');
+  });
+
+  it('joins a 150 + 150 character line1 and line2 into a 302 character line within the 500 limit', async () => {
+    const line = await count('SELECT address_line AS n FROM app.customers WHERE id = $1', [
+      ids.longCustomer,
+    ]);
+    expect(line).toBe(`${LONG_LINE1}, ${LONG_LINE2}`);
+    expect(line).toHaveLength(302);
+    expect(line.length).toBeLessThanOrEqual(LINE_MAX);
   });
 
   it('drops the jsonb address column', async () => {
@@ -396,6 +471,7 @@ describe('0192-0194 phones', () => {
     );
     expect(leadRows.rows).toEqual([
       { lead_id: ids.usLead, country: 'US', e164: '+14155552671' },
+      { lead_id: ids.noLead, country: 'NO', e164: '+4740612345' },
       { lead_id: ids.lead, country: 'IN', e164: '+919812345678' },
     ]);
   });
@@ -407,7 +483,7 @@ describe('0192-0194 phones', () => {
        UNION ALL SELECT id FROM app.lead_phones WHERE tenant_id = $1`,
       [org.tenantId],
     );
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     for (const row of rows) expect(await auditedBy('system:migration-0193', row.id)).toBe('1');
   });
 
@@ -421,7 +497,10 @@ describe('0192-0194 phones', () => {
     expect(
       await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [ids.usLead]),
     ).toBe('+14155552671');
-    for (const id of [ids.shortUsLead, ids.badAreaUsLead]) {
+    expect(
+      await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [ids.noLead]),
+    ).toBe('+4740612345');
+    for (const id of [ids.shortUsLead, ids.badAreaUsLead, ids.shortNepalMobileLead]) {
       expect(await count('SELECT phones_search AS n FROM app.leads WHERE id = $1', [id])).toBe(
         'null',
       );
@@ -453,11 +532,11 @@ describe('0192-0194 phones', () => {
 });
 
 describe('0195 entity settings and import previews', () => {
-  const latest = async (key: string) => {
+  const latest = async (key: string, entity: TenantWithEntity = org) => {
     const { rows } = await pool.query<{ version: number; value: unknown }>(
       `SELECT version, value FROM app.settings WHERE tenant_id = $1 AND organization_id = $2 AND key = $3
         ORDER BY version DESC LIMIT 1`,
-      [org.tenantId, org.organizationId, key],
+      [entity.tenantId, entity.organizationId, key],
     );
     return rows[0];
   };
@@ -475,7 +554,32 @@ describe('0195 entity settings and import previews', () => {
     expect((row?.value as { phones: unknown }).phones).toEqual([
       { country: 'NP', e164: '+9779812345678', label: null },
       { country: 'US', e164: '+14155552671', label: null },
+      { country: 'NO', e164: '+4740612345', label: null },
     ]);
+  });
+
+  it('joins a long entity address within the 500 limit and nulls a non-ISO country', async () => {
+    const row = await latest('entity.address', longEntity);
+    expect(row).toEqual({
+      version: 2,
+      value: { line: `${LONG_LINE1}, ${LONG_LINE2}`, city: 'Pokhara', country: 'NP' },
+    });
+    const line = (row?.value as { line: string }).line;
+    expect(line).toHaveLength(302);
+    expect(line.length).toBeLessThanOrEqual(LINE_MAX);
+    expect(await latest('entity.address', spacedPanEntity)).toEqual({ version: 2, value: null });
+  });
+
+  it('writes entity.pan_vat_no as nine digits or null', async () => {
+    expect(await latest('entity.pan_vat_no', longEntity)).toEqual({ version: 2, value: null });
+    expect(await latest('entity.pan_vat_no', spacedPanEntity)).toEqual({
+      version: 2,
+      value: '301234567',
+    });
+    expect(await latest('entity.pan_vat_no', strictPanEntity)).toEqual({
+      version: 1,
+      value: '301234567',
+    });
   });
 
   it('expires the previewed import batch', async () => {

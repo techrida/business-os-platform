@@ -42,7 +42,7 @@ import { and, asc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
-import { type Principal, type ResourceRef } from '../../../platform/authz/can';
+import { can, type Principal, type ResourceRef } from '../../../platform/authz/can';
 import { RoleCache } from '../../../platform/authz/role-cache';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
@@ -55,6 +55,7 @@ import {
   duplicatePan,
 } from '../../customers/customers.service';
 import { carryOpenFollowUps } from '../../activities/follow-ups';
+import { customerVisibleWhere } from '../../customers/customer-read-scope';
 import { normalizeEmail, normalizeName, normalizePan } from '../../customers/customers.normalize';
 import { loadAssignmentParties, partyHolds } from '../lead-assignee';
 import { loadPhonesOfLead } from '../lead-phones';
@@ -163,7 +164,7 @@ export class LeadConvertService {
     // 3. Duplicates. A PAN/VAT match is refused first and whatever the override says; the rest is a warning.
     if (choice.mode === 'create') await this.assertPanFree(tx, scope, choice.customer);
     if (body.duplicateOverride === undefined) {
-      const duplicates = await this.findDuplicates(tx, scope, choice, newContact);
+      const duplicates = await this.findDuplicates(tx, scope, principal, choice, newContact);
       if (duplicates.length > 0) {
         throw new ConflictException({
           code: 'duplicate_found',
@@ -386,23 +387,24 @@ export class LeadConvertService {
   }
 
   /**
-   * The new contact as it will be written: unchanged when it names phone numbers, otherwise with copies of the
+   * The new contact as it will be written. A body that sends a phone list keeps it, an empty one included: the user
+   * removed the lead's numbers, so the contact gets none. Only a body that leaves `phones` out takes copies of the
    * lead's numbers (country, number, label and primary mark; the contact's own rows get their own sort order).
    */
   private async withLeadPhones(
     tx: DbTransaction,
     scope: TxScope,
     leadId: string,
-    contact: CreateContactBody,
+    contact: Extract<ConvertLeadBody['contact'], { mode: 'create' }>['contact'],
   ): Promise<CreateContactBody> {
-    if (contact.phones.length > 0) return contact;
+    if (contact.phones !== undefined) return { ...contact, phones: contact.phones };
     const phones: PartyPhoneInput[] = (await loadPhonesOfLead(tx, scope, leadId)).map((phone) => ({
       country: phone.country,
       e164: phone.e164,
       label: phone.label ?? null,
       isPrimary: phone.isPrimary,
     }));
-    return phones.length === 0 ? contact : { ...contact, phones };
+    return { ...contact, phones };
   }
 
   /** 409 `duplicate_pan_vat`, whatever the override says: the unique index would refuse the insert anyway. */
@@ -426,28 +428,42 @@ export class LeadConvertService {
    * the contacts with the same e-mail or with any number equal to any of the new contact's numbers (only for a new
    * contact), across the tenant. A phone match is one EXISTS per contact, so a contact sharing two numbers is still
    * one row of the limit.
+   * Only customers the caller may read (FX9 A1): customerVisibleWhere (the customers list's SQL twin of can()) sits
+   * in the same WHERE as each LIMIT, as in the lead duplicate hint, so a customer or a contact of a customer the
+   * caller cannot open is never named in `duplicate_found` and never takes a slot; can() re-checks each row.
    */
   private async findDuplicates(
     tx: DbTransaction,
     scope: TxScope,
+    principal: Principal,
     choice: CustomerChoice,
     contact: CreateContactBody | undefined,
   ): Promise<Candidate[]> {
     const found: Candidate[] = [];
+    const visible = customerVisibleWhere(principal, customers, 'customer.read', scope.tenantId);
+    const readable = (r: Pick<CustomerRow, 'tenantId' | 'id' | 'ownerUserId'>) =>
+      can(principal, 'customer.read', customerRef(r, principal)).allowed;
     if (choice.mode === 'create') {
       const rows = await tx
-        .select({ id: customers.id, number: customers.number, legalName: customers.legalName })
+        .select({
+          id: customers.id,
+          tenantId: customers.tenantId,
+          ownerUserId: customers.ownerUserId,
+          number: customers.number,
+          legalName: customers.legalName,
+        })
         .from(customers)
         .where(
           and(
             eq(customers.tenantId, scope.tenantId),
             eq(customers.nameNorm, normalizeName(choice.customer.legalName)),
             isNull(customers.mergedIntoId),
+            visible,
           ),
         )
         .orderBy(asc(customers.number), asc(customers.id))
         .limit(DUPLICATE_LIMIT);
-      for (const r of rows) {
+      for (const r of rows.filter(readable)) {
         found.push({
           kind: 'customer',
           id: r.id,
@@ -483,6 +499,8 @@ export class LeadConvertService {
                 ? sql<boolean>`false`
                 : sql<boolean>`coalesce(${samePhone}, false)`,
             legalName: customers.legalName,
+            tenantId: customers.tenantId,
+            ownerUserId: customers.ownerUserId,
           })
           .from(customerContacts)
           .innerJoin(
@@ -492,10 +510,13 @@ export class LeadConvertService {
               eq(customers.id, customerContacts.customerId),
             ),
           )
-          .where(and(eq(customerContacts.tenantId, scope.tenantId), or(...matches)))
+          .where(and(eq(customerContacts.tenantId, scope.tenantId), visible, or(...matches)))
           .orderBy(asc(customerContacts.fullName), asc(customerContacts.id))
           .limit(DUPLICATE_LIMIT);
         for (const r of rows) {
+          if (!readable({ tenantId: r.tenantId, id: r.customerId, ownerUserId: r.ownerUserId })) {
+            continue;
+          }
           const base = {
             kind: 'contact' as const,
             id: r.id,

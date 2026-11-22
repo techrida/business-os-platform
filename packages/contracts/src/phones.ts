@@ -1,5 +1,5 @@
 // Phone numbers of a party (FX9): several per person, each with its own country. A Nepal number keeps FX8's rules
-// (a `+9779` mobile, or a 7 to 9 digit landline with no trunk 0); any other country is checked by libphonenumber-js
+// (a `+9779` mobile, or a 7 to 9 digit landline starting 1 to 8); any other country is checked by libphonenumber-js
 // (`min` metadata), and the number's calling code must be the selected country's. Calling codes are compared rather
 // than the parsed country, because +1, +7 and +44 are shared: a Canadian number is a valid +1 number for US too.
 // This module must not import crm.ts or document-style.ts: document-style imports crm, and crm imports this.
@@ -23,16 +23,18 @@ const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
 
 /**
  * Why a Nepal (`+977`) number is not one, or null. A mobile is ten national digits starting with 9; a landline is 7
- * to 9 national digits that do not start with 0 (the trunk 0 is not part of E.164). A number from another country
- * is not judged here: the generic E.164 rule covers it.
+ * to 9 national digits that start with neither 0 (the trunk 0 is not part of E.164) nor 9 (no landline area code
+ * does, so a short number starting with 9 is a mobile missing digits). The workspace's Nepal box applies the same
+ * rule. A number from another country is not judged here: the generic E.164 rule covers it.
  */
 export function nepalPhoneProblem(phone: string): string | null {
   if (!phone.startsWith(NEPAL_CODE)) return null;
   const national = phone.slice(NEPAL_CODE.length);
   if (national.startsWith('0')) return 'leave out the leading 0 of a Nepal number';
-  if (national.length === 10) {
-    return national.startsWith('9') ? null : 'a Nepal mobile number starts with 9';
+  if (national.startsWith('9')) {
+    return national.length === 10 ? null : 'a Nepal number starting with 9 is a 10-digit mobile';
   }
+  if (national.length === 10) return 'a Nepal mobile number starts with 9';
   if (national.length >= 7 && national.length <= 9) return null;
   return 'a Nepal number is a 10-digit mobile starting with 9 or a 7 to 9 digit landline';
 }

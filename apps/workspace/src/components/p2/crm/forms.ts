@@ -523,7 +523,7 @@ const CONVERT_MESSAGES: Record<string, string> = {
   legalName: 'Enter the customer legal name, up to 200 characters.',
   panVatNo: 'Enter 5 to 20 letters, digits or hyphens.',
   industry: 'The industry is too long. The limit is 100 characters.',
-  'address.line': 'Enter the street address, up to 300 characters.',
+  'address.line': 'Enter the street address, up to 500 characters.',
   'address.city': 'Enter the city, up to 100 characters.',
   'address.country': 'Choose the country from the list.',
   contactId: 'Enter the id of the existing contact.',

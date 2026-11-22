@@ -120,6 +120,6 @@ describe('AddressFields', () => {
       start: { line: long, city: 'Kathmandu', country: 'NP' },
     });
     expect(address.byLabel('Registered address').value).toBe(long);
-    expect(address.byLabel('Registered address').getAttribute('maxlength')).toBe('300');
+    expect(address.byLabel('Registered address').getAttribute('maxlength')).toBe('500');
   });
 });
