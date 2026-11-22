@@ -489,7 +489,11 @@ describe('PUT .../content (raw streamed upload)', () => {
 
       const next = await request(baseUrl)
         .post(`/v1/documents/${c.documentId}/versions`)
-        .send({ filename: 'invoice.pdf', declaredMime: 'application/pdf', sizeBytes: PDF().length });
+        .send({
+          filename: 'invoice.pdf',
+          declaredMime: 'application/pdf',
+          sizeBytes: PDF().length,
+        });
       expect(next.status, JSON.stringify(next.body)).toBe(201);
       const retry = next.body as Created;
       expect(retry.versionId).not.toBe(c.versionId);

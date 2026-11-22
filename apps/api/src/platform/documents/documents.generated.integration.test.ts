@@ -284,6 +284,21 @@ describe('generated documents', () => {
     expect(queue.add).not.toHaveBeenCalled();
   });
 
+  it('a generated file whose write fails is refused (rejected), never left quarantined without bytes (EF3)', async () => {
+    const file = pdf();
+    const { created, who } = await generate(randomUUID(), file);
+    vi.spyOn(storage, 'writeQuarantine').mockRejectedValueOnce(new Error('EIO'));
+
+    await expect(service.receiveGenerated(created, file, who)).rejects.toMatchObject({
+      status: 400,
+    });
+    const r = await versionRow(created.versionId);
+    // Left `quarantined` with no sha256 it would count as a filled version for good, and the render job could never
+    // discard the document and render again.
+    expect(r.status).toBe('rejected');
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
   it('an upload still queues a scan and ends clean through clamd, never as generated', async () => {
     const ownerId = randomUUID();
     const bytes = pdf().bytes;
