@@ -129,7 +129,11 @@ const documents = { receiveContent: deferred() };
 const evidence = { receive: deferred() };
 const bills = { receive: deferred() };
 const proofs = { receiveForPortal: deferred(), receiveForStaff: deferred() };
-const inbox = { receiveKycFile: deferred(), receiveQuotationFile: deferred(), receiveBillFile: deferred() };
+const inbox = {
+  receiveKycFile: deferred(),
+  receiveQuotationFile: deferred(),
+  receiveBillFile: deferred(),
+};
 const bank = { receive: deferred(), assertMayAttach: vi.fn() };
 
 const RECORD = randomUUID();
@@ -138,11 +142,11 @@ const DOC = randomUUID();
 const VER = randomUUID();
 const FILE = Buffer.from('%PDF-1.4 deferred scan probe');
 
-const tx = expect.objectContaining({
+const tx: unknown = expect.objectContaining({
   scope: { tenantId: TENANT, organizationId: ORG },
-  actor: expect.objectContaining({ kind: 'user', id: caller.userId }),
+  actor: expect.objectContaining({ kind: 'user', id: caller.userId }) as unknown,
 });
-const src = expect.objectContaining({ method: 'PUT' });
+const src: unknown = expect.objectContaining({ method: 'PUT' });
 const len = FILE.length;
 
 /** [route label, controller, path, the mocked receive, the arguments the real handler must pass it]. */
@@ -237,7 +241,10 @@ describe('ScanQueueDeferredError over HTTP', () => {
   let app: INestApplication;
   let baseUrl: string;
   beforeAll(async () => {
-    const controllers = [ProbeController, ...new Set(uploadRoutes.map(([, controller]) => controller))];
+    const controllers = [
+      ProbeController,
+      ...new Set(uploadRoutes.map(([, controller]) => controller)),
+    ];
     const moduleRef = await Test.createTestingModule({
       controllers,
       providers: [
@@ -275,12 +282,17 @@ describe('ScanQueueDeferredError over HTTP', () => {
   it.each([
     ['a plain ServiceUnavailableException', '/probe/plain-503'],
     ['a ServiceUnavailableException subclass from another source', '/probe/downstream-503'],
-    ['a 503 that carries a version field but is not the deferred error', '/probe/version-shaped-503'],
+    [
+      'a 503 that carries a version field but is not the deferred error',
+      '/probe/version-shaped-503',
+    ],
     ['a plain error with status 503', '/probe/plain-error-503'],
   ])('keeps %s a 503 with the error body', async (_label, path) => {
     const res = await request(baseUrl).post(path);
     expect(res.status).toBe(503);
-    expect(res.body).toEqual({ error: expect.objectContaining({ code: expect.any(String) }) });
+    expect(res.body).toEqual({
+      error: expect.objectContaining({ code: expect.any(String) as unknown }) as unknown,
+    });
     expect(res.body).not.toHaveProperty('status');
     expect(res.body).not.toHaveProperty('id');
   });
