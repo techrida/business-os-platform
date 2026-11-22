@@ -1,6 +1,7 @@
 'use client';
 
 import type { Currency, TaxCode } from '@bos/contracts';
+import { Dec, formatMoney, plainAmount } from '@bos/locale';
 import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
@@ -9,6 +10,7 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Select, Textarea } from '@/components/ui/field';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
+import { useNumberSystems } from '@/components/ui/number-system-context';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
@@ -16,8 +18,9 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { DraftSummary } from './draft-summary';
 import type { InvoiceFormState } from './form-state';
-import { DISCOUNT_MODES, type DiscountMode, parseDiscount } from './forms';
+import { type DiscountMode, parseDiscount } from './forms';
 import { LinesEditor, useLines } from './lines-editor';
+import type { LineValues } from './lines';
 import styles from './manual-invoice.module.css';
 
 export interface CustomerOption {
@@ -27,11 +30,37 @@ export interface CustomerOption {
   currency: Currency | null;
 }
 
-const DISCOUNT_LABEL: Record<DiscountMode, string> = {
-  none: 'No discount',
-  pct: 'Percentage',
-  amount: 'Fixed amount',
-};
+const PLAIN_DECIMAL = /^(\d+\.?\d*|\.\d+)$/;
+const HUNDRED = new Dec(100);
+
+/**
+ * The subtotal before tax the discount applies to: each line's quantity times price at 2 decimals, summed, as the
+ * summary and the server work it out. Null while any line's quantity or price is not a number yet.
+ */
+function discountBase(lines: readonly LineValues[]): Dec | null {
+  let total = new Dec(0);
+  for (const line of lines) {
+    const quantity = plainAmount(line.quantity);
+    const price = plainAmount(line.unitPrice);
+    if (!PLAIN_DECIMAL.test(quantity) || !PLAIN_DECIMAL.test(price)) return null;
+    total = total.plus(new Dec(quantity).times(price).toDecimalPlaces(2));
+  }
+  return lines.length > 0 ? total : null;
+}
+
+/**
+ * The side the person did not type, worked out from the side they did. The amount is rounded half-up to 2 decimals
+ * as the server rounds it; the percentage to 4 decimals with trailing zeros dropped (`5`, not `5.0000`). Blank when
+ * there is nothing to work from, or when the amount is more than the base (that is flagged on the amount instead).
+ */
+function derivedDiscount(mode: DiscountMode, value: string, base: Dec | null): string {
+  if (mode === 'none' || base === null) return '';
+  const plain = plainAmount(value);
+  if (!PLAIN_DECIMAL.test(plain)) return '';
+  if (mode === 'pct') return base.times(plain).div(HUNDRED).toDecimalPlaces(2).toFixed(2);
+  if (base.isZero() || new Dec(plain).gt(base)) return '';
+  return new Dec(plain).div(base).times(HUNDRED).toDecimalPlaces(4).toFixed();
+}
 
 /**
  * Card heading with the eyebrow Figma shows above it ("01 · The basics", "02 · The story"), the same treatment as the
@@ -93,9 +122,28 @@ export function ManualInvoiceForm({
     }
   }, [state]);
 
+  const numberSystems = useNumberSystems();
   const errors = state.errors;
   const customer = customers?.find((c) => c.id === customerId);
   const discount = parseDiscount(discountMode, discountValue);
+  // The side typed last is the one posted; the other is worked out from it and the subtotal, so a
+  // changed line price moves only the worked-out side. Emptying either side means no discount.
+  const base = discountBase(lines);
+  const derived = derivedDiscount(discountMode, discountValue, base);
+  const percentShown = discountMode === 'pct' ? discountValue : derived;
+  const amountShown = discountMode === 'amount' ? discountValue : derived;
+  const editDiscount = (mode: Exclude<DiscountMode, 'none'>) => (value: string) => {
+    setDiscountMode(value === '' ? 'none' : mode);
+    setDiscountValue(value);
+  };
+  const plainTyped = plainAmount(discountValue);
+  const overBase =
+    discountMode === 'amount' &&
+    base !== null &&
+    PLAIN_DECIMAL.test(plainTyped) &&
+    new Dec(plainTyped).gt(base)
+      ? `Enter no more than the subtotal before tax, ${formatMoney(base.toFixed(2), currency, { numberSystems })}.`
+      : undefined;
   // A new invoice offers only switched-on currencies; NPR (the default) is always among them.
   const currencies = currencyChoices(enabledCurrencies);
   const choose = (id: string): void => {
@@ -225,51 +273,42 @@ export function ManualInvoiceForm({
               />
             )}
           </Field>
-          <Field label="Discount" hint="Optional. Applies to the whole invoice, before tax.">
-            {(control) => (
-              <Select
-                name="discountMode"
-                value={discountMode}
-                onChange={(e) => {
-                  // A value typed for one type means nothing in the other: 5000 is not 5000%.
-                  setDiscountMode(e.target.value as DiscountMode);
-                  setDiscountValue('');
-                }}
-                {...control}
-              >
-                {DISCOUNT_MODES.map((m) => (
-                  <option key={m} value={m}>
-                    {DISCOUNT_LABEL[m]}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          {discountMode !== 'none' ? (
+          {/* One discount is posted: its type and the value of the side typed last. */}
+          <input type="hidden" name="discountMode" value={discountMode} />
+          <div className={styles.discountPair}>
             <Field
-              label={discountMode === 'pct' ? 'Discount (%)' : `Discount amount (${currency})`}
-              error={errors['discount']}
+              label="Discount %"
+              hint="Optional. Applies to the whole invoice, before tax."
+              error={discountMode === 'pct' ? errors['discount'] : undefined}
             >
-              {(control) =>
-                discountMode === 'pct' ? (
-                  <PercentInput
-                    {...control}
-                    name="discountValue"
-                    value={discountValue}
-                    onValueChange={setDiscountValue}
-                  />
-                ) : (
-                  <MoneyInput
-                    {...control}
-                    name="discountValue"
-                    currency={currency}
-                    value={discountValue}
-                    onValueChange={setDiscountValue}
-                  />
-                )
-              }
+              {(control) => (
+                <PercentInput
+                  {...control}
+                  name={discountMode === 'pct' ? 'discountValue' : undefined}
+                  value={percentShown}
+                  onValueChange={editDiscount('pct')}
+                  onUserEdit={editDiscount('pct')}
+                />
+              )}
             </Field>
-          ) : null}
+            <Field
+              label={`Discount amount (${currency})`}
+              hint="Optional. Kept in step with the percentage."
+              error={overBase ?? (discountMode === 'amount' ? errors['discount'] : undefined)}
+            >
+              {(control) => (
+                <MoneyInput
+                  {...control}
+                  name={discountMode === 'amount' ? 'discountValue' : undefined}
+                  currency={currency}
+                  max={base?.toFixed(2)}
+                  value={amountShown}
+                  onValueChange={editDiscount('amount')}
+                  onUserEdit={editDiscount('amount')}
+                />
+              )}
+            </Field>
+          </div>
         </div>
       </Panel>
 

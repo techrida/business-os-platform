@@ -136,32 +136,22 @@ async function openLineEditor() {
 }
 
 describe('quote builder number fields', () => {
-  it('has no native number input across lines, schedule and both discount modes', async () => {
+  it('has no native number input across lines, schedule and both discount fields', async () => {
     await mountPriced();
     await openLineEditor();
     expect(document.querySelectorAll('input[type="number"]')).toHaveLength(0);
-    for (const label of ['Quantity', 'Rate (NPR)', 'Discount amount (NPR)']) {
+    for (const label of ['Quantity', 'Rate (NPR)', 'Discount amount (NPR)', 'Discount %']) {
       expect(box(label).type).toBe('text');
     }
     expect(boxes('Percent (%)')).toHaveLength(2);
     expect(boxes('Amount (NPR)')).toHaveLength(2);
-
-    const discountType = Array.from(document.querySelectorAll('select')).find((s) =>
-      Array.from(s.options).some((o) => o.value === 'pct'),
-    );
-    await fill(discountType ?? null, 'pct');
-    expect(document.querySelectorAll('input[type="number"]')).toHaveLength(0);
-    expect(box('Discount (%)').type).toBe('text');
   });
 
-  it('clears the discount value when the type changes, so 1000 never becomes 1000%', async () => {
+  it('shows a saved 1000 amount as its percentage beside it, so 1000 never becomes 1000%', async () => {
     await mountPriced();
     expect(box('Discount amount (NPR)').value).toBe('1,000.00');
-    const discountType = Array.from(document.querySelectorAll('select')).find((s) =>
-      Array.from(s.options).some((o) => o.value === 'pct'),
-    );
-    await fill(discountType ?? null, 'pct');
-    expect(box('Discount (%)').value).toBe('');
+    // 1,000 of the 1,20,000.00 line base.
+    expect(box('Discount %').value).toBe('0.8333');
   });
 
   it('groups a typed rate in the box and hands the line form plain digits', async () => {

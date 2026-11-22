@@ -1,6 +1,7 @@
 'use client';
 
 import type { InvoiceSettlement, PaymentDto } from '@bos/contracts';
+import { Dec } from '@bos/locale';
 import Link from 'next/link';
 import { useActionState, useMemo, useRef, useState } from 'react';
 
@@ -31,11 +32,17 @@ export interface AllocatePanelProps {
   reloadHref: string;
 }
 
+/** A typed amount as the box posts it; anything else (empty, partial) counts as nothing. */
+const AMOUNT = /^\d+(\.\d+)?$/;
+const amountOf = (value: string | undefined): Dec =>
+  value !== undefined && AMOUNT.test(value) ? new Dec(value) : new Dec(0);
+
 /**
  * Spreads a verified payment over the customer's open invoices. The person types an amount per
- * invoice; nothing here adds amounts up or checks them against what is open or left. The server
- * refuses too much or the wrong invoice (OVER_ALLOCATION, MISMATCHED_ITEMS) and its words are shown
- * above the table. Whether the person may allocate at all is decided by the page, which mounts this
+ * invoice; a running total under the table adds them up exactly (Dec, never floats) against what is
+ * left on the payment, and a row above its invoice's open amount or a total above what is left keeps
+ * the button off. The server still checks and refuses too much or the wrong invoice
+ * (OVER_ALLOCATION, MISMATCHED_ITEMS); its words are shown above the table. Whether the person may allocate at all is decided by the page, which mounts this
  * panel only for a verified payment and a role with `payment.allocate`; the API still decides.
  */
 export function AllocatePanel({
@@ -86,6 +93,7 @@ export function AllocatePanel({
           <AllocateForm
             paymentId={paymentId}
             currency={currency}
+            remaining={remaining}
             items={items}
             idempotencyKey={idempotencyKey}
             reloadHref={reloadHref}
@@ -99,10 +107,14 @@ export function AllocatePanel({
 function AllocateForm({
   paymentId,
   currency,
+  remaining,
   items,
   idempotencyKey,
   reloadHref,
-}: Pick<AllocatePanelProps, 'paymentId' | 'currency' | 'idempotencyKey' | 'reloadHref'> & {
+}: Pick<
+  AllocatePanelProps,
+  'paymentId' | 'currency' | 'remaining' | 'idempotencyKey' | 'reloadHref'
+> & {
   items: readonly InvoiceSettlement[];
 }) {
   const numberSystems = useNumberSystems();
@@ -127,6 +139,19 @@ function AllocateForm({
     [state],
   );
   useFocusOnProblem(problem, wrapRef, summaryRef);
+
+  const total = items.reduce(
+    (sum, item) => sum.plus(amountOf(amounts[item.invoiceId])),
+    new Dec(0),
+  );
+  const overRows = new Set(
+    items
+      .filter((item) => amountOf(amounts[item.invoiceId]).gt(item.openAmount))
+      .map((item) => item.invoiceId),
+  );
+  const left = amountOf(remaining);
+  const totalOver = total.gt(left);
+  const blocked = overRows.size > 0 || totalOver;
 
   return (
     <div ref={wrapRef}>
@@ -155,7 +180,9 @@ function AllocateForm({
           </thead>
           <tbody>
             {items.map((item) => {
-              const rowError = state.errors?.lines?.[item.invoiceId];
+              const rowError = overRows.has(item.invoiceId)
+                ? `More than the ${money(item.openAmount, currency, numberSystems)} open on this invoice.`
+                : state.errors?.lines?.[item.invoiceId];
               // Ends in -error so MoneyInput reads it after the currency, as it does for Field errors.
               const errorId = `amount-${item.invoiceId}-error`;
               return (
@@ -209,8 +236,26 @@ function AllocateForm({
             })}
           </tbody>
         </Table>
+        {/* The running total changes with every digit, so it is not announced; only a problem is. */}
+        <p className={totalOver ? styles.totalOver : styles.total}>
+          Allocated {money(total.toFixed(2), currency, numberSystems)} of{' '}
+          {money(left.toFixed(2), currency, numberSystems)} remaining
+          {totalOver
+            ? `. That is ${money(total.minus(left).toFixed(2), currency, numberSystems)} more than is left on this payment.`
+            : null}
+        </p>
+        <p role="status" className="sr-only">
+          {[
+            overRows.size > 0
+              ? `${overRows.size} ${overRows.size === 1 ? 'invoice is' : 'invoices are'} above the open amount.`
+              : '',
+            totalOver ? 'The total is more than is left on this payment.' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        </p>
         <div className={styles.buttons}>
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending || blocked}>
             Allocate payment
           </Button>
         </div>

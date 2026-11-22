@@ -38,7 +38,7 @@ describe('QuoteForm numbers', () => {
     const container = await mount();
     const box = boxOf(container, 'Total of your quotation');
     await paste(box, '12,50,000.00');
-    expect(posted(container, 'total')).toBe('1250000.00');
+    expect(posted(container, 'total')).toBe('1250000');
   });
 
   it('keeps delivery days to whole digits, at most 1000, with no stepper', async () => {

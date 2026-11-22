@@ -7,12 +7,22 @@ import {
   PAYMENT_METHODS,
   type PaymentMethod,
 } from '@bos/contracts';
-import { type ReactNode, useActionState, useEffect, useId, useRef, useState } from 'react';
+import { amountInWords } from '@bos/locale';
+import {
+  type FormEvent,
+  type ReactNode,
+  useActionState,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { DatePicker } from '@/components/ui/date-picker';
+import { Dialog } from '@/components/ui/dialog';
 import { Icon } from '@/components/ui/icon';
 import {
   DecimalInput,
@@ -22,7 +32,7 @@ import {
 import { PageHeader } from '@/components/ui/page';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { toast } from '@/components/ui/toast';
-import { Panel } from '@/components/ui/panel';
+import { FactList, Panel } from '@/components/ui/panel';
 import { CURRENCY_NAME, normalizeEnabled } from '@/lib/enabled-currencies';
 import { money, when } from '@/lib/kernel-format';
 
@@ -110,6 +120,10 @@ interface Proof {
  *
  * A proof is stored against the customer it was uploaded for, so the customer is locked while the
  * form holds proof, and the file picker waits for a customer.
+ *
+ * Record payment does not post straight away: once the browser's own field checks pass it opens a
+ * review of who paid, how much (in figures and words), the currency, the date and the reference.
+ * Confirm there submits the form as it stands; Back or Escape returns to it untouched.
  */
 /** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
 function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
@@ -182,6 +196,9 @@ export function PaymentForm({
   );
   const [currencyChosen, setCurrencyChosen] = useState(false);
   const [amount, setAmount] = useState(prefill?.amount ?? '');
+  // Set on the person's first edit of the amount. A typed figure padded on blur can read exactly like
+  // the invoice's open amount, so "untouched" is tracked, never worked out by comparing the text.
+  const [amountTouched, setAmountTouched] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>('bank_transfer');
   const [receivedOn, setReceivedOn] = useState(today);
   const [bankReference, setBankReference] = useState('');
@@ -193,6 +210,11 @@ export function PaymentForm({
   const pickerRef = useRef<HTMLInputElement>(null);
   const uploadBusy = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  // Set by Confirm so the submit it starts goes through to the action instead of reopening the review.
+  const confirmed = useRef(false);
+  // Set by the first Confirm click: a second click before React re-renders must not post again.
+  const confirming = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
   const referenceRef = useRef<HTMLDivElement>(null);
   const numberSystems = useNumberSystems();
@@ -212,7 +234,7 @@ export function PaymentForm({
     const fallback = customers.find((c) => c.id === id)?.defaultCurrency;
     if (!currencyChosen) setCurrency(startCurrency(fallback, enabledCurrencies));
     // The invoice's open amount belongs to its customer: drop it unless the person has typed their own.
-    if (prefill !== null && id !== prefill.customerId && amount === prefill.amount) setAmount('');
+    if (prefill !== null && id !== prefill.customerId && !amountTouched) setAmount('');
   }
 
   async function addFiles(files: FileList | null) {
@@ -277,15 +299,85 @@ export function PaymentForm({
   // The open amount is in the invoice's currency: in any other currency the same figure is not what the invoice owes.
   const showsOpenAmount =
     prefill !== null &&
+    !amountTouched &&
+    amount !== '' &&
     customerId === prefill.customerId &&
-    currency === prefill.currency &&
-    amount === prefill.amount;
+    currency === prefill.currency;
   const amountHint = showsOpenAmount
     ? `The open amount of ${prefill?.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
     : 'The cash that arrived, for example 20,18,180.00.';
 
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
+
+  /**
+   * Opens the review once the browser's own field checks pass. A form with a missing or malformed
+   * field skips the review and goes to the action, which answers with the inline messages as before.
+   */
+  function requestReview() {
+    const form = formRef.current;
+    if (busy || form === null) return;
+    // The amount box is plain text, so the browser's check does not see a zero; the action does.
+    if (!form.checkValidity() || !/[1-9]/.test(amount)) {
+      confirmed.current = true;
+      form.requestSubmit();
+      return;
+    }
+    confirming.current = false;
+    setReviewOpen(true);
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    // The submit Confirm started goes on to the action, with the form exactly as it stands.
+    if (confirmed.current) {
+      confirmed.current = false;
+      return;
+    }
+    // Any other submit (Enter in a field) opens the review first.
+    event.preventDefault();
+    requestReview();
+  }
+
+  function confirmReview() {
+    if (confirming.current || busy) return;
+    confirming.current = true;
+    confirmed.current = true;
+    setReviewOpen(false);
+    formRef.current?.requestSubmit();
+  }
+
+  const reviewCurrency = CURRENCIES.find((c) => c === currency);
+  const reviewCustomer = customers.find((c) => c.id === customerId);
+  const reviewPayer =
+    fixedCustomer !== null
+      ? fixedCustomer.name
+      : reviewCustomer !== undefined
+        ? `${reviewCustomer.name} (${reviewCustomer.number})`
+        : '';
+  const reviewAmount =
+    reviewCurrency !== undefined ? money(amount, reviewCurrency, numberSystems) : amount;
+  const reviewWords =
+    reviewCurrency !== undefined && /^\d+(\.\d+)?$/.test(amount)
+      ? amountInWords(amount, reviewCurrency, numberSystems[reviewCurrency])
+      : null;
+  const reviewFacts = [
+    { key: 'payer', label: 'Received from', value: reviewPayer },
+    { key: 'amount', label: 'Amount', value: reviewAmount },
+    ...(reviewWords !== null
+      ? [{ key: 'words', label: 'Amount in words', value: reviewWords }]
+      : []),
+    {
+      key: 'currency',
+      label: 'Currency',
+      value: reviewCurrency !== undefined ? CURRENCY_NAME[reviewCurrency] : currency,
+    },
+    { key: 'receivedOn', label: 'Received on', value: when(receivedOn, 'date') },
+    {
+      key: 'reference',
+      label: 'Bank reference',
+      value: bankReference.trim() !== '' ? bankReference : 'None given',
+    },
+  ];
 
   return (
     <>
@@ -297,14 +389,59 @@ export function PaymentForm({
             <LinkButton href="/payments" variant="secondary">
               Cancel
             </LinkButton>
-            <Button type="submit" form={formId} disabled={busy} aria-busy={busy || undefined}>
-              {pending ? 'Recording' : 'Record payment'}
-            </Button>
+            <Dialog
+              // The Record button is the dialog's trigger, so Back and Escape hand focus back to it.
+              trigger={
+                <Button
+                  // Still the form's submit button, so Enter in a text field presses it.
+                  type="submit"
+                  form={formId}
+                  disabled={busy}
+                  aria-busy={busy || undefined}
+                  onClick={(event) => {
+                    // Stops both the submit and the trigger's own toggle: the review opens only once
+                    // the field checks pass.
+                    event.preventDefault();
+                    requestReview();
+                  }}
+                >
+                  {pending ? 'Recording' : 'Record payment'}
+                </Button>
+              }
+              open={reviewOpen}
+              onOpenChange={setReviewOpen}
+              title="Check the payment before you record it"
+              description="Finance verifies the payment against these details and the proof."
+              footer={
+                <>
+                  <Button type="button" variant="secondary" onClick={() => setReviewOpen(false)}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={busy}
+                    aria-busy={busy || undefined}
+                    onClick={confirmReview}
+                  >
+                    Confirm
+                  </Button>
+                </>
+              }
+            >
+              <FactList facts={reviewFacts} />
+            </Dialog>
           </>
         }
       />
       {children}
-      <form id={formId} ref={formRef} action={formAction} noValidate className={styles.form}>
+      <form
+        id={formId}
+        ref={formRef}
+        action={formAction}
+        onSubmit={onSubmit}
+        noValidate
+        className={styles.form}
+      >
         <input type="hidden" name="idempotencyKey" value={state.key} />
         {/* The select below is locked while proof is held, and a locked select sends nothing. */}
         <input type="hidden" name="customerId" value={customerId} />
@@ -439,15 +576,21 @@ export function PaymentForm({
               </Field>
               <Field label="Amount received" hint={amountHint} error={fe.amount}>
                 {(control) => (
-                  <AmountInput
-                    {...control}
-                    currency={currency}
-                    name="amount"
-                    required
-                    min="0.01"
-                    value={amount}
-                    onValueChange={setAmount}
-                  />
+                  // A retyped amount equal to the open one posts the same value, so the edit is read from the input event.
+                  <div onInput={() => setAmountTouched(true)}>
+                    <AmountInput
+                      {...control}
+                      currency={currency}
+                      name="amount"
+                      required
+                      min="0.01"
+                      value={amount}
+                      onValueChange={(next) => {
+                        setAmount(next);
+                        setAmountTouched(true);
+                      }}
+                    />
+                  </div>
                 )}
               </Field>
             </div>

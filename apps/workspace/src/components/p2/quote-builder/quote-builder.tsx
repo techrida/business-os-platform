@@ -1,6 +1,7 @@
 'use client';
 
 import type { TermPreset } from '@bos/contracts';
+import { Dec, formatMoney } from '@bos/locale';
 import { unstable_rethrow, useRouter } from 'next/navigation';
 import {
   useCallback,
@@ -32,6 +33,7 @@ import {
   currencyChoiceText,
   currencyProblem,
   newMilestone,
+  plainNumber,
   scheduleMessage,
   scheduleState,
   submitBlocker,
@@ -103,11 +105,56 @@ const onServer = () => false;
 /** How long the totals wait for the platform before saying they did not load (TR-Q8). */
 export const PREVIEW_TIMEOUT_MS = 20_000;
 
-const DISCOUNT_LABEL: Record<DiscountMode, string> = {
-  none: 'No discount',
-  pct: 'Percentage',
-  amount: 'Fixed amount',
+const PLAIN_DECIMAL = /^(\d+\.?\d*|\.\d+)$/;
+
+const decimalOf = (raw: string): Dec | null => {
+  const plain = plainNumber(raw);
+  return PLAIN_DECIMAL.test(plain) ? new Dec(plain) : null;
 };
+
+/**
+ * The amount the quotation discount applies to, priced as the platform does: each line's quantity
+ * times rate rounded half up to 2 decimals, added up. Null while there is no line or a line has no
+ * usable number, so nothing is worked out from a guess.
+ */
+function discountBase(lines: readonly LineValues[]): Dec | null {
+  if (lines.length === 0) return null;
+  let base = new Dec(0);
+  for (const line of lines) {
+    const quantity = decimalOf(line.quantity);
+    const rate = decimalOf(line.unitPrice);
+    if (quantity === null || rate === null) return null;
+    base = base.plus(quantity.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP));
+  }
+  return base;
+}
+
+/**
+ * Both discount fields from the one that was typed last (`mode`, `value`). The other is worked out
+ * from the base: an amount rounded half up to 2 decimals, a percentage to at most 4, shortest form.
+ * `overBase` is an amount larger than the base; its percentage is then left blank.
+ */
+function discountPair(
+  mode: DiscountMode,
+  value: string,
+  base: Dec | null,
+): { pct: string; amount: string; overBase: boolean } {
+  const typed = decimalOf(value);
+  if (mode === 'none' || plainNumber(value) === '') return { pct: '', amount: '', overBase: false };
+  if (mode === 'pct') {
+    const amount =
+      base === null || typed === null
+        ? ''
+        : base.times(typed).div(100).toDecimalPlaces(2, Dec.ROUND_HALF_UP).toFixed(2);
+    return { pct: value, amount, overBase: false };
+  }
+  const overBase = base !== null && typed !== null && typed.gt(base);
+  const pct =
+    base === null || typed === null || overBase || base.isZero()
+      ? ''
+      : typed.times(100).div(base).toDecimalPlaces(4, Dec.ROUND_HALF_UP).toFixed();
+  return { pct, amount: value, overBase };
+}
 
 /**
  * The builder holds edits locally and requests pricing and the approval route from the server.
@@ -228,6 +275,32 @@ export function QuoteBuilder({
     <K extends keyof BuilderValues>(key: K) =>
     (value: BuilderValues[K]) =>
       edit((v) => ({ ...v, [key]: value }));
+
+  // ---- Discount: percent and amount side by side ---------------------------------------------
+  // The side typed last is the discount sent to the platform (`discountMode` + `discountValue`, the
+  // same shape as before); the other side is worked out from the line base and never stored.
+  const base = discountBase(values.lines);
+  const pair = discountPair(values.discountMode, values.discountValue, base);
+  const discountError = errors['discount.value'] ?? errors['discount'];
+
+  const setDiscount =
+    (side: 'pct' | 'amount', typed = false) =>
+    (raw: string) => {
+      if (plainNumber(raw) === '') {
+        edit((v) => ({ ...v, discountMode: 'none', discountValue: '' }));
+        return;
+      }
+      // `typed`: the person edited this box, so it becomes the discount even when the number is the
+      // one it already showed (typing 100 over a worked-out 100.00).
+      // The worked-out side reporting the number it already shows (for example padding on blur) is
+      // not a new entry, so it must not take over as the discount.
+      if (!typed && side !== values.discountMode) {
+        const shown = decimalOf(side === 'pct' ? pair.pct : pair.amount);
+        const typed = decimalOf(raw);
+        if (shown !== null && typed !== null && shown.eq(typed)) return;
+      }
+      edit((v) => ({ ...v, discountMode: side, discountValue: raw }));
+    };
 
   // ---- Totals and approval route: ask the platform, show what it says ----------------------
 
@@ -755,58 +828,47 @@ export function QuoteBuilder({
           />
         </Card>
 
-        <Panel title="Discount" description="Optional. Applies to the full quotation.">
+        <Panel
+          title="Discount"
+          description="Optional. Applies to the full quotation. Enter a percentage or an amount; the other is worked out from the subtotal."
+        >
           <div className={styles.sectionBody}>
             <div className={styles.grid2}>
-              <Field label="Discount type">
+              <Field
+                label="Discount %"
+                hint="A discount above 12% of the subtotal needs extra approval."
+                error={values.discountMode !== 'amount' ? discountError : undefined}
+              >
                 {(control) => (
-                  <Select
-                    value={values.discountMode}
-                    onChange={(e) =>
-                      edit((v) => ({
-                        ...v,
-                        discountMode: e.target.value as DiscountMode,
-                        discountValue: '',
-                      }))
-                    }
+                  <PercentInput
+                    value={pair.pct}
+                    onValueChange={setDiscount('pct')}
+                    onUserEdit={setDiscount('pct', true)}
                     {...control}
-                  >
-                    {(Object.keys(DISCOUNT_LABEL) as DiscountMode[]).map((m) => (
-                      <option key={m} value={m}>
-                        {DISCOUNT_LABEL[m]}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                 )}
               </Field>
-              {values.discountMode !== 'none' ? (
-                <Field
-                  label={
-                    values.discountMode === 'pct'
-                      ? 'Discount (%)'
-                      : `Discount amount (${values.currency})`
-                  }
-                  hint="A discount above 12% of the subtotal needs extra approval."
-                  error={errors['discount.value'] ?? errors['discount']}
-                >
-                  {(control) =>
-                    values.discountMode === 'pct' ? (
-                      <PercentInput
-                        value={values.discountValue}
-                        onValueChange={set('discountValue')}
-                        {...control}
-                      />
-                    ) : (
-                      <MoneyInput
-                        currency={values.currency}
-                        value={values.discountValue}
-                        onValueChange={set('discountValue')}
-                        {...control}
-                      />
-                    )
-                  }
-                </Field>
-              ) : null}
+              <Field
+                label={`Discount amount (${values.currency})`}
+                error={
+                  values.discountMode === 'amount'
+                    ? pair.overBase && base !== null
+                      ? `The discount cannot be more than the subtotal of ${formatMoney(base.toFixed(2), values.currency)}.`
+                      : discountError
+                    : undefined
+                }
+              >
+                {(control) => (
+                  <MoneyInput
+                    currency={values.currency}
+                    value={pair.amount}
+                    max={base === null ? undefined : base.toFixed(2)}
+                    onValueChange={setDiscount('amount')}
+                    onUserEdit={setDiscount('amount', true)}
+                    {...control}
+                  />
+                )}
+              </Field>
             </div>
           </div>
         </Panel>
