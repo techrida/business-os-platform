@@ -204,11 +204,22 @@ export class OpportunitiesService {
         principal,
       ),
       creditHold: {
-        held: credit.held,
-        // An override covers the order it was given for: a bigger pending order is held again (R5 FU4).
+        // Once the deal's order is confirmed and no other accepted quotation waits to become one, nothing is left to
+        // hold: the confirmed order's own balance counts in the position, and would keep the flag raised for good
+        // (R5 FU10).
+        held: credit.held && !(ordered && credit.pendingQuotationVersionId === null),
+        // An override covers one quotation version at one order value (R5 FU10); once the deal is ordered it was
+        // given and used, so it reads as overridden.
         overridden:
           row.creditOverrideAt !== null &&
-          overrideCovers(row.creditOverrideOrderValue, credit.orderValue),
+          (ordered ||
+            overrideCovers(
+              {
+                versionId: row.creditOverrideQuotationVersionId,
+                orderValue: row.creditOverrideOrderValue,
+              },
+              { versionId: credit.pendingQuotationVersionId, orderValue: credit.orderValue },
+            )),
         ordered,
       },
       stageHistory: toStageHistoryDto(history, actorNames),
