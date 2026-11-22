@@ -213,6 +213,9 @@ describe('DocumentsService.createAndReceiveUpload', () => {
     const p = pipeline();
     p.queue.add.mockRejectedValue(new Error('valkey down'));
 
+    await expect(p.svc.createAndReceiveUpload(owner, file, { scope, actor: user })).rejects.toThrow(
+      /not saved. Upload it again/,
+    );
     await expect(
       p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);

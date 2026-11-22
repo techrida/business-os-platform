@@ -5,18 +5,22 @@
 //   * the amounts come from the frozen header of the issued document (taxable, VAT, exempt, zero-rated, total), not
 //     from a recomputation of its lines, so the register always agrees with the document the customer holds.
 // A credit note is stored positive (invoices_amounts_check) and listed negative; a debit note stays positive.
+// Each row also carries its NPR equivalents (round 5, FU11; Kuu decision K1 Q3 b): every amount times the rate frozen at
+// issue, rounded half-up to two decimals, and the document's own frozen NPR total. The register adds one NPR filing total
+// across currencies, the sum of those row values, next to the per-currency totals.
 // Proformas, drafts, returned, submitted, approved and discarded documents are not tax documents and never appear.
 import {
   CURRENCIES,
   SALES_VAT_REGISTER_KINDS,
   type Currency,
   type SalesVatRegister,
+  type SalesVatRegisterNprTotal,
   type SalesVatRegisterRow,
   type SalesVatRegisterTotal,
 } from '@bos/contracts';
 import { invoices, scoped } from '@bos/db';
+import { Dec } from '@bos/money-rules';
 import { Inject, Injectable } from '@nestjs/common';
-import Decimal from 'decimal.js';
 import { and, asc, between, eq, inArray } from 'drizzle-orm';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -32,7 +36,7 @@ function buyerOf(snapshot: unknown): { name: string; pan: string | null } {
   return { name, pan };
 }
 
-const zero = () => new Decimal(0);
+const zero = () => new Dec(0);
 
 @Injectable()
 export class InvoiceVatRegisterService {
@@ -63,6 +67,8 @@ export class InvoiceVatRegisterService {
             exempt: invoices.exemptAmount,
             zeroRated: invoices.zeroRatedAmount,
             total: invoices.total,
+            fxRate: invoices.fxRate,
+            amountNpr: invoices.amountNpr,
           })
           .from(invoices)
           .where(
@@ -81,20 +87,28 @@ export class InvoiceVatRegisterService {
           Currency,
           {
             n: number;
-            taxable: Decimal;
-            vat: Decimal;
-            exempt: Decimal;
-            zeroRated: Decimal;
-            total: Decimal;
+            taxable: Dec;
+            vat: Dec;
+            exempt: Dec;
+            zeroRated: Dec;
+            total: Dec;
           }
         >();
+        const npr = {
+          n: 0,
+          taxable: zero(),
+          vat: zero(),
+          exempt: zero(),
+          zeroRated: zero(),
+          total: zero(),
+        };
         const rows = documents.map((d): SalesVatRegisterRow => {
           const sign = d.kind === 'credit_note' ? -1 : 1;
-          const taxable = new Decimal(d.taxable).times(sign);
-          const vat = new Decimal(d.vat).times(sign);
-          const exempt = new Decimal(d.exempt).times(sign);
-          const zeroRated = new Decimal(d.zeroRated).times(sign);
-          const total = new Decimal(d.total).times(sign);
+          const taxable = new Dec(d.taxable).times(sign);
+          const vat = new Dec(d.vat).times(sign);
+          const exempt = new Dec(d.exempt).times(sign);
+          const zeroRated = new Dec(d.zeroRated).times(sign);
+          const total = new Dec(d.total).times(sign);
           const acc = sums.get(d.currency) ?? {
             n: 0,
             taxable: zero(),
@@ -111,6 +125,29 @@ export class InvoiceVatRegisterService {
             zeroRated: acc.zeroRated.plus(zeroRated),
             total: acc.total.plus(total),
           });
+          // Issued implies a frozen rate and NPR total (invoices_issued_snapshot_check).
+          const rate = new Dec(d.fxRate!);
+          const nprTotal = new Dec(d.amountNpr!).times(sign);
+          // Each bucket converted and rounded half-up; the rounding remainder against the frozen NPR total goes to the largest
+          // bucket that has an amount (money rule C-2), so a zero bucket stays zero and the columns add up to the total.
+          const buckets = [taxable, vat, exempt, zeroRated];
+          const converted = buckets.map((x) => x.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP));
+          const remainder = nprTotal.minus(Dec.sum(...converted));
+          if (!remainder.isZero()) {
+            let target = 0;
+            buckets.forEach((x, i) => {
+              if (!x.isZero() && (buckets[target]!.isZero() || x.abs().gt(buckets[target]!.abs())))
+                target = i;
+            });
+            converted[target] = converted[target]!.plus(remainder);
+          }
+          const [nprTaxable, nprVat, nprExempt, nprZeroRated] = converted as [Dec, Dec, Dec, Dec];
+          npr.n += 1;
+          npr.taxable = npr.taxable.plus(nprTaxable);
+          npr.vat = npr.vat.plus(nprVat);
+          npr.exempt = npr.exempt.plus(nprExempt);
+          npr.zeroRated = npr.zeroRated.plus(nprZeroRated);
+          npr.total = npr.total.plus(nprTotal);
           const buyer = buyerOf(d.buyerSnapshot);
           return {
             invoiceId: d.id,
@@ -127,6 +164,12 @@ export class InvoiceVatRegisterService {
             exemptAmount: exempt.toFixed(2),
             zeroRatedAmount: zeroRated.toFixed(2),
             totalAmount: total.toFixed(2),
+            fxRate: d.fxRate!,
+            nprTaxableAmount: nprTaxable.toFixed(2),
+            nprVatAmount: nprVat.toFixed(2),
+            nprExemptAmount: nprExempt.toFixed(2),
+            nprZeroRatedAmount: nprZeroRated.toFixed(2),
+            nprTotalAmount: nprTotal.toFixed(2),
           };
         });
         const totals = CURRENCIES.filter((c) => sums.has(c)).map(
@@ -143,7 +186,15 @@ export class InvoiceVatRegisterService {
             };
           },
         );
-        return { from, to, rows, totals };
+        const nprTotal: SalesVatRegisterNprTotal = {
+          documents: npr.n,
+          taxableAmount: npr.taxable.toFixed(2),
+          vatAmount: npr.vat.toFixed(2),
+          exemptAmount: npr.exempt.toFixed(2),
+          zeroRatedAmount: npr.zeroRated.toFixed(2),
+          totalAmount: npr.total.toFixed(2),
+        };
+        return { from, to, rows, totals, nprTotal };
       },
       READ_ONLY,
     );

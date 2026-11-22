@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { SalesVatRegisterSchema } from '@bos/contracts';
 import { createParty, createTenantWithEntity, organizations } from '@bos/db';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
+import Decimal from 'decimal.js';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -50,7 +51,9 @@ interface Doc {
   customerId: string;
   kind?: 'tax_invoice' | 'credit_note' | 'debit_note' | 'proforma';
   status?: 'issued' | 'draft';
-  currency?: 'NPR' | 'USD';
+  currency?: 'NPR' | 'USD' | 'INR';
+  /** The frozen NPR rate of a foreign document; 133 when not given. */
+  rate?: string;
   issueDate: string;
   bs?: string;
   taxable: string;
@@ -59,6 +62,8 @@ interface Doc {
   zero?: string;
   buyer?: { legalName: string; panVatNo: string | null };
   originalId?: string;
+  /** The exact document total, when a float sum of the parts would lose digits. */
+  total?: string;
 }
 
 /** An invoice written the way the app does: a draft row, then one UPDATE that issues it with its snapshots. */
@@ -68,7 +73,7 @@ async function document(d: Doc): Promise<string> {
   const exempt = d.exempt ?? '0.00';
   const zero = d.zero ?? '0.00';
   const subtotal = (Number(d.taxable) + Number(exempt) + Number(zero)).toFixed(2);
-  const total = (Number(subtotal) + Number(d.vat)).toFixed(2);
+  const total = d.total ?? (Number(subtotal) + Number(d.vat)).toFixed(2);
   const currency = d.currency ?? 'NPR';
   const { tenantId, organizationId } = d.scope;
   return withTx(db, d.scope, systemActor('test'), async (tx) => {
@@ -89,9 +94,9 @@ async function document(d: Doc): Promise<string> {
         UPDATE app.invoices
            SET status = 'issued', number = ${`INV-T-${String(n).padStart(5, '0')}`}, seq = ${n},
                fiscal_year = '2083/84', issue_date = ${d.issueDate}::date, issue_date_bs = ${d.bs ?? '2083-07-20'},
-               issued_at = now(), fx_rate = ${currency === 'NPR' ? 1 : 133}::numeric,
+               issued_at = now(), fx_rate = ${currency === 'NPR' ? '1' : (d.rate ?? '133')}::numeric,
                fx_source = ${currency === 'NPR' ? null : 'test'}, fx_date = ${currency === 'NPR' ? null : d.issueDate}::date,
-               amount_npr = ${currency === 'NPR' ? total : (Number(total) * 133).toFixed(2)}::numeric,
+               amount_npr = ${currency === 'NPR' ? total : sql`round(${total}::numeric * ${d.rate ?? '133'}::numeric, 2)`}::numeric,
                seller_snapshot = '{"legalName":"Techrida"}'::jsonb,
                buyer_snapshot = ${JSON.stringify(buyer)}::jsonb,
                content_hash = decode(repeat('ab', 32), 'hex')
@@ -263,6 +268,167 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
     ]);
   });
 
+  it('gives every row its NPR equivalents at the rate frozen at issue, and one NPR filing total that adds up across NPR, USD and INR (FU11)', async () => {
+    const scope: TxScope = { tenantId: a.tenantId, organizationId: a.organizationId };
+    const base = { scope, customerId: a.customerId };
+    await document({
+      ...base,
+      issueDate: '2027-03-02',
+      taxable: '1000.00',
+      vat: '130.00',
+      exempt: '300.00',
+      zero: '200.00',
+    });
+    const usd = await document({
+      ...base,
+      currency: 'USD',
+      rate: '133.5',
+      issueDate: '2027-03-05',
+      taxable: '33.33',
+      vat: '4.33',
+    });
+    await document({
+      ...base,
+      currency: 'INR',
+      rate: '1.6',
+      issueDate: '2027-03-09',
+      taxable: '1000.00',
+      vat: '130.00',
+      exempt: '250.50',
+    });
+    await document({
+      ...base,
+      kind: 'credit_note',
+      originalId: usd,
+      currency: 'USD',
+      rate: '133.5',
+      issueDate: '2027-03-12',
+      taxable: '10.00',
+      vat: '1.30',
+    });
+
+    current.scope = scope;
+    const register = SalesVatRegisterSchema.parse(
+      await service().register('2027-03-01', '2027-03-31'),
+    );
+
+    // Each amount times the frozen rate, half-up to 2 decimals; a credit note is negative; the total is the frozen amount_npr.
+    expect(
+      register.rows.map((r) => [
+        r.currency,
+        r.fxRate,
+        r.nprTaxableAmount,
+        r.nprVatAmount,
+        r.nprExemptAmount,
+        r.nprZeroRatedAmount,
+        r.nprTotalAmount,
+      ]),
+    ).toEqual([
+      ['NPR', '1.000000', '1000.00', '130.00', '300.00', '200.00', '1630.00'],
+      ['USD', '133.500000', '4449.55', '578.06', '0.00', '0.00', '5027.61'],
+      ['INR', '1.600000', '1600.00', '208.00', '400.80', '0.00', '2208.80'],
+      ['USD', '133.500000', '-1335.00', '-173.55', '0.00', '0.00', '-1508.55'],
+    ]);
+    // The per-currency totals stay as they were, in each document's own currency.
+    expect(
+      register.totals.map((t) => [
+        t.currency,
+        t.documents,
+        t.taxableAmount,
+        t.vatAmount,
+        t.totalAmount,
+      ]),
+    ).toEqual([
+      ['NPR', 1, '1000.00', '130.00', '1630.00'],
+      ['INR', 1, '1000.00', '130.00', '1380.50'],
+      ['USD', 2, '23.33', '3.03', '26.36'],
+    ]);
+    // The NPR filing total: taxable is the NPR total less VAT, exempt and zero-rated, so 1000 + 4449.55 + 1600 - 1335 = 5714.55; every row adds up to its NPR total, and it is exactly the sum of the rows.
+    expect(register.nprTotal).toEqual({
+      documents: 4,
+      taxableAmount: '5714.55',
+      vatAmount: '742.51',
+      exemptAmount: '700.80',
+      zeroRatedAmount: '200.00',
+      totalAmount: '7357.86',
+    });
+    const sum = (pick: (r: (typeof register.rows)[number]) => string) =>
+      register.rows.reduce((acc, r) => acc.plus(pick(r)), new Decimal(0)).toFixed(2);
+    expect(register.nprTotal.taxableAmount).toBe(sum((r) => r.nprTaxableAmount));
+    expect(register.nprTotal.vatAmount).toBe(sum((r) => r.nprVatAmount));
+    expect(register.nprTotal.exemptAmount).toBe(sum((r) => r.nprExemptAmount));
+    expect(register.nprTotal.zeroRatedAmount).toBe(sum((r) => r.nprZeroRatedAmount));
+    expect(register.nprTotal.totalAmount).toBe(sum((r) => r.nprTotalAmount));
+  });
+
+  it('converts at full precision and rounds once: a cent is not rounded early (FU11)', async () => {
+    const scope: TxScope = { tenantId: a.tenantId, organizationId: a.organizationId };
+    await document({
+      scope,
+      customerId: a.customerId,
+      currency: 'USD',
+      rate: '100.000001',
+      issueDate: '2027-06-02',
+      taxable: '0.00',
+      vat: '10000000004999.99',
+      total: '10000000004999.99',
+    });
+    current.scope = scope;
+    const register = SalesVatRegisterSchema.parse(
+      await service().register('2027-06-01', '2027-06-30'),
+    );
+    // 10000000004999.99 x 100.000001 = 1000000010499999.00499999: half-up to the cent is .00. Rounding the product at 20
+    // significant digits first gave .005, which then rounded up to .01.
+    expect(register.rows).toHaveLength(1);
+    expect(register.rows[0]!.nprVatAmount).toBe('1000000010499999.00');
+    expect(register.nprTotal.vatAmount).toBe('1000000010499999.00');
+  });
+
+  it('never shows a negative taxable base: a zero bucket stays zero and the rounding remainder goes to a bucket with an amount (FU11)', async () => {
+    const scope: TxScope = { tenantId: a.tenantId, organizationId: a.organizationId };
+    const base = { scope, customerId: a.customerId, currency: 'INR' as const, rate: '1.6' };
+    // 0.01 exempt + 0.01 zero-rated = 0.02 INR, frozen at 0.03 NPR; each bucket alone rounds to 0.02.
+    const original = await document({
+      ...base,
+      issueDate: '2027-07-02',
+      taxable: '0.00',
+      vat: '0.00',
+      exempt: '0.01',
+      zero: '0.01',
+    });
+    await document({
+      ...base,
+      kind: 'credit_note',
+      originalId: original,
+      issueDate: '2027-07-03',
+      taxable: '0.00',
+      vat: '0.00',
+      exempt: '0.01',
+      zero: '0.01',
+    });
+    current.scope = scope;
+    const register = SalesVatRegisterSchema.parse(
+      await service().register('2027-07-01', '2027-07-31'),
+    );
+    expect(register.rows).toHaveLength(2);
+    const [invoice, note] = register.rows;
+    expect(invoice).toMatchObject({
+      nprTotalAmount: '0.03',
+      nprTaxableAmount: '0.00',
+      nprVatAmount: '0.00',
+      nprExemptAmount: '0.01',
+      nprZeroRatedAmount: '0.02',
+    });
+    expect(note).toMatchObject({
+      nprTotalAmount: '-0.03',
+      nprTaxableAmount: '0.00',
+      nprVatAmount: '0.00',
+      nprExemptAmount: '-0.01',
+      nprZeroRatedAmount: '-0.02',
+    });
+    expect(register.nprTotal).toMatchObject({ totalAmount: '0.00', taxableAmount: '0.00' });
+  });
+
   it('is scoped to the acting entity and tenant, and an empty period is an empty register', async () => {
     current.scope = { tenantId: a.tenantId, organizationId: entityA2 };
     const other = await service().register('2026-11-01', '2026-11-30');
@@ -276,6 +442,14 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
       to: '2030-01-31',
       rows: [],
       totals: [],
+      nprTotal: {
+        documents: 0,
+        taxableAmount: '0.00',
+        vatAmount: '0.00',
+        exemptAmount: '0.00',
+        zeroRatedAmount: '0.00',
+        totalAmount: '0.00',
+      },
     });
   });
 });
