@@ -3,6 +3,7 @@
 // { area, flow, persona, steps(c, S, step) } and runs once per size with its own recorded context.
 import { goNav, noSideScroll, reachable, ledger, logIssue } from './fqa1-lib.mjs';
 import { proofFile, search } from './fqa1-flows.mjs';
+import { realLogin } from '../lib/session.mjs';
 
 const INV13 = 'INV-2083/84-00013';
 
@@ -733,7 +734,7 @@ export const FLAG_FLOWS = [
       await step('2-address-picker', 'FX9 Q3: the address Country list opens; screenshot of how the flags render', async (c) => {
         await c.open('/customers/new');
         const box = p().getByRole('combobox', { name: 'Country', exact: true }).nth(1);
-        await box.scrollIntoViewIfNeeded();
+        await box.evaluate((e) => e.scrollIntoView({ block: 'center' }));
         await box.click();
         await box.fill('');
         await p().waitForTimeout(800);
@@ -748,13 +749,222 @@ export const FLAG_FLOWS = [
       });
       await step('3-phone-picker', 'The phone country list opens; screenshot', async (c) => {
         const box = p().getByRole('combobox', { name: 'Phone 1 country' });
-        await box.scrollIntoViewIfNeeded();
+        await box.evaluate((e) => e.scrollIntoView({ block: 'center' }));
         await box.click();
         await p().waitForTimeout(800);
         await p().getByRole('option').first().waitFor({ state: 'visible', timeout: 15000 });
         await p().screenshot({ path: path.join(dir, `phone-country-picker-${S.size}.png`) });
         c.controls.push(`screenshot flags/phone-country-picker-${S.size}.png`);
         await p().keyboard.press('Escape');
+      });
+    },
+  },
+];
+
+export const USER_FLOWS = [
+  {
+    area: 'users',
+    flow: 'invite-roles-lock',
+    persona: 'Dev Founder',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const email = `fqa2-${S.tag}@bos-demo.example.com`;
+      const first = 'Fqa2';
+      const last = `Invitee ${S.tag}`;
+      const THROWAWAY = 'QA Staff mwpz3ytn';
+      await step('1-as', 'Sign in as Dev Founder', async (c) => {
+        await c.as('Dev Founder');
+      });
+      await step('2-list', 'Settings > Users lists people with search and filters', async (c) => {
+        await goNav(c, S, 'Settings', '/settings');
+        await c.s.click(p().getByRole('link', { name: 'Users', exact: true }).first(), 'Users');
+        await p().waitForURL((u) => u.pathname === '/settings/users', { timeout: 60000 });
+        await c.see(p().getByRole('searchbox', { name: 'Search users' }), 'searchbox Search users');
+        await c.see(p().getByRole('link', { name: /Add user/ }), 'link Add user');
+        await noSideScroll(c, '/settings/users');
+      });
+      await step('3-invite', 'Add user: an invitation to a new person with the Sales role', async (c) => {
+        await c.s.click(p().getByRole('link', { name: /Add user/ }), 'Add user');
+        await c.s.fill(p().getByRole('textbox', { name: 'First name' }), first);
+        await c.s.fill(p().getByRole('textbox', { name: 'Last name' }), last);
+        await c.s.fill(p().getByRole('textbox', { name: 'Work email' }), email);
+        await p().getByRole('checkbox', { name: 'Sales', exact: true }).check();
+        await c.s.click(c.btn('Send invitation'), 'Send invitation');
+        const sent = p().getByText(/invitation (was )?sent|invited|Invitation sent/i).first();
+        await sent.waitFor({ state: 'visible', timeout: 60000 }).catch(() => {});
+        c.controls.push(`after Send invitation: ${new URL(p().url()).pathname}; ${(await sent.innerText().catch(() => 'no confirmation text')).slice(0, 80)}`);
+        c.ok((await p().getByRole('textbox', { name: 'Work email' }).inputValue().catch(() => '')) === '' || new URL(p().url()).pathname !== '/settings/users/new', 'the form was reset or the page moved on (the invitation went through)');
+        ledger({ kind: `user invited ${email} (Sales)`, path: '/settings/users', size: S.size });
+      });
+      await step('4-invited-listed', 'The invited person is listed as Invited with the Sales role', async (c) => {
+        await c.open(`/settings/users?q=${encodeURIComponent(email)}`);
+        const row = p().locator('main').getByText(`${first} ${last}`).first();
+        await c.see(row, `the row ${first} ${last}`, 45000);
+        await c.see(p().getByText('Invited', { exact: true }).first(), 'status Invited');
+        await noSideScroll(c, 'users list');
+      });
+      await step('5-edit-roles', 'Edit roles for the invitee: the dialog opens with the roles and Cancel leaves them', async (c) => {
+        await c.s.click(p().getByRole('button', { name: `Edit roles for ${first} ${last}` }), 'Edit roles');
+        const d = p().getByRole('dialog');
+        await c.see(d, 'the Edit roles dialog');
+        await c.see(d.getByRole('checkbox', { name: 'Sales', exact: true }), 'checkbox Sales in the dialog');
+        c.ok(await d.getByRole('checkbox', { name: 'Sales', exact: true }).isChecked(), 'Sales is ticked (the saved role)');
+        await reachable(c, d.getByRole('button', { name: /^(Save|Review)/ }), 'the dialog save button');
+        await p().keyboard.press('Escape');
+        await d.waitFor({ state: 'hidden', timeout: 10000 });
+      });
+      await step('6-lock-unlock', `Lock then unlock ${THROWAWAY} (audited), restoring Active`, async (c) => {
+        await c.open(`/settings/users?q=${encodeURIComponent(THROWAWAY)}`);
+        await c.s.click(p().getByRole('button', { name: `Lock ${THROWAWAY}` }), 'Lock');
+        const d = p().getByRole('dialog');
+        await c.see(d, 'the Lock dialog');
+        const reason = d.getByRole('textbox').first();
+        if (await reason.count()) await reason.fill('FQA2 lock check');
+        await d.getByRole('button', { name: /^Lock/ }).last().click();
+        await c.see(p().getByText('Locked').first(), 'status Locked', 45000);
+        ledger({ kind: `user ${THROWAWAY} locked (restored in this step)`, path: '/settings/users', size: S.size });
+        await c.s.click(p().getByRole('button', { name: `Unlock ${THROWAWAY}` }), 'Unlock');
+        const d2 = p().getByRole('dialog');
+        if (await d2.isVisible({ timeout: 3000 }).catch(() => false)) await d2.getByRole('button', { name: /^Unlock/ }).last().click();
+        await c.see(p().getByRole('button', { name: `Lock ${THROWAWAY}` }), 'button Lock is back: the user is Active again', 45000);
+      });
+      await step('7-check-access', 'Check access opens for a person', async (c) => {
+        await c.open(`/settings/users?q=${encodeURIComponent(THROWAWAY)}`);
+        await c.s.click(p().getByRole('link', { name: `Check access for ${THROWAWAY}` }), 'Check access');
+        await p().waitForURL((u) => u.pathname.startsWith('/settings/access/check'), { timeout: 60000 });
+        await noSideScroll(c, '/settings/access/check');
+      });
+    },
+  },
+];
+
+/** The portal's own sign-in (password and one-time code are read in code and masked), then the portal home. */
+async function portalSignIn(c, S, key) {
+  const portal = S.qa.cfg.portalUrl;
+  await realLogin(c.s, c.page(), key, `${portal}/`);
+  await c.page().waitForURL((u) => u.origin === new URL(portal).origin, { timeout: 90000 });
+  c.persona = `${key} (portal, real sign-in)`;
+}
+async function portalNav(c, S, href, label) {
+  const p = c.page();
+  const link = () => p.locator(`a[href="${href}"]`).filter({ hasText: label }).first();
+  if (!(await link().isVisible().catch(() => false))) {
+    const menu = p.getByRole('button', { name: /menu/i }).first();
+    if (await menu.isVisible().catch(() => false)) await menu.click();
+  }
+  await c.s.click(link(), label);
+  await p.waitForURL((u) => u.pathname === href || u.pathname.startsWith(`${href}/`), { timeout: 60000 });
+  await p.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+}
+
+export const PORTAL_FLOWS = [
+  {
+    area: 'portal',
+    flow: 'customer-orders',
+    persona: 'Dev Customer (portal)',
+    async steps(c, S, step) {
+      const p = () => c.page();
+      await step('1-sign-in', 'The fixture customer signs in on the portal for real', async (c) => {
+        await portalSignIn(c, S, 'customer');
+        await c.see(p().getByRole('link', { name: 'Milestones' }).first(), 'link Milestones');
+        await noSideScroll(c, 'portal home');
+      });
+      await step('2-quotation', 'Quotations: the accepted quotation opens and shows an address with the country name', async (c) => {
+        await portalNav(c, S, '/', 'Quotations').catch(() => {});
+        await c.see(p().getByRole('link', { name: /QT-2083\/84-00015/ }).first(), 'link QT-2083/84-00015');
+        await c.see(p().getByText('Accepted').first(), 'status Accepted');
+        await c.s.click(p().getByRole('link', { name: /QT-2083\/84-00015/ }).first(), 'QT-2083/84-00015');
+        await p().waitForURL((u) => /^\/quotations\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 60000 });
+        const text = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+        c.controls.push(`address text on the portal quotation: ${text.match(/[^.]{0,60}Nepal[^.]{0,20}/)?.[0] ?? 'no country name found'}`);
+        c.ok(/Nepal/.test(text), 'the portal quotation names the country (Nepal)', text.slice(0, 200));
+        await noSideScroll(c, 'portal quotation');
+      });
+      await step('3-milestones', 'r4c2 7: Milestones lists the order; opening it shows its milestones and statuses', async (c) => {
+        await portalNav(c, S, '/milestones', 'Milestones');
+        await c.see(p().getByRole('link', { name: /SO-2083\/84-00012/ }).first(), 'link SO-2083/84-00012', 30000);
+        await c.s.click(p().getByRole('link', { name: /SO-2083\/84-00012/ }).first(), 'SO-2083/84-00012');
+        await p().waitForURL((u) => /^\/milestones\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 60000 });
+        const text = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+        c.ok(/Advance/.test(text), 'the order shows its Advance milestone', text.slice(0, 200));
+        c.ok(/invoice|Planned|Ready|Due|Billed/i.test(text), 'a milestone status is shown');
+        await noSideScroll(c, 'portal order');
+      });
+      await step('4-invoices-payments', 'Invoices and Payments pages open', async (c) => {
+        await portalNav(c, S, '/invoices', 'Invoices');
+        await c.see(p().getByRole('heading', { level: 1 }), 'a page heading on Invoices');
+        await portalNav(c, S, '/payments', 'Payments');
+        await c.see(p().getByRole('heading', { level: 1 }), 'a page heading on Payments');
+        await noSideScroll(c, 'portal payments');
+      });
+    },
+  },
+];
+
+export const IMPORT_FLOWS = [
+  {
+    area: 'parties',
+    flow: 'csv-import',
+    persona: 'Dev Sales',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const fsm = await import('node:fs');
+      const os = await import('node:os');
+      const pathm = await import('node:path');
+      const n = String((Date.now() % 9000) + 1000);
+      const names = [`FQA2 Csv Good ${S.tag}`, `FQA2 Csv Foreign ${S.tag}`, `FQA2 Csv Bad ${S.tag}`];
+      await step('1-as', 'Sign in as Dev Sales', async (c) => {
+        await c.as('Dev Sales');
+      });
+      await step('2-template', 'Customers > Import from CSV: the help lists the new columns and the template downloads with them', async (c) => {
+        await goNav(c, S, 'Customers', '/customers');
+        await c.s.click(p().getByRole('link', { name: /Import from CSV/ }), 'Import from CSV');
+        await p().waitForURL((u) => u.pathname === '/imports/customers', { timeout: 60000 });
+        const help = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+        for (const col of ['address_line', 'address_city', 'address_country', 'contact_phones', 'contact_country'])
+          c.ok(help.includes(col), `the on-screen help names the column ${col}`);
+        const dir = fsm.mkdtempSync(pathm.join(os.tmpdir(), 'fqa2-csv-'));
+        const got = await c.s.download(p().getByRole('link', { name: 'Download the template' }), dir);
+        const head = got.bytes.toString('utf8').replace(/^\uFEFF/, '').split(/\r?\n/)[0].replace(/"/g, '');
+        c.ok(head.startsWith('legal_name,pan_vat_no,industry,address_line,address_city,address_country,contact_name,contact_email,contact_phones,contact_country'), 'the template header has the customer columns', head);
+        await noSideScroll(c, '/imports/customers');
+      });
+      await step('3-upload-check', 'Upload a file with a good row (two phones), a foreign row without PAN and a Nepal row with a 5-digit PAN: the check refuses only the last', async (c) => {
+        const dir = fsm.mkdtempSync(pathm.join(os.tmpdir(), 'fqa2-csv-'));
+        const file = pathm.join(dir, 'fqa2-customers.csv');
+        const head = 'legal_name,pan_vat_no,industry,address_line,address_city,address_country,contact_name,contact_email,contact_phones,contact_country';
+        const rows = [
+          `${names[0]},,Retail,1 Good Street,Austin,US,Gia Good,csvgood-${S.tag}@bos-demo.example.com,+1 415556${n}; +977 98${n}1234,US`,
+          `${names[1]},,Retail,2 Foreign Street,Leeds,GB,Fia Foreign,csvforeign-${S.tag}@bos-demo.example.com,,GB`,
+          `${names[2]},12345,Retail,3 Bad Marg,Kathmandu,NP,Bea Bad,csvbad-${S.tag}@bos-demo.example.com,,NP`,
+        ];
+        fsm.writeFileSync(file, [head, ...rows].join('\n') + '\n');
+        await p().locator('input[type=file][name=file]').setInputFiles(file);
+        await c.s.click(c.btn('Check the file'), 'Check the file');
+        await p().waitForURL((u) => /^\/imports\/result\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 90000 });
+        S.csvResult = new URL(p().url()).pathname;
+        const t = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+        c.ok(new RegExp(names[2]).test(t), 'the result lists the Nepal row', t.slice(0, 300));
+        c.ok(/PAN/.test(t) && /(9 digits|nine digits)/i.test(t), 'the Nepal row is refused with a PAN message', t.slice(0, 400));
+        await c.see(p().getByRole('button', { name: /^Import 2 customers/ }), 'button "Import 2 customers" (the two good rows)');
+        await noSideScroll(c, 'import result');
+      });
+      await step('4-commit', 'Import the two ready rows', async (c) => {
+        await c.s.click(p().getByRole('button', { name: /^Import 2 customers/ }), 'Import 2 customers');
+        await c.see(p().getByText(/Imported/).first(), 'the batch reads Imported', 60000);
+        ledger({ kind: `csv import: ${names[0]}, ${names[1]} (customers)`, path: S.csvResult, size: S.size });
+        await c.open(`/customers?q=${encodeURIComponent(`FQA2 Csv`)}`);
+        await c.see(p().getByRole('link', { name: names[0] }).first(), `customer ${names[0]}`, 30000);
+        await c.see(p().getByText(/Austin, United States/).first(), 'location "Austin, United States"');
+      });
+      await step('5-vendor-template', 'The vendor import help and template have the address and contact phone columns', async (c) => {
+        await c.as('Dev Procurement');
+        await c.open('/imports/vendors');
+        const help = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+        for (const col of ['address_line', 'address_city', 'contact_phone', 'contact_country'])
+          c.ok(help.includes(col), `the vendor help names the column ${col}`);
       });
     },
   },
@@ -934,4 +1144,7 @@ export const FLOWS = [
   ...FX5_FLOWS,
   ...LOST_FLOWS,
   ...FLAG_FLOWS,
+  ...USER_FLOWS,
+  ...PORTAL_FLOWS,
+  ...IMPORT_FLOWS,
 ];

@@ -14,7 +14,7 @@
 // procurement-15 is the VAT register, so the guide never asks for the approval. The refusal when the
 // requester is the only Finance person is covered by the API unit tests, not by this run.
 /* global document -- referenced inside page.evaluate callbacks, which run in the browser */
-import { escapeRe, uniqueValues } from '../lib/config.mjs';
+import { escapeRe, runMatch, uniqueValues } from '../lib/config.mjs';
 import { realLogin, StepFailure } from '../lib/session.mjs';
 import { demoFile, isPdf, pdfText } from '../lib/support.mjs';
 
@@ -183,6 +183,35 @@ export function workflow(cfg) {
       .first()
       .isVisible()
       .catch(() => false);
+  /**
+   * A segmented date picker (react-aria, round 5): a group named after the field whose month, day and
+   * year are typed one by one. `iso` is YYYY-MM-DD.
+   */
+  const dateGroup = (p, label) => p.getByRole('group', { name: label, exact: true }).first();
+  const fillDate = async (s, label, iso, page = s.page) => {
+    const [, year, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso) ?? [];
+    if (!year) throw new StepFailure(`Invalid ISO date "${iso}"`);
+    const group = dateGroup(page, label);
+    await s.hydrated(group.locator('[data-type="year"]'));
+    for (const [segment, digits] of [
+      ['year', year],
+      ['month', month],
+      ['day', day],
+    ]) {
+      const seg = group.locator(`[data-type="${segment}"]`).first();
+      await seg.click();
+      await seg.pressSequentially(digits);
+    }
+    const got = await readDate(group);
+    s.expect(got === iso, `${label} is ${iso}`, got);
+  };
+  /** The YYYY-MM-DD a segmented date picker shows ('' while a segment is empty). */
+  const readDate = async (group) => {
+    const part = async (t) => (await group.locator(`[data-type="${t}"]`).first().innerText()).trim();
+    const [y, m, d] = [await part('year'), await part('month'), await part('day')];
+    return /^\d+$/.test(y + m + d) ? `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}` : '';
+  };
+
   const openUrl = (s, key, ready) => s.goto(s.need(key), ready);
   const headingNumber = async (s, re) => {
     const m = re.exec(await s.page.getByRole('heading', { level: 1 }).first().innerText());
@@ -247,11 +276,12 @@ export function workflow(cfg) {
   const approve = async (s, persona, match, comment, isDone) => {
     await as(s, persona);
     await s.caption(`${step(s)} — ${persona}: Inbox → approve`);
-    await s.goto('/inbox', (p) => p.getByRole('heading', { name: 'Inbox', exact: true }));
-    const row = s.page
-      .getByRole('table', { name: 'Waiting approvals' })
-      .getByRole('row')
-      .filter({ hasText: match });
+    // Round 5: the inbox is a searchable list of links (the "Waiting approvals" table is gone), as in sales.mjs.
+    const q = (match.match(/[A-Z]{2,3}-\d{4}\/\d{2}-\d{5}/) ?? [match])[0];
+    await s.goto(`/inbox?q=${encodeURIComponent(q)}`, (p) =>
+      p.getByRole('heading', { name: 'Inbox', exact: true }),
+    );
+    const row = s.page.locator('main a[href^="/inbox/"]').filter({ hasText: runMatch(match) });
     for (let i = 0; i < 8 && !(await visible(row)); i++) {
       await s.page.waitForTimeout(5000);
       await s.page.reload({ waitUntil: 'domcontentloaded' });
@@ -274,7 +304,7 @@ export function workflow(cfg) {
       `${await row.count()}`,
     );
     await s.see(row, `${persona}'s inbox row for ${match}`);
-    await s.click(row.first().getByRole('link').first(), 'the inbox row');
+    await s.click(row.first(), 'the inbox row');
     await s.page.waitForURL(new RegExp(`/inbox/${UUID}`));
     await s.pause();
     const dialog = s.page.getByRole('dialog', { name: 'Approve request' });
@@ -414,7 +444,7 @@ export function workflow(cfg) {
             await s.goto('/procurement/requests/new', (p) => h1(p, 'New purchase request'));
             await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
             await s.caption('procurement-1 — fill the request (Emergency stays off)');
-            await s.fill('Needed by', '2030-12-31');
+            await fillDate(s, 'Needed by', '2030-12-31');
             await s.choose(s.select('departmentId', { byName: true }), 'Operations');
             await s.choose(s.select('costCenterId', { byName: true }), /^GENERAL\s*·\s*General$/);
             await s.fill('Budget code', v.budgetCode);
@@ -429,7 +459,7 @@ export function workflow(cfg) {
             );
             await s.fill('Unit', 'pcs');
             await s.fill('Quantity', '2');
-            await s.fill('Estimated unit price (NPR)', '60000.00');
+            await s.fill('Estimated unit price', '60000.00');
             const serials = s.page.getByRole('checkbox', {
               name: 'Record serial numbers at receipt',
               exact: true,
@@ -469,7 +499,10 @@ export function workflow(cfg) {
             await s.page.waitForURL(/\/edit$/, { timeout: cfg.navTimeout });
             await s.see(s.field('Budget code'), 'the edit form');
             const val = (label) => s.field(label).first().inputValue();
-            s.expect((await val('Needed by')) === '2030-12-31', 'Needed by is 2030-12-31');
+            s.expect(
+              (await readDate(dateGroup(s.page, 'Needed by'))) === '2030-12-31',
+              'Needed by is 2030-12-31',
+            );
             s.expect((await val('Budget code')) === v.budgetCode, `Budget code is ${v.budgetCode}`);
             s.expect(
               (await val('Delivery location')) === 'Demo office, Kathmandu',
@@ -488,12 +521,22 @@ export function workflow(cfg) {
             );
             await openUrl(s, 'prUrl', (p) => p.getByRole('heading', { level: 1 }));
             await s.caption('procurement-1 — Submit for approval');
-            await s.click(s.button('Submit for approval'), 'Submit for approval');
+            await s.click(
+              s.page.getByRole('main').getByRole('button', { name: 'Submit for approval', exact: true }),
+              'Submit for approval',
+            );
+            // Round 5: Submit asks "Submit for approval?" first; the confirm shares the opener's name.
+            const confirm = s.page.getByRole('dialog', { name: 'Submit for approval?' });
+            await s.see(confirm, 'the Submit for approval? dialog');
+            await s.pause(400);
+            await confirm.getByRole('button', { name: 'Submit for approval', exact: true }).click();
           } else s.checks.push('note: the request was submitted by an earlier attempt');
           await s.see(status(s.page, 'Awaiting approval'), 'status Awaiting approval', 90000);
           const steps = s.page
             .getByRole('region', { name: 'Approval', exact: true })
-            .getByRole('listitem');
+            .getByRole('listitem')
+            // Round 5: the panel also lists "Who acted" as list items; the steps are the routes.
+            .filter({ hasText: /route:/i });
           s.expect(
             (await steps.count()) === 1,
             'exactly one approval step',
