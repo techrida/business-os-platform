@@ -126,6 +126,12 @@ export const users = appSchema.table(
     lockedAt: timestamp('locked_at', { withTimezone: true }),
     /** When the lock-expiry job unlocks a `failed_sign_ins` lock; NULL for an admin lock. */
     lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    /**
+     * Set by a failed or ambiguous write to ZITADEL (migration 0189). A flagged person is never 'active' (a trigger,
+     * 0190); sync never clears it. An admin resolves it after reading ZITADEL again.
+     */
+    identityReviewRequired: boolean('identity_review_required').notNull().default(false),
+    identityReviewAt: timestamp('identity_review_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -138,6 +144,9 @@ export const users = appSchema.table(
         OR (${t.lockReason} = 'admin' AND ${t.lockedAt} IS NOT NULL AND ${t.lockedUntil} IS NULL)
         OR (${t.lockReason} = 'failed_sign_ins' AND ${t.lockedAt} IS NOT NULL AND ${t.lockedUntil} IS NOT NULL)`,
     ),
+    index('users_identity_review_idx')
+      .on(t.tenantId)
+      .where(sql`${t.identityReviewRequired}`),
     index('users_lock_expiry_idx')
       .on(t.lockedUntil)
       .where(sql`${t.lockReason} = 'failed_sign_ins'`),
