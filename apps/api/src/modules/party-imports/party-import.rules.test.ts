@@ -1,3 +1,9 @@
+import {
+  PARTY_IMPORT_COLUMNS,
+  PARTY_IMPORT_EXAMPLE,
+  parsePhonesCell,
+  type PartyImportKind,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,12 +23,13 @@ const customerLine = (over: Partial<Record<string, string>> = {}) => {
     legal_name: 'Himal Traders',
     pan_vat_no: '123456789',
     industry: '',
-    address_line1: 'Thapathali 12',
+    address_line: 'Thapathali 12',
     address_city: 'Kathmandu',
-    address_country: '',
+    address_country: 'NP',
     contact_name: '',
     contact_email: 'ACCOUNTS@Example.com',
-    contact_phone: '',
+    contact_phones: '',
+    contact_country: 'NP',
     ...over,
   };
   return base;
@@ -54,7 +61,7 @@ describe('parseCsv', () => {
 
 describe('readPartyCsv', () => {
   it('numbers data lines from 2 and accepts the columns in any order', () => {
-    const csv = `contact_email,legal_name,address_line1,address_city\na@b.co,Acme,Road 1,Pokhara\n`;
+    const csv = `contact_email,legal_name,address_line,address_city,address_country,contact_country\na@b.co,Acme,Road 1,Pokhara,NP,NP\n`;
     const read = readPartyCsv('customer', csv);
     expect(read.records).toHaveLength(1);
     expect(read.records[0]).toMatchObject({
@@ -98,6 +105,14 @@ describe('review fixes', () => {
     expect(issues({ pan_vat_no: '123456789' })).toEqual([]);
   });
 
+  it('refuses a 5-digit PAN on a Nepal row and accepts a foreign row without a PAN (FX9)', () => {
+    const issues = (over: Record<string, string>) =>
+      checkLine('customer', customerLine(over)).issues.map((i) => i.column);
+    expect(issues({ pan_vat_no: '12345', address_country: 'NP' })).toEqual(['pan_vat_no']);
+    expect(issues({ pan_vat_no: '12345', address_country: 'US' })).toEqual([]);
+    expect(issues({ pan_vat_no: '', address_country: 'US', contact_country: 'US' })).toEqual([]);
+  });
+
   it('refuses a PAN with no letter or digit, and keeps a vendor contact name within 120 characters', () => {
     expect(
       checkLine('customer', customerLine({ pan_vat_no: '-----' })).issues.map((i) => i.column),
@@ -109,6 +124,8 @@ describe('review fixes', () => {
       pan: '987654321',
       vat_registered: '',
       country: '',
+      address_line: '',
+      address_city: '',
       contact_name: '',
       contact_email: 'a@b.co',
       contact_phone: '',
@@ -121,6 +138,8 @@ describe('review fixes', () => {
         pan: '987654321',
         vat_registered: '',
         country: '',
+        address_line: '',
+        address_city: '',
         contact_name: 'C'.repeat(121),
         contact_email: '',
         contact_phone: '',
@@ -184,13 +203,60 @@ describe('checkLine, customers', () => {
         legal_name: '',
         pan_vat_no: 'ABC',
         contact_email: 'not-an-email',
-        address_line1: '',
+        address_line: '',
       }),
     );
     expect(checked.values).toBeUndefined();
+    // One issue per problem: a malformed PAN is not judged again by the Nepal rule, a missing line not twice.
     expect(checked.issues.map((i) => i.column).sort()).toEqual(
-      ['address_line1', 'contact_email', 'legal_name', 'pan_vat_no'].sort(),
+      ['address_line', 'contact_email', 'legal_name', 'pan_vat_no'].sort(),
     );
+  });
+
+  it('needs the address country and the contact country, with no Nepal default (FX9)', () => {
+    const checked = checkLine(
+      'customer',
+      customerLine({ address_country: '', contact_country: '', address_city: '' }),
+    );
+    expect(checked.issues.map((i) => i.column).sort()).toEqual(
+      ['address_city', 'address_country', 'contact_country'].sort(),
+    );
+    expect(
+      checkLine('customer', customerLine({ address_country: 'XX' })).issues.map((i) => i.column),
+    ).toEqual(['address_country']);
+  });
+
+  it('reads several phones into one canonical cell, the first one primary (FX9)', () => {
+    const checked = checkLine(
+      'customer',
+      customerLine({ contact_phones: '+1 4155552671; +977 9812345678', contact_country: 'US' }),
+    );
+    expect(checked.issues).toEqual([]);
+    expect(checked.values?.contact_phones).toBe('+14155552671;+9779812345678');
+    const parsed = parsePhonesCell(checked.values!.contact_phones!);
+    expect(parsed).toEqual({
+      ok: true,
+      phones: [
+        { country: 'US', e164: '+14155552671', isPrimary: true },
+        { country: 'NP', e164: '+9779812345678', isPrimary: false },
+      ],
+    });
+    expect(
+      checkLine('customer', customerLine({ contact_phones: 'call me' })).issues.map(
+        (i) => i.column,
+      ),
+    ).toEqual(['contact_phones']);
+  });
+
+  it('keeps the formula guard on the address cells, reported once', () => {
+    expect(
+      checkLine('customer', customerLine({ address_line: '=HYPERLINK("x")' })).issues.map(
+        (i) => i.column,
+      ),
+    ).toEqual(['address_line']);
+    expect(
+      checkLine('customer', customerLine({ address_city: '@SUM(A1)' })).issues.map((i) => i.column),
+    ).toEqual(['address_city']);
   });
 
   it('refuses a cell that a spreadsheet would run as a formula, but not a phone number', () => {
@@ -201,9 +267,9 @@ describe('checkLine, customers', () => {
         evil,
       ).toBe(true);
     }
-    expect(checkLine('customer', customerLine({ contact_phone: '+9779812345678' })).issues).toEqual(
-      [],
-    );
+    expect(
+      checkLine('customer', customerLine({ contact_phones: '+9779812345678' })).issues,
+    ).toEqual([]);
     expect(startsLikeFormula('Himal')).toBe(false);
   });
 });
@@ -215,10 +281,38 @@ describe('checkLine, vendors', () => {
     pan: '987654321',
     vat_registered: 'YES',
     country: '',
+    address_line: '',
+    address_city: '',
     contact_name: '',
     contact_email: '',
     contact_phone: '',
     ...over,
+  });
+
+  it('takes an optional address whose line and city come together, and reads the contact phone (FX9)', () => {
+    expect(
+      checkLine('vendor', vendor({ address_line: 'Balaju', address_city: '' })).issues,
+    ).toEqual([
+      { column: 'address_city', message: 'address city is required when an address line is given' },
+    ]);
+    const checked = checkLine(
+      'vendor',
+      vendor({
+        address_line: 'Balaju',
+        address_city: 'Kathmandu',
+        contact_phone: '+977 980-1234567',
+      }),
+    );
+    expect(checked.issues).toEqual([]);
+    expect(checked.values).toMatchObject({
+      address_line: 'Balaju',
+      address_city: 'Kathmandu',
+      contact_phone: '+9779801234567',
+      contact_name: 'Everest Supplies',
+    });
+    expect(
+      checkLine('vendor', vendor({ contact_phone: '9801234567' })).issues.map((i) => i.column),
+    ).toEqual(['contact_phone']);
   });
 
   it('defaults to a Nepal company that is not VAT registered', () => {
@@ -246,6 +340,18 @@ describe('checkLine, vendors', () => {
     expect(
       checkLine('vendor', vendor({ kind: 'foreign', country: 'NP' })).issues.map((i) => i.column),
     ).toEqual(['country']);
+    // FX9, as the vendors service: the Nepal 9-digit rule only for a Nepal vendor; a foreign tax id stays loose.
+    const foreign = checkLine(
+      'vendor',
+      vendor({ kind: 'foreign', country: 'IN', pan: 'ab-12345' }),
+    );
+    expect(foreign.issues).toEqual([]);
+    expect(foreign.values?.pan).toBe('AB-12345');
+    expect(
+      checkLine('vendor', vendor({ kind: 'foreign', country: 'IN', pan: '---' })).issues.map(
+        (i) => i.column,
+      ),
+    ).toEqual(['pan']);
     expect(checkLine('vendor', vendor({ kind: 'martian' })).issues.map((i) => i.column)).toContain(
       'kind',
     );
@@ -303,4 +409,31 @@ describe('buildRows and identityKey', () => {
       errorCount: 1,
     });
   });
+});
+
+describe('the downloaded template (FX9)', () => {
+  const quote = (cell: string) => `"${cell.replaceAll('"', '""')}"`;
+  const templateCsv = (kind: PartyImportKind, row: readonly string[]) =>
+    `${PARTY_IMPORT_COLUMNS[kind].join(',')}\r\n${row.map(quote).join(',')}\r\n`;
+
+  for (const kind of ['customer', 'vendor'] as const) {
+    it(`imports the ${kind} example row with no issues`, () => {
+      const rows = buildRows(
+        kind,
+        readPartyCsv(kind, templateCsv(kind, PARTY_IMPORT_EXAMPLE[kind])).records,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.issues).toEqual([]);
+      expect(rows[0]!.status).toBe('valid');
+    });
+
+    it(`imports the ${kind} example row as the download writes it, phones behind an apostrophe`, () => {
+      const phones = kind === 'customer' ? 'contact_phones' : 'contact_phone';
+      const at = PARTY_IMPORT_COLUMNS[kind].indexOf(phones as never);
+      const row = PARTY_IMPORT_EXAMPLE[kind].map((cell, i) => (i === at ? `'${cell}` : cell));
+      const rows = buildRows(kind, readPartyCsv(kind, templateCsv(kind, row)).records);
+      expect(rows[0]!.issues).toEqual([]);
+      expect(rows[0]!.values?.[phones]?.startsWith('+977')).toBe(true);
+    });
+  }
 });

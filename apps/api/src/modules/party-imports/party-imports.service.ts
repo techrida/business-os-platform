@@ -12,6 +12,8 @@
 // Tenancy: every lookup is by the caller's tenant; another tenant's PAN neither matches nor is revealed. The file is
 // never stored (no bucket, no document row): only what was read from it is kept in the batch record.
 import {
+  CountryCodeSchema,
+  parsePhonesCell,
   PartyImportRowSchema,
   PARTY_IMPORT_MAX_BYTES,
   type PartyImportBatch,
@@ -77,6 +79,16 @@ const toDetail = (row: BatchRow): PartyImportDetail => ({
   ...toBatch(row),
   rows: RowsSchema.parse(row.rows).map(({ values: _values, ...rest }) => rest),
 });
+
+/**
+ * The phones of a stored line: the canonical cell `checkPartyImportPlace` wrote at preview, read again. A cell that no
+ * longer parses is a broken batch, never a contact silently saved without its numbers.
+ */
+const storedPhones = (cell: string | undefined) => {
+  const parsed = parsePhonesCell(cell ?? '');
+  if (!parsed.ok) throw new Error(`A stored import line has unreadable phones: ${parsed.message}`);
+  return parsed.phones;
+};
 
 const batchNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Import not found' });
@@ -255,11 +267,8 @@ export class PartyImportsService {
             ...(v.pan_vat_no ? { panVatNo: v.pan_vat_no } : {}),
             ...(v.industry ? { industry: v.industry } : {}),
             relationship: 'prospect',
-            address: {
-              line1: v.address_line1!,
-              city: v.address_city!,
-              country: v.address_country!,
-            },
+            country: CountryCodeSchema.parse(v.address_country),
+            address: { line: v.address_line!, city: v.address_city! },
           },
           now,
         );
@@ -270,7 +279,9 @@ export class PartyImportsService {
           {
             fullName: v.contact_name || v.legal_name!,
             email: v.contact_email!,
-            ...(v.contact_phone ? { phone: v.contact_phone } : {}),
+            country: CountryCodeSchema.parse(v.contact_country),
+            // The first number of the cell is the primary one (parsePhonesCell).
+            phones: storedPhones(v.contact_phones),
             isPrimary: true,
           },
           now,
@@ -278,6 +289,7 @@ export class PartyImportsService {
         recordId = customer.id;
       } else {
         const hasContact = v.contact_name !== '' && v.contact_name !== undefined;
+        const country = CountryCodeSchema.parse(v.country);
         const vendor = await this.vendorsService.createInTx(
           tx,
           {
@@ -285,14 +297,18 @@ export class PartyImportsService {
             kind: v.kind as 'company' | 'sole_proprietor' | 'individual' | 'foreign',
             ...(v.pan ? { pan: v.pan } : {}),
             vatRegistered: v.vat_registered === 'yes',
-            country: v.country!,
+            country,
+            // Line and city come together or not at all (checkPartyImportPlace).
+            ...(v.address_line ? { address: { line: v.address_line, city: v.address_city! } } : {}),
           },
           now,
           hasContact
             ? {
                 name: v.contact_name!,
                 ...(v.contact_email ? { email: v.contact_email } : {}),
-                ...(v.contact_phone ? { phone: v.contact_phone } : {}),
+                // The template has no contact country: the contact is placed in the vendor's country.
+                country,
+                phones: storedPhones(v.contact_phone),
               }
             : undefined,
           nameIndex,

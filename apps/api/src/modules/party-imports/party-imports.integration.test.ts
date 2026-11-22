@@ -14,6 +14,8 @@ import type { AddressInfo } from 'node:net';
 import {
   DEFAULT_ROLE_PERMISSIONS,
   ErrorBodySchema,
+  PARTY_IMPORT_COLUMNS,
+  PARTY_IMPORT_EXAMPLE,
   PartyImportBatchSchema,
   PartyImportDetailSchema,
   type Permission,
@@ -182,10 +184,8 @@ beforeEach(() => as('founder'));
 
 // ---------------------------------------------------------------------------------------------- helpers
 
-const CUSTOMER_HEADER =
-  'legal_name,pan_vat_no,industry,address_line1,address_city,address_country,contact_name,contact_email,contact_phone';
-const VENDOR_HEADER =
-  'legal_name,kind,pan,vat_registered,country,contact_name,contact_email,contact_phone';
+const CUSTOMER_HEADER = PARTY_IMPORT_COLUMNS.customer.join(',');
+const VENDOR_HEADER = PARTY_IMPORT_COLUMNS.vendor.join(',');
 const upload = (kind: 'customers' | 'vendors', csv: string | Buffer, name = 'file.csv') =>
   request(baseUrl)
     .post(`/v1/imports/${kind}?filename=${name}`)
@@ -211,12 +211,16 @@ describe('customer import', () => {
     const tag = uniq();
     const csv = [
       CUSTOMER_HEADER,
-      `Valid One ${tag},111${tag.replace(/\D/g, '1').slice(0, 3)}111,Retail,Road 1,Kathmandu,,,one-${tag}@Example.com,`,
-      `,222222222,,Road 2,Pokhara,NP,,two@example.com,`,
-      `Bad Pan ${tag},AB,,Road 3,Pokhara,NP,,three@example.com,`,
-      `Bad Mail ${tag},,,Road 4,Pokhara,NP,,not-an-email,`,
-      `No Address ${tag},,,,,NP,,five@example.com,`,
-      `Valid Two ${tag},,,Road 6,Lalitpur,NP,Sita Sharma,six-${tag}@example.com,+9779812345678`,
+      `Valid One ${tag},111${tag.replace(/\D/g, '1').slice(0, 3)}111,Retail,Road 1,Kathmandu,NP,,one-${tag}@Example.com,,NP`,
+      `,222222222,,Road 2,Pokhara,NP,,two@example.com,,NP`,
+      `Bad Pan ${tag},AB,,Road 3,Pokhara,NP,,three@example.com,,NP`,
+      `Bad Mail ${tag},,,Road 4,Pokhara,NP,,not-an-email,,NP`,
+      `No Address ${tag},,,,,NP,,five@example.com,,NP`,
+      // FX9: two numbers in two countries, the first one primary; the contact lives in the US.
+      `Valid Two ${tag},,,Road 6,Lalitpur,NP,Sita Sharma,six-${tag}@example.com,+1 4155552671; +977 9812345678,US`,
+      // FX9: a foreign customer needs no PAN; a Nepal one with a 5-digit PAN is refused.
+      `Foreign ${tag},,,1 Market St,San Francisco,US,,seven-${tag}@example.com,,US`,
+      `Short Pan ${tag},12345,,Road 8,Pokhara,NP,,eight-${tag}@example.com,,NP`,
     ].join('\r\n');
     const before = await customersOf(a);
 
@@ -227,9 +231,9 @@ describe('customer import', () => {
       kind: 'customer',
       status: 'previewed',
       fileName: 'customers.csv',
-      rowCount: 6,
-      validCount: 2,
-      errorCount: 4,
+      rowCount: 8,
+      validCount: 3,
+      errorCount: 5,
       duplicateCount: 0,
       createdCount: 0,
       createdByUserId: usersA.founder,
@@ -242,13 +246,18 @@ describe('customer import', () => {
       [5, 'error'],
       [6, 'error'],
       [7, 'valid'],
+      [8, 'valid'],
+      [9, 'error'],
     ]);
     expect(preview.rows[1]!.issues).toEqual([
       { column: 'legal_name', message: 'legal name is required' },
     ]);
     expect(preview.rows[2]!.issues[0]).toMatchObject({ column: 'pan_vat_no' });
     expect(preview.rows[3]!.issues[0]).toMatchObject({ column: 'contact_email' });
-    expect(preview.rows[4]!.issues.map((i) => i.column)).toEqual(['address_line1', 'address_city']);
+    expect(preview.rows[4]!.issues.map((i) => i.column)).toEqual(['address_line', 'address_city']);
+    expect(preview.rows[7]!.issues).toEqual([
+      { column: 'pan_vat_no', message: 'a PAN for a customer in Nepal must be exactly 9 digits' },
+    ]);
     expect(await customersOf(a), 'a preview creates no customer').toBe(before);
 
     const done = await request(baseUrl).post(`/v1/imports/${preview.id}/commit`);
@@ -257,14 +266,14 @@ describe('customer import', () => {
     expect(committed).toMatchObject({
       status: 'committed',
       validCount: 0,
-      createdCount: 2,
-      errorCount: 4,
+      createdCount: 3,
+      errorCount: 5,
     });
     expect(committed.committedAt).not.toBeNull();
     expect(
       committed.rows.filter((r) => r.status === 'created').every((r) => r.recordId !== undefined),
     ).toBe(true);
-    expect(await customersOf(a)).toBe(before + 2);
+    expect(await customersOf(a)).toBe(before + 3);
 
     // The created customer: prospect, owned by the importer, with its primary contact; the audit trail names the importer.
     const { rows } = await ownerPool.query<{
@@ -272,9 +281,11 @@ describe('customer import', () => {
       owner_user_id: string;
       relationship: string;
       email_norm: string;
-      phone_e164: string | null;
+      country: string;
+      address_line: string;
+      address_city: string;
     }>(
-      `SELECT c.id, c.owner_user_id, c.relationship, k.email_norm, k.phone_e164
+      `SELECT c.id, c.owner_user_id, c.relationship, k.email_norm, c.country, c.address_line, c.address_city
          FROM app.customers c JOIN app.customer_contacts k ON k.customer_id = c.id AND k.is_primary
         WHERE c.tenant_id = $1 AND c.legal_name = $2`,
       [a.tenantId, `Valid One ${tag}`],
@@ -284,7 +295,30 @@ describe('customer import', () => {
       owner_user_id: usersA.founder,
       relationship: 'prospect',
       email_norm: `one-${tag}@example.com`,
+      country: 'NP',
+      address_line: 'Road 1',
+      address_city: 'Kathmandu',
     });
+    // FX9: the phones cell becomes the contact's phone rows, in order, the first one primary; the contact keeps its
+    // own country (US) while the company is in Nepal.
+    const phones = await ownerPool.query<{
+      contact_country: string;
+      country: string;
+      e164: string;
+      is_primary: boolean;
+    }>(
+      `SELECT k.country AS contact_country, p.country, p.e164, p.is_primary
+         FROM app.customers c
+         JOIN app.customer_contacts k ON k.customer_id = c.id
+         JOIN app.customer_contact_phones p ON p.contact_id = k.id
+        WHERE c.tenant_id = $1 AND c.legal_name = $2
+        ORDER BY p.sort_order`,
+      [a.tenantId, `Valid Two ${tag}`],
+    );
+    expect(phones.rows).toEqual([
+      { contact_country: 'US', country: 'US', e164: '+14155552671', is_primary: true },
+      { contact_country: 'US', country: 'NP', e164: '+9779812345678', is_primary: false },
+    ]);
     const audited = await count(
       `SELECT count(*) AS n FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 AND actor_id = $3`,
       [a.tenantId, rows[0]!.id, usersA.founder],
@@ -301,15 +335,15 @@ describe('customer import', () => {
     expect(detailOf(again.body)).toEqual(committed);
     const second = await request(baseUrl).post(`/v1/imports/${preview.id}/commit`);
     expect(detailOf(second.body)).toEqual(committed);
-    expect(await customersOf(a)).toBe(before + 2);
+    expect(await customersOf(a)).toBe(before + 3);
   });
 
   it('is idempotent: the same file again creates nothing, and a name-only row is keyed on its normalised name', async () => {
     const tag = uniq();
     const csv = [
       CUSTOMER_HEADER,
-      `Keyed Pan ${tag},${tag.replace(/\D/g, '7').padEnd(9, '7').slice(0, 9)},,Road 1,Kathmandu,NP,,k1-${tag}@example.com,`,
-      `Himalaya ${tag} Pvt. Ltd.,,,Road 2,Kathmandu,NP,,k2-${tag}@example.com,`,
+      `Keyed Pan ${tag},${tag.replace(/\D/g, '7').padEnd(9, '7').slice(0, 9)},,Road 1,Kathmandu,NP,,k1-${tag}@example.com,,NP`,
+      `Himalaya ${tag} Pvt. Ltd.,,,Road 2,Kathmandu,NP,,k2-${tag}@example.com,,NP`,
     ].join('\n');
     const first = detailOf((await upload('customers', csv)).body);
     expect(first.validCount).toBe(2);
@@ -335,7 +369,7 @@ describe('customer import', () => {
   it('checks the existing records again at commit: a customer added after the preview is not duplicated', async () => {
     const tag = uniq();
     const pan = tag.replace(/\D/g, '5').padEnd(9, '5').slice(0, 9);
-    const csv = `${CUSTOMER_HEADER}\nRaced ${tag},${pan},,Road 1,Kathmandu,NP,,r-${tag}@example.com,\n`;
+    const csv = `${CUSTOMER_HEADER}\nRaced ${tag},${pan},,Road 1,Kathmandu,NP,,r-${tag}@example.com,,NP\n`;
     const preview = detailOf((await upload('customers', csv)).body);
     expect(preview.validCount).toBe(1);
     // Someone creates the same customer by hand between the preview and the commit.
@@ -358,7 +392,7 @@ describe('customer import', () => {
   it("does not match, reveal or touch another tenant's PAN", async () => {
     const tag = uniq();
     const pan = tag.replace(/\D/g, '3').padEnd(9, '3').slice(0, 9);
-    const csv = `${CUSTOMER_HEADER}\nShared Pan ${tag},${pan},,Road 1,Kathmandu,NP,,s-${tag}@example.com,\n`;
+    const csv = `${CUSTOMER_HEADER}\nShared Pan ${tag},${pan},,Road 1,Kathmandu,NP,,s-${tag}@example.com,,NP\n`;
     // Tenant B imports it first.
     as('founder', b.organizationId, b);
     const inB = detailOf((await upload('customers', csv)).body);
@@ -393,7 +427,7 @@ describe('customer import', () => {
         (
           await upload(
             'customers',
-            `${CUSTOMER_HEADER}\n${name},${pan},,R,C,NP,,m-${uniq()}@example.com,\n`,
+            `${CUSTOMER_HEADER}\n${name},${pan},,R,C,NP,,m-${uniq()}@example.com,,NP\n`,
           )
         ).body,
       );
@@ -422,7 +456,7 @@ describe('customer import', () => {
       (
         await upload(
           'customers',
-          `${CUSTOMER_HEADER}\nNew Name ${tag},${panA},,R,C,NP,,x-${tag}@example.com,\n`,
+          `${CUSTOMER_HEADER}\nNew Name ${tag},${panA},,R,C,NP,,x-${tag}@example.com,,NP\n`,
         )
       ).body,
     );
@@ -435,7 +469,7 @@ describe('customer import', () => {
       (
         await upload(
           'customers',
-          `${CUSTOMER_HEADER}\nAudit ${tag},,,R,C,NP,,audit-${tag}@example.com,+9779812345678\n`,
+          `${CUSTOMER_HEADER}\nAudit ${tag},,,R,C,NP,,audit-${tag}@example.com,+9779812345678,NP\n`,
         )
       ).body,
     );
@@ -457,16 +491,16 @@ describe('customer import', () => {
     const before = await customersOf(a);
     const csv = [
       CUSTOMER_HEADER,
-      `"=HYPERLINK(""http://evil.example"",""x"")",,,Road 1,Kathmandu,NP,,f1-${tag}@example.com,`,
-      `Plus ${tag},,,"+1+1",Kathmandu,NP,,f2-${tag}@example.com,`,
-      `At ${tag},,,Road 3,@SUM(A1),NP,,f3-${tag}@example.com,`,
-      `Fine ${tag},,,Road 4,Kathmandu,NP,"-cmd|' /C calc'!A0",f4-${tag}@example.com,+9779800000000`,
+      `"=HYPERLINK(""http://evil.example"",""x"")",,,Road 1,Kathmandu,NP,,f1-${tag}@example.com,,NP`,
+      `Plus ${tag},,,"+1+1",Kathmandu,NP,,f2-${tag}@example.com,,NP`,
+      `At ${tag},,,Road 3,@SUM(A1),NP,,f3-${tag}@example.com,,NP`,
+      `Fine ${tag},,,Road 4,Kathmandu,NP,"-cmd|' /C calc'!A0",f4-${tag}@example.com,+9779800000000,NP`,
     ].join('\n');
     const preview = detailOf((await upload('customers', csv)).body);
     expect(preview.rows.map((r) => r.status)).toEqual(['error', 'error', 'error', 'error']);
     expect(preview.rows.flatMap((r) => r.issues.map((i) => i.column))).toEqual([
       'legal_name',
-      'address_line1',
+      'address_line',
       'address_city',
       'contact_name',
     ]);
@@ -485,15 +519,16 @@ describe('customer import', () => {
     const before = await batches();
     const unterminated = await upload(
       'customers',
-      `${CUSTOMER_HEADER}\n"never closed,,,x,y,NP,,a@b.co,\n`,
+      `${CUSTOMER_HEADER}\n"never closed,,,x,y,NP,,a@b.co,,NP\n`,
     );
     expect(unterminated.status).toBe(400);
     expect(errorOf(unterminated.body).message).toMatch(/never closed/);
     expect((await upload('customers', 'legal_name,surprise\nA,B\n')).status).toBe(400);
     expect((await upload('customers', `${CUSTOMER_HEADER}\n`)).status).toBe(400);
-    const rows = Array.from({ length: 2001 }, (_, i) => `N${i},,,R,C,NP,,n${i}@example.com,`).join(
-      '\n',
-    );
+    const rows = Array.from(
+      { length: 2001 },
+      (_, i) => `N${i},,,R,C,NP,,n${i}@example.com,,NP`,
+    ).join('\n');
     const tooMany = await upload('customers', `${CUSTOMER_HEADER}\n${rows}\n`);
     expect(tooMany.status).toBe(400);
     expect(errorOf(tooMany.body).message).toMatch(/more than 2000/);
@@ -504,11 +539,14 @@ describe('customer import', () => {
       .set('Content-Type', 'application/json')
       .send({ csv: 'x' });
     expect(wrongType.status).toBe(415);
-    const nul = await upload('customers', `${CUSTOMER_HEADER}\n"Acme\u0000",,,R,C,NP,,a@b.co,\n`);
+    const nul = await upload(
+      'customers',
+      `${CUSTOMER_HEADER}\n"Acme\u0000",,,R,C,NP,,a@b.co,,NP\n`,
+    );
     expect(nul.status).toBe(400);
     const latin1 = await upload(
       'customers',
-      Buffer.from(`${CUSTOMER_HEADER}\nCaf\xE9,,,R,C,NP,,a@b.co,\n`, 'latin1'),
+      Buffer.from(`${CUSTOMER_HEADER}\nCaf\xE9,,,R,C,NP,,a@b.co,,NP\n`, 'latin1'),
     );
     expect(latin1.status).toBe(400);
     expect(errorOf(latin1.body).message).toMatch(/UTF-8/);
@@ -525,11 +563,11 @@ describe('vendor import', () => {
     const pan2 = tag.replace(/\D/g, '8').padEnd(9, '8').slice(0, 9);
     const csv = [
       VENDOR_HEADER,
-      `Everest ${tag},company,${pan1},yes,NP,Ram Karki,ram-${tag}@example.com,+9779801234567`,
-      `Overseas ${tag},foreign,,no,IN,,,`,
-      `Missing Pan ${tag},company,,yes,NP,,,`,
-      `Dup In File ${tag},company,${pan1},no,NP,,,`,
-      `Solo ${tag},individual,${pan2},,,,,`,
+      `Everest ${tag},company,${pan1},yes,NP,Balaju Industrial Area,Kathmandu,Ram Karki,ram-${tag}@example.com,+977 980-1234567`,
+      `Overseas ${tag},foreign,,no,IN,,,,,`,
+      `Missing Pan ${tag},company,,yes,NP,,,,,`,
+      `Dup In File ${tag},company,${pan1},no,NP,,,,,`,
+      `Solo ${tag},individual,${pan2},,,,,,,`,
     ].join('\n');
     const before = await vendorsOf(a);
     const preview = detailOf((await upload('vendors', csv)).body);
@@ -584,6 +622,32 @@ describe('vendor import', () => {
       [`Solo ${tag}`, 'draft', 'individual', false, 'NP', '1', '0'],
     ]);
     expect(rows.every((r) => r.owner_user_id === usersA.founder)).toBe(true);
+    // FX9: the address and the contact phone; the contact is placed in the vendor's country.
+    const everest = await ownerPool.query<{
+      address_line: string | null;
+      address_city: string | null;
+      contact_country: string;
+      country: string;
+      e164: string;
+      is_primary: boolean;
+    }>(
+      `SELECT v.address_line, v.address_city, k.country AS contact_country, p.country, p.e164, p.is_primary
+         FROM app.vendors v
+         JOIN app.vendor_contacts k ON k.vendor_id = v.id
+         JOIN app.vendor_contact_phones p ON p.contact_id = k.id
+        WHERE v.tenant_id = $1 AND v.legal_name = $2`,
+      [a.tenantId, `Everest ${tag}`],
+    );
+    expect(everest.rows).toEqual([
+      {
+        address_line: 'Balaju Industrial Area',
+        address_city: 'Kathmandu',
+        contact_country: 'NP',
+        country: 'NP',
+        e164: '+9779801234567',
+        is_primary: true,
+      },
+    ]);
 
     // The same file again: nothing is created.
     const again = detailOf((await upload('vendors', csv)).body);
@@ -596,12 +660,12 @@ describe('vendor import', () => {
     const tag = uniq();
     const pan1 = tag.replace(/\D/g, '2').padEnd(9, '2').slice(0, 9);
     const pan2 = tag.replace(/\D/g, '1').padEnd(9, '1').slice(0, 9);
-    const first = `${VENDOR_HEADER}\nSame Name ${tag} Pvt. Ltd.,company,${pan1},no,NP,,,\n`;
+    const first = `${VENDOR_HEADER}\nSame Name ${tag} Pvt. Ltd.,company,${pan1},no,NP,,,,,\n`;
     await request(baseUrl)
       .post(`/v1/imports/${detailOf((await upload('vendors', first)).body).id}/commit`)
       .expect(200);
     // A different PAN, the same company name: created (keyed on PAN) and noted in the audit trail.
-    const second = `${VENDOR_HEADER}\nSAME NAME ${tag} Private Limited,company,${pan2},no,NP,,,\n`;
+    const second = `${VENDOR_HEADER}\nSAME NAME ${tag} Private Limited,company,${pan2},no,NP,,,,,\n`;
     const batch = detailOf((await upload('vendors', second)).body);
     expect(batch.validCount).toBe(1);
     const done = detailOf((await request(baseUrl).post(`/v1/imports/${batch.id}/commit`)).body);
@@ -617,7 +681,7 @@ describe('vendor import', () => {
   it("does not match another tenant's vendor PAN", async () => {
     const tag = uniq();
     const pan = tag.replace(/\D/g, '6').padEnd(9, '6').slice(0, 9);
-    const csv = `${VENDOR_HEADER}\nPan Twin ${tag},company,${pan},no,NP,,,\n`;
+    const csv = `${VENDOR_HEADER}\nPan Twin ${tag},company,${pan},no,NP,,,,,\n`;
     as('founder', b.organizationId, b);
     await request(baseUrl)
       .post(`/v1/imports/${detailOf((await upload('vendors', csv)).body).id}/commit`)
@@ -630,12 +694,49 @@ describe('vendor import', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------------- the template
+
+describe('the downloaded template (FX9)', () => {
+  it('imports both example rows as the download writes them (phones behind an apostrophe) with no issues', async () => {
+    for (const [kind, path, phones] of [
+      ['customer', 'customers', 'contact_phones'],
+      ['vendor', 'vendors', 'contact_phone'],
+    ] as const) {
+      const columns: readonly string[] = PARTY_IMPORT_COLUMNS[kind];
+      const row = PARTY_IMPORT_EXAMPLE[kind].map((cell, i) =>
+        columns[i] === phones ? `'${cell}` : cell,
+      );
+      const csv = `${columns.join(',')}\r\n${row.map((c) => `"${c.replaceAll('"', '""')}"`).join(',')}\r\n`;
+      const preview = detailOf((await upload(path, csv)).body);
+      expect(
+        preview.rows.map((r) => [r.status, r.issues]),
+        kind,
+      ).toEqual([['valid', []]]);
+      const done = detailOf((await request(baseUrl).post(`/v1/imports/${preview.id}/commit`)).body);
+      expect(done.createdCount, kind).toBe(1);
+    }
+    const { rows } = await ownerPool.query<{ e164: string; is_primary: boolean }>(
+      `SELECT p.e164, p.is_primary
+         FROM app.customers c
+         JOIN app.customer_contacts k ON k.customer_id = c.id
+         JOIN app.customer_contact_phones p ON p.contact_id = k.id
+        WHERE c.tenant_id = $1 AND c.legal_name = $2
+        ORDER BY p.sort_order`,
+      [a.tenantId, PARTY_IMPORT_EXAMPLE.customer[0]],
+    );
+    expect(rows).toEqual([
+      { e164: '+9779812345678', is_primary: true },
+      { e164: '+97714123456', is_primary: false },
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------- authz and record
 
 describe('who may import, and the record', () => {
   it('needs customer.write for customers and vendor.write for vendors (sales and procurement hold one each)', async () => {
-    const csvC = `${CUSTOMER_HEADER}\nAuthz ${uniq()},,,R,C,NP,,a@example.com,\n`;
-    const csvV = `${VENDOR_HEADER}\nAuthz ${uniq()},company,${uniq().replace(/\D/g, '4').padEnd(9, '4').slice(0, 9)},no,NP,,,\n`;
+    const csvC = `${CUSTOMER_HEADER}\nAuthz ${uniq()},,,R,C,NP,,a@example.com,,NP\n`;
+    const csvV = `${VENDOR_HEADER}\nAuthz ${uniq()},company,${uniq().replace(/\D/g, '4').padEnd(9, '4').slice(0, 9)},no,NP,,,,,\n`;
     as('procurement');
     expect((await upload('customers', csvC)).status).toBe(403);
     const v = await upload('vendors', csvV);
@@ -666,8 +767,12 @@ describe('who may import, and the record', () => {
 
   it('keeps a committed batch final in the database', async () => {
     const preview = detailOf(
-      (await upload('customers', `${CUSTOMER_HEADER}\nFinal ${uniq()},,,R,C,NP,,f@example.com,\n`))
-        .body,
+      (
+        await upload(
+          'customers',
+          `${CUSTOMER_HEADER}\nFinal ${uniq()},,,R,C,NP,,f@example.com,,NP\n`,
+        )
+      ).body,
     );
     await request(baseUrl).post(`/v1/imports/${preview.id}/commit`).expect(200);
     await expect(
@@ -698,7 +803,7 @@ describe('an unused preview expires after 7 days (FU11)', () => {
         await upload(
           'customers',
           `${CUSTOMER_HEADER}
-${name} ${uniq()},,,R,C,NP,,e@example.com,
+${name} ${uniq()},,,R,C,NP,,e@example.com,,NP
 `,
         )
       ).body,
