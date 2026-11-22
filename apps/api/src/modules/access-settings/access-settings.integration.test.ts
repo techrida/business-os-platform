@@ -868,7 +868,9 @@ describe('Access Settings level rules match the run-time grants (real Postgres)'
         await liveScope(env, ['sales'], 'head', 'crm.lead.read'),
       );
     }
-  });
+    // Every role x level x permission x four switch states against a live database: it ran past the 5 s default
+    // under load (R5 EF2), so it has its own budget.
+  }, 180_000);
 });
 
 describe('Access save re-checks the caller against the user mirror (U20b-Q3, real Postgres)', () => {
