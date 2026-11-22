@@ -106,6 +106,16 @@ describe('quotation entry boxes', () => {
     expect(days.box.value).toBe('145');
     expect(days.posted.value).toBe('145');
   });
+
+  it('stops a unit price at 14 whole digits, as the quotation contract does', async () => {
+    await mountQuote();
+    const price = numberField('lines.0.unitPrice');
+    await typeKeys(price.box, '123456789012345');
+    expect(price.posted.value).toBe('12345678901234');
+    const status = price.box.parentElement!.parentElement!.querySelector('[role="status"]');
+    expect(status?.textContent).toMatch(/14/);
+    expect(status?.textContent).not.toMatch(/decimal/i);
+  });
 });
 
 describe('score box', () => {

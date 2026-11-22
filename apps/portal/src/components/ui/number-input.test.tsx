@@ -310,6 +310,16 @@ describe('refused keystrokes', () => {
     expect(status()).toBe(NO_SPACES);
   });
 
+  it('refuses a digit past a smaller intDigits and names the digit limit', async () => {
+    const { box, hidden, status } = await mount(
+      <MoneyInput aria-label="Amount" name="amount" currency="NPR" intDigits={14} />,
+    );
+    await typeKeys(box, '123456789012345');
+    expect(hidden()).toBe('12345678901234');
+    expect(status()).toMatch(/14/);
+    expect(status()).not.toMatch(/decimal/i);
+  });
+
   it('refuses a third decimal and letters', async () => {
     const { box, hidden, status } = await mount(
       <MoneyInput aria-label="Amount" name="amount" currency="NPR" />,

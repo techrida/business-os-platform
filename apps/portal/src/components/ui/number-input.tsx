@@ -828,6 +828,8 @@ export interface MoneyInputProps extends NumberInputCommonProps {
   currency: Currency;
   /** Shows the amount in words under the box ("Twenty lakh ..."), read through aria-describedby. */
   showWords?: boolean | undefined;
+  /** Fewer whole digits than the money default of 16, where the field's contract takes fewer. */
+  intDigits?: number | undefined;
   /** Overrides the selling company's grouping for this currency. */
   numberSystem?: NumberSystem | undefined;
   /** The selling company's grouping per currency, from `PortalDisplay.numberSystems`. */
@@ -844,6 +846,7 @@ export interface MoneyInputProps extends NumberInputCommonProps {
 export function MoneyInput({
   currency,
   showWords,
+  intDigits,
   numberSystem,
   numberSystems: systems = DEFAULT_NUMBER_SYSTEMS,
   ...rest
@@ -853,7 +856,7 @@ export function MoneyInput({
   return (
     <NumberBox
       {...rest}
-      limits={MONEY_LIMITS}
+      limits={intDigits === undefined ? MONEY_LIMITS : { ...MONEY_LIMITS, intDigits }}
       grouping={system}
       prefix={currency}
       padTo={2}
