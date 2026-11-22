@@ -1790,6 +1790,109 @@ export const PORTAL_VENDOR_FLOWS = [
   },
 ];
 
+export const PROC_FLOWS = [
+  {
+    area: 'procurement',
+    flow: 'date-picker-incomplete',
+    persona: 'Dev Procurement',
+    async steps(c, S, step) {
+      const p = () => c.page();
+      await step('1-as', 'Sign in as Dev Procurement', async (c) => {
+        await c.as('Dev Procurement');
+      });
+      await step('2-new-pr', 'Purchase requests > New purchase request opens', async (c) => {
+        await goNav(c, S, 'Purchase requests', '/procurement/requests');
+        await c.s.click(p().getByRole('link', { name: /New purchase request/ }).first(), 'New purchase request');
+        await c.see(c.btn('Save draft'), 'button Save draft');
+        c.ok((await p().locator('input[type=date]').evaluateAll((es) => es.filter((e) => e.tabIndex >= 0).length)) === 0, 'the Needed-by date is a picker (no focusable native date input)');
+        await noSideScroll(c, '/procurement/requests/new');
+      });
+      await step('3-finish-the-date', 'FX6: a half-cleared Needed-by date is not silently kept and nothing is saved', async (c) => {
+        const day = p().getByRole('spinbutton', { name: /day/i }).first();
+        const month = p().getByRole('spinbutton', { name: /month/i }).first();
+        const year = p().getByRole('spinbutton', { name: /year/i }).first();
+        for (const [seg, text] of [[day, '15'], [month, '12'], [year, '2027']]) {
+          await seg.click();
+          await p().keyboard.type(text, { delay: 80 });
+        }
+        c.controls.push(`segments before clearing: ${await day.innerText()}/${await month.innerText()}/${await year.innerText()}`);
+        await day.click();
+        await p().keyboard.press('Backspace');
+        await p().keyboard.press('Backspace');
+        c.controls.push(`segments after clearing the day: [${await day.innerText()}]/[${await month.innerText()}]/[${await year.innerText()}]`);
+        await c.s.fill(p().getByRole('textbox', { name: 'Description' }), 'FQA2 date check');
+        await c.s.click(c.btn('Save draft'), 'Save draft');
+        await p().waitForTimeout(1500);
+        c.controls.push(`segments after the refused save: [${await day.innerText()}]/[${await month.innerText()}]/[${await year.innerText()}]; page says: ${(await p().locator('main').innerText()).split('\n').filter((l) => /date|needed/i.test(l)).slice(0, 4).join(' | ')}`);
+        c.ok(await p().getByText(/Choose the date it is needed by/).first().isVisible(), 'a message under Needed by says to choose the date');
+        c.ok(new URL(p().url()).pathname === '/procurement/requests/new', 'nothing was saved');
+      });
+      await step(
+        '4-finish-the-date-message',
+        'FX6 guide: the red message under the picker reads "Finish the date"',
+        async (c) => {
+          await c.see(p().getByText(/Finish the date/).first(), 'message "Finish the date"', 5000);
+        },
+        { soft: true },
+      );
+    },
+  },
+];
+
+export const ACCESS_FLOWS = [
+  {
+    area: 'users',
+    flow: 'access-grant-edit-restore',
+    persona: 'Dev Founder',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const trigger = () => p().getByRole('button', { name: 'Accountant can see payables' });
+      const change = async (to) => {
+        await c.s.click(p().getByRole('button', { name: 'Edit Payables' }), 'Edit Payables');
+        await c.s.choose(trigger(), to);
+        await c.s.click(p().getByRole('button', { name: 'Review changes' }), 'Review changes');
+        const d = p().getByRole('dialog');
+        await c.see(d, 'the review dialog');
+        await d.getByText(/Accountant/).first().waitFor({ state: 'visible', timeout: 20000 });
+        c.controls.push(`review: ${(await d.innerText()).replace(/\s+/g, ' ').slice(0, 160)}`);
+        const save = d.getByRole('button', { name: 'Save changes', exact: true });
+        const understand = d.getByRole('checkbox', { name: /I understand/ });
+        if (await understand.count()) await understand.check();
+        await c.s.click(save, 'Save in the review');
+        await d.waitFor({ state: 'hidden', timeout: 60000 });
+      };
+      await step('1-as', 'Sign in as Dev Founder', async (c) => {
+        await c.as('Dev Founder');
+      });
+      await step('2-open', 'Settings > Access shows the areas with an Edit button each', async (c) => {
+        await c.open('/settings/access');
+        await c.see(p().getByRole('button', { name: 'Edit Payables' }), 'button Edit Payables');
+        await noSideScroll(c, '/settings/access');
+      });
+      await step('3-narrow', 'Narrow the Accountant to "Their own" payables, review and save', async (c) => {
+        S.accessChanged = true;
+        ledger({ kind: 'access grant: Accountant can see payables set to Their own (restored in step 5)', path: '/settings/access', size: S.size });
+        await change('Their own');
+      });
+      await step('4-last-changed', 'After a change, the page shows the "Last changed" line with View history (r4d 5.1)', async (c) => {
+        await p().reload({ waitUntil: 'domcontentloaded' });
+        await c.see(p().getByText(/Last changed/).first(), 'the "Last changed" line', 30000);
+        await c.see(p().getByRole('link', { name: /View history/ }).first(), 'link View history');
+      });
+      await step('5-restore', 'Restore: the Accountant sees Everything in payables again, and the editor reads it back', async (c) => {
+        await change('Everything');
+        S.accessChanged = false;
+        await p().reload({ waitUntil: 'domcontentloaded' });
+        await c.s.click(p().getByRole('button', { name: 'Edit Payables' }), 'Edit Payables');
+        const t = (await trigger().innerText()).trim();
+        c.ok(/Everything/.test(t), `Accountant payables reads Everything after the restore (${t})`);
+        await p().getByRole('button', { name: 'Discard' }).click().catch(() => {});
+      });
+    },
+  },
+];
+
 export const FLOWS = [
   {
     area: 'payments',
@@ -2019,5 +2122,7 @@ export const FLOWS = [
   ...IMPORT_FLOWS,
   ...PASTE_FLOWS,
   ...PDF_FLOWS,
+  ...PROC_FLOWS,
+  ...ACCESS_FLOWS,
   ...PORTAL_VENDOR_FLOWS,
 ];
