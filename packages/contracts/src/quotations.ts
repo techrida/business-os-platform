@@ -97,7 +97,6 @@ export const QUOTATION_ACTIONS = [
   'send',
   'accept',
   'customer_reject',
-  'cascade_reject',
   'expire',
   'revise',
   'cancel',
@@ -126,8 +125,8 @@ function edge(
 
 /**
  * The version state machine of A2 section 2.2. Approval steps are not states: a Submitted version
- * stays Submitted while the kernel request runs (A2 C3). `cascade_reject` was the original Lost-opportunity
- * cascade for an Approved or Sent version; nothing runs it, and the Lost cascade uses `cancel_on_lost` (R5 FU12).
+ * stays Submitted while the kernel request runs (A2 C3). The Lost-opportunity cascade uses `cancel_on_lost`
+ * (Cancelled, Kuu 2026-11-22, R5 FU12); the unused `cascade_reject` edges were removed (R5 EF2).
  * `cancel` ends a quotation that has not been approved yet (Kuu, F1-Q27: Cancel only, no
  * Recall): a Draft, a Returned one, or a Submitted one, whose open approval request is cancelled with it.
  */
@@ -140,8 +139,6 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('send', 'approved', 'sent'),
   edge('accept', 'sent', 'accepted'),
   edge('customer_reject', 'sent', 'rejected', true),
-  edge('cascade_reject', 'approved', 'rejected', true, 'system'),
-  edge('cascade_reject', 'sent', 'rejected', true, 'system'),
   edge('expire', 'approved', 'expired', false, 'system'),
   edge('expire', 'sent', 'expired', false, 'system'),
   edge('revise', 'approved', 'superseded', true),

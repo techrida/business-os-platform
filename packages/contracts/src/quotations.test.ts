@@ -11,6 +11,7 @@ import {
   PaymentMilestoneSchema,
   PaymentTermSchema,
   PreviewResultSchema,
+  QUOTATION_ACTIONS,
   QUOTATION_REVISION_RULES,
   QUOTATION_STATUSES,
   QUOTATION_TRANSITIONS,
@@ -145,7 +146,6 @@ describe('quotation statuses and the transition table', () => {
         'approved>cancelled',
         'approved>expired',
         'approved>superseded',
-        'approved>rejected',
         'sent>accepted',
         'sent>rejected',
         'sent>cancelled',
@@ -200,6 +200,16 @@ describe('quotation statuses and the transition table', () => {
     // A user's Cancel button is unchanged: it never reaches an Approved or Sent version.
     expect(canCancelQuotation('sent')).toBe(false);
     expect(canCancelQuotation('approved')).toBe(false);
+  });
+
+  it('has no cascade_reject: a Lost opportunity cancels an Approved or Sent version (R5 EF2)', () => {
+    // Fails on the old code: the unused cascade_reject action and its two edges to Rejected were still there.
+    expect([...QUOTATION_ACTIONS] as string[]).not.toContain('cascade_reject');
+    expect(QUOTATION_TRANSITIONS.map((t) => t.action as string)).not.toContain('cascade_reject');
+    const lost = QUOTATION_TRANSITIONS.filter((t) => t.action === 'cancel_on_lost');
+    for (const from of ['approved', 'sent'] as const) {
+      expect(lost.find((t) => t.from === from)?.to, from).toBe('cancelled');
+    }
   });
 
   it('lets only the system expire a version', () => {
