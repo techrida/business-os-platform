@@ -601,7 +601,8 @@ export const CreditOverrideBodySchema = z.strictObject({
   reason: text(500),
   /**
    * The deal's pending accepted quotation version the person saw (`CreditHoldDto.pendingQuotationVersionId`). The
-   * API refuses the override (409) if the deal's pending version is another one by then (R5 FU10).
+   * API refuses it (404) when the version is not one of this deal's, and (409) when it is not accepted or already has a
+   * confirmed order (R5 FU10).
    */
   quotationVersionId: z.guid(),
   /**
@@ -624,7 +625,7 @@ export type CreditOverrideBody = z.infer<typeof CreditOverrideBodySchema>;
  * `exposureWithOrder = exposure + uninvoiced + orderValue`; never held without a limit. `pendingQuotationVersionId`
  * is that accepted quotation version (null when none). The override, once given for a quotation version and an
  * order value (`override.quotationVersionId`, `override.orderValue`), lets that version only become a sales order
- * as long as the order is not worth more than that (R5 FU10); `overrideCovers` says whether it covers the pending
+ * while the order is worth exactly that (R5 FU10); `overrideCovers` says whether it covers the pending
  * version and `orderValue` now.
  */
 export const CreditHoldDtoSchema = z.object({

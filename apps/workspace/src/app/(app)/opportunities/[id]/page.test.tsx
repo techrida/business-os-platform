@@ -923,6 +923,7 @@ describe('credit hold on the deal (F1-Q20)', () => {
     orderValue: '0.00',
     exposureWithOrder: '512345.50',
     held: true,
+    pendingQuotationVersionId: '4a8c3f0e-6b1d-4e2a-9c57-1d3e5f7a9b02',
     override: null,
     overrideCovers: false,
   });

@@ -212,7 +212,7 @@ export class OpportunitiesService {
         // given and used, so it reads as overridden.
         overridden:
           row.creditOverrideAt !== null &&
-          (ordered ||
+          ((ordered && credit.pendingQuotationVersionId === null) ||
             overrideCovers(
               {
                 versionId: row.creditOverrideQuotationVersionId,
