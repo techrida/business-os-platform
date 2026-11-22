@@ -72,12 +72,25 @@ export function decideStatusReconcile(input: {
   row: UserRow | null;
   live: ZitadelUser | null | undefined;
   failedOpening: { lock: boolean } | null;
+  /**
+   * Set when this request's closing call (lock or deactivate) went through in ZITADEL. If ZITADEL cannot be read now,
+   * that call counts as the live state, so the row is closed too; an admin lock also replaces a timed lock a sync
+   * recorded for it (a timed lock would be lifted when its window ends).
+   */
+  closingApplied?: { lock: boolean } | null;
 }): StatusDecision {
   const none: StatusDecision = { closeRow: null, closeZitadel: null, differed: null };
-  const { row, live, failedOpening } = input;
+  const { row, failedOpening } = input;
+  const closingApplied = input.closingApplied ?? null;
   if (!row) return none;
+  const live =
+    input.live === undefined && closingApplied !== null
+      ? ({ status: 'inactive', locked: closingApplied.lock } as unknown as ZitadelUser)
+      : input.live;
   const rowClosed = isRowShutOut(row);
   const liveState = liveStateOf(live);
+  const timedLockToUpgrade =
+    closingApplied?.lock === true && rowClosed && (row.lockReason ?? null) !== null && row.lockReason !== 'admin';
   if (!rowClosed && liveState !== 'closed' && failedOpening === null) return none;
 
   // A lock (admin or timed) is held as LOCKED in ZITADEL; anything else closed is a deactivation.
@@ -86,7 +99,7 @@ export function decideStatusReconcile(input: {
     : liveState === 'closed'
       ? live?.locked === true
       : (failedOpening?.lock ?? false);
-  const closeRow = rowClosed ? null : { lock: locked ? adminLock() : null };
+  const closeRow = rowClosed && !timedLockToUpgrade ? null : { lock: locked || timedLockToUpgrade ? adminLock() : null };
   const closeZitadel = liveState === 'open' || liveState === 'unknown' ? (locked ? 'lock' : 'deactivate') : null;
   if (closeRow === null && closeZitadel === null) return none;
   return {
@@ -154,6 +167,7 @@ export class IdentityReconciler {
     actor: Actor,
     target: UserRow,
     failedOpening: { lock: boolean } | null,
+    closingApplied: { lock: boolean } | null = null,
   ): Promise<void> {
     try {
       const live = await this.zitadel.getUser(target.zitadelUserId).catch(() => undefined);
@@ -164,7 +178,7 @@ export class IdentityReconciler {
         async (tx) => {
           await lockAccessRevision(tx, scope.tenantId);
           const row = await this.store.findById(tx, scope, target.id, true);
-          const decided = decideStatusReconcile({ row, live, failedOpening });
+          const decided = decideStatusReconcile({ row, live, failedOpening, closingApplied });
           if (row && decided.closeRow !== null) {
             await this.store.updateUser(tx, row.id, {
               email: row.email,

@@ -204,12 +204,10 @@ export class UserStatusService {
   ): Promise<void> {
     // A deactivate or lock may take a Founder away: one at a time per tenant, so the last-Founder guard of (A) still
     // holds when ZITADEL has been changed and (C) writes (see the header).
-    if (action === 'deactivate' || action === 'lock') {
-      return withFounderRemovalLease(this.store, scope.tenantId, () =>
-        this.run(scope, actor, userId, action, assertAccess),
-      );
-    }
-    return this.run(scope, actor, userId, action, assertAccess);
+    // Unlock and reactivate take it too: a reconcile that closes a person again must not interleave with a removal.
+    return withFounderRemovalLease(this.store, scope.tenantId, () =>
+      this.run(scope, actor, userId, action, assertAccess),
+    );
   }
 
   private async run(
@@ -301,6 +299,7 @@ export class UserStatusService {
         actor,
         target,
         plan.removesAccess ? null : { lock: (target.lockReason ?? null) !== null },
+        plan.removesAccess ? { lock: (plan.lock ?? null) !== null } : null,
       );
       throw error;
     }
@@ -337,7 +336,13 @@ export class UserStatusService {
       try {
         await this.identityCall(() => step(this.zitadel, target.zitadelUserId));
       } catch (error) {
-        if (index > 0) await this.reconciler.reconcileStatus(scope, actor, target, null);
+        // A plan that opened the person first (unlock, then deactivate) may have changed ZITADEL even when its first
+        // call failed (a timeout that was applied); a sync may already have copied that. Close them whatever the row says.
+        if (index > 0 || plan.steps.length > 1) {
+          await this.reconciler.reconcileStatus(scope, actor, target, {
+            lock: (target.lockReason ?? null) !== null,
+          });
+        }
         throw error;
       }
     }

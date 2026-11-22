@@ -414,7 +414,7 @@ export class UserMirror {
    * (B) ZITADEL setGrants, (C) re-checked versioned write tx. On failure or conflict it never writes a stored snapshot
    * back: it reads ZITADEL and the committed roles as they are now and keeps only roles both still hold that this
    * request did not add (IdentityReconciler.reconcileRoles), so a role another admin just revoked is never granted
-   * again. A role set without founder runs under the tenant's Founder-removal lease (see user-status.ts). The caller
+   * again. A role set runs under the tenant's Founder-removal lease (see user-status.ts). The caller
    * invalidates authz after this resolves.
    */
   async setRoles(
@@ -424,12 +424,9 @@ export class UserMirror {
     roles: RoleKey[],
     assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<void> {
-    if (!roles.includes('founder')) {
-      return withFounderRemovalLease(this.store, scope.tenantId, () =>
-        this.setRolesOnce(scope, actor, userId, roles, assertAccess),
-      );
-    }
-    return this.setRolesOnce(scope, actor, userId, roles, assertAccess);
+    return withFounderRemovalLease(this.store, scope.tenantId, () =>
+      this.setRolesOnce(scope, actor, userId, roles, assertAccess),
+    );
   }
 
   private async setRolesOnce(
