@@ -775,6 +775,22 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('keeps draft_of_other_revision and its message on a 409, and only on a 409 (R5 FX5)', () => {
+    const message = 'This quotation already has a draft sales order of another revision';
+    const out = filter(new ConflictException({ code: 'draft_of_other_revision', message }));
+
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'draft_of_other_revision',
+      message,
+    });
+    const wrongStatus = filter(
+      new UnprocessableEntityException({ code: 'draft_of_other_revision', message: 'm' }),
+    );
+    expect(wrongStatus.status).toBe(422);
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
+  });
+
   it.each(['promise_open', 'invoice_not_open'])(
     'keeps the promise to pay conflict code %s and its message on a 409, and only on a 409',
     (code) => {
