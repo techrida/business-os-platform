@@ -23,6 +23,8 @@ import {
   SETTINGS,
   SOD_PERMISSIONS,
   StepSpecSchema,
+  WORKFLOW_AMOUNT_ERROR,
+  WORKFLOW_AMOUNT_NEGATIVE_ERROR,
   WorkflowSpecSchema,
   WorkflowWriteSpecSchema,
 } from './index.js';
@@ -85,6 +87,43 @@ describe('workflow amount threshold writes', () => {
     };
     expect(WorkflowSpecSchema.safeParse(spec).success).toBe(true);
     expect(WorkflowWriteSpecSchema.safeParse(spec).success).toBe(value === '1.01');
+  });
+
+  const thresholdSpec = (value: string | string[], op = 'gte') => ({
+    documentType: 'test_memo',
+    steps: [],
+    rules: [
+      {
+        id: 'escalate',
+        when: { any: [{ field: 'amountNpr', op, value }] },
+        add: { id: 'finance', kind: 'role', role: 'finance', reason: 'Review' },
+        reason: 'Review',
+      },
+    ],
+  });
+  const messages = (value: string | string[], op?: string) => {
+    const parsed = WorkflowWriteSpecSchema.safeParse(thresholdSpec(value, op));
+    return parsed.success ? [] : parsed.error.issues.map((i) => i.message);
+  };
+
+  it.each(['-5', '-0.01', '-0', ' -100'])('refuses the signed threshold %j', (value) => {
+    expect(messages(value)).toEqual([WORKFLOW_AMOUNT_NEGATIVE_ERROR]);
+  });
+
+  it('refuses a negative inside an in-list and names the sign, not the decimals', () => {
+    expect(messages(['100', '-1'], 'in')).toEqual([WORKFLOW_AMOUNT_NEGATIVE_ERROR]);
+  });
+
+  it.each(['0', '0.00', '100000', '1000000.00'])('accepts the unsigned threshold %s', (value) => {
+    expect(messages(value)).toEqual([]);
+  });
+
+  it('keeps the decimals message for a stored value with three decimals', () => {
+    expect(messages('100000.000')).toEqual([WORKFLOW_AMOUNT_ERROR]);
+  });
+
+  it('still reads a published spec that holds a negative threshold', () => {
+    expect(WorkflowSpecSchema.safeParse(thresholdSpec('-5')).success).toBe(true);
   });
 });
 

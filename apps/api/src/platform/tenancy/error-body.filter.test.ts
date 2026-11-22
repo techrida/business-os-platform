@@ -414,6 +414,8 @@ describe('ErrorBodyFilter', () => {
     'serial_duplicate',
     'PO_AMENDMENT_INVALID',
     'DUE_DATE_BEFORE_ISSUE',
+    'RECEIPT_DATE_IN_FUTURE',
+    'BILL_DATE_IN_FUTURE',
   ])(
     'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4, invoice issue), and only on a 422',
     (code) => {

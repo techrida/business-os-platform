@@ -4,7 +4,19 @@
 
 import { getLocalTimeZone, isToday, parseDate, type CalendarDate } from '@internationalized/date';
 import { bsLongOfDay } from '@bos/locale';
-import { useId, useRef, useState } from 'react';
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useInsertionEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
+import { flushSync } from 'react-dom';
 import {
   Button,
   Calendar,
@@ -13,6 +25,7 @@ import {
   CalendarGridBody,
   CalendarGridHeader,
   CalendarHeaderCell,
+  DateFieldStateContext,
   DateInput,
   DatePicker as AriaDatePicker,
   DateSegment,
@@ -43,10 +56,97 @@ function defined<T extends object>(bag: T): { [K in keyof T]: Exclude<T[K], unde
   };
 }
 
+/**
+ * Rendered inside the date field, where React Aria keeps its segment state. While a segment is
+ * cleared, React Aria keeps the last complete date as its value, and posts it; this reports that
+ * case, and the date the field holds, so the picker can post '' instead. `unfinished` is any partly
+ * filled field, including one typed into from empty, which React Aria posts as ''.
+ */
+function CompletenessWatch({
+  onChange,
+}: {
+  onChange: (incomplete: boolean, current: string, unfinished: boolean) => void;
+}) {
+  const state = useContext(DateFieldStateContext);
+  const current = state?.value ? state.value.toString() : '';
+  const editable = state?.segments.filter((segment) => segment.isEditable) ?? [];
+  const someEmpty = editable.some((segment) => segment.isPlaceholder);
+  const incomplete = current !== '' && someEmpty;
+  const unfinished = someEmpty && (current !== '' || editable.some((s) => !s.isPlaceholder));
+  useEffect(
+    () => onChange(incomplete, current, unfinished),
+    [incomplete, current, unfinished, onChange],
+  );
+  return null;
+}
+
+/**
+ * State for the message an `UnfinishedBlocker` shows once it has blocked a submit. The message stays
+ * until the field is finished; `shown` is false whenever the blocker is not mounted.
+ */
+export function useUnfinishedMessage(active: boolean) {
+  const id = useId();
+  const [blocked, setBlocked] = useState(false);
+  if (blocked && !active) setBlocked(false);
+  const onBlocked = useCallback(() => setBlocked(true), []);
+  return { id, shown: blocked && active, onBlocked };
+}
+
+/**
+ * Keeps a native-validated form from submitting a partly typed date, as a native date input does.
+ * Nameless, so it posts nothing. The browser cannot point at a hidden field, so its bubble is
+ * cancelled: the message shows beside the field instead and the empty segment takes the focus.
+ */
+export function UnfinishedBlocker({
+  message,
+  root,
+  disabled,
+  messageId,
+  shown,
+  onBlocked,
+}: {
+  message: string;
+  root: RefObject<HTMLElement | null>;
+  disabled?: boolean | undefined;
+  messageId: string;
+  shown: boolean;
+  onBlocked: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.setCustomValidity(message);
+  }, [message]);
+  return (
+    <>
+      <input
+        ref={ref}
+        type="text"
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        value=""
+        disabled={disabled === true}
+        onChange={() => {}}
+        onInvalid={(event) => {
+          event.preventDefault();
+          // Committed first, so the segment is described by the message when it takes the focus.
+          flushSync(onBlocked);
+          root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
+        }}
+      />
+      {shown ? (
+        <span id={messageId} role="alert" className={styles.unfinished}>
+          {message}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 export interface DatePickerProps {
   /** Id of the field group. `Field` passes its control id here. */
   id?: string | undefined;
-  /** Form field name. A hidden `<input type="date">` carries the ISO `YYYY-MM-DD` value. */
+  /** Form field name. A hidden input carries the ISO `YYYY-MM-DD` value, or '' while the date is incomplete. */
   name?: string | undefined;
   /** Controlled value, `YYYY-MM-DD`, or `''` for empty. */
   value?: string | undefined;
@@ -120,22 +220,67 @@ export function DatePicker({
   const bsId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState(defaultValue ?? '');
+  const [incomplete, setIncomplete] = useState(false);
+  const [unfinished, setUnfinished] = useState(false);
+  // The date React Aria still holds while the field is incomplete. A controlled parent hears '' and
+  // passes '' back; React Aria keeps getting this date, or it would wipe the segments still filled.
+  const [held, setHeld] = useState<string | null>(null);
+  const heldRef = useRef<string | null>(null);
+  // Bumped when a held date is picked again, so React Aria gets a new object and refills the segments.
+  const [refills, setRefills] = useState(0);
+  const hold = useCallback((date: string | null) => {
+    heldRef.current = date;
+    setHeld(date);
+  }, []);
+  const latestOnChange = useRef(onChange);
+  useInsertionEffect(() => {
+    latestOnChange.current = onChange;
+  });
   // React 19 resets a form after every function action, and React Aria then reports the reset as a
   // change to a controlled picker, which would wipe what the user chose. A reset restores the
-  // default of an uncontrolled picker; a controlled parent keeps its own value.
-  const isResetting = useFormReset(rootRef, () => setTyped(defaultValue ?? ''));
-  const chosen = value !== undefined ? value : typed;
+  // default of an uncontrolled picker; a controlled parent keeps its own value. An incomplete
+  // controlled date posted '' and its parent holds ''; dropping the held date shows that, where
+  // React Aria would refill the segments from the held date and post it.
+  const isResetting = useFormReset(rootRef, () => {
+    setTyped(defaultValue ?? '');
+    hold(null);
+  });
+  const watchCompleteness = useCallback(
+    (nowIncomplete: boolean, current: string, nowUnfinished: boolean) => {
+      const was = heldRef.current;
+      hold(nowIncomplete ? current : null);
+      setIncomplete(nowIncomplete);
+      setUnfinished(nowUnfinished);
+      if (nowIncomplete && was === null) latestOnChange.current?.('');
+      // Retyping the date React Aria already holds completes the field without a change event.
+      else if (!nowIncomplete && was !== null) latestOnChange.current?.(current);
+    },
+    [hold],
+  );
+  const chosen = incomplete ? '' : value !== undefined ? value : typed;
+  const fed = value === '' && held !== null ? held : value;
+  // React Aria resets the segments whenever it gets a new date object, so keep one per date.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `refills` forces a new object.
+  const fedDate = useMemo(() => toCalendarDate(fed), [fed, refills]);
   const bs = showBs ? bsLongOfDay(chosen) : null;
+  const unfinishedMessage = useUnfinishedMessage(validation === 'native' && unfinished);
   const describedBy =
-    [aria['aria-describedby'], bs ? bsId : undefined].filter(Boolean).join(' ') || undefined;
+    [
+      aria['aria-describedby'],
+      unfinishedMessage.shown ? unfinishedMessage.id : undefined,
+      bs ? bsId : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
   const contextContainer = usePopoverContainer();
   const container = popoverContainer ?? contextContainer;
-  const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
+  const isInvalid =
+    invalid === true || ariaInvalid === true || ariaInvalid === 'true' || unfinishedMessage.shown;
   const minValue = toCalendarDate(min);
   const maxValue = toCalendarDate(max);
   const optional = defined({
     id,
-    name,
+    name: incomplete ? undefined : name,
     isDisabled: disabled,
     isReadOnly: readOnly,
     isRequired: required,
@@ -143,9 +288,7 @@ export function DatePicker({
     'aria-labelledby': aria['aria-labelledby'],
     'aria-describedby': describedBy,
     'aria-label': aria['aria-label'],
-    ...(value !== undefined
-      ? { value: toCalendarDate(value) }
-      : { defaultValue: toCalendarDate(defaultValue) }),
+    ...(value !== undefined ? { value: fedDate } : { defaultValue: toCalendarDate(defaultValue) }),
   });
 
   return (
@@ -156,6 +299,8 @@ export function DatePicker({
         onChange={(next) => {
           if (isResetting()) return;
           const iso = next ? next.toString() : '';
+          if (heldRef.current !== null) setRefills((n) => n + 1);
+          hold(null);
           setTyped(iso);
           onChange?.(iso);
         }}
@@ -165,7 +310,16 @@ export function DatePicker({
       >
         <Group className={styles.group ?? ''}>
           <DateInput className={styles.input ?? ''}>
-            {(segment) => <DateSegment segment={segment} className={styles.segment ?? ''} />}
+            {(segment) =>
+              segment.type === 'year' ? (
+                <>
+                  <DateSegment segment={segment} className={styles.segment ?? ''} />
+                  <CompletenessWatch onChange={watchCompleteness} />
+                </>
+              ) : (
+                <DateSegment segment={segment} className={styles.segment ?? ''} />
+              )
+            }
           </DateInput>
           <Button className={styles.trigger ?? ''}>
             <svg
@@ -253,6 +407,19 @@ export function DatePicker({
           </Dialog>
         </Popover>
       </AriaDatePicker>
+      {incomplete && name !== undefined ? (
+        <input type="hidden" name={name} value="" disabled={disabled} />
+      ) : null}
+      {validation === 'native' && unfinished ? (
+        <UnfinishedBlocker
+          message="Finish the date"
+          root={rootRef}
+          disabled={disabled}
+          messageId={unfinishedMessage.id}
+          shown={unfinishedMessage.shown}
+          onBlocked={unfinishedMessage.onBlocked}
+        />
+      ) : null}
       {bs ? (
         <span id={bsId} className={styles.bs}>
           {bs}

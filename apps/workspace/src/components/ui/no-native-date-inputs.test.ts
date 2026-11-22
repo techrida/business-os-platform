@@ -30,12 +30,7 @@ function sources(dir: string): string[] {
  */
 const DEFERRED = [
   'apps/portal/src/app/(portal)/payments/_components/payment-form.tsx',
-  'apps/portal/src/app/(vendor)/vendor/bills/new/_components/bill-form.tsx',
-  'apps/portal/src/app/(vendor)/vendor/rfqs/[id]/quote/_components/quote-form.tsx',
   'apps/workspace/src/app/(app)/invoices/_components/invoice-filters.tsx',
-  'apps/workspace/src/app/(app)/procurement/rfqs/_components/decision-forms.tsx',
-  'apps/workspace/src/app/(app)/procurement/rfqs/_components/rfq-form.tsx',
-  'apps/workspace/src/app/(app)/settings/workflows/panels.tsx',
   'apps/workspace/src/components/p2/crm/lead-form.tsx',
 ];
 

@@ -118,7 +118,7 @@ describe('the hidden default VAT rate', () => {
     persona('accountant-live', ['sales'], 'settings.finance.write');
     const html = await render();
     expect(admin.getSetting).not.toHaveBeenCalled();
-    expect(html).not.toContain('Default VAT rate (%)');
+    expect(html).not.toContain('Default VAT rate');
     expect(html).not.toContain('name="v:tax.vat_rate"');
     expect(html).not.toContain('The default VAT rate');
     expect(html).toContain('VAT codes');

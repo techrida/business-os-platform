@@ -1183,6 +1183,25 @@ describe('admin: groups and delegations', () => {
       status: 400,
     });
   });
+
+  it('refuses a negative amount threshold on create and on a new version (FX6)', async () => {
+    const negative = (value: string) => ({
+      ...seedSpec,
+      rules: [{ ...seedSpec.rules[0]!, when: { field: 'amountNpr', op: 'gt', value } }],
+    });
+    const refused = admin.createWorkflow({
+      key: 'negative',
+      name: 'Negative',
+      spec: negative('-5'),
+    });
+    await expect(refused).rejects.toMatchObject({ status: 400 });
+    await expect(refused).rejects.toThrow('Enter an amount of zero or more.');
+    await expect(admin.addVersion('test_memo', negative('-0.01'))).rejects.toMatchObject({
+      status: 400,
+    });
+    const saved = await admin.addVersion('test_memo', negative('0'));
+    expect(saved.version).toBeGreaterThan(1);
+  });
 });
 
 describe('P1 review fixes (FIX-A2)', () => {

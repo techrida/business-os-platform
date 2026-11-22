@@ -20,6 +20,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  approvalActions,
   approvalRequests,
   approvalSteps,
   createCostCenter,
@@ -56,6 +57,7 @@ import {
 } from '../sourcing/sourcing.rules';
 import { SourcingService, type QuotationDto } from '../sourcing/sourcing.service';
 import { PoAmendmentSubject } from './po-amendment.subject';
+import { PO_ISSUE_ACTION, PO_READ_ONLY_ACTIONS } from './po-read-access';
 import {
   PO_VENDOR_CHANGE_DOCUMENT_TYPE,
   PO_VENDOR_CHANGE_WORKFLOW_SPEC,
@@ -102,11 +104,20 @@ const resetRoles = () => {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey } = { userId: '', role: 'procurement' };
+const current: { userId: string; role: RoleKey; grants: Map<Permission, Scope> | null } = {
+  userId: '',
+  role: 'procurement',
+  grants: null,
+};
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.role = role;
 };
+/** `role`'s default grants without any grant that opens purchase orders. */
+const withoutPoGrants = (role: RoleKey) =>
+  new Map(
+    [...grantsOf(role)].filter(([p]) => p !== PO_ISSUE_ACTION && !PO_READ_ONLY_ACTIONS.includes(p)),
+  );
 const principalNow = (): Principal => ({
   userId: current.userId,
   zitadelUserId: `z-${current.userId}`,
@@ -117,7 +128,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -256,6 +267,7 @@ afterAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   resetRoles();
+  current.grants = null;
   as(U.proc, 'procurement');
 });
 
@@ -1338,5 +1350,227 @@ describe('changeVendor refusals', () => {
     expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_REFERENCED' });
     expect(await poRow(id)).toEqual(before);
     expect(await auditRows(id)).toEqual([]);
+  });
+});
+
+describe('vendor change approval route by who requested the order (FU9 follow-up, AD8)', () => {
+  /** A second Management user in the directory, so two distinct Management steps can both be staffed. */
+  async function secondManager(): Promise<string> {
+    const [{ idp_org_id: idpOrgId }] = (
+      await exec(scopeA, sql`SELECT idp_org_id FROM app.users WHERE id = ${U.mgmt}`)
+    ).rows as [{ idp_org_id: string }];
+    const id = (await createStaffUser(appPool, { ...scopeA, idpOrgId, roleKeys: ['management'] }))
+      .userId;
+    roles.management = [U.mgmt, id];
+    return id;
+  }
+  /** A commitment draft whose new vendor quoted 2 x 450,000.00 + 13% VAT = 1,017,000.00 (above NPR 1,000,000). */
+  async function aboveMillion(requester: string) {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '450000.00' }],
+    });
+    await exec(
+      scopeA,
+      sql`UPDATE app.purchase_requests SET requester_user_id = ${requester}
+          WHERE id = ${draft.purchaseRequestId}`,
+    );
+    return { draft, newVendor };
+  }
+
+  it('gives a Founder-requested order two distinct Management steps when a non-Founder buyer swaps the vendor', async () => {
+    const mgmt2 = await secondManager();
+    const { draft, newVendor } = await aboveMillion(U.founder);
+
+    as(U.proc, 'procurement');
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    const requestId = submitted.pendingVendorChange!.approvalRequestId;
+    expect(submitted.pendingVendorChange!.total).toBe('1017000.00');
+    expect(await stepRoles(requestId)).toEqual([
+      'accountant',
+      'finance',
+      'management',
+      'management',
+    ]);
+
+    await approve(U.acct, 'accountant', requestId);
+    await approve(U.fin, 'finance', requestId);
+    await approve(U.mgmt, 'management', requestId);
+    // The Manager who decided the first Management step may not decide the second one.
+    const again = await httpErrorOf(approve(U.mgmt, 'management', requestId));
+    expect(again.getStatus()).toBe(403);
+    expect(again.getResponse()).toMatchObject({
+      code: 'forbidden',
+      reason: 'separation_of_duties',
+    });
+    expect((await poRow(draft.id)).vendorId).toBe(draft.vendorId);
+
+    await approve(mgmt2, 'management', requestId);
+    expect(await service.get(draft.id)).toMatchObject({
+      vendorId: newVendor,
+      approvedTotal: '1017000.00',
+      approvedBand: 'founder',
+      pendingVendorChange: null,
+    });
+  });
+
+  it('gives an order requested by anyone else the Founder step instead', async () => {
+    await secondManager();
+    const { draft, newVendor } = await aboveMillion(U.req);
+
+    as(U.proc, 'procurement');
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    expect(await stepRoles(submitted.pendingVendorChange!.approvalRequestId)).toEqual([
+      'accountant',
+      'finance',
+      'management',
+      'founder',
+    ]);
+  });
+});
+
+describe('a reference added while the vendor change waits (FU9 follow-up)', () => {
+  it('refuses the final approval with 409 PO_REFERENCED and rolls the decision back, leaving the order as it was', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '42000.00' }],
+    });
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    const requestId = submitted.pendingVendorChange!.approvalRequestId;
+    expect(await stepRoles(requestId)).toEqual(['accountant', 'finance']);
+    await approve(U.acct, 'accountant', requestId);
+
+    // While Finance has not decided, a payment request names the draft with its current vendor.
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT id FROM app.vendor_bank_accounts
+          WHERE tenant_id = ${scopeA.tenantId} AND vendor_id = ${oldVendor} AND status = 'active'`,
+    );
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.payment_requests (tenant_id, organization_id, vendor_id, payment_type,
+            purchase_order_id, currency, total_amount, from_bank_account_id, vendor_bank_account_id, bank_last4,
+            requested_by)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${oldVendor}, 'advance', ${draft.id}, 'NPR', 1000,
+                  ${randomUUID()}, ${(rows[0] as { id: string }).id}, '1234', ${U.proc})`,
+    );
+    const before = await poRow(draft.id);
+
+    const refused = await httpErrorOf(approve(U.fin, 'finance', requestId));
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_REFERENCED');
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_REFERENCED' });
+
+    expect(await poRow(draft.id)).toEqual(before);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await auditRows(draft.id)).toEqual([]);
+    const [request] = await read((tx) =>
+      tx.select().from(approvalRequests).where(eq(approvalRequests.id, requestId)),
+    );
+    expect(request!.status).toBe('pending');
+    const financeActions = await read((tx) =>
+      tx
+        .select()
+        .from(approvalActions)
+        .where(
+          sql`${approvalActions.requestId} = ${requestId} AND ${approvalActions.actorUserId} = ${U.fin}`,
+        ),
+    );
+    expect(financeActions).toEqual([]);
+    expect((await service.get(draft.id)).pendingVendorChange).toMatchObject({
+      approvalRequestId: requestId,
+      vendorId: newVendor,
+    });
+  });
+});
+
+describe('an approver of the vendor change opens the order, read-only (FU9 follow-up, R4f Q1 b)', () => {
+  const statusOf = async (call: Promise<unknown>) => (await httpErrorOf(call)).getStatus();
+  /** Reads as `user` holding `role` without any order grant; only an approval can open the order. */
+  const asApprover = (user: string, role: RoleKey) => {
+    as(user, role);
+    current.grants = withoutPoGrants(role);
+  };
+  const hrefOf = async (requestId: string) => (await approvals.get(requestId)).context?.href;
+
+  it('opens it to the approver of the active step and keeps it after they decide; not to later steps, others or another order', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    // 2 x 55,000.00 + 13% VAT = 124,300.00: Accountant, Finance and Management.
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '55000.00' }],
+    });
+    const other = await commitmentDraft(await vendor('approved', { vatRegistered: true }));
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    const requestId = submitted.pendingVendorChange!.approvalRequestId;
+    expect(await stepRoles(requestId)).toEqual(['accountant', 'finance', 'management']);
+    const link = `/procurement/orders/${draft.id}`;
+
+    // The Accountant, active, holds no order grant: the context links the order and the link opens its detail.
+    asApprover(U.acct, 'accountant');
+    expect(await hrefOf(requestId)).toBe(link);
+    expect(await service.get(draft.id)).toMatchObject({ id: draft.id, status: 'draft' });
+    // Nothing broader: the versions are refused and another order is a 404.
+    expect(await statusOf(service.versions(draft.id))).toBe(403);
+    expect(await statusOf(service.get(other.draft.id))).toBe(404);
+    // Finance and Management are not active yet.
+    for (const [user, role] of [
+      [U.fin, 'finance'],
+      [U.mgmt, 'management'],
+    ] as const) {
+      asApprover(user, role);
+      expect(await hrefOf(requestId)).toBeNull();
+      expect(await statusOf(service.get(draft.id))).toBe(404);
+    }
+    // The order's requester, without an order grant, approves nothing.
+    asApprover(U.req, 'operations_officer');
+    expect(await statusOf(service.get(draft.id))).toBe(404);
+
+    current.grants = null;
+    await approve(U.acct, 'accountant', requestId);
+    asApprover(U.acct, 'accountant');
+    expect((await service.get(draft.id)).id).toBe(draft.id);
+    asApprover(U.fin, 'finance');
+    expect(await hrefOf(requestId)).toBe(link);
+    expect((await service.get(draft.id)).id).toBe(draft.id);
+    asApprover(U.mgmt, 'management');
+    expect(await statusOf(service.get(draft.id))).toBe(404);
+
+    current.grants = null;
+    await approve(U.fin, 'finance', requestId);
+    asApprover(U.mgmt, 'management');
+    expect(await hrefOf(requestId)).toBe(link);
+    expect((await service.get(draft.id)).id).toBe(draft.id);
+
+    current.grants = null;
+    await approve(U.mgmt, 'management', requestId);
+    // Once decided, every approver may still look back at the order, now with the new vendor.
+    for (const [user, role] of [
+      [U.acct, 'accountant'],
+      [U.fin, 'finance'],
+      [U.mgmt, 'management'],
+    ] as const) {
+      asApprover(user, role);
+      expect(await service.get(draft.id)).toMatchObject({ id: draft.id, vendorId: newVendor });
+    }
+  });
+
+  it('matches the order id in the snapshot whatever its case', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '42000.00' }],
+    });
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    await exec(
+      scopeA,
+      sql`UPDATE app.approval_requests
+            SET snapshot = jsonb_set(snapshot, '{vendorChange,purchaseOrderId}', to_jsonb(upper(${draft.id}::text)))
+          WHERE id = ${submitted.pendingVendorChange!.approvalRequestId}`,
+    );
+    asApprover(U.acct, 'accountant');
+    expect((await service.get(draft.id)).id).toBe(draft.id);
   });
 });

@@ -37,6 +37,12 @@ describe('422 refusals', () => {
     );
   });
 
+  it('says a future receipt date is refused', () => {
+    expect(receiptFailure(apiError(422, 'RECEIPT_DATE_IN_FUTURE'), 'create').message).toMatch(
+      /receipt date is after today/i,
+    );
+  });
+
   it('falls back to a plain sentence for a 422 nobody named', () => {
     expect(receiptFailure(apiError(422, 'new_code'), 'create').message).toMatch(/did not accept/i);
   });

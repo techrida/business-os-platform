@@ -49,7 +49,7 @@ describe('the bill line number boxes', () => {
   it('posts a pasted grouped unit price as plain digits', async () => {
     mounted = await mount();
     const { container } = mounted;
-    const price = labelled(container, 'Unit price (NPR)');
+    const price = labelled(container, 'Unit price');
     await paste(price, '12,50,000.00');
     expect(price.value).toBe('12,50,000.00');
     expect(posted(container, 'line:0:unitPrice')).toBe('1250000.00');

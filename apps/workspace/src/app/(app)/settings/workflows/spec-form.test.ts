@@ -93,6 +93,32 @@ describe('specToForm and formToSpec', () => {
     });
   });
 
+  it('refuses a negative amount and says it must be zero or more', () => {
+    const converted = specToForm(seedSpec);
+    if (!converted.ok) throw new Error('should convert');
+    converted.form.rules[0]!.value = '-100';
+    expect(formToSpec(converted.form)).toMatchObject({
+      ok: false,
+      issues: ['rules[1].when.value: Enter an amount of zero or more.'],
+    });
+  });
+
+  it('reads a stored 100000.000 as 100000, so the round trip passes the amount check', () => {
+    const spec = WorkflowSpecSchema.parse({
+      ...seedSpec,
+      rules: [
+        { ...seedSpec.rules[0]!, when: { field: 'amountNpr', op: 'gt', value: '100000.000' } },
+      ],
+    });
+    const converted = specToForm(spec);
+    if (!converted.ok) throw new Error('should convert');
+    expect(converted.form.rules[0]!.value).toBe('100000');
+    expect(formToSpec(converted.form)).toMatchObject({
+      ok: true,
+      spec: { rules: [{ when: { value: '100000' } }] },
+    });
+  });
+
   it('refuses to flatten a rule the form cannot show (nested all, other field)', () => {
     const nested = WorkflowSpecSchema.parse({
       ...seedSpec,

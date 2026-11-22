@@ -2114,3 +2114,106 @@ describe('bill line expense accounts (round 5, unit P1)', () => {
     expect(codeOf(e)).toBe('EXPENSE_ACCOUNT_INVALID');
   });
 });
+
+describe('invoice date (FX6 #6): today in Kathmandu at the latest', () => {
+  // Kathmandu is UTC+05:45, so its day turns at 18:15 UTC.
+  const lastSecondOfNov9 = new Date('2026-11-09T18:14:59Z');
+  const firstSecondOfNov10 = new Date('2026-11-09T18:15:00Z');
+  const clocked = (at: Date) =>
+    new VendorBillsService(
+      db,
+      approvals,
+      new AuditService(db),
+      new SettingsService(db),
+      caller,
+      () => at,
+    );
+  const dated = (documentId: string, invoiceDate: string) => ({
+    vendorPartyId: documentVendors.get(documentId)!,
+    kind: 'bill' as const,
+    vendorInvoiceNo: `FUT-${randomUUID().slice(0, 8)}`,
+    invoiceDate,
+    currency: 'NPR' as const,
+    documentId,
+    lines: [
+      { accountId: expenseAccountId, quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
+    ],
+  });
+  const billsOf = (vendorId: string) =>
+    read((tx) => tx.select().from(vendorBills).where(eq(vendorBills.vendorId, vendorId)));
+
+  it('takes today and refuses tomorrow with 422 BILL_DATE_IN_FUTURE, writing nothing', async () => {
+    const svc = clocked(lastSecondOfNov9);
+    const documentId = await doc();
+    const vendorId = documentVendors.get(documentId)!;
+
+    const refused = await httpErrorOf(svc.create(dated(documentId, '2026-11-10'), randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'BILL_DATE_IN_FUTURE',
+      details: { invoiceDate: '2026-11-10', today: '2026-11-09' },
+    });
+    expect(await billsOf(vendorId)).toEqual([]);
+
+    const ok = await svc.create(dated(documentId, '2026-11-09'), randomUUID());
+    expect(ok).toMatchObject({ status: 'draft', invoiceDate: '2026-11-09' });
+  });
+
+  it('follows the Kathmandu day, not the UTC one, at its midnight', async () => {
+    const svc = clocked(firstSecondOfNov10);
+    const documentId = await doc();
+    // 18:15 UTC on 9 November is already 10 November in Kathmandu.
+    expect(await svc.create(dated(documentId, '2026-11-10'), randomUUID())).toMatchObject({
+      invoiceDate: '2026-11-10',
+    });
+    expect(
+      codeOf(await httpErrorOf(svc.create(dated(documentId, '2026-11-11'), randomUUID()))),
+    ).toBe('BILL_DATE_IN_FUTURE');
+  });
+
+  // A draft saved before the rule, or edited outside the API, can carry a later date.
+  const postDate = (billId: string) =>
+    exec(scopeA, sql`UPDATE app.vendor_bills SET invoice_date = '2026-11-10' WHERE id = ${billId}`);
+  const billRow = async (billId: string) =>
+    (await read((tx) => tx.select().from(vendorBills).where(eq(vendorBills.id, billId))))[0]!;
+
+  it('refuses to submit a draft dated after the day it is submitted, and submits it once that day comes', async () => {
+    const bill = await billWithoutPo(await doc(['clean']));
+    await postDate(bill.id);
+
+    const refused = await httpErrorOf(clocked(lastSecondOfNov9).submit(bill.id, randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(refused.getResponse()).toMatchObject({
+      code: 'BILL_DATE_IN_FUTURE',
+      details: { invoiceDate: '2026-11-10', today: '2026-11-09' },
+    });
+    expect(await billRow(bill.id)).toMatchObject({
+      status: 'draft',
+      number: null,
+      approvalRequestId: null,
+    });
+
+    expect(await clocked(firstSecondOfNov10).submit(bill.id, randomUUID())).toMatchObject({
+      status: 'pending_approval',
+    });
+  });
+
+  it('refuses to match a draft dated after the day it is matched, and matches it once that day comes', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    await postDate(bill.id);
+    const runsOf = () =>
+      read((tx) =>
+        tx.select().from(matchResults).where(eq(matchResults.vendorBillId, bill.id)),
+      ).then((rows) => rows.length);
+    const runsBefore = await runsOf();
+
+    const refused = await httpErrorOf(clocked(lastSecondOfNov9).match(bill.id, randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('BILL_DATE_IN_FUTURE');
+    expect(await runsOf()).toBe(runsBefore);
+
+    await clocked(firstSecondOfNov10).match(bill.id, randomUUID());
+    expect(await runsOf()).toBeGreaterThan(runsBefore);
+  });
+});

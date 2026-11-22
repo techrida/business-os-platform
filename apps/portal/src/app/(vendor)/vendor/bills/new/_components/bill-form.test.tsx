@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { boxOf, fill, mountNode, paste, posted, settle } from '@/test/number-entry';
+import { boxOf, fill, mountNode, paste, pickDate, posted, settle } from '@/test/number-entry';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/session', () => ({ getSession: vi.fn() }));
@@ -81,4 +81,24 @@ describe('BillForm total', () => {
     expect(box.value).toBe('1,250,000.00');
     expect(posted(container, 'claimedTotal')).toBe('1250000.00');
   });
+});
+
+describe('BillForm invoice date', () => {
+  it('is the app date picker, posts what is picked, and the browser blocks a date after today', async () => {
+    const container = await mount();
+    expect(
+      container.querySelector('input[type="date"][name="invoiceDate"]:not([form=""])'),
+    ).toBeNull();
+    expect(container.querySelector('button[aria-label="Calendar"]')).not.toBeNull();
+    await pickDate(container, 'invoiceDate', '2026-11-09');
+    expect(posted(container, 'invoiceDate')).toBe('2026-11-09');
+    // The input the form posts (the picker's other one has form="" and posts nothing).
+    const valid = () =>
+      container
+        .querySelector<HTMLInputElement>('input[name="invoiceDate"]:not([form=""])')!
+        .checkValidity();
+    expect(valid()).toBe(true);
+    await pickDate(container, 'invoiceDate', '2026-11-11');
+    expect(valid()).toBe(false);
+  }, 15_000);
 });

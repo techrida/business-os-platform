@@ -1,5 +1,5 @@
-import type { VendorBillLineBody } from '@bos/contracts';
-import { hasInnerSpace, NO_SPACES } from '@bos/locale';
+import type { VendorBillLineBody, WithholdingCode } from '@bos/contracts';
+import { Dec, hasInnerSpace, NO_SPACES } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
 
@@ -19,6 +19,16 @@ export const NEW_BILL_HEADING = {
   description:
     "Key in a vendor's invoice, or start from an invoice in the inbox. The platform calculates VAT, withholding and totals from the lines.",
 };
+
+/** A withholding code as the bill line picker offers it, with its rate: "TDS-5 - Rent (5%)". */
+export function withholdingOption(code: Pick<WithholdingCode, 'id' | 'code' | 'name' | 'rateBp'>): {
+  id: string;
+  label: string;
+} {
+  // Basis points to a percent without trailing zeros: 150 is 1.5%, 500 is 5%.
+  const percent = new Dec(code.rateBp).div(100).toString();
+  return { id: code.id, label: `${code.code} - ${code.name} (${percent}%)` };
+}
 
 export interface LineRow {
   /** Set when the row was started from a purchase order line; the person cannot change it. */
@@ -90,7 +100,7 @@ export function parseBillLines(
     if (!isGuid(accountId)) fail('accountId', 'Choose the expense account this line is booked to.');
     if (!isGuid(taxCodeId)) fail('taxCodeId', 'Choose the VAT treatment of this line.');
     if (tdsCodeId !== '' && !isGuid(tdsCodeId)) {
-      fail('tdsCodeId', 'Paste a withholding code ID, or leave it empty.');
+      fail('tdsCodeId', 'Choose a withholding code from the list, or No withholding.');
     }
     if (bad) return;
 

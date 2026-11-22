@@ -16,6 +16,7 @@ import { toast } from '@/components/ui/toast';
 import styles from '../_components/settings.module.css';
 import type { ActionState } from '../action-state';
 import admin from '../admin.module.css';
+import { withoutTrailingZeros } from '../format';
 import { addTaxCodeAction, changeTaxCodeAction, retireTaxCodeAction } from './actions';
 import {
   firstEditableDay,
@@ -27,6 +28,9 @@ import {
   statusText,
 } from './tax-code-model';
 import tax from './tax.module.css';
+
+/** Tax-code rates take two decimals here, though the column stores four ("13.0000"). */
+const RATE_SCALE = 2;
 
 /**
  * The VAT codes table on Settings > Tax (F1-Q49): every code with the rate in force today. Finance, Accountant and
@@ -241,7 +245,7 @@ function AddTaxCodeDialog({ today, onClose }: { today: string; onClose: () => vo
           )}
         </Field>
         <Field
-          label="Rate (%)"
+          label="Rate"
           hint={
             zero ? 'Exempt and zero-rated codes are always 0%.' : '0.01 to 100, up to two decimals.'
           }
@@ -249,7 +253,7 @@ function AddTaxCodeDialog({ today, onClose }: { today: string; onClose: () => vo
           {(c) => (
             <PercentInput
               {...c}
-              scale={2}
+              scale={RATE_SCALE}
               value={zero ? '0' : rate}
               disabled={zero}
               onValueChange={setRate}
@@ -293,7 +297,7 @@ function ChangeTaxCodeDialog({
 }) {
   const first = firstEditableDay(code, today);
   const [name, setName] = useState(code.latest.name);
-  const [rate, setRate] = useState(code.latest.rate);
+  const [rate, setRate] = useState(() => withoutTrailingZeros(code.latest.rate, RATE_SCALE));
   const [creditable, setCreditable] = useState(code.latest.creditable);
   const [effectiveFrom, setEffectiveFrom] = useState(first);
   const { pending, error, run } = useRun(onClose);
@@ -349,7 +353,7 @@ function ChangeTaxCodeDialog({
           )}
         </Field>
         <Field
-          label="Rate (%)"
+          label="Rate"
           hint={
             zero
               ? `${KIND_LABEL[code.kind]} codes are always 0%.`
@@ -359,7 +363,7 @@ function ChangeTaxCodeDialog({
           {(c) => (
             <PercentInput
               {...c}
-              scale={2}
+              scale={RATE_SCALE}
               value={zero ? '0' : rate}
               disabled={zero}
               onValueChange={setRate}

@@ -824,6 +824,8 @@ export interface MoneyInputProps extends NumberInputCommonProps {
   currency: Currency;
   /** Shows the amount in words under the box ("Twenty lakh ..."), read through aria-describedby. */
   showWords?: boolean | undefined;
+  /** Fewer whole digits than the money default of 16, where the field's contract takes fewer. */
+  intDigits?: number | undefined;
   /** Overrides the tenant's grouping for this currency. */
   numberSystem?: NumberSystem | undefined;
 }
@@ -835,14 +837,20 @@ export interface MoneyInputProps extends NumberInputCommonProps {
  *
  *   <Field label="Amount">{(control) => <MoneyInput {...control} name="amount" currency="NPR" />}</Field>
  */
-export function MoneyInput({ currency, showWords, numberSystem, ...rest }: MoneyInputProps) {
+export function MoneyInput({
+  currency,
+  showWords,
+  numberSystem,
+  intDigits,
+  ...rest
+}: MoneyInputProps) {
   const systems = useNumberSystems();
   const system = numberSystem ?? systems[currency];
   const numberSystems: NumberSystems = { ...systems, [currency]: system };
   return (
     <NumberBox
       {...rest}
-      limits={MONEY_LIMITS}
+      limits={intDigits === undefined ? MONEY_LIMITS : { ...MONEY_LIMITS, intDigits }}
       grouping={system}
       prefix={currency}
       padTo={2}

@@ -16,6 +16,17 @@
   line-height: var(--line-height-caption);
 }
 
+/* Shown once an unfinished date has blocked a submit; styled as Field's error. */
+.unfinished {
+  display: block;
+  margin-top: 6px;
+  color: var(--status-error);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
 .picker {
   position: relative;
   display: block;

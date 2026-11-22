@@ -106,6 +106,8 @@ export function billFailure(err: unknown, op: BillOp): ProcFailure {
       switch (code) {
         case 'NO_ELIGIBLE_APPROVER':
           return 'This bill needs approval, but nobody can approve it right now. Nothing was changed. Ask an administrator to check the approvers for vendor bills.';
+        case 'BILL_DATE_IN_FUTURE':
+          return 'The invoice date is after today. Enter the date printed on the vendor’s invoice.';
         case 'SUBMISSION_HAS_NO_VENDOR':
           return 'The vendor did not name a vendor account, so a bill cannot be made from this submission. Reject it and ask the vendor to send it again.';
         case 'SUBMISSION_INCOMPLETE':
