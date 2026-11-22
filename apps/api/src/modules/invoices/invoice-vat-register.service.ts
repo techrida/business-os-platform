@@ -127,12 +127,20 @@ export class InvoiceVatRegisterService {
           });
           // Issued implies a frozen rate and NPR total (invoices_issued_snapshot_check).
           const rate = new Dec(d.fxRate!);
-          const nprVat = vat.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP);
-          const nprExempt = exempt.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP);
-          const nprZeroRated = zeroRated.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP);
           const nprTotal = new Dec(d.amountNpr!).times(sign);
-          // The taxable base takes the rounding remainder (money rule C-2), so the NPR columns add up to the frozen NPR total.
-          const nprTaxable = nprTotal.minus(nprVat).minus(nprExempt).minus(nprZeroRated);
+          // Each bucket converted and rounded half-up; the rounding remainder against the frozen NPR total goes to the largest
+          // bucket that has an amount (money rule C-2), so a zero bucket stays zero and the columns add up to the total.
+          const buckets = [taxable, vat, exempt, zeroRated];
+          const converted = buckets.map((x) => x.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP));
+          const remainder = nprTotal.minus(Dec.sum(...converted));
+          if (!remainder.isZero()) {
+            let target = 0;
+            buckets.forEach((x, i) => {
+              if (!x.isZero() && (buckets[target]!.isZero() || x.abs().gt(buckets[target]!.abs()))) target = i;
+            });
+            converted[target] = converted[target]!.plus(remainder);
+          }
+          const [nprTaxable, nprVat, nprExempt, nprZeroRated] = converted as [Dec, Dec, Dec, Dec];
           npr.n += 1;
           npr.taxable = npr.taxable.plus(nprTaxable);
           npr.vat = npr.vat.plus(nprVat);

@@ -384,6 +384,51 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
     expect(register.nprTotal.vatAmount).toBe('1000000010499999.00');
   });
 
+  it('never shows a negative taxable base: a zero bucket stays zero and the rounding remainder goes to a bucket with an amount (FU11)', async () => {
+    const scope: TxScope = { tenantId: a.tenantId, organizationId: a.organizationId };
+    const base = { scope, customerId: a.customerId, currency: 'INR' as const, rate: '1.6' };
+    // 0.01 exempt + 0.01 zero-rated = 0.02 INR, frozen at 0.03 NPR; each bucket alone rounds to 0.02.
+    const original = await document({
+      ...base,
+      issueDate: '2027-07-02',
+      taxable: '0.00',
+      vat: '0.00',
+      exempt: '0.01',
+      zero: '0.01',
+    });
+    await document({
+      ...base,
+      kind: 'credit_note',
+      originalId: original,
+      issueDate: '2027-07-03',
+      taxable: '0.00',
+      vat: '0.00',
+      exempt: '0.01',
+      zero: '0.01',
+    });
+    current.scope = scope;
+    const register = SalesVatRegisterSchema.parse(
+      await service().register('2027-07-01', '2027-07-31'),
+    );
+    expect(register.rows).toHaveLength(2);
+    const [invoice, note] = register.rows;
+    expect(invoice).toMatchObject({
+      nprTotalAmount: '0.03',
+      nprTaxableAmount: '0.00',
+      nprVatAmount: '0.00',
+      nprExemptAmount: '0.01',
+      nprZeroRatedAmount: '0.02',
+    });
+    expect(note).toMatchObject({
+      nprTotalAmount: '-0.03',
+      nprTaxableAmount: '0.00',
+      nprVatAmount: '0.00',
+      nprExemptAmount: '-0.01',
+      nprZeroRatedAmount: '-0.02',
+    });
+    expect(register.nprTotal).toMatchObject({ totalAmount: '0.00', taxableAmount: '0.00' });
+  });
+
   it('is scoped to the acting entity and tenant, and an empty period is an empty register', async () => {
     current.scope = { tenantId: a.tenantId, organizationId: entityA2 };
     const other = await service().register('2026-11-01', '2026-11-30');
