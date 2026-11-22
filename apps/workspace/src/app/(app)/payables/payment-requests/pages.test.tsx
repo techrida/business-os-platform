@@ -462,9 +462,13 @@ it('puts Cancel and Review request in the heading, opening a review dialog befor
   const html = renderToStaticMarkup(await NewPage());
   const formId = /<form id="([^"]+)"/.exec(html)?.[1];
   expect(formId).toBeTruthy();
-  // The heading button opens the review; only its Confirm sends the form.
-  expect(html).toMatch(/<button type="button"[^>]*aria-haspopup="dialog"[^>]*>Review request</);
-  expect(html).not.toMatch(new RegExp(`<button[^>]*type="submit"[^>]*form="${formId}"`));
+  // The heading button is the form's submit button (so Enter in a field reaches it); the submit opens the review
+  // and only its Confirm sends the form.
+  expect(html).toMatch(
+    new RegExp(
+      `<button type="submit"[^>]*form="${formId}"[^>]*aria-haspopup="dialog"[^>]*>Review request<`,
+    ),
+  );
   expect(html.indexOf('Review request')).toBeLessThan(html.indexOf(`<form id="${formId}"`));
   expect(html.match(/<h1/g)).toHaveLength(1);
 });
