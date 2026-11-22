@@ -1702,4 +1702,80 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     expect(zitadel.calls.filter((c) => c.startsWith('reactivate'))).toEqual([]);
     expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ lockReason: 'admin' });
   }, 60_000);
+
+  it('a deactivate of a locked person whose unlock a sync copied and whose deactivate then fails ends closed in the row and in ZITADEL', async () => {
+    const f = await fixture('inactive', { lock: adminLock() });
+    const zitadel = zitadelFor(f, 'inactive', true);
+    vi.spyOn(zitadel, 'deactivateUser').mockRejectedValue(new Error('ZITADEL 503'));
+    zitadel.onCall = async (op) => {
+      if (op !== 'unlock') return;
+      await write(f, {
+        email: 'mina@techrida.test',
+        displayName: 'Mina Gurung',
+        status: 'active',
+        lock: null,
+      });
+    };
+    const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+
+    await expect(
+      status.apply(f.scope, adminActor(f.adminId), f.userId, 'deactivate'),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive', locked: true });
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+    });
+  }, 60_000);
+
+  it('a deactivate that went through but whose phase C failed while ZITADEL is unreadable still closes the row', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    vi.spyOn(zitadel, 'getUser').mockRejectedValue(new Error('ZITADEL 503'));
+    const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+    let checks = 0;
+
+    const error = await status
+      .apply(f.scope, adminActor(f.adminId), f.userId, 'deactivate', () =>
+        ++checks > 1 ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(zitadel.users.get(f.zitadelUserId)).toMatchObject({ status: 'inactive' });
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+      status: 'inactive',
+      lockReason: null,
+    });
+  }, 60_000);
+
+  it('an admin lock whose phase C failed after a sync recorded it as a timed lock becomes an admin lock', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    let synced = false;
+    zitadel.onCall = async (op) => {
+      if (op !== 'lock' || synced) return;
+      synced = true;
+      await write(f, {
+        email: 'mina@techrida.test',
+        displayName: 'Mina Gurung',
+        status: 'inactive',
+        lock: { reason: 'failed_sign_ins', lockedAt: new Date(), until: new Date(Date.now() + 3_600_000) },
+      });
+    };
+    const status = new UserStatusService(db, store, zitadel.asClient(), audit);
+
+    const error = await status
+      .apply(f.scope, adminActor(f.adminId), f.userId, 'lock', () =>
+        synced ? Promise.reject(new ForbiddenException('revoked')) : Promise.resolve(),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+      status: 'inactive',
+      lockReason: 'admin',
+    });
+  }, 60_000);
 });
