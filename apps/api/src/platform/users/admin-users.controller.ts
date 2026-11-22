@@ -173,6 +173,21 @@ export class AdminUsersController {
     return this.runStatusAction(id, 'unlock');
   }
 
+  /** Clears a flag set by a failed or ambiguous write to ZITADEL, after reading ZITADEL again. */
+  @Post(':id/resolve-identity')
+  @HttpCode(204)
+  @Can(STATUS_PERMISSION)
+  async resolveIdentity(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    if (!canChangeStatus()) throw new ForbiddenException('Forbidden');
+    const { scope, actor } = requestTx();
+    await zitadelCall(() =>
+      this.users.resolveIdentityReview(scope, actor, id, async (tx) => {
+        await assertLiveGrant(tx, this.liveGrants, scope, actor, STATUS_PERMISSION);
+      }),
+    );
+    await this.authz.invalidate(scope.tenantId, scope.organizationId);
+  }
+
   private async runStatusAction(id: string, action: UserStatusAction): Promise<void> {
     if (!canChangeStatus()) throw new ForbiddenException('Forbidden');
     const { scope, actor } = requestTx();

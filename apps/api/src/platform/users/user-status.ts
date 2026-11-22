@@ -9,16 +9,17 @@
 //   (C) short tx: lock access-revision, re-check live grant, re-read user FOR NO KEY UPDATE, re-run guards, and write
 //       only while the row version is unchanged (or upgrading a concurrent failed_sign_ins lock to an admin lock).
 //       If the row already shows the desired outcome, record the audit row and return success.
-// A failed or conflicting write is never undone from a stored snapshot (FU8). IdentityReconciler reads ZITADEL and the
-// row as they are now and the closing state wins: if either side is locked or deactivated the row ends closed and
-// ZITADEL is closed if it is open; an unlock or reactivate that failed leaves the person closed. Nothing in a failure
-// path unlocks or reactivates. The last-Founder guard holds across the three phases through a per-tenant lease
-// (withFounderRemovalLease): a deactivate or lock whose guard passed in (A) cannot be refused in (C) after ZITADEL
-// already closed the person, because no other Founder-removing action of the tenant runs in between.
+// BOS never undoes a ZITADEL write (FU8). A failed or ambiguous one (a timeout or 5xx from ZITADEL, a step that fails
+// after an earlier one worked, any failure in (C) once ZITADEL changed) closes the person's row and sets
+// `identity_review_required` in its own transaction (IdentityReconciler.denyAfterFailure): a flagged row is never
+// active, sync never clears the flag, and an admin resolves it after reading ZITADEL again. One best-effort remote
+// close follows; nothing unlocks, reactivates or compensates in ZITADEL. A 4xx refusal on the first call changed
+// nothing and flags nobody. The last-Founder guard holds across the three phases through a per-tenant lease
+// (withFounderRemovalLease) with a hard deadline, after which no provider call starts.
 //
 // What each action does depends on the person's status and lock (planFor):
 //   deactivate  active: ZITADEL deactivate. Locked (either kind): ZITADEL unlock, then deactivate (if deactivate fails
-//               the reconcile locks them again, so ZITADEL never ends active).
+//               the person is closed and flagged for review).
 //   reactivate  deactivated and not locked: ZITADEL reactivate.
 //   lock        active: ZITADEL lock. Under a failed-sign-in lock: read ZITADEL first and call lockUser only when ZITADEL
 //               reports unlocked (real ZITADEL v4.20.1 refuses lockUser on an already-locked user).
@@ -35,7 +36,12 @@ import { lockAccessRevision } from '../../modules/access-settings/access-revisio
 import { AuditService } from '../audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
-import { IdentityReconciler, withFounderRemovalLease } from './identity-reconcile';
+import {
+  assertWithinOperationDeadline,
+  IdentityReconciler,
+  isDefiniteRefusal,
+  withFounderRemovalLease,
+} from './identity-reconcile';
 import { soleFounderEntities } from './user-mirror';
 import { type UserLock, type UserRow, UsersStore } from './users.store';
 import {
@@ -202,9 +208,8 @@ export class UserStatusService {
     action: UserStatusAction,
     assertAccess?: (tx: DbTransaction) => Promise<void>,
   ): Promise<void> {
-    // A deactivate or lock may take a Founder away: one at a time per tenant, so the last-Founder guard of (A) still
-    // holds when ZITADEL has been changed and (C) writes (see the header).
-    // Unlock and reactivate take it too: a reconcile that closes a person again must not interleave with a removal.
+    // A deactivate or lock may take a Founder away: one identity change at a time per tenant, so the last-Founder guard
+    // of (A) still holds when ZITADEL has been changed and (C) writes (see the header). The other actions take it too.
     return withFounderRemovalLease(this.store, scope.tenantId, () =>
       this.run(scope, actor, userId, action, assertAccess),
     );
@@ -236,7 +241,7 @@ export class UserStatusService {
       READ_ONLY,
     );
 
-    await this.runSteps(scope, actor, plan, target);
+    await this.runSteps(scope, actor, plan, target, action);
 
     try {
       await withTx(
@@ -293,14 +298,8 @@ export class UserStatusService {
         AFTER_ACCESS_LOCK,
       );
     } catch (error) {
-      // An unlock or reactivate that failed leaves the person closed; a closing action leaves whatever is closed closed.
-      await this.reconciler.reconcileStatus(
-        scope,
-        actor,
-        target,
-        plan.removesAccess ? null : { lock: (target.lockReason ?? null) !== null },
-        plan.removesAccess ? { lock: (plan.lock ?? null) !== null } : null,
-      );
+      // Phase B already changed ZITADEL: whatever failed here, the person is closed and flagged, never reopened.
+      await this.deny(scope, actor, target, action, 'phase_c_failed');
       throw error;
     }
   }
@@ -322,36 +321,57 @@ export class UserStatusService {
     if (!plan) {
       throw new ConflictException({ code: 'wrong_status', message: WRONG_STATE[action] });
     }
+    if (!plan.removesAccess && target.identityReviewRequired === true) {
+      throw new ConflictException({
+        code: 'identity_review_required',
+        message:
+          'This person is closed until their sign-in state is reviewed. Resolve it first, then try again.',
+      });
+    }
     if (plan.removesAccess) await this.assertNotSoleFounder(tx, tenantId, target, action);
     return plan;
   }
 
   /**
-   * The plan's ZITADEL calls in order, with no transaction open. When a later step fails after an earlier one changed
-   * ZITADEL (deactivate of a locked person: unlock worked, deactivate did not), reconciles so ZITADEL never ends active
-   * while the row says closed.
+   * The plan's ZITADEL calls in order, with no transaction open. A failure is ambiguous (the person may be in any
+   * state) unless it is a 4xx refusal on the first call, which changed nothing: then the person is closed and flagged.
    */
-  private async runSteps(scope: TxScope, actor: Actor, plan: Plan, target: UserRow): Promise<void> {
+  private async runSteps(
+    scope: TxScope,
+    actor: Actor,
+    plan: Plan,
+    target: UserRow,
+    action: UserStatusAction,
+  ): Promise<void> {
     for (const [index, step] of plan.steps.entries()) {
+      if (index === 0) assertWithinOperationDeadline();
       try {
+        if (index > 0) assertWithinOperationDeadline();
         await this.identityCall(() => step(this.zitadel, target.zitadelUserId));
       } catch (error) {
-        // A plan that opened the person first (unlock, then deactivate) may have changed ZITADEL even when its first
-        // call failed (a timeout that was applied); a sync may already have copied that. Close them whatever the row says.
-        if (plan.removesAccess && plan.steps.length === 1) {
-          // A closing call that failed (a timeout can have been applied in ZITADEL) must not leave the row open while
-          // ZITADEL is closed: the row follows ZITADEL, or the call when ZITADEL cannot be read.
-          await this.reconciler.reconcileStatus(scope, actor, target, null, {
-            lock: (plan.lock ?? null) !== null,
-          });
-        } else if (index > 0 || plan.steps.length > 1) {
-          await this.reconciler.reconcileStatus(scope, actor, target, {
-            lock: (target.lockReason ?? null) !== null,
-          });
+        if (index > 0 || !isDefiniteRefusal(error)) {
+          await this.deny(scope, actor, target, action, 'phase_b_failed');
         }
         throw error;
       }
     }
+  }
+
+  /** Closes and flags `target`; the remote close follows the action's intent (lock when it was or is to be locked). */
+  private deny(
+    scope: TxScope,
+    actor: Actor,
+    target: UserRow,
+    action: UserStatusAction,
+    reason: string,
+  ): Promise<void> {
+    const lock = action === 'lock' || (target.lockReason ?? null) !== null;
+    return this.reconciler.denyAfterFailure(scope, actor, {
+      reason: `users.${action}:${reason}`,
+      userId: target.id,
+      zitadelUserId: target.zitadelUserId,
+      close: lock ? 'lock' : 'deactivate',
+    });
   }
 
   private async assertNotSoleFounder(

@@ -15,6 +15,7 @@ import {
   type Queryable,
   type ExpiredLock,
   type UserFields,
+  type UserLock,
   type UserRow,
   type UserUpdate,
   UsersStore,
@@ -130,6 +131,8 @@ export class FakeUsersStore extends UsersStore {
     if (row) {
       const { lock, ...fields } = u;
       Object.assign(row, fields);
+      // As the trigger of migration 0190: a flagged person is never active.
+      if (row.identityReviewRequired === true && row.status === 'active') row.status = 'inactive';
       // As the SQL store: a status other than inactive clears the lock; undefined keeps it.
       const next = u.status === 'inactive' ? lock : null;
       if (next === null) {
@@ -139,6 +142,27 @@ export class FakeUsersStore extends UsersStore {
         row.lockReason = next.reason;
         row.lockedUntil = next.until?.toISOString() ?? null;
       }
+      this.touch(row);
+    }
+    return Promise.resolve();
+  }
+  flagIdentityReview(_tx: DbTransaction, id: string, lock?: UserLock) {
+    const row = this.users.find((x) => x.id === id);
+    if (row) {
+      row.identityReviewRequired = true;
+      if (row.status === 'active') row.status = 'inactive';
+      if (lock) {
+        row.lockReason = lock.reason;
+        row.lockedUntil = lock.until?.toISOString() ?? null;
+      }
+      this.touch(row);
+    }
+    return Promise.resolve();
+  }
+  clearIdentityReview(_tx: DbTransaction, id: string) {
+    const row = this.users.find((x) => x.id === id);
+    if (row) {
+      row.identityReviewRequired = false;
       this.touch(row);
     }
     return Promise.resolve();
@@ -157,6 +181,7 @@ export class FakeUsersStore extends UsersStore {
         .filter(
           (u) =>
             u.lockReason === 'failed_sign_ins' &&
+            u.identityReviewRequired !== true &&
             u.lockedUntil != null &&
             Date.parse(u.lockedUntil) <= now.getTime(),
         )
@@ -313,7 +338,7 @@ export class FakeUsersStore extends UsersStore {
     return Promise.resolve();
   }
   founderLeases = new Map<string, string>();
-  claimFounderLease(tenantId: string, leaseId: string) {
+  claimFounderLease(tenantId: string, leaseId: string, _ttlSeconds?: number, _timeoutMs?: number) {
     const held = this.founderLeases.get(tenantId);
     if (held !== undefined && held !== leaseId) return Promise.resolve(false);
     this.founderLeases.set(tenantId, leaseId);
