@@ -199,6 +199,9 @@ export function PrForm({
                 name="requiredBy"
                 value={values.requiredBy}
                 onChange={(iso) => setValues((v) => ({ ...v, requiredBy: iso }))}
+                // The form returns through a server action, which resets it: hold a partly typed date
+                // here, so its segments stay and "Finish the date" names the problem.
+                validation="hold"
                 required
                 {...control}
               />
