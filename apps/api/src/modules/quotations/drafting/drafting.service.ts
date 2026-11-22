@@ -1005,7 +1005,11 @@ export class DraftingService {
     id: string,
   ) {
     const [row] = await tx
-      .select({ id: opportunities.id, customerId: opportunities.customerId })
+      .select({
+        id: opportunities.id,
+        customerId: opportunities.customerId,
+        stage: opportunities.stage,
+      })
       .from(opportunities)
       .where(
         scoped(scope).where(
@@ -1020,6 +1024,13 @@ export class DraftingService {
       )
       .for('update');
     if (row === undefined) throw opportunityNotFound();
+    // Read under the row lock: a draft queued behind Mark Lost sees the committed stage, not the one it started with.
+    if (row.stage === 'lost') {
+      throw new ConflictException({
+        code: 'conflict',
+        message: 'This deal is Lost; a quotation cannot be drafted on it',
+      });
+    }
     return row;
   }
 

@@ -2085,3 +2085,85 @@ describe('saved reach on quotations (U20a phase 2)', () => {
     expect(await statusOf(service.detail(theirs.id))).toBe(404);
   });
 });
+
+// ------------------------------------------------------------------------------------ Lost deal
+
+/**
+ * Resolves once `pending` waits on a row lock in this database (or has already settled, as code that takes no lock
+ * does), so the test commits the blocking transaction only after the call queued behind it.
+ */
+async function queuedBehindLock(pending: Promise<unknown>): Promise<void> {
+  let settled = false;
+  pending.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  for (let i = 0; i < 200 && !settled; i++) {
+    const { rows } = await ownerPool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE NOT l.granted AND a.datname = current_database()`,
+    );
+    if (rows[0]!.n > 0) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+describe('DraftingService.create on a Lost deal', () => {
+  const dealInA = async (): Promise<string> => {
+    const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Deal that is lost',
+          customerId: f.customerPartyId,
+          ownerUserId: f.ownerUserId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    return row!.id;
+  };
+  /** Mark Lost's write to the deal row: stage, its reason and note, the row version. */
+  const markLostSql = (id: string) =>
+    sql`UPDATE app.opportunities
+           SET stage = 'lost', stage_reason = 'Price', stage_note = 'Went elsewhere', version = version + 1
+         WHERE id = ${id}`;
+
+  it('drafts on an open deal, and answers 409 on a Lost one, writing nothing', async () => {
+    const dealId = await dealInA();
+    const open = await service.create(
+      goldenCreateBody(f, { opportunityId: dealId }),
+      `create-${randomUUID()}`,
+    );
+    expect(open).toMatchObject({ opportunityId: dealId, status: 'draft' });
+
+    await withTx(db, scopeA, systemActor('test'), (tx) => tx.execute(markLostSql(dealId)));
+    const error = await service
+      .create(goldenCreateBody(f, { opportunityId: dealId }), `create-${randomUUID()}`)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toEqual({
+      code: 'conflict',
+      message: 'This deal is Lost; a quotation cannot be drafted on it',
+    });
+    expect(await quotationCount(dealId)).toBe(1);
+  });
+
+  it('refuses a draft queued behind Mark Lost once Mark Lost commits', async () => {
+    const dealId = await dealInA();
+    let draft!: Promise<unknown>;
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.execute(sql`SELECT id FROM app.opportunities WHERE id = ${dealId} FOR UPDATE`);
+      await tx.execute(markLostSql(dealId));
+      draft = service.create(
+        goldenCreateBody(f, { opportunityId: dealId }),
+        `create-${randomUUID()}`,
+      );
+      await queuedBehindLock(draft);
+    });
+    expect(await statusOf(draft)).toBe(409);
+    expect(await quotationCount(dealId)).toBe(0);
+  });
+});
