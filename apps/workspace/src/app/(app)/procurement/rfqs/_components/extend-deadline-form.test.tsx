@@ -59,8 +59,10 @@ it('extends from a dialog that starts at the current Kathmandu deadline (F1-Q47)
     await click(trigger);
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('The deadline passed on 20 Nov 2026, 10:00.');
-    const input = dialog?.querySelector<HTMLInputElement>('input[name="deadline"]');
-    expect(input?.type).toBe('datetime-local');
+    // The app's date-and-time picker, not the browser's datetime-local box (UIP-FORM-004).
+    expect(dialog?.querySelector('input[type="datetime-local"]')).toBeNull();
+    expect(dialog?.querySelector('button[aria-label="Calendar"]')).not.toBeNull();
+    const input = dialog?.querySelector<HTMLInputElement>('input[type="hidden"][name="deadline"]');
     expect(input?.value).toBe('2026-11-20T10:00');
 
     await click(document.querySelector('[role="dialog"] footer button[type="submit"]'));

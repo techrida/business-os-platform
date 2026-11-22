@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { boxOf, fill, mountNode, paste, posted } from '@/test/number-entry';
+import { boxOf, fill, mountNode, paste, pickDate, posted } from '@/test/number-entry';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/session', () => ({ getSession: vi.fn() }));
@@ -59,4 +59,22 @@ describe('QuoteForm numbers', () => {
     const container = await mount();
     expect(posted(container, 'deliveryDays')).toBe('');
   });
+});
+
+describe('QuoteForm valid-until date', () => {
+  it('is the app date picker, posts nothing until picked, and the browser blocks a day before today', async () => {
+    const container = await mount();
+    expect(container.querySelector('button[aria-label="Calendar"]')).not.toBeNull();
+    expect(posted(container, 'validUntil')).toBe('');
+    await pickDate(container, 'validUntil', '2026-11-12');
+    expect(posted(container, 'validUntil')).toBe('2026-11-12');
+    // The input the form posts (the picker's other one has form="" and posts nothing).
+    const valid = () =>
+      container
+        .querySelector<HTMLInputElement>('input[name="validUntil"]:not([form=""])')!
+        .checkValidity();
+    expect(valid()).toBe(true);
+    await pickDate(container, 'validUntil', '2026-11-09');
+    expect(valid()).toBe(false);
+  }, 15_000);
 });

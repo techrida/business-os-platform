@@ -3,7 +3,8 @@
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Field, Input, Select } from '@/components/ui/field';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
+import { Field, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
@@ -132,13 +133,12 @@ export function RfqForm({
             error={err.deadline}
           >
             {(control) => (
-              <Input
-                type="datetime-local"
+              <DateTimePicker
+                {...control}
                 name="deadline"
                 value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
+                onChange={setDeadline}
                 required
-                {...control}
               />
             )}
           </Field>

@@ -9,6 +9,7 @@ import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { MoneyInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { currencyOptions } from '@/lib/enabled-currencies';
@@ -118,14 +119,13 @@ export function BillForm({
         </Field>
         <Field label="Invoice date" error={fe.invoiceDate}>
           {(control) => (
-            <Input
-              type="date"
+            <DatePicker
+              {...control}
               name="invoiceDate"
               required
               max={today}
               value={invoiceDate}
-              onChange={(e) => setInvoiceDate(e.target.value)}
-              {...control}
+              onChange={setInvoiceDate}
             />
           )}
         </Field>
