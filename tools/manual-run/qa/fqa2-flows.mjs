@@ -1893,6 +1893,44 @@ export const ACCESS_FLOWS = [
   },
 ];
 
+export const INVITE_FLOWS = [
+  {
+    area: 'portal',
+    flow: 'invite-first-admin',
+    persona: 'Dev Sales',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      await step('1-as', 'Sign in as Dev Sales (the customer owner)', async (c) => {
+        await c.as('Dev Sales');
+      });
+      await step('2-customer', 'Open a customer with approved verification and no portal user', async (c) => {
+        await goNav(c, S, 'Customers', '/customers');
+        await c.s.fill(p().getByRole('searchbox', { name: 'Search organizations' }), 'SCR-r3g-1440x0900');
+        await c.s.click(p().locator('main a[href^="/customers/"]').filter({ hasText: 'SCR-r3g-1440x0900' }).first(), 'the customer SCR-r3g');
+        await p().waitForURL((u) => /^\/customers\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 60000 });
+        await c.see(p().getByText(/Portal access/).first(), 'the Portal access line');
+        await c.see(p().getByRole('button', { name: 'Invite portal admin' }), 'button Invite portal admin', 30000);
+        await noSideScroll(c, 'customer page');
+      });
+      await step('3-invite', 'Invite portal admin: choose the contact and send; a confirmation shows', async (c) => {
+        await c.s.click(p().getByRole('button', { name: 'Invite portal admin' }), 'Invite portal admin');
+        const d = p().getByRole('dialog', { name: 'Invite portal admin' });
+        await c.see(d, 'the Invite portal admin dialog');
+        await c.s.choose(d.locator('button[aria-haspopup="listbox"]').filter({ hasText: 'Choose a contact' }), /./);
+        await d.getByRole('button', { name: 'Send invite', exact: true }).click();
+        await c.see(p().getByText(/invit/i).filter({ hasNotText: /Invite portal/ }).first(), 'an invitation confirmation', 45000);
+        ledger({ kind: 'portal invitation sent for customer SCR-r3g-1440x0900', path: p().url(), size: S.size });
+      });
+      await step('4-mail', 'The invitation mail is in Mailpit (no link recorded)', async (c) => {
+        const { findMail } = await import('../lib/support.mjs');
+        const mail = await findMail(S.qa.cfg, 'subject:invit', 60000, { signal: c.s.signal });
+        c.ok(!!mail, 'a Mailpit message about the invitation exists');
+      });
+    },
+  },
+];
+
 export const FLOWS = [
   {
     area: 'payments',
@@ -2124,5 +2162,6 @@ export const FLOWS = [
   ...PDF_FLOWS,
   ...PROC_FLOWS,
   ...ACCESS_FLOWS,
+  ...INVITE_FLOWS,
   ...PORTAL_VENDOR_FLOWS,
 ];
