@@ -14,8 +14,9 @@ function scaled(value: Dec, places: number): bigint {
  * Each bucket starts at its own amount times `rate`, half-up to the cent, and never exceeds its proportional ceiling,
  * `nprTotal * bucket / sum of buckets` rounded up. Cents still missing go to the buckets in order of size, each up to
  * its ceiling; cents too many come off them in the same order, each down to zero. Equal sizes go in bucket order. A
- * bucket with no amount stays exactly zero. When the frozen total is the converted document total, this is the
- * per-bucket rounding with the remainder on the largest bucket.
+ * bucket with no amount stays exactly zero. The remainder goes to the largest bucket that has room under its ceiling,
+ * so on rare rows (a few in a thousand) a cent lands on the next bucket where the old split piled it on the largest;
+ * the row total is the same.
  *
  * `buckets` and `nprTotal` are non-negative with at most two decimals; `rate` is positive.
  */
