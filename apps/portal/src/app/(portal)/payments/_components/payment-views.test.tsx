@@ -122,7 +122,7 @@ describe('PaymentForm', () => {
     expect(html).toContain(
       'This invoice is in INR, which is switched off for the company. Payments in it are still accepted. The amount filled in is in INR.',
     );
-    expect(html).toContain('name="amount" value="1000000"');
+    expect(html).toContain('name="amount" value="1000000.00"');
   });
 });
 
