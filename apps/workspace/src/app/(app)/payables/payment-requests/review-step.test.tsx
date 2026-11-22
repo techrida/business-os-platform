@@ -301,3 +301,35 @@ it('lets the server name the fields when the request is incomplete, without a re
   expect(dialog()).toBeNull();
   expect(actions.createPaymentRequestAction).toHaveBeenCalledTimes(1);
 });
+
+it('keeps the opener focusable while the draft is created, and ignores presses until the action answers', async () => {
+  let finish: (state: unknown) => void = () => {};
+  actions.createPaymentRequestAction.mockImplementationOnce(
+    (prev: unknown) =>
+      new Promise((resolve) => {
+        finish = () => resolve(prev);
+      }),
+  );
+  await filledForm();
+  const opener = await openReview();
+  await click(button('Create draft request'));
+  await flush();
+  expect(actions.createPaymentRequestAction).toHaveBeenCalledTimes(1);
+
+  // Old code set `disabled`, so focus fell to the page body when the review closed.
+  expect(opener.disabled).toBe(false);
+  expect(opener.getAttribute('aria-disabled')).toBe('true');
+  expect(document.activeElement).toBe(opener);
+
+  await click(opener);
+  await flush();
+  expect(dialog()).toBeNull();
+  expect(actions.createPaymentRequestAction).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    finish(undefined);
+    await Promise.resolve();
+  });
+  await flush();
+  expect(opener.getAttribute('aria-disabled')).toBeNull();
+});

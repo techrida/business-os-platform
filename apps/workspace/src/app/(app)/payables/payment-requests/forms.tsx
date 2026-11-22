@@ -163,7 +163,11 @@ export function PaymentRequestEntry({
               ref={opener}
               type="submit"
               form={formId}
-              disabled={pending || eligible.length === 0}
+              disabled={eligible.length === 0}
+              // aria-disabled, not disabled, while the request is created: a focused button that turns
+              // disabled drops focus to the page body, and focus is here once Confirm closes the review.
+              // The form's submit handler ignores presses while pending, so nothing posts twice.
+              aria-disabled={pending || undefined}
               aria-busy={pending || undefined}
               aria-haspopup="dialog"
             >
