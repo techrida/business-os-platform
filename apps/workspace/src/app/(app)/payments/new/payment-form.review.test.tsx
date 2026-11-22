@@ -92,6 +92,30 @@ describe('payment form review step', () => {
     }
   });
 
+  it('shows the tax withheld and its code in the review only when some was entered (R5 EF2)', async () => {
+    const mounted = await mount();
+    try {
+      const root = mounted.container;
+      await fillIn(root);
+      await click(button(root, 'Record payment'));
+      expect(dialog()?.textContent).not.toContain('Tax withheld');
+      await click(button(dialog()!, 'Back'));
+      await settle();
+
+      root.querySelector('details')?.setAttribute('open', '');
+      await fill(boxFor(root, 'Tax withheld'), '125');
+      await fill(root.querySelector('input[name="withholdingCode"]'), 'TDS-1.5');
+      await click(button(root, 'Record payment'));
+      const text = dialog()?.textContent ?? '';
+      expect(text).toContain('Tax withheld');
+      expect(text).toContain('NPR 125.00');
+      expect(text).toContain('TDS-1.5');
+      expect(mocks.action).not.toHaveBeenCalled();
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   it('goes back to the same form with every value kept, on Back and on Escape, and focus on Record', async () => {
     const mounted = await mount();
     try {
