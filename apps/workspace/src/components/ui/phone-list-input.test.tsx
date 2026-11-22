@@ -120,6 +120,15 @@ describe('PhoneListInput, country from a typed code', () => {
       { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
     ]);
   });
+
+  it('holds no value when only the calling code was typed and the same country is picked again', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '+');
+    await typeKeys(list.number(1), '977');
+    await pickCountry(list.country(1), 'nepal');
+    expect(list.number(1).value).toBe('');
+    expect(list.posted('0.number')).toBe('');
+  });
 });
 
 describe('PhoneListInput, rows', () => {
@@ -477,6 +486,21 @@ describe('PhoneListInput for screen readers', () => {
     expect(live.textContent).toBe('Phone 2 moved to position 1.');
     await click(list.button('Move phone 1 down'));
     expect(live.textContent).toBe('Phone 1 moved to position 2.');
+  });
+
+  it('announces an identical move again', async () => {
+    const list = await mount({
+      defaultValue: [
+        { country: 'NP', e164: '+9779812345678', isPrimary: true },
+        { country: 'US', e164: '+14155552671', isPrimary: false },
+      ],
+    });
+    const live = list.container.querySelector('[aria-live="polite"]')!;
+    await click(list.button('Move phone 2 up'));
+    const first = live.textContent;
+    await click(list.button('Move phone 2 up'));
+    expect(live.textContent).not.toBe(first);
+    expect(live.textContent?.replace(/\u00a0/g, '')).toBe(first);
   });
 });
 
