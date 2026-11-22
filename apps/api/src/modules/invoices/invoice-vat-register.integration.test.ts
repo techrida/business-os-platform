@@ -64,6 +64,8 @@ interface Doc {
   originalId?: string;
   /** The exact document total, when a float sum of the parts would lose digits. */
   total?: string;
+  /** The frozen NPR total, when it is not the total times the rate (a closing credit note takes what is left). */
+  amountNpr?: string;
 }
 
 /** An invoice written the way the app does: a draft row, then one UPDATE that issues it with its snapshots. */
@@ -96,7 +98,7 @@ async function document(d: Doc): Promise<string> {
                fiscal_year = '2083/84', issue_date = ${d.issueDate}::date, issue_date_bs = ${d.bs ?? '2083-07-20'},
                issued_at = now(), fx_rate = ${currency === 'NPR' ? '1' : (d.rate ?? '133')}::numeric,
                fx_source = ${currency === 'NPR' ? null : 'test'}, fx_date = ${currency === 'NPR' ? null : d.issueDate}::date,
-               amount_npr = ${currency === 'NPR' ? total : sql`round(${total}::numeric * ${d.rate ?? '133'}::numeric, 2)`}::numeric,
+               amount_npr = ${currency === 'NPR' ? total : (d.amountNpr ?? sql`round(${total}::numeric * ${d.rate ?? '133'}::numeric, 2)`)}::numeric,
                seller_snapshot = '{"legalName":"Techrida"}'::jsonb,
                buyer_snapshot = ${JSON.stringify(buyer)}::jsonb,
                content_hash = decode(repeat('ab', 32), 'hex')
@@ -427,6 +429,76 @@ describe('GET /v1/invoices/vat-register (InvoiceVatRegisterService)', () => {
       nprZeroRatedAmount: '-0.02',
     });
     expect(register.nprTotal).toMatchObject({ totalAmount: '0.00', taxableAmount: '0.00' });
+  });
+
+  it('keeps every credit note bucket at or below zero across a run of tiny credits ending in a closing credit (FU11 follow-up)', async () => {
+    const scope: TxScope = { tenantId: a.tenantId, organizationId: a.organizationId };
+    const base = { scope, customerId: a.customerId, currency: 'INR' as const, rate: '1.6' };
+    // 0.07 INR at 1.6 freezes 0.11 NPR; five 0.01 INR credits freeze 0.02 NPR each; the closing credit (0.01 exempt and
+    // 0.01 zero-rated) takes the 0.01 NPR left, as credit-note-issue does for the credit that completes the full credit.
+    const original = await document({
+      ...base,
+      issueDate: '2027-08-02',
+      taxable: '0.05',
+      vat: '0.00',
+      exempt: '0.01',
+      zero: '0.01',
+    });
+    for (let day = 3; day <= 7; day += 1) {
+      await document({
+        ...base,
+        kind: 'credit_note',
+        originalId: original,
+        issueDate: `2027-08-0${day}`,
+        taxable: '0.01',
+        vat: '0.00',
+      });
+    }
+    await document({
+      ...base,
+      kind: 'credit_note',
+      originalId: original,
+      issueDate: '2027-08-08',
+      taxable: '0.00',
+      vat: '0.00',
+      exempt: '0.01',
+      zero: '0.01',
+      amountNpr: '0.01',
+    });
+    current.scope = scope;
+    const register = SalesVatRegisterSchema.parse(
+      await service().register('2027-08-01', '2027-08-31'),
+    );
+    expect(register.rows).toHaveLength(7);
+    expect(register.rows[0]).toMatchObject({
+      nprTotalAmount: '0.11',
+      nprTaxableAmount: '0.07',
+      nprVatAmount: '0.00',
+      nprExemptAmount: '0.02',
+      nprZeroRatedAmount: '0.02',
+    });
+    expect(register.rows[6]).toMatchObject({
+      kind: 'credit_note',
+      nprTotalAmount: '-0.01',
+      nprTaxableAmount: '0.00',
+      nprVatAmount: '0.00',
+      nprExemptAmount: '0.00',
+      nprZeroRatedAmount: '-0.01',
+    });
+    for (const row of register.rows.slice(1)) {
+      const parts = [
+        row.nprTaxableAmount,
+        row.nprVatAmount,
+        row.nprExemptAmount,
+        row.nprZeroRatedAmount,
+      ];
+      for (const part of parts) expect(new Decimal(part).gt(0), JSON.stringify(row)).toBe(false);
+      expect(
+        parts.reduce((acc, p) => acc.plus(p), new Decimal(0)).toFixed(2),
+        JSON.stringify(row),
+      ).toBe(row.nprTotalAmount);
+    }
+    expect(register.nprTotal.totalAmount).toBe('0.00');
   });
 
   it('is scoped to the acting entity and tenant, and an empty period is an empty register', async () => {

@@ -26,6 +26,7 @@ import { and, asc, between, eq, inArray } from 'drizzle-orm';
 import { DB, type Db } from '../../platform/db/db.module';
 import { READ_ONLY, withTx } from '../../platform/db/tx';
 import { InvoiceCaller } from './invoice-support';
+import { allocateNprBuckets } from './invoice-vat-npr-allocation';
 
 /** The buyer as frozen at issue (`buyer_snapshot`); a malformed snapshot reads as no name and no PAN. */
 function buyerOf(snapshot: unknown): { name: string; pan: string | null } {
@@ -128,19 +129,13 @@ export class InvoiceVatRegisterService {
           // Issued implies a frozen rate and NPR total (invoices_issued_snapshot_check).
           const rate = new Dec(d.fxRate!);
           const nprTotal = new Dec(d.amountNpr!).times(sign);
-          // Each bucket converted and rounded half-up; the rounding remainder against the frozen NPR total goes to the largest
-          // bucket that has an amount (money rule C-2), so a zero bucket stays zero and the columns add up to the total.
-          const buckets = [taxable, vat, exempt, zeroRated];
-          const converted = buckets.map((x) => x.times(rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP));
-          const remainder = nprTotal.minus(Dec.sum(...converted));
-          if (!remainder.isZero()) {
-            let target = 0;
-            buckets.forEach((x, i) => {
-              if (!x.isZero() && (buckets[target]!.isZero() || x.abs().gt(buckets[target]!.abs())))
-                target = i;
-            });
-            converted[target] = converted[target]!.plus(remainder);
-          }
+          // The frozen NPR total split over the buckets as stored (unsigned), then signed: the rounding remainder never
+          // flips a bucket's sign, a zero bucket stays zero and the columns add up to the total (money rule D22).
+          const converted = allocateNprBuckets(
+            [d.taxable, d.vat, d.exempt, d.zeroRated].map((x) => new Dec(x)),
+            rate,
+            new Dec(d.amountNpr!),
+          ).map((x) => x.times(sign));
           const [nprTaxable, nprVat, nprExempt, nprZeroRated] = converted as [Dec, Dec, Dec, Dec];
           npr.n += 1;
           npr.taxable = npr.taxable.plus(nprTaxable);
