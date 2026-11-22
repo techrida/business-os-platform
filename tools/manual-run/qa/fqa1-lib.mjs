@@ -39,7 +39,7 @@ export function logIssue({ id, severity, area, found, repro, size = '' }) {
   if (seen.includes(`### ${id}\n`)) return;
   const head = seen
     ? ''
-    : '# FQA1 issue log\n\nFound, severity, area, repro. Nothing is fixed in part 1 (no app code edits).\n\n';
+    : `# ${process.env.FQA_NAME ?? 'FQA1'} issue log\n\nFound, severity, area, repro. Nothing is fixed here (no app code edits).\n\n`;
   writeFileSync(
     file,
     `${head}### ${id}\n- found: ${found}\n- severity: ${severity}\n- area: ${area}\n- size: ${size || 'all'}\n- repro: ${repro}\n\n`,

@@ -1149,7 +1149,7 @@ export const FLOWS = [
 ];
 
 /** A tiny valid PDF the scanner accepts. */
-function proofFile(name) {
+export function proofFile(name) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fqa1-up-'));
   const file = path.join(dir, name);
   const body =
@@ -1159,14 +1159,14 @@ function proofFile(name) {
 }
 
 /** The standard anti-virus test string (EICAR): harmless, but every scanner flags it. */
-function eicarFile(name) {
+export function eicarFile(name) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fqa1-up-'));
   const file = path.join(dir, name);
   writeFileSync(file, 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*');
   return file;
 }
 /** Decide an inbox request: press the decision button, add a reason if it asks, confirm. */
-async function decide(c, word, req) {
+export async function decide(c, word, req) {
   const p = c.page();
   const btn = p
     .getByRole('main')
@@ -1243,7 +1243,7 @@ async function doneDialog(c) {
 }
 
 /** Type in a list search box and wait until the table has narrowed to the one matching row. */
-async function search(c, what, text) {
+export async function search(c, what, text) {
   const box = c.page().getByRole('searchbox', { name: `Search ${what}` });
   const rows = c.page().locator('main table tbody tr');
   for (let i = 0; i < 3; i++) {
