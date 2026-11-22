@@ -182,7 +182,7 @@ describe('recordQuotationAction', () => {
       vendorId: V1,
       documentId: DOC,
       currency: 'NPR',
-      lines: [{ prLineId: LINE, quantity: '10', unitPrice: '450000.00', taxCodeId: TAX }],
+      lines: [{ prLineId: LINE, quantity: '10', unitPrice: '450000', taxCodeId: TAX }],
     });
     expect(api.convertSubmission).not.toHaveBeenCalled();
   });

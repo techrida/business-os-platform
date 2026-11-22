@@ -195,7 +195,7 @@ describe('create a standalone bill', () => {
         documentId: ACCOUNT,
         currency: 'NPR',
         kind: 'bill',
-        lines: [{ accountId: ACCOUNT, taxCodeId: TAX, quantity: '2', unitPrice: '1000.00' }],
+        lines: [{ accountId: ACCOUNT, taxCodeId: TAX, quantity: '2', unitPrice: '1000' }],
       },
       KEY,
     );
@@ -419,7 +419,7 @@ describe('convert a submission', () => {
           poLineId: POLINE,
           accountId: ACCOUNT,
           quantity: '2',
-          unitPrice: '1000.50',
+          unitPrice: '1000.5',
           taxCodeId: TAX,
         },
       ],
