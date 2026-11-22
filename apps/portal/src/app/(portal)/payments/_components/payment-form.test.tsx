@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { Currency } from '@bos/contracts';
+import type { NumberSystems } from '@bos/locale';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,8 @@ vi.mock('server-only', () => ({}));
 vi.mock('@/lib/session', () => ({ getSession: vi.fn() }));
 vi.mock('next/navigation', () => ({ redirect: vi.fn(), notFound: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+
+import { boxOf, fill, paste, posted } from '@/test/number-entry';
 
 const { PaymentForm } = await import('./payment-form');
 
@@ -18,7 +21,11 @@ const INVOICE = { id: '1f8fad5b-d9cb-469f-a165-70867728950e', number: 'INV-2083/
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 
-async function mount(defaultCurrency: Currency, enabledCurrencies: Currency[]) {
+async function mount(
+  defaultCurrency: Currency,
+  enabledCurrencies: Currency[],
+  numberSystems?: NumberSystems,
+) {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -32,6 +39,7 @@ async function mount(defaultCurrency: Currency, enabledCurrencies: Currency[]) {
           defaultCurrency={defaultCurrency}
           enabledCurrencies={enabledCurrencies}
           suggestedAmount={defaultCurrency === 'NPR' ? '' : '1000000.00'}
+          numberSystems={numberSystems}
         />,
       ),
     ),
@@ -103,5 +111,66 @@ describe('PaymentForm currency picker', () => {
       '1000000.00',
     );
     expect(container.textContent).not.toContain('Payments in it are still accepted');
+  });
+});
+
+describe('PaymentForm amount boxes', () => {
+  // Old code showed `1250000` in a plain text box and posted whatever was typed.
+  it('groups the amount as it is typed, in the company number system, and posts it plain', async () => {
+    await mount('NPR', ['NPR', 'USD']);
+    const box = boxOf(container, 'Amount paid');
+    await fill(box, '1250000');
+    expect(box.value).toBe('12,50,000');
+    expect(posted(container, 'amount')).toBe('1250000');
+  });
+
+  it('follows the numberSystems prop and the chosen currency', async () => {
+    // USD defaults to international grouping; the setting says lakh.
+    await mount('USD', ['NPR', 'USD'], {
+      NPR: 'south_asian',
+      INR: 'south_asian',
+      USD: 'south_asian',
+    });
+    const box = boxOf(container, 'Amount paid');
+    await fill(box, '1250000');
+    expect(box.value).toBe('12,50,000');
+  });
+
+  it('groups USD in the international style by default', async () => {
+    await mount('USD', ['NPR', 'USD']);
+    const box = boxOf(container, 'Amount paid');
+    await fill(box, '1250000');
+    expect(box.value).toBe('1,250,000');
+  });
+
+  it('refuses a pasted `10 50` rather than posting 1050, and reads a pasted `Rs. 1,250/-`', async () => {
+    await mount('NPR', ['NPR', 'USD']);
+    const box = boxOf(container, 'Amount paid');
+    await paste(box, '10 50');
+    expect(box.value).toBe('');
+    expect(posted(container, 'amount')).toBe('');
+    await paste(box, 'Rs. 1,250/-');
+    expect(box.value).toBe('1,250');
+    expect(posted(container, 'amount')).toBe('1250');
+  });
+
+  it('groups the withheld tax the same way and keeps it optional', async () => {
+    await mount('NPR', ['NPR', 'USD']);
+    expect(posted(container, 'tdsWithheld')).toBe('');
+    const box = boxOf(container, 'Tax withheld');
+    await fill(box, '125000');
+    expect(box.value).toBe('1,25,000');
+    expect(posted(container, 'tdsWithheld')).toBe('125000');
+  });
+
+  it('on a blank currency still limits digits but shows no currency code', async () => {
+    await mount('INR', ['NPR', 'USD']);
+    const box = boxOf(container, 'Amount paid');
+    // A MoneyInput would group the prefill as 10,00,000.00 and carry an INR prefix.
+    expect(box.value).toBe('1000000.00');
+    expect(box.parentElement?.textContent).not.toContain('INR');
+    expect(posted(container, 'amount')).toBe('1000000.00');
+    await fill(box, '12345678901234567');
+    expect(box.value).not.toContain('12345678901234567');
   });
 });

@@ -143,6 +143,27 @@ describe('parsePrValues', () => {
     expect(r.ok && r.data.lines[0]?.quantity).toBe('10');
     expect(r.ok && r.data.lines[0]?.estimatedUnitPrice).toBe('4500.00');
   });
+
+  it('says to remove the space in a quantity or price typed as "10 50"', () => {
+    const r = parsePrValues(
+      valid({
+        lines: [
+          {
+            description: 'Chair',
+            specification: '',
+            uom: 'pcs',
+            quantity: '10 50',
+            estimatedUnitPrice: '4 500.00',
+          },
+        ],
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors['lines.0.quantity']).toBe('Remove the space inside the number.');
+      expect(r.errors['lines.0.estimatedUnitPrice']).toBe('Remove the space inside the number.');
+    }
+  });
 });
 
 describe('valuesFromDto', () => {

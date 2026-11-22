@@ -234,6 +234,23 @@ describe('parseQuoteValues', () => {
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.errors.deliveryDays).toMatch(/whole number/i);
   });
+
+  it('says "Remove the space" for a number typed with a space inside, and keeps the other words', () => {
+    const v = quoteValuesFromForm(quoteForm([['deliveryDays', '1 5']]));
+    v.lines[0]!.quantity = '10 50';
+    v.lines[0]!.unitPrice = '1 250 000';
+    v.lines[1]!.include = true;
+    v.lines[1]!.unitPrice = '12.345';
+    v.lines[1]!.taxCodeId = TAX;
+    const out = parseQuoteValues(v);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.errors.deliveryDays).toBe('Remove the space inside the number.');
+      expect(out.errors['lines.0.quantity']).toBe('Remove the space inside the number.');
+      expect(out.errors['lines.0.unitPrice']).toBe('Remove the space inside the number.');
+      expect(out.errors['lines.1.unitPrice']).toMatch(/2 decimal places/);
+    }
+  });
 });
 
 describe('scores', () => {
@@ -278,6 +295,13 @@ describe('scores', () => {
   it.each(['', '  ', '101', '-1', '1e2', '80.123', '8 0'])('refuses the score %j', (bad) => {
     const r = parseScoreValues(scoreValuesFromForm(rows(['Price', bad])));
     expect(r.ok).toBe(false);
+  });
+
+  it('says "Remove the space" for a score typed with a space inside', () => {
+    const spaced = parseScoreValues(scoreValuesFromForm(rows(['Price', '8 0'])));
+    expect(errorsOf(spaced)['scores.0.score']).toBe('Remove the space inside the number.');
+    const over = parseScoreValues(scoreValuesFromForm(rows(['Price', '101'])));
+    expect(errorsOf(over)['scores.0.score']).toMatch(/0 to 100/);
   });
 
   it.each(['0', '100', '100.00', '0.5'])('accepts the score %j', (good) => {

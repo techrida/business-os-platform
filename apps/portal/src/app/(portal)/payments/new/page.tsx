@@ -83,6 +83,7 @@ export default async function NewPaymentPage({
         defaultCurrency={currency}
         enabledCurrencies={enabledCurrencies}
         suggestedAmount={suggestedAmount}
+        numberSystems={(await display).numberSystems}
       />
     </main>
   );

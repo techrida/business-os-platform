@@ -5,7 +5,8 @@ import { useActionState, useEffect, useId, useRef, useState, type ReactNode } fr
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Select } from '@/components/ui/field';
+import { MoneyInput } from '@/components/ui/number-input';
 import { toast } from '@/components/ui/toast';
 
 import {
@@ -322,14 +323,13 @@ function LimitFields({
           error={error}
         >
           {(c) => (
-            <Input
+            <MoneyInput
               name="creditLimit"
-              inputMode="decimal"
-              autoComplete="off"
+              currency="NPR"
+              showWords
               placeholder="0.00"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className={styles.numeric}
+              onValueChange={setAmount}
               {...c}
             />
           )}

@@ -2,6 +2,7 @@
 
 import {
   CURRENCIES,
+  MONEY_LIMITS,
   ROLE_KEYS,
   type Currency,
   type RoleKey,
@@ -12,6 +13,7 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, type FieldControlProps } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { DecimalInput, PercentInput } from '@/components/ui/number-input';
 import { Panel } from '@/components/ui/panel';
 import type { SettingsSectionId } from '@/lib/settings-nav';
 
@@ -27,6 +29,26 @@ import {
 } from './setting-fields';
 import { SettingsForm, useSettingsFormContext, type SaveSettingsPageAction } from './settings-form';
 import styles from './settings.module.css';
+
+/**
+ * Whole digits for a whole-number setting the contracts give no upper bound (`z.number().int()`,
+ * the reminder hours): 9 digits stays exact in a JavaScript number and in a 32-bit integer.
+ */
+const WHOLE_NUMBER_DIGITS = 9;
+
+/** Decimals a step allows: `'0.01'` is 2, `'1'` is 0. */
+function stepScale(step: string): number {
+  return step.split('.')[1]?.length ?? 0;
+}
+
+/** The percent input's scale for a step, never fewer decimals than the step needs. */
+function percentScale(step: string): 0 | 2 | 4 {
+  const scale = stepScale(step);
+  return scale === 0 ? 0 : scale <= 2 ? 2 : 4;
+}
+
+/** A number bound as the plain decimal string the number inputs compare exactly. */
+const bound = (value: number | undefined) => (value === undefined ? undefined : String(value));
 
 export interface SettingCardProps {
   /** Required only when rendered standalone outside `<SettingsForm>`. */
@@ -330,23 +352,37 @@ function Control({
     case 'money': {
       const textValue = value.kind === 'text' ? value.value : '';
       const bounds = spec.numberBounds;
+      const step = bounds?.step ?? (spec.kind === 'integer' ? '1' : '0.01');
+      const shared = {
+        name: `v:${spec.key}`,
+        min: bound(bounds?.min),
+        max: bound(bounds?.max),
+        value: textValue,
+        onValueChange: (next: string) => onChange({ kind: 'text', value: next }),
+      };
       return (
         <Field label={spec.label} hint={spec.help} error={error}>
-          {(control) => (
-            <Input
-              name={`v:${spec.key}`}
-              type="number"
-              min={bounds?.min}
-              max={bounds?.max}
-              step={bounds?.step ?? (spec.kind === 'integer' ? '1' : '0.01')}
-              inputMode={spec.kind === 'integer' ? 'numeric' : 'decimal'}
-              value={textValue}
-              onChange={(e) => onChange({ kind: 'text', value: e.currentTarget.value })}
-              autoComplete="off"
-              spellCheck={false}
-              {...control}
-            />
-          )}
+          {(control) =>
+            spec.kind === 'percent' ? (
+              <PercentInput {...control} {...shared} scale={percentScale(step)} />
+            ) : spec.kind === 'money' ? (
+              <DecimalInput
+                {...control}
+                {...shared}
+                intDigits={MONEY_LIMITS.intDigits}
+                scale={Math.min(stepScale(step), MONEY_LIMITS.scale)}
+              />
+            ) : (
+              <DecimalInput
+                {...control}
+                {...shared}
+                intDigits={
+                  bounds?.max === undefined ? WHOLE_NUMBER_DIGITS : String(bounds.max).length
+                }
+                scale={0}
+              />
+            )
+          }
         </Field>
       );
     }
@@ -507,29 +543,25 @@ function SlaControl({
       <div className={styles.fields}>
         <Field label="Remind after (hours)">
           {(c) => (
-            <Input
-              type="number"
-              min={1}
-              step={1}
-              inputMode="numeric"
-              value={value.remindAfterHours}
-              autoComplete="off"
-              onChange={(e) => onChange({ ...value, remindAfterHours: e.currentTarget.value })}
+            <DecimalInput
               {...inGroup(c, errorId, error)}
+              intDigits={WHOLE_NUMBER_DIGITS}
+              scale={0}
+              min="1"
+              value={value.remindAfterHours}
+              onValueChange={(next) => onChange({ ...value, remindAfterHours: next })}
             />
           )}
         </Field>
         <Field label="Escalate after (hours)">
           {(c) => (
-            <Input
-              type="number"
-              min={1}
-              step={1}
-              inputMode="numeric"
-              value={value.escalateAfterHours}
-              autoComplete="off"
-              onChange={(e) => onChange({ ...value, escalateAfterHours: e.currentTarget.value })}
+            <DecimalInput
               {...inGroup(c, errorId, error)}
+              intDigits={WHOLE_NUMBER_DIGITS}
+              scale={0}
+              min="1"
+              value={value.escalateAfterHours}
+              onValueChange={(next) => onChange({ ...value, escalateAfterHours: next })}
             />
           )}
         </Field>
@@ -639,16 +671,13 @@ function ScheduleControl({
             </Field>
             <Field label="Percent">
               {(c) => (
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="0.01"
-                  inputMode="decimal"
-                  value={row.percent}
-                  autoComplete="off"
-                  onChange={(e) => patch(index, { percent: e.currentTarget.value })}
+                <PercentInput
                   {...inGroup(c, errorId, error)}
+                  scale={4}
+                  min="0"
+                  max="100"
+                  value={row.percent}
+                  onValueChange={(next) => patch(index, { percent: next })}
                 />
               )}
             </Field>

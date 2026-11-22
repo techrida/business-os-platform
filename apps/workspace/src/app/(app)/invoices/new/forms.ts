@@ -10,7 +10,7 @@ import {
   type DebitNoteBody,
   type Discount,
 } from '@bos/contracts';
-import { USE_A_POINT, hasStrayComma, plainAmount } from '@bos/locale';
+import { NO_SPACES, USE_A_POINT, hasInnerSpace, hasStrayComma, plainAmount } from '@bos/locale';
 
 import {
   isGuid,
@@ -56,7 +56,7 @@ export interface ManualInvoiceValues {
   dueDate: string;
   /** One document discount (the contract's `discount`); left out or 'none' sends none. */
   discountMode?: string;
-  /** As typed: grouping commas and spaces are dropped before it is checked. */
+  /** As typed: valid grouping commas in an amount are dropped before it is checked; a space inside is refused. */
   discountValue?: string;
   lines: LineValues[];
 }
@@ -71,7 +71,7 @@ export function parseDiscount(
 ): { ok: true; data: Discount | undefined } | { ok: false; error: string } {
   if (mode === undefined || mode === '' || mode === 'none') return { ok: true, data: undefined };
   if (mode !== 'pct' && mode !== 'amount') return { ok: false, error: INCOMPLETE };
-  // A percentage has no grouping, so a comma and an inner space stay and fails the check ("1,5" is not 15). Amounts may group only
+  // A percentage has no grouping, so a comma and an inner space stay and fail the check ("1,5" is not 15). Amounts may group only
   // as 1,250,000 or 12,50,000; any other comma stays and is refused.
   const value = mode === 'pct' ? (raw ?? '').trim() : plainAmount(raw ?? '');
   if (value === '') return { ok: false, error: 'Enter the discount, or choose No discount.' };
@@ -83,6 +83,8 @@ export function parseDiscount(
     };
   }
   if (checked.success) return { ok: true, data: checked.data };
+  // "1 5" or "10 50" is refused, never joined; the space is the thing to fix, so name it.
+  if (hasInnerSpace(value)) return { ok: false, error: NO_SPACES };
   const hint = (mode === 'pct' ? value.includes(',') : hasStrayComma(raw ?? ''))
     ? `${USE_A_POINT} `
     : '';

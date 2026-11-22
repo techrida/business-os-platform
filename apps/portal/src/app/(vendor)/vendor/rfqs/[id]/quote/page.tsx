@@ -115,6 +115,7 @@ export default async function QuotePage({
           rfqId={id}
           today={todayInKathmandu()}
           currencies={currencies}
+          numberSystems={(await display).numberSystems}
         />
       )}
     </main>

@@ -2,7 +2,7 @@ import 'server-only';
 
 import { randomUUID } from 'node:crypto';
 
-import { type MeResponse, MeResponseSchema } from '@bos/contracts';
+import { dropUnknownGrants, type MeResponse, MeResponseSchema } from '@bos/contracts';
 
 import { getEnv } from './env';
 import type { Session } from './session';
@@ -73,7 +73,12 @@ export async function getMe(session: Pick<Session, 'accessToken'>): Promise<MeRe
   const res = await authedFetch(session.accessToken, '/v1/me', { method: 'GET' });
   const body = await readBody(res);
   if (!res.ok) throw new ApiError(res.status, `GET /v1/me failed with ${res.status}`, body);
-  const parsed = MeResponseSchema.safeParse(body);
+  // A newer API may send a permission or scope this build has no name for: drop those rows, warn, keep signing in.
+  const { body: known, dropped } = dropUnknownGrants(body);
+  if (dropped.length > 0) {
+    console.warn(JSON.stringify({ event: 'me.unknown_grants_dropped', dropped }));
+  }
+  const parsed = MeResponseSchema.safeParse(known);
   if (!parsed.success) {
     // 502: the upstream answered, but not with the shape we agreed on.
     throw new ApiError(502, 'GET /v1/me returned an invalid body', parsed.error.issues);

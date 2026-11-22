@@ -6,6 +6,7 @@ import { VendorBillSubmissionBodySchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { spaceAware } from '@/lib/amount-hint';
 import { ApiError } from '@/lib/api';
 import { submitVendorBill } from '@/lib/api.vendor-writes';
 import { currencyNotEnabledText } from '@/lib/enabled-currencies';
@@ -73,6 +74,9 @@ export async function submitBillAction(
       const head = issue.path[0];
       const field: BillField | undefined = head === 'documentId' ? 'file' : (head as BillField);
       if (field !== undefined && field in FIELD_MESSAGE) fieldErrors[field] = FIELD_MESSAGE[field];
+    }
+    if (fieldErrors.claimedTotal !== undefined) {
+      fieldErrors.claimedTotal = spaceAware(text(form, 'claimedTotal'), fieldErrors.claimedTotal);
     }
     // Nothing reached the API, so the same key is still unused.
     return { key, fieldErrors };

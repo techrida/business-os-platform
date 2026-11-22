@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import type { CompanyBankAccount, Currency } from '@bos/contracts';
+import { NO_SPACES } from '@bos/locale';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PaymentRequestItem } from '@/lib/api-payables';
-import { choose, click, fill, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, typeKeys } from '@/test/form-interactions';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('./actions', () => ({
@@ -83,6 +84,43 @@ it('starts on the switched-off currency when it is the only one the vendor bills
   // Old code left the currency empty, so nothing could be requested.
   expect(currencyField().value).toBe('INR');
   expect(mounted.container.textContent).not.toContain('switched off');
+});
+
+describe('the amount per bill', () => {
+  const amountBox = () =>
+    mounted.container
+      .querySelector('input[type="hidden"][name="allocation:0:amount"]')!
+      .parentElement!.querySelector<HTMLInputElement>('input[type="text"]')!;
+
+  it('groups the amount as it is typed and posts the plain digits', async () => {
+    mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
+    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    const box = amountBox();
+    // The visible box is named by its label; the hidden input carries the posted name.
+    expect(box.getAttribute('name')).toBeNull();
+    expect(document.querySelector(`label[for="${box.id}"]`)?.textContent).toBe('Amount 1');
+    await fill(box, '1250000');
+    // Old code showed the bare digits in a plain text input.
+    expect(box.value).toBe('12,50,000');
+    expect(new FormData(mounted.container.querySelector('form')!).get('allocation:0:amount')).toBe(
+      '1250000',
+    );
+  });
+
+  it('refuses a space inside the amount and says to remove it', async () => {
+    mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
+    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    const box = amountBox();
+    await typeKeys(box, '10 ');
+    // Old code took the space as typed and said nothing.
+    expect(box.value).toBe('10');
+    expect(mounted.container.textContent).toContain(NO_SPACES);
+    await typeKeys(box, '50');
+    expect(box.value).toBe('1,050');
+    expect(new FormData(mounted.container.querySelector('form')!).get('allocation:0:amount')).toBe(
+      '1050',
+    );
+  });
 });
 
 const account = (

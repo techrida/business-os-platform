@@ -1,5 +1,6 @@
 // The credit limit the Commercial terms card sends: NPR, at most two decimals, never negative; "No limit" is null,
 // and an empty amount is an error, never null or 0.00 (zero is a real limit).
+import { NO_SPACES } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -27,10 +28,10 @@ describe('parseCreditLimit', () => {
     expect(parseCreditLimit('limit', ' 250000.5 ')).toEqual({ ok: true, value: '250000.5' });
   });
 
-  it.each(['2 50 000.5', '10 50', '1 250'])(
-    'refuses %s: a space inside a number is not grouping, and joining it would be a silent error',
+  it.each(['2 50 000.5', '10 50', '1 250', ' 10 50 '])(
+    'refuses %j and says to remove the space: it is not grouping, and joining it would be a silent error',
     (typed) => {
-      expect(parseCreditLimit('limit', typed).ok).toBe(false);
+      expect(parseCreditLimit('limit', typed)).toEqual({ ok: false, error: NO_SPACES });
     },
   );
 
