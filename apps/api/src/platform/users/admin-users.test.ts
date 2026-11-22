@@ -895,7 +895,7 @@ describe('PUT /v1/admin/users/:id/roles last-Founder guard', () => {
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).getResponse()).toMatchObject({
       code: 'last_founder',
-      message: expect.stringContaining('Add another Founder first.'),
+      message: 'Kiran Thapa is the only Founder of Techrida Nepal. Add another Founder first.',
     });
     expect(zitadel.grants.has('z-founder-1')).toBe(false);
     expect(store.users.find((u) => u.id === FOUNDER_ONE)?.identityReviewRequired).toBeFalsy();
