@@ -42,7 +42,8 @@ const customer = {
   relationship: 'prospect',
   ownerUserId: null,
   defaultCurrency: 'NPR',
-  address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+  country: 'NP',
+  address: { line: 'Balaju', city: 'Kathmandu' },
   mergedIntoId: null,
   version: 2,
   createdAt: WHEN,
@@ -54,7 +55,8 @@ const contact = {
   customerId: ID_A,
   fullName: 'Sita Sharma',
   email: 'sita@example.com',
-  phone: '+9779812345678',
+  country: 'NP',
+  phones: [{ country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true }],
   title: 'Purchase manager',
   isPrimary: true,
   version: 1,
@@ -129,8 +131,14 @@ describe('create and update customer', () => {
   const body = {
     legalName: 'Himalayan Construction Pvt. Ltd.',
     relationship: 'prospect' as const,
-    address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
-    contact: { fullName: 'Sita Rai', email: 'sita@himalayan.example' },
+    country: 'NP' as const,
+    address: { line: 'Balaju', city: 'Kathmandu' },
+    contact: {
+      fullName: 'Sita Rai',
+      email: 'sita@himalayan.example',
+      country: 'NP' as const,
+      phones: [],
+    },
   };
 
   it('POSTs the body with the idempotency key and parses the new customer', async () => {
@@ -186,7 +194,12 @@ describe('contacts', () => {
     const out = await createContact(
       session,
       ID_A,
-      { fullName: 'Sita Sharma', phone: '+9779812345678', isPrimary: true },
+      {
+        fullName: 'Sita Sharma',
+        country: 'NP',
+        phones: [{ country: 'NP', e164: '+9779812345678', isPrimary: true }],
+        isPrimary: true,
+      },
       'key-abcdef12',
     );
     expect(out.id).toBe(ID_B);

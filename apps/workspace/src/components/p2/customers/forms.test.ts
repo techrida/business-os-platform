@@ -2,19 +2,22 @@ import type { CustomerDto } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  EMPTY_CONTACT_VALUES,
   EMPTY_CUSTOMER_VALUES,
   normalizePhone,
   parseContact,
   parseCreateCustomer,
   parseUpdateCustomer,
+  readPhoneRows,
   valuesOfCustomer,
   type CustomerValues,
+  type PhoneRow,
 } from './forms';
 
 const valid: CustomerValues = {
   ...EMPTY_CUSTOMER_VALUES,
   legalName: '  Himalayan Construction Pvt. Ltd.  ',
-  line1: 'Balaju',
+  line: 'Balaju',
   city: 'Kathmandu',
   contactName: ' Sita Rai ',
   contactEmail: ' sita@himalayan.example ',
@@ -29,25 +32,139 @@ const existing: CustomerDto = {
   relationship: 'prospect',
   ownerUserId: null,
   defaultCurrency: 'NPR',
-  address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+  country: 'NP',
+  address: { line: 'Balaju', city: 'Kathmandu' },
   mergedIntoId: null,
   version: 2,
   createdAt: '2026-11-08T05:45:00.000Z',
   updatedAt: '2026-11-08T05:45:00.000Z',
 };
 
+const nepal: PhoneRow = { country: 'NP', e164: '+9779812345678', isPrimary: true, index: 0 };
+const us: PhoneRow = {
+  country: 'US',
+  e164: '+14155552671',
+  label: 'work',
+  isPrimary: false,
+  index: 1,
+};
+
+function form(fields: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+}
+
+describe('readPhoneRows', () => {
+  it('reads the rows in order, leaves out blank ones and keeps each row its own index', () => {
+    const f = form({
+      'phones.2.number': '+14155552671',
+      'phones.2.country': 'us',
+      'phones.2.label': 'work',
+      'phones.2.isPrimary': 'false',
+      'phones.0.number': '+9779812345678',
+      'phones.0.country': 'NP',
+      'phones.0.label': '',
+      'phones.0.isPrimary': 'true',
+      'phones.1.number': '',
+      'phones.1.country': 'NP',
+      'phones.1.isPrimary': 'false',
+      'other.0.number': '+9779800000000',
+    });
+    expect(readPhoneRows(f, 'phones')).toEqual([
+      { country: 'NP', e164: '+9779812345678', isPrimary: true, index: 0 },
+      { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false, index: 2 },
+    ]);
+  });
+
+  it('makes the first number primary when the primary row was left blank', () => {
+    const f = form({
+      'phones.0.number': '',
+      'phones.0.country': 'NP',
+      'phones.0.isPrimary': 'true',
+      'phones.1.number': '+14155552671',
+      'phones.1.country': 'US',
+      'phones.1.isPrimary': 'false',
+    });
+    expect(readPhoneRows(f, 'phones')).toEqual([
+      { country: 'US', e164: '+14155552671', isPrimary: true, index: 1 },
+    ]);
+  });
+
+  it('reads nothing from a form without rows', () => {
+    expect(readPhoneRows(form({ fullName: 'Sita' }), 'phones')).toEqual([]);
+  });
+});
+
 describe('parseCreateCustomer', () => {
-  it('builds the contract body: trimmed, blanks left out, country upper case', () => {
+  it('builds the contract body: trimmed, blanks left out, country top level and upper case', () => {
     const out = parseCreateCustomer({ ...valid, country: ' np ', industry: '  ', panVatNo: '' });
     expect(out).toEqual({
       ok: true,
       data: {
         legalName: 'Himalayan Construction Pvt. Ltd.',
         relationship: 'prospect',
-        address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
-        contact: { fullName: 'Sita Rai', email: 'sita@himalayan.example' },
+        country: 'NP',
+        address: { line: 'Balaju', city: 'Kathmandu' },
+        contact: {
+          fullName: 'Sita Rai',
+          email: 'sita@himalayan.example',
+          country: 'NP',
+          phones: [],
+        },
       },
     });
+  });
+
+  it('refuses an address without a country, on the country field', () => {
+    const out = parseCreateCustomer({ ...valid, country: '' });
+    expect(out).toEqual({ ok: false, errors: { country: "Choose the company's country." } });
+  });
+
+  it('refuses a Nepal customer whose PAN is not 9 digits, on the PAN field', () => {
+    const out = parseCreateCustomer({ ...valid, country: 'NP', panVatNo: '30123456' });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors.panVatNo).toMatch(/9 digits/);
+  });
+
+  it('saves a foreign customer with no PAN, and one with a foreign tax id', () => {
+    const none = parseCreateCustomer({ ...valid, country: 'IN', panVatNo: '' });
+    expect(none.ok).toBe(true);
+    expect(none.ok && none.data).toMatchObject({ country: 'IN' });
+    expect(none.ok && none.data.panVatNo).toBeUndefined();
+    const foreign = parseCreateCustomer({ ...valid, country: 'IN', panVatNo: 'AAAPL1234C' });
+    expect(foreign.ok && foreign.data.panVatNo).toBe('AAAPL1234C');
+    const shortForeign = parseCreateCustomer({ ...valid, country: 'IN', panVatNo: '12 34' });
+    expect(!shortForeign.ok && shortForeign.errors.panVatNo).toMatch(/5 to 20/);
+  });
+
+  it("sends the first contact's country and two phones in different countries intact", () => {
+    const out = parseCreateCustomer({ ...valid, contactCountry: 'us', contactTitle: 'Director' }, [
+      nepal,
+      us,
+    ]);
+    expect(out.ok && out.data.contact).toEqual({
+      fullName: 'Sita Rai',
+      email: 'sita@himalayan.example',
+      country: 'US',
+      title: 'Director',
+      phones: [
+        { country: 'NP', e164: '+9779812345678', isPrimary: true },
+        { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false },
+      ],
+    });
+  });
+
+  it("puts a phone refusal on the row the form posted, by that row's own index", () => {
+    const out = parseCreateCustomer(valid, [
+      nepal,
+      { country: 'NP', e164: '+14155552671', isPrimary: false, index: 3 },
+    ]);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors.phoneRows?.[3]).toMatch(/Nepal number starts with \+977\.$/);
+    expect(out.errors.phoneRows?.slice(0, 3)).toEqual([undefined, undefined, undefined]);
   });
 
   it('needs a first contact with an email, and says so on its fields', () => {
@@ -60,22 +177,6 @@ describe('parseCreateCustomer', () => {
     expect(!bad.ok && bad.errors.contactEmail).toMatch(/name@company.com/);
   });
 
-  it("keeps the first contact's phone (punctuation removed) and job title", () => {
-    const out = parseCreateCustomer({
-      ...valid,
-      contactPhone: '+977 981-234 5678',
-      contactTitle: 'Director',
-    });
-    expect(out.ok && out.data.contact).toEqual({
-      fullName: 'Sita Rai',
-      email: 'sita@himalayan.example',
-      phone: '+9779812345678',
-      title: 'Director',
-    });
-    const badPhone = parseCreateCustomer({ ...valid, contactPhone: '9812345678' });
-    expect(!badPhone.ok && badPhone.errors.contactPhone).toMatch(/country code/i);
-  });
-
   it('keeps the optional fields that are filled', () => {
     const out = parseCreateCustomer({
       ...valid,
@@ -83,39 +184,31 @@ describe('parseCreateCustomer', () => {
       industry: 'Hydropower',
       defaultCurrency: 'USD',
       relationship: 'active',
-      line2: 'Ward 4',
-      postalCode: '44600',
     });
     expect(out.ok && out.data).toMatchObject({
       panVatNo: '301234567',
       industry: 'Hydropower',
       defaultCurrency: 'USD',
       relationship: 'active',
-      address: { line2: 'Ward 4', postalCode: '44600' },
     });
   });
 
   it('says what is missing in plain words', () => {
-    const out = parseCreateCustomer({ ...EMPTY_CUSTOMER_VALUES });
+    const out = parseCreateCustomer({ ...EMPTY_CUSTOMER_VALUES, country: '' });
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.errors.legalName).toMatch(/legal name/i);
-    expect(out.errors.line1).toMatch(/address/i);
+    expect(out.errors.line).toMatch(/address/i);
     expect(out.errors.city).toMatch(/city/i);
+    expect(out.errors.country).toMatch(/country/i);
     expect(JSON.stringify(out.errors)).not.toMatch(/too small|invalid/i);
   });
 
-  it('refuses a bad PAN/VAT, country and over-long text with a friendly message', () => {
-    const out = parseCreateCustomer({
-      ...valid,
-      panVatNo: '12 34',
-      country: 'NEP',
-      industry: 'x'.repeat(101),
-    });
+  it('refuses a country that is not on the list and over-long text with a friendly message', () => {
+    const out = parseCreateCustomer({ ...valid, country: 'NEP', industry: 'x'.repeat(101) });
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.errors.panVatNo).toMatch(/5 to 20/);
-    expect(out.errors.country).toMatch(/two-letter/);
+    expect(out.errors.country).toMatch(/from the list/);
     expect(out.errors.industry).toMatch(/100/);
   });
 
@@ -133,6 +226,7 @@ describe('parseUpdateCustomer', () => {
 
   it('turns a customer into form values and back with no change', () => {
     expect(same.country).toBe('NP');
+    expect(same.line).toBe('Balaju');
     expect(same.defaultCurrency).toBe('NPR');
     expect(parseUpdateCustomer(same, existing)).toEqual({ ok: false, nothingChanged: true });
   });
@@ -142,15 +236,25 @@ describe('parseUpdateCustomer', () => {
     expect(out).toEqual({ ok: true, data: { industry: 'Hydropower', expectedVersion: 2 } });
   });
 
-  it('sends the whole address when any part of it changed', () => {
+  it('sends the whole address when its line or city changed, without the country', () => {
     const out = parseUpdateCustomer({ ...same, city: 'Lalitpur' }, existing);
     expect(out).toEqual({
       ok: true,
-      data: {
-        address: { line1: 'Balaju', city: 'Lalitpur', country: 'NP' },
-        expectedVersion: 2,
-      },
+      data: { address: { line: 'Balaju', city: 'Lalitpur' }, expectedVersion: 2 },
     });
+  });
+
+  it('sends a new country on its own, and holds the kept PAN to the new country', () => {
+    const foreign = { ...existing, country: 'IN' as const, panVatNo: 'AAAPL1234C' };
+    const toNepal = parseUpdateCustomer({ ...valuesOfCustomer(foreign), country: 'NP' }, foreign);
+    expect(!toNepal.ok && 'errors' in toNepal && toNepal.errors.panVatNo).toMatch(/9 digits/);
+    const out = parseUpdateCustomer({ ...same, country: 'IN' }, existing);
+    expect(out).toEqual({ ok: true, data: { country: 'IN', expectedVersion: 2 } });
+  });
+
+  it('refuses an 8-digit PAN for a Nepal customer', () => {
+    const out = parseUpdateCustomer({ ...same, panVatNo: '30123456' }, existing);
+    expect(!out.ok && 'errors' in out && out.errors.panVatNo).toMatch(/9 digits/);
   });
 
   it('cannot clear PAN/VAT, industry or currency, and says so instead of ignoring the blank', () => {
@@ -171,11 +275,9 @@ describe('parseUpdateCustomer', () => {
     expect(out.ok).toBe(true);
   });
 
-  it('still validates what it sends', () => {
-    const out = parseUpdateCustomer({ ...same, panVatNo: '!!' }, existing);
-    expect(out.ok).toBe(false);
-    if (out.ok || !('errors' in out)) return;
-    expect(out.errors.panVatNo).toMatch(/5 to 20/);
+  it('refuses a cleared country', () => {
+    const out = parseUpdateCustomer({ ...same, country: '' }, existing);
+    expect(!out.ok && 'errors' in out && out.errors.country).toMatch(/country/i);
   });
 });
 
@@ -187,62 +289,72 @@ describe('normalizePhone', () => {
 });
 
 describe('parseContact', () => {
-  const base = { fullName: ' Sita Sharma ', title: '', email: '', phone: '', isPrimary: false };
+  const base = { ...EMPTY_CONTACT_VALUES, fullName: ' Sita Sharma ' };
 
   it('needs an email while the customer has no contact with one, and only then', () => {
-    const out = parseContact(base, { requireEmail: true });
+    const out = parseContact(base, [], { requireEmail: true });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.errors.email).toMatch(/no contact with an email/i);
-    expect(parseContact({ ...base, email: 'sita@example.com' }, { requireEmail: true }).ok).toBe(
-      true,
-    );
-    expect(parseContact(base, { requireEmail: false }).ok).toBe(true);
+    expect(
+      parseContact({ ...base, email: 'sita@example.com' }, [], { requireEmail: true }).ok,
+    ).toBe(true);
+    expect(parseContact(base, [], { requireEmail: false }).ok).toBe(true);
   });
 
   it('keeps the other field errors when the email is also missing', () => {
-    const out = parseContact({ ...base, fullName: ' ' }, { requireEmail: true });
+    const out = parseContact({ ...base, fullName: ' ' }, [], { requireEmail: true });
     expect(!out.ok && Object.keys(out.errors).sort()).toEqual(['email', 'fullName']);
   });
 
-  it('builds a contact with only a name', () => {
+  it('builds a contact with only a name and a country', () => {
     expect(parseContact(base)).toEqual({
       ok: true,
-      data: { fullName: 'Sita Sharma', isPrimary: false },
+      data: { fullName: 'Sita Sharma', country: 'NP', phones: [], isPrimary: false },
     });
   });
 
-  it('accepts a phone typed with spaces and normalises it to E.164', () => {
-    const out = parseContact({
-      ...base,
-      phone: '+977 981-234 5678',
-      email: 'sita@example.com',
-      isPrimary: true,
-    });
+  it('sends two phones in different countries intact, with the contact country', () => {
+    const out = parseContact(
+      { ...base, country: 'in', email: 'sita@example.com', isPrimary: true },
+      [nepal, us],
+    );
     expect(out).toEqual({
       ok: true,
       data: {
         fullName: 'Sita Sharma',
-        phone: '+9779812345678',
         email: 'sita@example.com',
+        country: 'IN',
         isPrimary: true,
+        phones: [
+          { country: 'NP', e164: '+9779812345678', isPrimary: true },
+          { country: 'US', e164: '+14155552671', label: 'work', isPrimary: false },
+        ],
       },
     });
   });
 
-  it('explains a phone without a country code', () => {
-    const out = parseContact({ ...base, phone: '9812345678' });
+  it('explains a number without its country code on its row, in plain words', () => {
+    const out = parseContact(base, [
+      { country: 'NP', e164: '9812345678', isPrimary: true, index: 0 },
+    ]);
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.errors.phone).toMatch(/country code/i);
-    expect(out.errors.phone).toContain('+9779812345678');
-    expect(out.errors.phone).not.toMatch(/E\.164|regex|pattern/i);
+    expect(out.errors.phoneRows?.[0]).toMatch(/country code/i);
+    expect(out.errors.phoneRows?.[0]).toContain('+9779812345678');
+    expect(out.errors.phoneRows?.[0]).not.toMatch(/E\.164|regex|pattern/i);
   });
 
-  it('requires a name and a real email', () => {
-    const out = parseContact({ ...base, fullName: '   ', email: 'not-an-email' });
+  it('says a number is listed twice on the second row', () => {
+    const out = parseContact(base, [nepal, { ...nepal, isPrimary: false, index: 1 }]);
+    expect(!out.ok && out.errors.phoneRows).toEqual([undefined, 'This number is already listed.']);
+  });
+
+  it('requires a name, a country and a real email', () => {
+    const out = parseContact({ ...base, fullName: '   ', country: '', email: 'not-an-email' });
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.errors.fullName).toMatch(/name/i);
+    expect(out.errors.country).toMatch(/country/i);
     expect(out.errors.email).toMatch(/email/i);
   });
 });

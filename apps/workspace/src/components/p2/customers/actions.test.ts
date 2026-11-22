@@ -50,11 +50,12 @@ const createForm = () =>
   form({
     legalName: 'Himalayan Construction Pvt. Ltd.',
     relationship: 'prospect',
-    country: 'NP',
-    line1: 'Balaju',
-    city: 'Kathmandu',
+    'address.line': 'Balaju',
+    'address.city': 'Kathmandu',
+    'address.country': 'NP',
     contactName: 'Sita Rai',
     contactEmail: 'sita@himalayan.example',
+    contactCountry: 'NP',
     ackDuplicates: 'yes',
     idempotencyKey: IDEM,
   });
@@ -72,7 +73,7 @@ describe('the live grants, not the role defaults (audit #5)', () => {
     expect(created.error).toMatch(/do not include changing customers/i);
     const contact = await addContactAction(
       { key: IDEM, errors: {}, savedCount: 0 },
-      form({ customerId: ID, fullName: 'Sita Rai', idempotencyKey: IDEM }),
+      form({ customerId: ID, fullName: 'Sita Rai', country: 'NP', idempotencyKey: IDEM }),
     );
     expect(contact.error).toMatch(/do not include changing customers/i);
     expect(api.createCustomer).not.toHaveBeenCalled();
@@ -100,6 +101,73 @@ describe('createCustomerAction', () => {
     });
   });
 
+  it("sends the address country as the customer's country and the first contact's two phones", async () => {
+    api.createCustomer.mockResolvedValue({ id: ID });
+    const f = createForm();
+    f.set('address.country', 'IN');
+    f.set('contactCountry', 'US');
+    f.set('contactPhones.0.number', '+9779812345678');
+    f.set('contactPhones.0.country', 'NP');
+    f.set('contactPhones.0.label', '');
+    f.set('contactPhones.0.isPrimary', 'false');
+    f.set('contactPhones.1.number', '+14155552671');
+    f.set('contactPhones.1.country', 'US');
+    f.set('contactPhones.1.label', 'work');
+    f.set('contactPhones.1.isPrimary', 'true');
+    await expect(createCustomerAction({ key: IDEM, errors: {} }, f)).rejects.toThrow(/redirect/);
+    expect(api.createCustomer.mock.calls[0]?.[1]).toMatchObject({
+      country: 'IN',
+      address: { line: 'Balaju', city: 'Kathmandu' },
+      contact: {
+        country: 'US',
+        phones: [
+          { country: 'NP', e164: '+9779812345678', isPrimary: false },
+          { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
+        ],
+      },
+    });
+  });
+
+  it('refuses an address without a country before calling the API', async () => {
+    const f = createForm();
+    f.delete('address.country');
+    const res = await createCustomerAction({ key: IDEM, errors: {} }, f);
+    // Only the country is refused: the line and city posted under `address.` were read.
+    expect(res.errors).toEqual({ country: "Choose the company's country." });
+    expect(api.createCustomer).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Nepal customer with an 8-digit PAN, and saves a foreign one without a PAN', async () => {
+    const short = createForm();
+    short.set('panVatNo', '30123456');
+    const refused = await createCustomerAction({ key: IDEM, errors: {} }, short);
+    expect(refused.errors.panVatNo).toMatch(/9 digits/);
+    expect(api.createCustomer).not.toHaveBeenCalled();
+
+    api.createCustomer.mockResolvedValue({ id: ID });
+    const foreign = createForm();
+    foreign.set('address.country', 'IN');
+    await expect(createCustomerAction({ key: IDEM, errors: {} }, foreign)).rejects.toThrow(
+      /redirect/,
+    );
+    expect(api.createCustomer.mock.calls[0]?.[1]).toMatchObject({ country: 'IN' });
+  });
+
+  it('puts a bad phone back on the row the form posted it in', async () => {
+    const f = createForm();
+    f.set('contactPhones.0.number', '');
+    f.set('contactPhones.0.country', 'NP');
+    f.set('contactPhones.0.isPrimary', 'true');
+    f.set('contactPhones.1.number', '+14155552671');
+    f.set('contactPhones.1.country', 'NP');
+    f.set('contactPhones.1.isPrimary', 'false');
+    const res = await createCustomerAction({ key: IDEM, errors: {} }, f);
+    const errors = res.errors as { phoneRows?: (string | undefined)[] };
+    expect(errors.phoneRows?.[0]).toBeUndefined();
+    expect(errors.phoneRows?.[1]).toMatch(/Nepal number starts with \+977/);
+    expect(api.createCustomer).not.toHaveBeenCalled();
+  });
+
   it('refuses a customer without a first contact email before calling the API', async () => {
     const f = createForm();
     f.delete('contactEmail');
@@ -114,7 +182,13 @@ describe('addContactAction', () => {
     api.createContact.mockRejectedValue(apiError(409, 'primary_contact_exists'));
     const res = await addContactAction(
       { key: IDEM, errors: {}, savedCount: 0 },
-      form({ customerId: ID, fullName: 'Sita Rai', isPrimary: 'on', idempotencyKey: IDEM }),
+      form({
+        customerId: ID,
+        fullName: 'Sita Rai',
+        country: 'NP',
+        isPrimary: 'on',
+        idempotencyKey: IDEM,
+      }),
     );
     expect(res.primaryTaken).toMatch(/already has a main contact/i);
     expect(res.error).toBeUndefined();
@@ -125,7 +199,13 @@ describe('addContactAction', () => {
   it('needs an email while the page says the customer has none, before calling the API', async () => {
     const res = await addContactAction(
       { key: IDEM, errors: {}, savedCount: 0 },
-      form({ customerId: ID, fullName: 'Sita Rai', requireEmail: 'yes', idempotencyKey: IDEM }),
+      form({
+        customerId: ID,
+        fullName: 'Sita Rai',
+        country: 'NP',
+        requireEmail: 'yes',
+        idempotencyKey: IDEM,
+      }),
     );
     expect(res.errors.email).toMatch(/no contact with an email/i);
     expect(api.createContact).not.toHaveBeenCalled();
@@ -135,17 +215,52 @@ describe('addContactAction', () => {
     api.createContact.mockRejectedValue(apiError(422, 'contact_email_required'));
     const res = await addContactAction(
       { key: IDEM, errors: {}, savedCount: 0 },
-      form({ customerId: ID, fullName: 'Sita Rai', idempotencyKey: IDEM }),
+      form({ customerId: ID, fullName: 'Sita Rai', country: 'NP', idempotencyKey: IDEM }),
     );
     expect(res.errors.email).toMatch(/no contact with an email/i);
     expect(res.error).toBeUndefined();
+  });
+
+  it("sends the contact's country and two phones in different countries intact", async () => {
+    api.createContact.mockResolvedValue({ id: ID });
+    await addContactAction(
+      { key: IDEM, errors: {}, savedCount: 0 },
+      form({
+        customerId: ID,
+        fullName: 'Sita Rai',
+        country: 'IN',
+        'phones.0.number': '+9779812345678',
+        'phones.0.country': 'NP',
+        'phones.0.isPrimary': 'true',
+        'phones.1.number': '+14155552671',
+        'phones.1.country': 'US',
+        'phones.1.label': 'mobile',
+        'phones.1.isPrimary': 'false',
+        idempotencyKey: IDEM,
+      }),
+    );
+    expect(api.createContact.mock.calls[0]?.[2]).toEqual({
+      fullName: 'Sita Rai',
+      country: 'IN',
+      isPrimary: false,
+      phones: [
+        { country: 'NP', e164: '+9779812345678', isPrimary: true },
+        { country: 'US', e164: '+14155552671', label: 'mobile', isPrimary: false },
+      ],
+    });
   });
 
   it('hands back a saved message (shown as a toast) and resets the form', async () => {
     api.createContact.mockResolvedValue({ id: ID });
     const res = await addContactAction(
       { key: IDEM, errors: {}, savedCount: 2 },
-      form({ customerId: ID, fullName: 'Sita Rai', email: 'sita@x.example', idempotencyKey: IDEM }),
+      form({
+        customerId: ID,
+        fullName: 'Sita Rai',
+        country: 'NP',
+        email: 'sita@x.example',
+        idempotencyKey: IDEM,
+      }),
     );
     expect(res.saved).toBe('Sita Rai was added.');
     expect(res.savedCount).toBe(3);
@@ -157,7 +272,8 @@ describe('updateCustomerAction', () => {
     id: ID,
     legalName: 'Old name',
     relationship: 'prospect',
-    address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+    country: 'NP',
+    address: { line: 'Balaju', city: 'Kathmandu' },
     version: 2,
   };
   const editForm = () =>
@@ -166,9 +282,9 @@ describe('updateCustomerAction', () => {
       expectedVersion: '2',
       legalName: 'New name',
       relationship: 'prospect',
-      line1: 'Balaju',
-      city: 'Kathmandu',
-      country: 'NP',
+      'address.line': 'Balaju',
+      'address.city': 'Kathmandu',
+      'address.country': 'NP',
     });
 
   it('shows the real duplicate PAN/VAT sentence, not "someone else changed this"', async () => {

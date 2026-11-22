@@ -58,12 +58,13 @@ const customer = {
   relationship: 'active',
   ownerUserId: null,
   defaultCurrency: 'NPR',
-  address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+  country: 'NP',
+  address: { line: 'Balaju', city: 'Kathmandu' },
   mergedIntoId: null,
   version: 1,
   createdAt: WHEN,
   updatedAt: WHEN,
-} as CustomerDto;
+} satisfies CustomerDto;
 
 async function render(): Promise<string> {
   return renderToStaticMarkup(await CustomersPage({ searchParams: Promise.resolve({}) }));
@@ -99,6 +100,34 @@ describe('customers list page', () => {
     expect(owners[0]).toContain('Anil Karki');
     expect(owners[1]).toBe('No owner');
     expect(doc.body.innerHTML).not.toContain(OWNER);
+  });
+
+  // FX9: one combined column with the city and the country's name; no street line and no phone in the list.
+  it("shows each organization's city and country name in a Location column", async () => {
+    mocks.listCustomers.mockResolvedValue({
+      items: [
+        { ...customer, address: { line: 'Lakeside Road 6', city: 'Pokhara' } },
+        {
+          ...customer,
+          id: MERGED,
+          legalName: 'Bay Area Imports Inc.',
+          panVatNo: null,
+          country: 'US',
+          address: { line: '500 Howard Street', city: 'San Francisco' },
+        },
+      ],
+      total: 2,
+    });
+    const doc = new DOMParser().parseFromString(await render(), 'text/html');
+    const headers = [...doc.querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    const column = headers.indexOf('Location');
+    expect(column).toBe(headers.indexOf('Organization') + 1);
+    const cells = [...doc.querySelectorAll('tbody tr')].map((tr) =>
+      tr.querySelectorAll('td')[column]?.textContent?.trim(),
+    );
+    expect(cells).toEqual(['Pokhara, Nepal', 'San Francisco, United States']);
+    expect(doc.body.textContent).not.toContain('Lakeside Road 6');
+    expect(doc.body.textContent).not.toContain('500 Howard Street');
   });
 
   it('draws the four cards from the relationship counts, the total being their sum', async () => {

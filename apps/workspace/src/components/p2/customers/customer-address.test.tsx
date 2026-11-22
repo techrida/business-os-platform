@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { mountForm } from '@/test/form-interactions';
 
@@ -13,15 +13,18 @@ beforeEach(() => {
 afterEach(async () => {
   await mounted?.unmount();
   mounted = undefined;
-  vi.restoreAllMocks();
 });
 
-it('renders two identical lines without a duplicate React key', async () => {
-  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+it('shows the street, city and country name on one line', async () => {
   mounted = await mountForm(
-    <CustomerAddress address={{ line1: 'KTM', city: 'KTM', country: 'NP' }} />,
+    <CustomerAddress address={{ line: 'Durbar Marg 1', city: 'Kathmandu' }} country="NP" />,
   );
-  const lines = [...mounted.container.querySelectorAll('span > span')].map((s) => s.textContent);
-  expect(lines).toEqual(['KTM', 'KTM', 'NP']);
-  expect(JSON.stringify(error.mock.calls)).not.toMatch(/same key/i);
+  expect(mounted.container.textContent).toBe('Durbar Marg 1, Kathmandu, Nepal');
+});
+
+it('names a foreign customer’s country', async () => {
+  mounted = await mountForm(
+    <CustomerAddress address={{ line: '1 Market St', city: 'San Francisco' }} country="US" />,
+  );
+  expect(mounted.container.textContent).toBe('1 Market St, San Francisco, United States');
 });

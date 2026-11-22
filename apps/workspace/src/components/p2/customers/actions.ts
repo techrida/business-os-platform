@@ -26,6 +26,7 @@ import {
   parseContact,
   parseCreateCustomer,
   parseUpdateCustomer,
+  readPhoneRows,
   tidyCustomerValues,
   type ContactValues,
   type CustomerValues,
@@ -56,9 +57,19 @@ function keyOf(form: FormData): string {
   return KEY.test(submitted) ? submitted : randomUUID();
 }
 
+/**
+ * The posted name of each customer field. `AddressFields name="address"` posts the line, city and
+ * country under `address.`; the country is the customer's own (top-level in the body).
+ */
+const POSTED_AS: Partial<Record<keyof CustomerValues, string>> = {
+  line: 'address.line',
+  city: 'address.city',
+  country: 'address.country',
+};
+
 function customerValues(form: FormData): CustomerValues {
   const raw: Partial<CustomerValues> = {};
-  for (const field of CUSTOMER_FIELDS) raw[field] = text(form, field);
+  for (const field of CUSTOMER_FIELDS) raw[field] = text(form, POSTED_AS[field] ?? field);
   return tidyCustomerValues(raw);
 }
 
@@ -89,7 +100,8 @@ export async function createCustomerAction(
     return { key, errors: {}, error: NO_WRITE };
   }
 
-  const parsed = parseCreateCustomer(customerValues(form));
+  // The first contact's numbers: `PhoneListInput name="contactPhones"`.
+  const parsed = parseCreateCustomer(customerValues(form), readPhoneRows(form, 'contactPhones'));
   if (!parsed.ok) return { key, errors: parsed.errors };
 
   if (text(form, 'ackDuplicates') !== 'yes') {
@@ -211,11 +223,13 @@ export async function addContactAction(
     fullName: text(form, 'fullName'),
     title: text(form, 'title'),
     email: text(form, 'email'),
-    phone: text(form, 'phone'),
+    country: text(form, 'country'),
     isPrimary: text(form, 'isPrimary') === 'on',
   };
   // The page says whether the customer still lacks a contact with an email; the API decides anyway.
-  const parsed = parseContact(values, { requireEmail: text(form, 'requireEmail') === 'yes' });
+  const parsed = parseContact(values, readPhoneRows(form, 'phones'), {
+    requireEmail: text(form, 'requireEmail') === 'yes',
+  });
   if (!parsed.ok) return { key, errors: parsed.errors, ...same };
 
   try {

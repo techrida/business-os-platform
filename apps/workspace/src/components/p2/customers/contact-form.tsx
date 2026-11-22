@@ -1,12 +1,14 @@
 'use client';
 
+import { DEFAULT_COUNTRY, type CountryCode, type PartyPhoneInput } from '@bos/contracts';
 import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { CountrySelect } from '@/components/ui/country-select';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/field';
-import { PhoneInput } from '@/components/ui/phone-input';
+import { PhoneListInput } from '@/components/ui/phone-list-input';
 import { toast } from '@/components/ui/toast';
 
 import type { ContactFormState } from './form-state';
@@ -28,6 +30,7 @@ export function ContactForm({
   idempotencyKey,
   hasPrimary,
   requireEmail,
+  customerCountry = DEFAULT_COUNTRY,
   inDialog = false,
 }: {
   action: (prev: ContactFormState, form: FormData) => Promise<ContactFormState>;
@@ -38,6 +41,8 @@ export function ContactForm({
   hasPrimary: boolean;
   /** The customer has no contact with an email yet, so this one needs an email. */
   requireEmail: boolean;
+  /** The customer's country, which a new contact starts in. */
+  customerCountry?: CountryCode;
   inDialog?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<ContactFormState, FormData>(action, {
@@ -47,8 +52,16 @@ export function ContactForm({
   });
   const formId = useId();
   const [openedAt, setOpenedAt] = useState<number | null>(null);
-  const [draft, setDraft] = useState({ savedCount: 0, values: EMPTY_CONTACT_VALUES });
-  const values = draft.savedCount === state.savedCount ? draft.values : EMPTY_CONTACT_VALUES;
+  const empty: ContactValues = { ...EMPTY_CONTACT_VALUES, country: customerCountry };
+  const [draft, setDraft] = useState({ savedCount: 0, values: empty });
+  const values = draft.savedCount === state.savedCount ? draft.values : empty;
+  // React resets the form after every action and the phone list then restores its default, so the
+  // numbers typed so far are its default: a refusal keeps them, a save starts again with none.
+  const [phoneDraft, setPhoneDraft] = useState<{ savedCount: number; phones: PartyPhoneInput[] }>({
+    savedCount: 0,
+    phones: [],
+  });
+  const phones = phoneDraft.savedCount === state.savedCount ? phoneDraft.phones : [];
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
 
@@ -81,10 +94,12 @@ export function ContactForm({
         </Alert>
       ) : null}
       <ContactFields
-        // A saved contact empties the form; fresh fields also drop the phone's other-country switch.
+        // A saved contact empties the form: fresh fields, and a phone list back to one blank row.
         key={state.savedCount}
         values={values}
         onChange={(next) => setDraft({ savedCount: state.savedCount, values: next })}
+        phones={phones}
+        onPhonesChange={(next) => setPhoneDraft({ savedCount: state.savedCount, phones: next })}
         errors={state.errors}
         hasPrimary={hasPrimary}
         requireEmail={requireEmail}
@@ -130,12 +145,16 @@ export function ContactForm({
 function ContactFields({
   values,
   onChange,
+  phones,
+  onPhonesChange,
   errors,
   hasPrimary,
   requireEmail,
 }: {
   values: ContactValues;
   onChange: (values: ContactValues) => void;
+  phones: PartyPhoneInput[];
+  onPhonesChange: (phones: PartyPhoneInput[]) => void;
   errors: ContactFormState['errors'];
   hasPrimary: boolean;
   requireEmail: boolean;
@@ -195,17 +214,34 @@ function ContactFields({
             />
           )}
         </Field>
+        <Field label="Country" error={errors.country}>
+          {(control) => (
+            <CountrySelect
+              id={control.id}
+              aria-labelledby={control['aria-labelledby']}
+              aria-describedby={control['aria-describedby']}
+              aria-invalid={control['aria-invalid']}
+              name="country"
+              required
+              value={values.country as CountryCode}
+              onChange={(country) => onChange({ ...values, country })}
+            />
+          )}
+        </Field>
         <Field
           label="Phone"
-          hint="Optional. Nepal numbers need only the digits."
-          error={errors.phone}
+          hint="Optional. Pick each number's country, or type + and its code."
+          className={styles.wide ?? ''}
         >
           {(control) => (
-            <PhoneInput
-              name="phone"
-              value={values.phone}
-              onValueChange={(phone) => set('phone')({ target: { value: phone } })}
-              {...control}
+            <PhoneListInput
+              name="phones"
+              aria-labelledby={control['aria-labelledby']}
+              defaultValue={phones}
+              defaultCountry={values.country as CountryCode}
+              onChange={onPhonesChange}
+              rowErrors={errors.phoneRows}
+              error={errors.phones}
             />
           )}
         </Field>

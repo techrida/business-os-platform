@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
+import type { CountryCode } from '@bos/contracts';
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm, submit } from '@/test/form-interactions';
+import { click, fill, mountForm, submit, typeKeys } from '@/test/form-interactions';
 
 import { ContactForm, PRIMARY_TAKEN_REASON } from './contact-form';
 import type { ContactFormState } from './form-state';
+import { readPhoneRows } from './forms';
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock('@/components/ui/toast', () => ({ toast }));
@@ -16,6 +19,8 @@ let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  // jsdom has no layout, so no scrollIntoView; the country list calls it on the highlighted option.
+  Element.prototype.scrollIntoView = () => {};
 });
 afterEach(async () => {
   await mounted?.unmount();
@@ -24,7 +29,12 @@ afterEach(async () => {
 });
 
 async function mount(
-  props: { hasPrimary?: boolean; requireEmail?: boolean; inDialog?: boolean },
+  props: {
+    hasPrimary?: boolean;
+    requireEmail?: boolean;
+    inDialog?: boolean;
+    customerCountry?: CountryCode;
+  },
   action: (prev: ContactFormState, form: FormData) => Promise<ContactFormState> = (prev) =>
     Promise.resolve(prev),
 ) {
@@ -36,6 +46,7 @@ async function mount(
       hasPrimary={props.hasPrimary ?? false}
       requireEmail={props.requireEmail ?? false}
       inDialog={props.inDialog ?? false}
+      {...(props.customerCountry ? { customerCountry: props.customerCountry } : {})}
     />,
   );
   return mounted.container;
@@ -43,6 +54,45 @@ async function mount(
 
 const box = (root: HTMLElement) =>
   root.querySelector<HTMLInputElement>('input[type="checkbox"][name="isPrimary"]')!;
+
+const phoneBox = (root: ParentNode, n: number, part: 'number' | 'country' = 'number') =>
+  root.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} ${part}"]`);
+
+/** Types an international number the way a person does: `+` first, then the rest. */
+async function typeInternational(root: ParentNode, n: number, rest: string) {
+  await typeKeys(phoneBox(root, n), '+');
+  await typeKeys(phoneBox(root, n), rest);
+}
+
+/** The contact's own Country box, found through its visible label. */
+function countryBox(root: HTMLElement) {
+  const label = [...root.querySelectorAll('label')].find((l) => l.textContent === 'Country');
+  return root.querySelector<HTMLInputElement>(`[id="${label?.htmlFor}"]`)!;
+}
+
+async function pickCountry(input: HTMLInputElement, search: string) {
+  await act(() => Promise.resolve(input.focus()));
+  await act(() => Promise.resolve(input.select()));
+  await typeKeys(input, search);
+  await act(() =>
+    Promise.resolve(
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    ),
+  );
+}
+
+function recordingAction() {
+  return vi.fn<(prev: ContactFormState, form: FormData) => Promise<ContactFormState>>((prev) =>
+    Promise.resolve(prev),
+  );
+}
+
+const postedPhones = (form: FormData | undefined) =>
+  readPhoneRows(form!, 'phones').map(({ country, e164, isPrimary }) => ({
+    country,
+    e164,
+    isPrimary,
+  }));
 
 describe('the main-contact box (demo feedback: a second primary answered 409)', () => {
   it('is off, with its reason linked, when the customer already has a main contact', async () => {
@@ -91,6 +141,98 @@ describe('the email of a new contact', () => {
   });
 });
 
+describe('the phones and country of a new contact (FX9)', () => {
+  it('posts two phones in different countries', async () => {
+    const action = recordingAction();
+    const root = await mount({}, action);
+    await fill(root.querySelector('[name="fullName"]'), 'Sita Rai');
+    await typeKeys(phoneBox(root, 1), '9812345678');
+    await click(root.querySelector('button[data-action="add"]'));
+    await typeInternational(root, 2, '1 4155552671');
+    await submit(root);
+    expect(postedPhones(action.mock.calls[0]?.[1])).toEqual([
+      { country: 'NP', e164: '+9779812345678', isPrimary: true },
+      { country: 'US', e164: '+14155552671', isPrimary: false },
+    ]);
+  });
+
+  it('posts +1 4155552671 typed into a Nepal row as a US number', async () => {
+    const action = recordingAction();
+    const root = await mount({}, action);
+    expect(phoneBox(root, 1, 'country')?.value).toBe('+977');
+    await typeInternational(root, 1, '1 4155552671');
+    await submit(root);
+    expect(postedPhones(action.mock.calls[0]?.[1])).toEqual([
+      { country: 'US', e164: '+14155552671', isPrimary: true },
+    ]);
+  });
+
+  it("starts in the customer's country, for the contact and its first phone", async () => {
+    const action = recordingAction();
+    const root = await mount({ customerCountry: 'IN' }, action);
+    expect(countryBox(root).getAttribute('aria-labelledby')).toBeTruthy();
+    expect(phoneBox(root, 1, 'country')?.value).toBe('+91');
+    await fill(root.querySelector('[name="fullName"]'), 'Sita Rai');
+    await submit(root);
+    expect(action.mock.calls[0]?.[1].get('country')).toBe('IN');
+  });
+
+  it('starts in Nepal when the customer country is not given', async () => {
+    const action = recordingAction();
+    const root = await mount({}, action);
+    await submit(root);
+    expect(action.mock.calls[0]?.[1].get('country')).toBe('NP');
+  });
+
+  it('posts a country chosen for the contact', async () => {
+    const action = recordingAction();
+    const root = await mount({ customerCountry: 'IN' }, action);
+    await pickCountry(countryBox(root), 'United States');
+    await submit(root);
+    expect(action.mock.calls[0]?.[1].get('country')).toBe('US');
+  });
+
+  it("clears the phones and puts back the customer's country after a save", async () => {
+    const action = recordingAction();
+    action.mockImplementationOnce((prev) =>
+      Promise.resolve({ ...prev, saved: 'Sita Rai was added.', savedCount: prev.savedCount + 1 }),
+    );
+    const root = await mount({ customerCountry: 'IN' }, action);
+    await fill(root.querySelector('[name="fullName"]'), 'Sita Rai');
+    await pickCountry(countryBox(root), 'United States');
+    await typeInternational(root, 1, '977 9812345678');
+    await click(root.querySelector('button[data-action="add"]'));
+    await typeInternational(root, 2, '1 4155552671');
+    await submit(root);
+    expect(postedPhones(action.mock.calls[0]?.[1])).toHaveLength(2);
+    expect(action.mock.calls[0]?.[1].get('country')).toBe('US');
+
+    expect(root.querySelectorAll('li[data-row]')).toHaveLength(1);
+    expect(phoneBox(root, 1)?.value).toBe('');
+    expect(root.querySelector<HTMLInputElement>('[name="country"]')?.value).toBe('IN');
+    await submit(root);
+    expect(postedPhones(action.mock.calls[1]?.[1])).toEqual([]);
+    expect(action.mock.calls[1]?.[1].get('country')).toBe('IN');
+  });
+
+  it('shows phone refusals on the list and on their row', async () => {
+    const root = await mount({}, (prev) =>
+      Promise.resolve({
+        ...prev,
+        errors: {
+          phones: 'Mark one number as primary.',
+          phoneRows: ['This number is already listed.'],
+        },
+      }),
+    );
+    await typeKeys(phoneBox(root, 1), '9812345678');
+    await submit(root);
+    expect(root.textContent).toContain('Mark one number as primary.');
+    expect(root.textContent).toContain('This number is already listed.');
+    expect(phoneBox(root, 1)?.getAttribute('aria-invalid')).toBe('true');
+  });
+});
+
 it('confirms a saved contact with a success toast and clears the form', async () => {
   const root = await mount({}, (prev) =>
     Promise.resolve({
@@ -136,8 +278,14 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
   expect(dialog?.querySelector<HTMLInputElement>('[name="isPrimary"]')?.disabled).toBe(true);
 
   await fill(fullName, 'Sita Rai');
+  await typeInternational(dialog!, 1, '1 4155552671');
   await click(footerSubmit);
   expect(action.mock.calls[0]?.[1].get('fullName')).toBe('Sita Rai');
+  // React resets the form after the refused action; the typed number stays.
+  expect(dialog?.querySelector<HTMLInputElement>('[name="phones.0.number"]')?.value).toBe(
+    '+14155552671',
+  );
+  expect(phoneBox(dialog!, 1)?.value).toBe('4155552671');
   expect(action.mock.calls[0]?.[1].get('requireEmail')).toBe('yes');
   expect(fullName?.value).toBe('Sita Rai');
   expect(email?.getAttribute('aria-invalid')).toBe('true');
@@ -145,6 +293,9 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
   await fill(email, 'sita@example.test');
   await click(footerSubmit);
   expect(action.mock.calls[1]?.[1].get('email')).toBe('sita@example.test');
+  expect(postedPhones(action.mock.calls[1]?.[1])).toEqual([
+    { country: 'US', e164: '+14155552671', isPrimary: true },
+  ]);
   expect(toast.success).toHaveBeenCalledWith('Contact added.');
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });

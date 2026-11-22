@@ -1,14 +1,23 @@
 'use client';
 
-import { CUSTOMER_RELATIONSHIPS, type Currency } from '@bos/contracts';
-import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  CUSTOMER_RELATIONSHIPS,
+  DEFAULT_COUNTRY,
+  isCountryCode,
+  type CountryCode,
+  type Currency,
+  type PartyPhoneInput,
+} from '@bos/contracts';
+import { useActionState, useEffect, useRef, useState } from 'react';
 
+import { AddressFields, type AddressValue } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { CountrySelect } from '@/components/ui/country-select';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PanInput } from '@/components/ui/pan-input';
-import { PhoneInput } from '@/components/ui/phone-input';
+import { PhoneListInput } from '@/components/ui/phone-list-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { currencyChoices } from '@/lib/enabled-currencies';
@@ -23,25 +32,11 @@ const RELATIONSHIP_LABEL: Record<(typeof CUSTOMER_RELATIONSHIPS)[number], string
   inactive: 'Inactive',
 };
 
-/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
-function SectionTitle({
-  step,
-  name,
-  children,
-}: {
-  step: number;
-  name: string;
-  children: ReactNode;
-}) {
-  return (
-    <>
-      <span className={styles.eyebrow} aria-hidden="true">
-        {`${String(step).padStart(2, '0')} · ${name}`}
-      </span>
-      {children}
-    </>
-  );
-}
+/** The form holds countries as text; the pickers take a code, and every saved value is one. */
+const countryOf = (value: string): CountryCode => {
+  const code = value.trim().toUpperCase();
+  return isCountryCode(code) ? code : DEFAULT_COUNTRY;
+};
 
 const REASON_MAX = 500;
 const REASON_REQUIRED = `Say why this is a different organization, up to ${REASON_MAX} characters.`;
@@ -110,6 +105,22 @@ export function CustomerForm({
     (field: CustomerField) =>
     (e: { target: { value: string } }): void =>
       setValues((v) => ({ ...v, [field]: e.target.value }));
+
+  // The first contact usually lives where the company does, so their country follows the address
+  // country until the person picks one for the contact; after that it stays as picked.
+  const [contactCountryChosen, setContactCountryChosen] = useState(false);
+  const setAddress = (address: AddressValue): void =>
+    setValues((v) => ({
+      ...v,
+      line: address.line,
+      city: address.city,
+      country: address.country,
+      contactCountry: contactCountryChosen ? v.contactCountry : address.country,
+    }));
+
+  // React 19 resets the form after every action, the duplicate warning included. The phone list
+  // restores its default on a reset, so the default is the valid numbers typed so far.
+  const [phones, setPhones] = useState<PartyPhoneInput[]>([]);
 
   // "Create anyway" asks why first (F1-Q55): the reason is audited with the organizations it matched.
   const reasonFieldRef = useRef<HTMLTextAreaElement>(null);
@@ -264,14 +275,7 @@ export function CustomerForm({
         </Alert>
       ) : null}
 
-      <Panel
-        title={
-          <SectionTitle step={1} name="The basics">
-            Basic Company Information
-          </SectionTitle>
-        }
-        className={styles.formSection}
-      >
+      <Panel title="Basic Company Information" className={styles.formSection}>
         <div className={styles.grid}>
           <Field label="Organization legal name" error={err.legalName} className={WIDE}>
             {(control) => (
@@ -319,11 +323,7 @@ export function CustomerForm({
 
       {mode === 'create' ? (
         <Panel
-          title={
-            <SectionTitle step={2} name="The contact">
-              Primary Contact
-            </SectionTitle>
-          }
+          title="Primary Contact"
           className={styles.formSection}
           description="Quotations are sent to this person by email. You can add more contacts later."
         >
@@ -356,20 +356,6 @@ export function CustomerForm({
                 />
               )}
             </Field>
-            <Field
-              label="Phone"
-              hint="Optional. Nepal numbers need only the digits."
-              error={err.contactPhone}
-            >
-              {(control) => (
-                <PhoneInput
-                  name="contactPhone"
-                  value={values.contactPhone}
-                  onValueChange={(phone) => set('contactPhone')({ target: { value: phone } })}
-                  {...control}
-                />
-              )}
-            </Field>
             <Field label="Job title" hint="Optional." error={err.contactTitle}>
               {(control) => (
                 <Input
@@ -382,123 +368,55 @@ export function CustomerForm({
                 />
               )}
             </Field>
+            <Field label="Country" error={err.contactCountry}>
+              {(control) => (
+                <CountrySelect
+                  id={control.id}
+                  aria-labelledby={control['aria-labelledby']}
+                  aria-describedby={control['aria-describedby']}
+                  aria-invalid={control['aria-invalid']}
+                  name="contactCountry"
+                  required
+                  value={countryOf(values.contactCountry)}
+                  onChange={(country) => {
+                    setContactCountryChosen(true);
+                    setValues((v) => ({ ...v, contactCountry: country }));
+                  }}
+                />
+              )}
+            </Field>
+            <Field
+              label="Phone"
+              hint="Optional. Pick each number's country, or type + and its code."
+              className={WIDE}
+            >
+              {(control) => (
+                <PhoneListInput
+                  name="contactPhones"
+                  aria-labelledby={control['aria-labelledby']}
+                  defaultValue={phones}
+                  defaultCountry={countryOf(values.contactCountry)}
+                  rowErrors={err.phoneRows}
+                  error={err.phones}
+                  onChange={setPhones}
+                />
+              )}
+            </Field>
           </div>
         </Panel>
       ) : null}
 
-      <Panel
-        title={
-          <SectionTitle step={mode === 'create' ? 3 : 2} name="The address">
-            Business Address
-          </SectionTitle>
-        }
-        className={styles.formSection}
-      >
-        <div className={styles.grid}>
-          <Field label="Address line 1" error={err.line1} className={WIDE}>
-            {(control) => (
-              <Input
-                name="line1"
-                value={values.line1}
-                onChange={set('line1')}
-                maxLength={200}
-                autoComplete="address-line1"
-                required
-                {...control}
-              />
-            )}
-          </Field>
-          <Field label="Address line 2" hint="Optional." error={err.line2} className={WIDE}>
-            {(control) => (
-              <Input
-                name="line2"
-                value={values.line2}
-                onChange={set('line2')}
-                maxLength={200}
-                autoComplete="address-line2"
-                {...control}
-              />
-            )}
-          </Field>
-          <Field label="City" error={err.city}>
-            {(control) => (
-              <Input
-                name="city"
-                value={values.city}
-                onChange={set('city')}
-                maxLength={100}
-                autoComplete="address-level2"
-                required
-                {...control}
-              />
-            )}
-          </Field>
-          <Field label="District" hint="Optional." error={err.district}>
-            {(control) => (
-              <Input
-                name="district"
-                value={values.district}
-                onChange={set('district')}
-                maxLength={100}
-                {...control}
-              />
-            )}
-          </Field>
-          <Field label="Province" hint="Optional." error={err.province}>
-            {(control) => (
-              <Input
-                name="province"
-                value={values.province}
-                onChange={set('province')}
-                maxLength={100}
-                autoComplete="address-level1"
-                {...control}
-              />
-            )}
-          </Field>
-          <Field label="Postal code" hint="Optional." error={err.postalCode}>
-            {(control) => (
-              <Input
-                name="postalCode"
-                value={values.postalCode}
-                onChange={set('postalCode')}
-                maxLength={20}
-                autoComplete="postal-code"
-                {...control}
-              />
-            )}
-          </Field>
-          <Field
-            label="Country code"
-            hint="Two letters, for example NP, IN or US."
-            error={err.country}
-          >
-            {(control) => (
-              <Input
-                name="country"
-                value={values.country}
-                onChange={set('country')}
-                maxLength={2}
-                autoComplete="country"
-                autoCapitalize="characters"
-                spellCheck={false}
-                className={styles.code}
-                required
-                {...control}
-              />
-            )}
-          </Field>
-        </div>
+      <Panel title="Business Address" className={styles.formSection}>
+        <AddressFields
+          name="address"
+          required
+          value={{ line: values.line, city: values.city, country: countryOf(values.country) }}
+          onChange={setAddress}
+          errors={{ line: err.line, city: err.city, country: err.country }}
+        />
       </Panel>
 
-      <Panel
-        title={
-          <SectionTitle step={mode === 'create' ? 4 : 3} name="The terms">
-            Commercial & Compliance
-          </SectionTitle>
-        }
-        className={styles.formSection}
-      >
+      <Panel title="Commercial & Compliance" className={styles.formSection}>
         <div className={styles.grid}>
           <Field
             label="Default currency"

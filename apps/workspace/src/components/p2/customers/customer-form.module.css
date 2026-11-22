@@ -6,17 +6,6 @@
   gap: var(--spacing-page);
 }
 
-/* Figma card eyebrow ("01 · The basics") above each card title. */
-.eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
-  letter-spacing: var(--letter-spacing-normal);
-}
-
 .formSection h2 {
   font-size: var(--font-size-h3);
   line-height: var(--line-height-h3);
@@ -36,11 +25,6 @@
 
 .numeric {
   font-variant-numeric: tabular-nums;
-}
-
-.code {
-  max-width: 6rem;
-  text-transform: uppercase;
 }
 
 .actions {
