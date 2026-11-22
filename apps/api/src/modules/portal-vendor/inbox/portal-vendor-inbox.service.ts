@@ -55,7 +55,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -141,12 +141,6 @@ function invalid(what: string, error: z.ZodError): BadRequestException {
   const fields = [...new Set(error.issues.map((i) => i.path.join('.') || 'body'))];
   return new BadRequestException(`Invalid ${what}: ${fields.join(', ')}`);
 }
-
-/**
- * File versions whose bytes arrived (scanning or scanned clean); anything else is not a submittable file. A
- * `quarantined` version also needs its recorded sha256: a failed write stays quarantined without one (EF3).
- */
-const RECEIVED_STATUSES = ['quarantined', 'clean'] as const;
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const VENDOR_PORTAL_INBOX_CLOCK = Symbol('VENDOR_PORTAL_INBOX_CLOCK');
@@ -662,8 +656,12 @@ export class VendorPortalInboxService {
         and(
           eq(documentVersions.tenantId, scope.tenantId),
           eq(documentVersions.documentId, documentId),
-          inArray(documentVersions.status, [...RECEIVED_STATUSES]),
-          isNotNull(documentVersions.sha256),
+          // Bytes arrived: scanned clean, or quarantined with the recorded sha256 (a failed write stays quarantined
+          // without one and is not a submittable file, EF3).
+          or(
+            eq(documentVersions.status, 'clean'),
+            and(eq(documentVersions.status, 'quarantined'), isNotNull(documentVersions.sha256)),
+          ),
         ),
       )
       .limit(1);
