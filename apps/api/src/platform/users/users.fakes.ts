@@ -330,6 +330,17 @@ export class FakeUsersStore extends UsersStore {
     this.events.add(key);
     return Promise.resolve(true);
   }
+  markInvitePending(zitadelUserId: string) {
+    this.cursors.set(`users.invite-pending:${zitadelUserId}`, 'pending');
+    return Promise.resolve();
+  }
+  clearInvitePending(_tx: DbTransaction, zitadelUserId: string) {
+    this.cursors.delete(`users.invite-pending:${zitadelUserId}`);
+    return Promise.resolve();
+  }
+  isInvitePending(zitadelUserId: string) {
+    return Promise.resolve(this.cursors.get(`users.invite-pending:${zitadelUserId}`) === 'pending');
+  }
   getCursor(name: string) {
     return Promise.resolve(this.cursors.get(name) ?? null);
   }

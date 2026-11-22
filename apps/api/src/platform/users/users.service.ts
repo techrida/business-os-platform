@@ -260,20 +260,17 @@ export class UsersService extends UserDirectory {
             message: 'This person is not waiting for a review.',
           });
         }
-        return found;
+        return { user: found, org };
       },
       READ_ONLY,
     );
 
-    // ZITADEL must answer before anything is cleared.
-    const live = await this.zitadel.getUser(target.zitadelUserId);
-    if (live === null || !live.status) {
-      throw new ConflictException({
-        code: 'identity_unreadable',
-        message: 'The sign-in service does not know this person right now. Try again later.',
-      });
-    }
+    // ZITADEL (the user and the grants) is read and validated first, with no transaction open. An unreadable answer is
+    // a 503 and the flag stays set.
+    const plan = await this.mirror.prepareResolve(target.org, target.user);
 
+    // One transaction: the same flag must still be pending, then the mirror update, the flag clear and the audit commit
+    // together. A flag that changed meanwhile is a 409.
     await withTx(
       this.db,
       scope,
@@ -281,22 +278,25 @@ export class UsersService extends UserDirectory {
       async (tx) => {
         await lockAccessRevision(tx, scope.tenantId);
         if (assertAccess) await assertAccess(tx);
-        const current = await this.store.findById(tx, scope, userId, true);
-        if (!current || current.identityReviewRequired !== true) return;
-        await this.store.clearIdentityReview(tx, current.id);
-        await this.store.bumpAuthzVersion(tx, scope);
+        const before = await this.mirror.commitResolve(
+          tx,
+          target.org,
+          scope,
+          userId,
+          target.user,
+          plan,
+        );
         await this.audit.record(tx, {
           action: IDENTITY_REVIEW_RESOLVED,
           entityType: 'users',
-          entityId: current.id,
-          before: { reviewRequired: true, status: current.status },
-          after: { reviewRequired: false },
-          meta: { zitadel: { status: live.status, locked: live.locked === true } },
+          entityId: before.id,
+          before: { reviewRequired: true, status: before.status },
+          after: { reviewRequired: false, status: plan.next.status },
+          meta: { zitadel: { status: plan.read.status, locked: plan.read.locked === true } },
         });
       },
       AFTER_ACCESS_LOCK,
     );
-    await this.mirror.syncUser(target.zitadelUserId);
   }
 
   /**
@@ -411,6 +411,9 @@ export class UsersService extends UserDirectory {
     zitadelUserId: string,
   ): Promise<void> {
     try {
+      // Marked before the first grant or mail: if every database write of this invite fails, no sign-in can create or
+      // activate a row for this identity. Cleared in the transaction that writes the invited row.
+      await this.store.markInvitePending(zitadelUserId);
       assertWithinOperationDeadline();
       await this.zitadel.setGrants(zitadelUserId, org.zitadelOrgId, b.roles);
       assertWithinOperationDeadline();

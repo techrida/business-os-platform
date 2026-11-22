@@ -249,6 +249,14 @@ export abstract class UsersStore {
 
   /** True when the event is new; false when this (instance, aggregate, sequence) was seen before. */
   abstract recordEvent(e: ZitadelEventKey): Promise<boolean>;
+  /**
+   * Marks a ZITADEL identity whose invite has not committed in the database yet. Set before the invite's first grant or
+   * mail, cleared in the transaction that writes the invited row. While it is set, no sign-in creates or activates a row
+   * for that identity (a failed invite whose database writes all failed leaves no other trace).
+   */
+  abstract markInvitePending(zitadelUserId: string): Promise<void>;
+  abstract clearInvitePending(tx: DbTransaction, zitadelUserId: string): Promise<void>;
+  abstract isInvitePending(zitadelUserId: string): Promise<boolean>;
   abstract getCursor(name: string): Promise<string | null>;
   abstract setCursor(name: string, cursor: string): Promise<void>;
 
@@ -267,6 +275,7 @@ export abstract class UsersStore {
   abstract releaseFounderLease(tenantId: string, leaseId: string): Promise<void>;
 }
 
+const invitePendingName = (zitadelUserId: string) => `users.invite-pending:${zitadelUserId}`;
 const founderLeaseName = (tenantId: string) => `users.founder-lease:${tenantId}`;
 const FOUNDER_LEASE_FREE = 'free';
 
@@ -737,6 +746,18 @@ export class SqlUsersStore extends UsersStore {
           RETURNING 1 AS one`,
     );
     return inserted.length > 0;
+  }
+
+  async markInvitePending(zitadelUserId: string): Promise<void> {
+    await this.setCursor(invitePendingName(zitadelUserId), 'pending');
+  }
+  async clearInvitePending(tx: DbTransaction, zitadelUserId: string): Promise<void> {
+    await tx.execute(
+      sql`UPDATE ops.sync_cursors SET cursor = 'done', updated_at = now() WHERE name = ${invitePendingName(zitadelUserId)}`,
+    );
+  }
+  async isInvitePending(zitadelUserId: string): Promise<boolean> {
+    return (await this.getCursor(invitePendingName(zitadelUserId))) === 'pending';
   }
 
   async getCursor(name: string): Promise<string | null> {
