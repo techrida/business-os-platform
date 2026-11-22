@@ -11,9 +11,11 @@ import { describe, expect, it } from 'vitest';
 import * as api from './index.js';
 import {
   activities,
+  customerContactPhones,
   customerContacts,
   customers,
   leadLostReasons,
+  leadPhones,
   leads,
   opportunities,
   partyAccounts,
@@ -43,6 +45,13 @@ const empty = (): Shape => ({
 
 /** `"a", "b"` -> `a,b`. */
 const cols = (list: string) => list.replaceAll('"', '').replaceAll(' ', '');
+
+/** An index column list without operator classes: `"a" gin_trgm_ops, "b"` -> `a,b`. */
+const indexCols = (list: string) =>
+  list
+    .split(',')
+    .map((c) => (c.trim().split(/\s+/)[0] ?? '').replaceAll('"', ''))
+    .join(',');
 
 /** One comparable line per constraint: the name, plus its columns (and parent, for a foreign key). */
 function sqlEntry(kind: Kind, name: string, definition: string): string {
@@ -92,24 +101,45 @@ function parseSql(text: string): Map<string, Shape> {
     shapeOf(m[1] ?? '').names[kind].push(sqlEntry(kind, m[2] ?? '', m[3] ?? ''));
   }
   for (const m of text.matchAll(
-    /CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)" USING btree \(([^)]*)\)/g,
+    /CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)" USING (?:btree|gin) \(([^)]*)\)/g,
   )) {
-    shapeOf(m[2] ?? '').names.index.push(`${m[1] ?? ''} (${cols(m[3] ?? '')})`);
+    shapeOf(m[2] ?? '').names.index.push(`${m[1] ?? ''} (${indexCols(m[3] ?? '')})`);
   }
   return tables;
 }
 
-/** Applies the ADD COLUMN, DROP CONSTRAINT and ADD CONSTRAINT lines of a later migration to the parsed tables. */
-function applyAlters(tables: Map<string, Shape>, text: string): void {
+/** Removes the constraint or index `name` (with or without its column list) from `shape`. */
+function dropName(shape: Shape, name: string): void {
+  for (const kind of Object.keys(shape.names) as Kind[]) {
+    shape.names[kind] = shape.names[kind].filter((e) => e !== name && !e.startsWith(`${name} (`));
+  }
+}
+
+/**
+ * Applies the ADD COLUMN, DROP CONSTRAINT, DROP COLUMN, DROP INDEX and ADD CONSTRAINT lines of a later migration
+ * to the parsed tables. `foreign` names tables of another schema file that the migration also alters (0191 and
+ * 0194 touch vendors too); their drops are skipped, and a drop on any other unknown table throws.
+ */
+function applyAlters(tables: Map<string, Shape>, text: string, foreign: string[] = []): void {
+  const target = (table: string) => {
+    const shape = tables.get(table);
+    if (!shape && !foreign.includes(table)) throw new Error(`drop on unknown table ${table}`);
+    return shape;
+  };
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
     tables.get(m[1] ?? '')?.columns.push(m[2] ?? '');
   }
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP CONSTRAINT "(\w+)";/g)) {
-    const shape = tables.get(m[1] ?? '');
-    if (!shape) throw new Error(`drop on unknown table ${m[1] ?? ''}`);
-    for (const kind of Object.keys(shape.names) as Kind[]) {
-      shape.names[kind] = shape.names[kind].filter((e) => e !== m[2] && !e.startsWith(`${m[2]} (`));
-    }
+    const shape = target(m[1] ?? '');
+    if (shape) dropName(shape, m[2] ?? '');
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP COLUMN "(\w+)";/g)) {
+    const shape = target(m[1] ?? '');
+    if (shape) shape.columns = shape.columns.filter((c) => c !== m[2]);
+  }
+  // DROP INDEX names no table: drop the name wherever it was parsed (IF EXISTS: it may be on an unread table).
+  for (const m of text.matchAll(/DROP INDEX (?:IF EXISTS )?"app"\."(\w+)";/g)) {
+    for (const shape of tables.values()) dropName(shape, m[1] ?? '');
   }
   for (const [table, shape] of parseSql(text)) {
     const target = tables.get(table);
@@ -249,6 +279,26 @@ describe('0015_crm and src/schema/crm.ts', () => {
       'utf8',
     ),
   );
+  // FX9: 0191 adds customers.country, address_line and address_city (dropping the address jsonb and its check),
+  // and leads.country and customer_contacts.country; 0192 adds leads.phones_search with its gin trigram index and
+  // creates the phone tables (checked on their own below); 0194 drops the phone_e164 columns, checks and indexes.
+  // 0191 and 0194 also alter the vendor tables, which vendors-schema.test.ts checks.
+  const phonesSql = readFileSync(
+    new URL('../migrations/0192_party_phones.sql', import.meta.url),
+    'utf8',
+  );
+  const vendorTables = ['vendors', 'vendor_contacts'];
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0191_party_country_address.sql', import.meta.url), 'utf8'),
+    vendorTables,
+  );
+  applyAlters(parsed, phonesSql, vendorTables);
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0194_drop_owner_phone_e164.sql', import.meta.url), 'utf8'),
+    vendorTables,
+  );
   const opportunityShape = parsed.get('opportunities');
   const sqlOnlyFks = opportunityShape?.names.foreignKey.filter((e) => e === overrideVersionFk);
   if (opportunityShape) {
@@ -281,6 +331,25 @@ describe('0015_crm and src/schema/crm.ts', () => {
     expect(getTableConfig(leadLostReasons).schema).toBe('app');
     expect(sorted(drizzleShape(leadLostReasons))).toEqual(sorted(created ?? empty()));
     expect(lostReasonsSql).toContain("SELECT audit.attach('app.lead_lost_reasons');");
+  });
+
+  const PHONE_TABLES: Record<string, PgTable> = {
+    customer_contact_phones: customerContactPhones,
+    lead_phones: leadPhones,
+  };
+
+  it.each(Object.keys(PHONE_TABLES))('0192 %s: same columns, keys, checks and indexes', (name) => {
+    const table = PHONE_TABLES[name];
+    if (table === undefined) throw new Error(`no Drizzle table for ${name}`);
+    expect(getTableConfig(table).schema).toBe('app');
+    expect(sorted(drizzleShape(table))).toEqual(sorted(parseSql(phonesSql).get(name) ?? empty()));
+    expect(phonesSql).toContain(`SELECT audit.attach('app.${name}');`);
+  });
+
+  it('0191 and 0194 drop customers.address and the phone_e164 columns of customer_contacts and leads', () => {
+    expect(parsed.get('customer_contacts')?.columns).not.toContain('phone_e164');
+    expect(parsed.get('leads')?.columns).not.toContain('phone_e164');
+    expect(parsed.get('customers')?.columns).not.toContain('address');
   });
 
   it('audits every table it creates', () => {

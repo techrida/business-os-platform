@@ -8,7 +8,13 @@ import { readFileSync } from 'node:fs';
 import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 
-import { vendorAccounts, vendorBankAccounts, vendorContacts, vendors } from './schema/vendors.js';
+import {
+  vendorAccounts,
+  vendorBankAccounts,
+  vendorContactPhones,
+  vendorContacts,
+  vendors,
+} from './schema/vendors.js';
 
 const SQL_TEXT = readFileSync(new URL('../migrations/0032_vendors.sql', import.meta.url), 'utf8');
 
@@ -82,6 +88,47 @@ function parseSql(text: string): Map<string, Shape> {
   return tables;
 }
 
+/** Removes the constraint or index `name` (with or without its column list) from `shape`. */
+function dropName(shape: Shape, name: string): void {
+  for (const kind of Object.keys(shape.names) as Kind[]) {
+    shape.names[kind] = shape.names[kind].filter((e) => e !== name && !e.startsWith(`${name} (`));
+  }
+}
+
+/**
+ * Applies the ADD COLUMN, DROP CONSTRAINT, DROP COLUMN, DROP INDEX and ADD CONSTRAINT lines of a later migration
+ * to the parsed tables. `foreign` names tables of another schema file that the migration also alters (0191 and
+ * 0194 touch the CRM tables too); their drops are skipped, and a drop on any other unknown table throws.
+ */
+function applyAlters(tables: Map<string, Shape>, text: string, foreign: string[] = []): void {
+  const target = (table: string) => {
+    const shape = tables.get(table);
+    if (!shape && !foreign.includes(table)) throw new Error(`drop on unknown table ${table}`);
+    return shape;
+  };
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
+    tables.get(m[1] ?? '')?.columns.push(m[2] ?? '');
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP CONSTRAINT "(\w+)";/g)) {
+    const shape = target(m[1] ?? '');
+    if (shape) dropName(shape, m[2] ?? '');
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP COLUMN "(\w+)";/g)) {
+    const shape = target(m[1] ?? '');
+    if (shape) shape.columns = shape.columns.filter((c) => c !== m[2]);
+  }
+  // DROP INDEX names no table: drop the name wherever it was parsed (IF EXISTS: it may be on an unread table).
+  for (const m of text.matchAll(/DROP INDEX (?:IF EXISTS )?"app"\."(\w+)";/g)) {
+    for (const shape of tables.values()) dropName(shape, m[1] ?? '');
+  }
+  for (const [table, shape] of parseSql(text)) {
+    const into = tables.get(table);
+    if (!into) continue;
+    for (const kind of Object.keys(shape.names) as Kind[])
+      into.names[kind].push(...shape.names[kind]);
+  }
+}
+
 function drizzleShape(table: PgTable): Shape {
   const config = getTableConfig(table);
   return {
@@ -135,6 +182,25 @@ describe('0032_vendors and src/schema/vendors.ts', () => {
   for (const m of logosSql.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
     parsed.get(m[1]!)?.columns.push(m[2]!);
   }
+  // FX9: 0191 adds vendors.address_line and address_city (with vendors_address_check) and vendor_contacts.country;
+  // 0192 creates vendor_contact_phones (checked on its own below); 0194 drops vendor_contacts.phone_e164 and its
+  // check. 0191 and 0194 also alter the CRM tables, which crm-schema.test.ts checks.
+  const crmTables = ['customers', 'customer_contacts', 'leads'];
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0191_party_country_address.sql', import.meta.url), 'utf8'),
+    crmTables,
+  );
+  const phonesSql = readFileSync(
+    new URL('../migrations/0192_party_phones.sql', import.meta.url),
+    'utf8',
+  );
+  applyAlters(parsed, phonesSql, crmTables);
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0194_drop_owner_phone_e164.sql', import.meta.url), 'utf8'),
+    crmTables,
+  );
 
   it('create the same four tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
@@ -145,6 +211,18 @@ describe('0032_vendors and src/schema/vendors.ts', () => {
     if (table === undefined) throw new Error(`no Drizzle table for ${name}`);
     expect(getTableConfig(table).schema).toBe('app');
     expect(sorted(drizzleShape(table))).toEqual(sorted(parsed.get(name) ?? empty()));
+  });
+
+  it('0192 vendor_contact_phones: same columns, keys, checks and indexes', () => {
+    expect(getTableConfig(vendorContactPhones).schema).toBe('app');
+    expect(sorted(drizzleShape(vendorContactPhones))).toEqual(
+      sorted(parseSql(phonesSql).get('vendor_contact_phones') ?? empty()),
+    );
+    expect(phonesSql).toContain("SELECT audit.attach('app.vendor_contact_phones');");
+  });
+
+  it('0194 leaves no phone_e164 column on vendor_contacts', () => {
+    expect(parsed.get('vendor_contacts')?.columns).not.toContain('phone_e164');
   });
 
   it('audits every table it creates', () => {

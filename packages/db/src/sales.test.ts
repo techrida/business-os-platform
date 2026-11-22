@@ -33,7 +33,8 @@ const SALES_TABLES = [
   'billing_schedule_lines',
 ] as const;
 
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
+/** The customer address as the schema before 0191 held it (the legacy-billing seed below runs on that schema). */
+const LEGACY_ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
 
 /** The golden SO (SCREENS.md R20): NPR 5,045,450.00 including 13% VAT. */
 const GOLDEN = {
@@ -95,14 +96,27 @@ async function insertEntity(tenantId: string): Promise<string> {
   return id;
 }
 
+/** Which customers shape to write: the current one, or the jsonb `address` that 0191 replaced. */
+type CustomerShape = 'current' | 'before-0191';
+
 /** A customer party and its customer row (tenant-level). */
-async function insertCustomer(scope: Scope): Promise<string> {
+async function insertCustomer(scope: Scope, shape: CustomerShape = 'current'): Promise<string> {
   const { partyId } = await createParty(app, { tenantId: scope.tenantId, kind: 'customer' });
+  const number = `CUS-${partyId.slice(0, 8)}`;
+  if (shape === 'before-0191') {
+    await exec(
+      scope,
+      `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+       VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4::jsonb)`,
+      [partyId, scope.tenantId, number, LEGACY_ADDRESS],
+    );
+    return partyId;
+  }
   await exec(
     scope,
-    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4::jsonb)`,
-    [partyId, scope.tenantId, `CUS-${partyId.slice(0, 8)}`, ADDRESS],
+    `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
+     VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', 'Durbar Marg 1', 'Kathmandu')`,
+    [partyId, scope.tenantId, number],
   );
   return partyId;
 }
@@ -114,8 +128,8 @@ interface Quote {
 }
 
 /** A quotation of `scope`'s entity with one Draft version (enough for the SO's version FK). */
-async function insertQuote(scope: Scope): Promise<Quote> {
-  const customerPartyId = await insertCustomer(scope);
+async function insertQuote(scope: Scope, shape: CustomerShape = 'current'): Promise<Quote> {
+  const customerPartyId = await insertCustomer(scope, shape);
   const opportunityId = await exec(
     scope,
     `INSERT INTO app.opportunities (tenant_id, organization_id, number, name, customer_id)
@@ -251,7 +265,7 @@ beforeAll(async () => {
     await runMigrations(ownerUrl, legacy);
 
     const scope = await newScope();
-    const orderId = await insertSalesOrder(scope);
+    const orderId = await insertSalesOrder(scope, await insertQuote(scope, 'before-0191'));
     const ids = await inTx(scope.organizationId, async (tx) => {
       const basisPoints = ['6000', '1', null];
       const ids: string[] = [];

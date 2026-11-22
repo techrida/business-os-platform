@@ -22,7 +22,6 @@ import { createParty, createTenantWithEntity, type TenantWithEntity } from './te
 import { createTestDatabase, type TestDatabase } from './testing/test-database.js';
 
 const ACTOR = 'party-accounts-access-test-user';
-const ADDRESS = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
 
 let testDb: TestDatabase;
 let owner: Pool;
@@ -68,9 +67,9 @@ async function insertCustomer(org: TenantWithEntity): Promise<string> {
   const { partyId } = await createParty(owner, { tenantId: org.tenantId, kind: 'customer' });
   await withTxAsApp(org, (c) =>
     c.query(
-      `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-       VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', $4::jsonb)`,
-      [partyId, org.tenantId, `CUS-${partyId.slice(0, 8)}`, ADDRESS],
+      `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address_line, address_city)
+       VALUES ($1, $2, $3, 'Acme Pvt. Ltd.', 'acme', 'Durbar Marg 1', 'Kathmandu')`,
+      [partyId, org.tenantId, `CUS-${partyId.slice(0, 8)}`],
     ),
   );
   return partyId;
