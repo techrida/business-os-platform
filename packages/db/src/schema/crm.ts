@@ -540,6 +540,12 @@ export const opportunities = appSchema.table(
      * such an override covers nothing.
      */
     creditOverrideOrderValue: numeric('credit_override_order_value', { precision: 18, scale: 2 }),
+    /**
+     * 0183 (R5 FU10): the quotation version the override was given for; it covers that version only. NULL on an
+     * override given before it was kept (not backfilled): such an override covers nothing. The composite FK to
+     * quotation_versions (opportunities_credit_override_quotation_version_fk) lives in SQL only, like the won one.
+     */
+    creditOverrideQuotationVersionId: uuid('credit_override_quotation_version_id'),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -606,6 +612,10 @@ export const opportunities = appSchema.table(
     check(
       'opportunities_credit_override_value_check',
       sql`${t.creditOverrideOrderValue} IS NULL OR (${t.creditOverrideAt} IS NOT NULL AND ${t.creditOverrideOrderValue} >= 0)`,
+    ),
+    check(
+      'opportunities_credit_override_quotation_version_check',
+      sql`${t.creditOverrideQuotationVersionId} IS NULL OR ${t.creditOverrideAt} IS NOT NULL`,
     ),
     index('opportunities_tenant_lead_creator_idx').on(
       t.tenantId,
