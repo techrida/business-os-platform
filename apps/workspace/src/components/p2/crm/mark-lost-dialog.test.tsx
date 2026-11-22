@@ -110,6 +110,7 @@ it('promises nothing about reopening a lead it marks lost (U22-Q1)', async () =>
   const mounted = await open();
   try {
     expect(dialog()?.textContent).toContain('LEAD-1 will move to Lost.');
+    expect(dialog()?.textContent).not.toContain('quotations');
     expect(dialog()?.textContent).not.toMatch(/reopen|manager/i);
   } finally {
     await mounted.unmount();
@@ -315,7 +316,9 @@ describe('opportunity noun (D54-3)', () => {
   it('uses opportunity copy and refuses an empty reason and note before any request', async () => {
     const mounted = await openOpportunity();
     expect(dialog()?.textContent).toContain('Mark this opportunity lost?');
-    expect(dialog()?.textContent).toContain('DEAL-7 will move to Lost.');
+    expect(dialog()?.textContent).toContain(
+      'DEAL-7 will move to Lost. Open quotations on this deal will be cancelled.',
+    );
     expect(dialog()?.textContent).not.toContain('reopen');
     await click(footerButton('Mark lost'));
     await settle();
