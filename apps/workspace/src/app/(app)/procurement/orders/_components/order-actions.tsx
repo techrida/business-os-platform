@@ -141,6 +141,10 @@ function VendorField({
           {problem}
         </Alert>
       ) : null}
+      {errors['acknowledgeVatWarning'] !== undefined &&
+      errors['acknowledgeVatWarningVendor'] === vendorId ? (
+        <VatAcknowledge message={errors['acknowledgeVatWarning']} />
+      ) : null}
       <Field
         label="New vendor"
         hint="Only approved vendors are listed. The vendor also needs an active account with your legal entity and a verified bank account."
@@ -170,6 +174,27 @@ function VendorField({
   );
 }
 
+/** The soft VAT warning of a vendor change (K3 Q2): shown after the API asks, and the person ticks to go on. */
+function VatAcknowledge({ message }: { message: string }) {
+  const [ticked, setTicked] = useState(false);
+  return (
+    <>
+      <Alert tone="warning" role="alert" title="The vendor is not VAT registered">
+        {message}
+      </Alert>
+      <label>
+        <input
+          type="checkbox"
+          name="acknowledgeVatWarning"
+          checked={ticked}
+          onChange={(e) => setTicked(e.target.checked)}
+        />{' '}
+        I understand, change the vendor anyway
+      </label>
+    </>
+  );
+}
+
 /** Moves a draft to another approved vendor (F1-Q40 a). */
 export function ChangeVendorDialog({
   vendors,
@@ -180,7 +205,7 @@ export function ChangeVendorDialog({
     <ProcurementActionDialog
       triggerLabel="Change vendor"
       title={`Change the vendor of ${common.number}`}
-      intro="The lines, prices and total stay as approved. Payment terms come from the new vendor."
+      intro="The new vendor must have quoted on this order's RFQ. The lines, prices and total become its quotation's, and payment terms come from the new vendor. A different total goes back for approval first."
       action={changeVendorAction}
       idempotencyKey={common.idempotencyKey}
       recordField="purchaseOrderId"

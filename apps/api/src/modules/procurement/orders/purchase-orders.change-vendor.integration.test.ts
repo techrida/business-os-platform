@@ -1,11 +1,12 @@
-// Integration tests of changing the vendor of a draft purchase order (F1-Q40 a; R4f Q2a) on a real Postgres
-// (Testcontainers, needs Docker in WSL). Same setup as purchase-orders.from-commitment.integration.test.ts: P2's
-// SourcingService and PrCommitmentSubject write a real commitment draft (header only, linked to its RFQ and
-// quotation), and PurchaseOrdersService.changeVendor moves it to another vendor before issue. Drafts that only need
-// to be refused are inserted directly with one line, as purchase-orders.integration.test.ts does.
+// Integration tests of changing the vendor of a draft purchase order (F1-Q40 a; R4f Q2a; K3 Q1 b, Q2) on a real
+// Postgres (Testcontainers, needs Docker in WSL). P2's SourcingService and PrCommitmentSubject write a real
+// commitment draft (header only, linked to its RFQ and recommended quotation, with extra vendors' quotations
+// recorded on the same RFQ before recommendation), and PurchaseOrdersService.changeVendor moves it to another
+// vendor's own quotation (immediately when the total matches, or via a `po_vendor_change` approval when it differs).
+// Drafts inserted directly with no RFQ (`plainDraft`) cover the NO_RFQ refusal and status/ownership/reference checks.
 // Real: migrations as bos_owner, queries as bos_app (so the version trigger, the purchase_orders CHECKs and the
-// vendor_bank_accounts CHECKs run), PurchaseOrdersService, ApprovalsService, AuditService. Faked: notify, the role
-// directory, the request context (a fake principal).
+// vendor_bank_accounts CHECKs run), PurchaseOrdersService, ApprovalsService, PoVendorChangeSubject, AuditService,
+// SourcingService, MoneyService. Faked: notify, the role directory, settings, the request context (a fake principal).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/orders/purchase-orders.change-vendor.integration.test.ts
 import 'reflect-metadata';
 
@@ -20,6 +21,7 @@ import {
 } from '@bos/contracts';
 import {
   approvalRequests,
+  approvalSteps,
   createCostCenter,
   createDepartment,
   createParty,
@@ -28,12 +30,14 @@ import {
   purchaseOrderLines,
   purchaseOrders,
 } from '@bos/db';
+import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { HttpException, type ArgumentsHost } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { AuditService } from '../../../platform/audit/audit.service';
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
@@ -42,7 +46,6 @@ import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
-import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/support/second-person';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
 import { PrCommitmentSubject } from '../sourcing/pr-commitment.subject';
@@ -51,8 +54,13 @@ import {
   PR_COMMITMENT_WORKFLOW_SPEC,
   quotationLineAmounts,
 } from '../sourcing/sourcing.rules';
-import { SourcingService } from '../sourcing/sourcing.service';
+import { SourcingService, type QuotationDto } from '../sourcing/sourcing.service';
 import { PoAmendmentSubject } from './po-amendment.subject';
+import {
+  PO_VENDOR_CHANGE_DOCUMENT_TYPE,
+  PO_VENDOR_CHANGE_WORKFLOW_SPEC,
+} from './po-vendor-change.rules';
+import { PoVendorChangeSubject } from './po-vendor-change.subject';
 import {
   ChangePurchaseOrderVendorBodySchema,
   IssuePurchaseOrderBodySchema,
@@ -60,7 +68,6 @@ import {
   PO_AMENDMENT_WORKFLOW_SPEC,
 } from './purchase-order.rules';
 import { PurchaseOrdersService } from './purchase-orders.service';
-import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -77,7 +84,9 @@ let audit: AuditService;
 let service: PurchaseOrdersService;
 let sourcing: SourcingService;
 let deptA = '';
+let deptB = '';
 let vatCode = '';
+let exemptCode = '';
 let net45 = '';
 /** Quotation files uploaded through the RFQ's evidence route. */
 let evidence: EvidenceFixture;
@@ -160,6 +169,7 @@ beforeAll(async () => {
   U.founder = await staff('founder');
   resetRoles();
   deptA = (await createDepartment(appPool, scopeA)).departmentId;
+  deptB = (await createDepartment(appPool, scopeB)).departmentId;
 
   const vat = await exec(
     scopeA,
@@ -167,6 +177,12 @@ beforeAll(async () => {
         VALUES (${scopeA.tenantId}, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01') RETURNING id`,
   );
   vatCode = (vat.rows[0] as { id: string }).id;
+  const exempt = await exec(
+    scopeA,
+    sql`INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
+        VALUES (${scopeA.tenantId}, 'EXEMPT', 'VAT Exempt', 'exempt', 0, false, '2020-01-01') RETURNING id`,
+  );
+  exemptCode = (exempt.rows[0] as { id: string }).id;
   const terms = await exec(
     scopeA,
     sql`INSERT INTO app.payment_terms (tenant_id, code, name, net_days)
@@ -185,6 +201,12 @@ beforeAll(async () => {
   });
   await adminPublisher.publish(PO_AMENDMENT_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
   await admin.createWorkflow({
+    key: PO_VENDOR_CHANGE_DOCUMENT_TYPE,
+    name: 'Purchase order vendor change',
+    spec: PO_VENDOR_CHANGE_WORKFLOW_SPEC,
+  });
+  await adminPublisher.publish(PO_VENDOR_CHANGE_DOCUMENT_TYPE, 1, SKIP_LIVE_PUBLISHER_CHECK);
+  await admin.createWorkflow({
     key: PR_COMMITMENT_DOCUMENT_TYPE,
     name: 'Purchase commitment',
     spec: PR_COMMITMENT_WORKFLOW_SPEC,
@@ -193,16 +215,31 @@ beforeAll(async () => {
 
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   approvals.registerSubject(new PoAmendmentSubject(audit, approvals, () => now));
+  approvals.registerSubject(new PoVendorChangeSubject(audit, approvals, () => now));
   service = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
   const numbering = new NumberingService();
   approvals.registerSubject(new PrCommitmentSubject(numbering, () => now));
+  const settings = {
+    get: (_s: unknown, key: string) =>
+      Promise.resolve(
+        key === 'currency.enabled'
+          ? ['NPR', 'USD', 'INR']
+          : key === 'fx.max_rate_age_days'
+            ? undefined
+            : 1,
+      ),
+  } as never;
+  const money = new MoneyService(db, settings);
+  await withTx(db, scopeA, { kind: 'user', id: U.acct, correlationId: 'test-corr' }, (tx) =>
+    money.setRate(tx, 'USD', '135.00', '2026-11-09', 'NRB'),
+  );
   sourcing = new SourcingService(
     db,
     approvals,
     audit,
     numbering,
-    new MoneyService(db, {} as never),
-    { get: () => Promise.resolve(1) } as never,
+    money,
+    settings,
     caller,
     () => now,
   );
@@ -278,15 +315,23 @@ async function evidenceDoc(): Promise<string> {
 }
 
 type VendorStatus = 'approved' | 'draft' | 'pending_kyc' | 'suspended' | 'blocked';
+type CurrencyCode = 'NPR' | 'INR' | 'USD';
 let panSeq = 0;
 /**
  * A vendor of tenant A in `status` with an active account in each of `accountIn` (entity A by default; on terms
- * `termId` when given) and a bank account: `active` (verified by another person with call-back evidence, the
- * default), `proposed` (not verified) or none.
+ * `termId` when given), `vatRegistered` (`false` by default, matching the DB column), and a bank account in
+ * `bankCurrency` (`'NPR'` by default): `active` (verified by another person with call-back evidence, the default),
+ * `proposed` (not verified) or `none`.
  */
 async function vendor(
   status: VendorStatus = 'approved',
-  opts: { accountIn?: TxScope[]; bank?: 'active' | 'proposed' | 'none'; termId?: string } = {},
+  opts: {
+    accountIn?: TxScope[];
+    bank?: 'active' | 'proposed' | 'none';
+    bankCurrency?: CurrencyCode;
+    termId?: string;
+    vatRegistered?: boolean;
+  } = {},
 ): Promise<string> {
   const { partyId } = await createParty(appPool, {
     tenantId: scopeA.tenantId,
@@ -295,9 +340,9 @@ async function vendor(
   });
   await exec(
     scopeA,
-    sql`INSERT INTO app.vendors (id, tenant_id, legal_name, pan, status, created_by, approved_by)
+    sql`INSERT INTO app.vendors (id, tenant_id, legal_name, pan, vat_registered, status, created_by, approved_by)
         VALUES (${partyId}, ${scopeA.tenantId}, ${`Vendor ${partyId.slice(0, 6)}`},
-                ${String(400_000_000 + (panSeq += 1))}, ${status}, ${U.proc},
+                ${String(400_000_000 + (panSeq += 1))}, ${opts.vatRegistered ?? false}, ${status}, ${U.proc},
                 ${status === 'draft' || status === 'pending_kyc' ? null : U.mgmt})`,
   );
   for (const s of opts.accountIn ?? [scopeA]) {
@@ -314,17 +359,23 @@ async function vendor(
     await exec(
       scopeA,
       sql`INSERT INTO app.vendor_bank_accounts (tenant_id, vendor_id, bank_name, account_name,
-            account_number_enc, account_fingerprint, last4, status, proposed_by, proposed_via, verified_by,
-            callback_evidence_document_id)
+            account_number_enc, account_fingerprint, last4, currency, status, proposed_by, proposed_via,
+            verified_by, callback_evidence_document_id)
           VALUES (${scopeA.tenantId}, ${partyId}, 'Nabil Bank', 'Vendor Pvt Ltd', decode('00', 'hex'),
-                  ${`fp-${randomUUID()}`}, '1234', ${bank}, ${U.proc}, 'staff',
+                  ${`fp-${randomUUID()}`}, '1234', ${opts.bankCurrency ?? 'NPR'}, ${bank}, ${U.proc}, 'staff',
                   ${active ? U.fin : null}, ${doc})`,
     );
   }
   return partyId;
 }
 
-async function approve(user: string, role: RoleKey, requestId: string) {
+async function decide(
+  user: string,
+  role: RoleKey,
+  requestId: string,
+  action: 'approve' | 'reject' | 'return' = 'approve',
+  comment?: string,
+) {
   const [req] = await read((tx) =>
     tx
       .select({ version: approvalRequests.version })
@@ -335,7 +386,11 @@ async function approve(user: string, role: RoleKey, requestId: string) {
   try {
     await approvals.act(
       requestId,
-      { action: 'approve', expectedVersion: req!.version },
+      {
+        action,
+        expectedVersion: req!.version,
+        ...(action !== 'approve' ? { comment: comment ?? 'Keep original vendor' } : {}),
+      },
       randomUUID(),
     );
   } finally {
@@ -343,11 +398,37 @@ async function approve(user: string, role: RoleKey, requestId: string) {
   }
 }
 
+async function approve(user: string, role: RoleKey, requestId: string) {
+  await decide(user, role, requestId, 'approve');
+}
+
+interface ExtraQuoteSpec {
+  vendorId: string;
+  /** Quantity quoted; defaults to `'2'`. */
+  quantity?: string;
+  /** Unit price quoted; defaults to `'39000.00'` (same total as the recommended quote). */
+  unitPrice?: string;
+  /** Currency quoted; defaults to `'NPR'`. */
+  currency?: CurrencyCode;
+  /** Tax code id; defaults to `vatCode` (13% VAT). */
+  taxCodeId?: string;
+}
+
 /**
  * The lineless draft P2 writes for an approved commitment: one request line of 2 laptops quoted at 39,000.00 + 13%
- * VAT by `vendorId` (88,140.00 incl. VAT, band base), linked to its RFQ and quotation.
+ * VAT by `vendorId` (88,140.00 incl. VAT, band base), linked to its RFQ and quotation. Extra vendors in
+ * `extraQuotes` are invited and have their own quotations recorded on the SAME RFQ before recommending `vendorId`;
+ * `invitedOnly` vendors are invited without recording a quotation.
  */
-async function commitmentDraft(vendorId: string) {
+async function commitmentDraft(
+  vendorId: string,
+  opts: {
+    extraQuotes?: ExtraQuoteSpec[];
+    invitedOnly?: string[];
+    unitPrice?: string;
+    taxCodeId?: string;
+  } = {},
+) {
   const prId = randomUUID();
   const prLineId = randomUUID();
   await exec(
@@ -369,8 +450,14 @@ async function commitmentDraft(vendorId: string) {
     sql`UPDATE app.purchase_requests SET status = 'dept_approved', fx_rate = 1, estimated_total = 80000,
           estimated_total_npr = 80000, number = ${`PR-T-${prId.slice(0, 8)}`} WHERE id = ${prId}`,
   );
+  const extraQuotes = opts.extraQuotes ?? [];
+  const invitedOnly = opts.invitedOnly ?? [];
   const rfq = await sourcing.createRfq(
-    { purchaseRequestId: prId, deadline: '2026-11-20T10:00:00+05:45', vendorIds: [vendorId] },
+    {
+      purchaseRequestId: prId,
+      deadline: '2026-11-20T10:00:00+05:45',
+      vendorIds: [vendorId, ...extraQuotes.map((q) => q.vendorId), ...invitedOnly],
+    },
     randomUUID(),
   );
   const documentId = await evidence.upload('rfq', rfq.id);
@@ -380,13 +467,42 @@ async function commitmentDraft(vendorId: string) {
       vendorId,
       documentId,
       currency: 'NPR',
-      lines: [{ prLineId, quantity: '2', unitPrice: '39000.00', taxCodeId: vatCode }],
+      lines: [
+        {
+          prLineId,
+          quantity: '2',
+          unitPrice: opts.unitPrice ?? '39000.00',
+          taxCodeId: opts.taxCodeId ?? vatCode,
+        },
+      ],
     },
     randomUUID(),
   );
+  const quotesByVendor = new Map<string, QuotationDto>([[vendorId, quote]]);
+  for (const extra of extraQuotes) {
+    const extraDocId = await evidence.upload('rfq', rfq.id);
+    const extraQuote = await sourcing.recordQuotation(
+      rfq.id,
+      {
+        vendorId: extra.vendorId,
+        documentId: extraDocId,
+        currency: extra.currency ?? 'NPR',
+        lines: [
+          {
+            prLineId,
+            quantity: extra.quantity ?? '2',
+            unitPrice: extra.unitPrice ?? '39000.00',
+            taxCodeId: extra.taxCodeId ?? opts.taxCodeId ?? vatCode,
+          },
+        ],
+      },
+      randomUUID(),
+    );
+    quotesByVendor.set(extra.vendorId, extraQuote);
+  }
   await sourcing.recommend(
     rfq.id,
-    { vendorQuotationId: quote.id, rationale: 'Only compliant quote' },
+    { vendorQuotationId: quote.id, rationale: 'Lowest compliant quote' },
     randomUUID(),
   );
   const committed = await sourcing.submitCommitment(rfq.id, randomUUID());
@@ -395,46 +511,47 @@ async function commitmentDraft(vendorId: string) {
   const [draft] = await read((tx) =>
     tx.select().from(purchaseOrders).where(eq(purchaseOrders.vendorQuotationId, quote.id)),
   );
-  return { draft: draft!, quote, rfqId: rfq.id, prLineId };
+  return { draft: draft!, quote, quotesByVendor, rfqId: rfq.id, prLineId };
 }
 
 let poSeq = 0;
 /**
- * A draft PO inserted directly (number taken, version 0) with one line of 1 x 79,646.02 + 13% VAT, or with no line
- * (`withLine: false`; it has no quotation link either, so there is nothing to copy).
+ * A draft PO inserted directly with no RFQ link (number taken, version 0) and one line of 1 x 79,646.02 + 13% VAT.
+ * Serves the NO_RFQ refusal and status/ownership/reference checks.
  */
-async function plainDraft(vendorId: string, opts: { withLine?: boolean } = {}): Promise<string> {
+async function plainDraft(vendorId: string, opts: { scope?: TxScope } = {}): Promise<string> {
+  const scope = opts.scope ?? scopeA;
+  const dept = scope === scopeA ? deptA : deptB;
   const a = quotationLineAmounts('1', '79646.02', 1300);
   const prId = randomUUID();
   await exec(
-    scopeA,
+    scope,
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
-        VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
-                ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
+        VALUES (${prId}, ${scope.tenantId}, ${scope.organizationId}, 'goods', ${dept}, ${U.req},
+                ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
   );
   await exec(
-    scopeA,
+    scope,
     sql`UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = ${a.lineTotal},
           estimated_total_npr = ${a.lineTotal}, number = ${`PR-T-${prId.slice(0, 8)}`} WHERE id = ${prId}`,
   );
   const id = randomUUID();
   poSeq += 1;
   await exec(
-    scopeA,
+    scope,
     sql`INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year,
           purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate,
           approved_total_npr, approved_band, created_by)
-        VALUES (${id}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${`PO-CV-${poSeq}`}, ${900 + poSeq},
+        VALUES (${id}, ${scope.tenantId}, ${scope.organizationId}, ${`PO-CV-${poSeq}`}, ${900 + poSeq},
                 '2082/83', ${prId}, ${vendorId}, 'NPR', 30, ${a.lineTotal}, 1, ${a.lineTotal}, 'base', ${U.proc})`,
   );
-  if (opts.withLine === false) return id;
   await exec(
-    scopeA,
+    scope,
     sql`INSERT INTO app.purchase_order_lines (id, tenant_id, organization_id, purchase_order_id,
           purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross,
           tax_amount, line_total)
-        VALUES (${randomUUID()}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${id}, ${prId}, 1, 'goods',
+        VALUES (${randomUUID()}, ${scope.tenantId}, ${scope.organizationId}, ${id}, ${prId}, 1, 'goods',
                 'Laptop', 'pcs', 1, 79646.02, ${vatCode}, ${a.gross}, ${a.taxAmount}, ${a.lineTotal})`,
   );
   return id;
@@ -448,26 +565,51 @@ const lineCount = async (id: string) =>
       tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.purchaseOrderId, id)),
     )
   ).length;
-const auditRows = async (id: string) =>
+const auditRows = async (id: string, action = 'procurement.po.vendor_changed') =>
   (
     await ownerPool.query<{ actor_id: string; before: unknown; after: unknown }>(
       `SELECT actor_id, before, after FROM audit.audit_events
         WHERE tenant_id = $1 AND entity_type = 'purchase_orders' AND entity_id = $2
-          AND action = 'procurement.po.vendor_changed'`,
-      [scopeA.tenantId, id],
+          AND action = $3`,
+      [scopeA.tenantId, id, action],
     )
   ).rows;
+const stepRoles = async (requestId: string) =>
+  (
+    await read((tx) =>
+      tx
+        .select({ roleKey: approvalSteps.roleKey })
+        .from(approvalSteps)
+        .where(eq(approvalSteps.requestId, requestId))
+        .orderBy(asc(approvalSteps.seq)),
+    )
+  ).map((s) => s.roleKey);
+const vendorChangeRequestsFor = async (poId: string) =>
+  read((tx) =>
+    tx
+      .select()
+      .from(approvalRequests)
+      .where(
+        sql`${approvalRequests.documentType} = ${PO_VENDOR_CHANGE_DOCUMENT_TYPE}
+            AND ${approvalRequests.snapshot} -> 'vendorChange' ->> 'purchaseOrderId' = ${poId}`,
+      ),
+  );
 
 // ---------------------------------------------------------------------------------------- tests
 
-describe('changeVendor on a commitment draft', () => {
-  it('moves the draft to the new vendor, keeps the approved lines and clears the quotation link', async () => {
-    const oldVendor = await vendor();
-    const { draft, quote, rfqId, prLineId } = await commitmentDraft(oldVendor);
+describe('changeVendor on a commitment draft (same total)', () => {
+  it('applies at once from the new vendor quotation, keeps the RFQ link, replaces lines, audits and replays', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { termId: net45, vatRegistered: true });
+    // 1 x 78,000.00 + 13% VAT = 88,140.00: same grand total as 2 x 39,000.00 + 13% VAT, with distinct line shape
+    // so the assertion proves the draft took the new vendor's quotation lines rather than the old vendor's.
+    const { draft, quote, quotesByVendor, rfqId, prLineId } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, quantity: '1', unitPrice: '78000.00' }],
+    });
+    const newQuote = quotesByVendor.get(newVendor)!;
     expect(draft).toMatchObject({ status: 'draft', rfqId, vendorQuotationId: quote.id });
     expect(await lineCount(draft.id)).toBe(0);
     const before = await service.get(draft.id);
-    const newVendor = await vendor('approved', { termId: net45 });
 
     const key = randomUUID();
     const dto = await service.changeVendor(draft.id, { vendorId: newVendor }, key);
@@ -475,30 +617,32 @@ describe('changeVendor on a commitment draft', () => {
     expect(dto).toMatchObject({
       status: 'draft',
       vendorId: newVendor,
-      rfqId: null,
-      vendorQuotationId: null,
+      rfqId,
+      vendorQuotationId: newQuote.id,
       paymentTermsDays: 45,
       currency: before.currency,
-      fxRate: before.fxRate,
-      approvedTotal: before.approvedTotal,
-      approvedTotalNpr: before.approvedTotalNpr,
-      approvedBand: before.approvedBand,
+      fxRate: newQuote.fxRate,
+      approvedTotal: newQuote.total,
+      approvedTotalNpr: newQuote.totalNpr,
+      approvedBand: 'base',
       number: draft.number,
       version: draft.version + 1,
     });
     expect(Number(dto.advancePercent)).toBe(0);
-    // The lines the commitment approved are now written on the order, as the draft showed them.
-    const strip = ({ id: _id, ...l }: (typeof dto.lines)[number]) => l;
-    expect(dto.lines.map(strip)).toEqual(before.proposedLines!.map(strip));
+    expect(dto.pendingVendorChange).toBeUndefined();
+    expect(dto.lines).toHaveLength(1);
     expect(dto.lines[0]).toMatchObject({
       prLineId,
-      orderedQuantity: '2.0000',
-      unitPrice: '39000.00',
+      orderedQuantity: '1.0000',
+      unitPrice: '78000.00',
+      gross: '78000.00',
+      taxAmount: '10140.00',
       lineTotal: '88140.00',
     });
     expect(await lineCount(draft.id)).toBe(1);
     const after = await service.get(draft.id);
     expect(after).not.toHaveProperty('proposedLines');
+    expect(after.pendingVendorChange).toBeNull();
     expect(after.lines).toHaveLength(1);
 
     expect(await auditRows(draft.id)).toEqual([
@@ -508,17 +652,23 @@ describe('changeVendor on a commitment draft', () => {
           vendorId: oldVendor,
           paymentTermsDays: 0,
           advancePercent: draft.advancePercent,
-          rfqId,
           vendorQuotationId: quote.id,
+          approvedTotal: draft.approvedTotal,
         },
         after: {
           vendorId: newVendor,
           paymentTermsDays: 45,
           advancePercent: '0',
-          rfqId: null,
-          vendorQuotationId: null,
-          cleared: ['rfqId', 'vendorQuotationId'],
-          linesCopied: 1,
+          vendorQuotationId: newQuote.id,
+          approvedTotal: newQuote.total,
+          fxRate: newQuote.fxRate,
+          fxSource: null,
+          fxDate: null,
+          approvedTotalNpr: newQuote.totalNpr,
+          approvedBand: 'base',
+          linesWritten: 1,
+          approvalRequestId: null,
+          vatWarningAcknowledged: false,
         },
       },
     ]);
@@ -530,24 +680,27 @@ describe('changeVendor on a commitment draft', () => {
     expect(await auditRows(draft.id)).toHaveLength(1);
     expect(await lineCount(draft.id)).toBe(1);
 
-    // The changed draft issues to the new vendor with the approved total.
+    // The changed draft issues to the new vendor with the new quotation's lines and total.
+    const strip = ({ id: _id, ...l }: (typeof dto.lines)[number]) => l;
     const issued = await service.issue(draft.id, randomUUID());
     expect(issued).toMatchObject({ status: 'issued', vendorId: newVendor, currentVersion: 1 });
     expect(issued.lines.map(strip)).toEqual(dto.lines.map(strip));
     const [v1] = await service.versions(draft.id);
     expect(v1).toMatchObject({
       version: 1,
-      total: quote.total,
-      totalNpr: quote.totalNpr,
+      total: newQuote.total,
+      totalNpr: newQuote.totalNpr,
       band: 'base',
     });
   });
 
   it('refuses to issue from a page opened before another buyer changed the vendor', async () => {
-    const oldVendor = await vendor();
-    const { draft } = await commitmentDraft(oldVendor);
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '39000.00' }],
+    });
     const opened = await service.get(draft.id);
-    const newVendor = await vendor();
     const changed = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
     expect(changed.version).toBe(opened.version + 1);
 
@@ -583,20 +736,420 @@ describe('changeVendor on a commitment draft', () => {
     expect(IssuePurchaseOrderBodySchema.safeParse({ expectedVersion: 2, x: 1 }).success).toBe(
       false,
     );
-    const id = await plainDraft(await vendor());
+    const id = await plainDraft(await vendor('approved', { vatRegistered: true }));
     const issued = await service.issue(id, randomUUID(), {});
     expect(issued.status).toBe('issued');
   });
+});
+
+describe('changeVendor approval flow (different total)', () => {
+  it('submits po_vendor_change approval, leaves PO untouched and blocks issue/second change until approved', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { termId: net45, vatRegistered: true });
+    const thirdVendor = await vendor('approved', { vatRegistered: true });
+    // 2 x 42,000.00 + 13% VAT = 94,920.00 (differs from 88,140.00; base band <= 100,000 NPR).
+    const { draft, quote, quotesByVendor, rfqId, prLineId } = await commitmentDraft(oldVendor, {
+      extraQuotes: [
+        { vendorId: newVendor, unitPrice: '42000.00' },
+        { vendorId: thirdVendor, unitPrice: '39000.00' },
+      ],
+    });
+    const newQuote = quotesByVendor.get(newVendor)!;
+
+    const key = randomUUID();
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, key);
+    const requestId = submitted.pendingVendorChange?.approvalRequestId;
+    expect(requestId).toBeDefined();
+    expect(submitted).toMatchObject({
+      status: 'draft',
+      vendorId: oldVendor,
+      rfqId,
+      vendorQuotationId: quote.id,
+      approvedTotal: '88140.00',
+      version: draft.version,
+      lines: [],
+      pendingVendorChange: {
+        approvalRequestId: requestId,
+        vendorId: newVendor,
+        total: '94920.00',
+      },
+    });
+    // The order itself is untouched until the approval is decided.
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect((await service.get(draft.id)).pendingVendorChange).toEqual(
+      submitted.pendingVendorChange,
+    );
+
+    // Idempotent replay while pending returns the same response without creating a second approval request.
+    expect(await service.changeVendor(draft.id, { vendorId: newVendor }, key)).toEqual(submitted);
+    const [reqRow] = await read((tx) =>
+      tx.select().from(approvalRequests).where(eq(approvalRequests.id, requestId!)),
+    );
+    expect(reqRow).toMatchObject({
+      documentType: PO_VENDOR_CHANGE_DOCUMENT_TYPE,
+      status: 'pending',
+    });
+    expect(await stepRoles(requestId!)).toEqual(['accountant', 'finance']);
+
+    // Issue is refused while the vendor change waits for approval.
+    const issueRefused = await httpErrorOf(service.issue(draft.id, randomUUID()));
+    expect(issueRefused.getStatus()).toBe(409);
+    expect(codeOf(issueRefused)).toBe('PO_VENDOR_CHANGE_PENDING');
+    expect(wireBody(issueRefused)).toMatchObject({
+      status: 409,
+      code: 'PO_VENDOR_CHANGE_PENDING',
+    });
+
+    // A second vendor change is also refused while one waits for approval.
+    const secondRefused = await httpErrorOf(
+      service.changeVendor(draft.id, { vendorId: thirdVendor }, randomUUID()),
+    );
+    expect(secondRefused.getStatus()).toBe(409);
+    expect(codeOf(secondRefused)).toBe('PO_VENDOR_CHANGE_PENDING');
+    expect(wireBody(secondRefused)).toMatchObject({
+      status: 409,
+      code: 'PO_VENDOR_CHANGE_PENDING',
+    });
+
+    // A request that went blocked (an approver became ineligible) is still open: the order stays locked.
+    await exec(
+      scopeA,
+      sql`UPDATE app.approval_requests SET status = 'blocked', block_reason = 'test' WHERE id = ${requestId!}`,
+    );
+    expect(codeOf(await httpErrorOf(service.issue(draft.id, randomUUID())))).toBe(
+      'PO_VENDOR_CHANGE_PENDING',
+    );
+    expect(
+      codeOf(
+        await httpErrorOf(service.changeVendor(draft.id, { vendorId: thirdVendor }, randomUUID())),
+      ),
+    ).toBe('PO_VENDOR_CHANGE_PENDING');
+    await exec(
+      scopeA,
+      sql`UPDATE app.approval_requests SET status = 'pending', block_reason = NULL WHERE id = ${requestId!}`,
+    );
+
+    // After Accountant approves, Finance still has to decide; the PO stays untouched.
+    await approve(U.acct, 'accountant', requestId!);
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+
+    // Finance approval commits the vendor change in the deciding transaction.
+    await approve(U.fin, 'finance', requestId!);
+    const after = await service.get(draft.id);
+    expect(after).toMatchObject({
+      status: 'draft',
+      vendorId: newVendor,
+      rfqId,
+      vendorQuotationId: newQuote.id,
+      paymentTermsDays: 45,
+      approvedTotal: '94920.00',
+      approvedTotalNpr: '94920.00',
+      approvedBand: 'base',
+      version: draft.version + 1,
+      pendingVendorChange: null,
+    });
+    expect(after.lines).toHaveLength(1);
+    expect(after.lines[0]).toMatchObject({
+      prLineId,
+      orderedQuantity: '2.0000',
+      unitPrice: '42000.00',
+      gross: '84000.00',
+      taxAmount: '10920.00',
+      lineTotal: '94920.00',
+    });
+    expect(await auditRows(draft.id)).toEqual([
+      {
+        actor_id: U.fin,
+        before: {
+          vendorId: oldVendor,
+          paymentTermsDays: 0,
+          advancePercent: draft.advancePercent,
+          vendorQuotationId: quote.id,
+          approvedTotal: '88140.00',
+        },
+        after: {
+          vendorId: newVendor,
+          paymentTermsDays: 45,
+          advancePercent: '0',
+          vendorQuotationId: newQuote.id,
+          approvedTotal: '94920.00',
+          fxRate: newQuote.fxRate,
+          fxSource: null,
+          fxDate: null,
+          approvedTotalNpr: '94920.00',
+          approvedBand: 'base',
+          linesWritten: 1,
+          approvalRequestId: requestId,
+          vatWarningAcknowledged: false,
+        },
+      },
+    ]);
+
+    // The approved draft now issues to the new vendor with version-1 total equal to the new quotation total.
+    const issued = await service.issue(draft.id, randomUUID());
+    expect(issued).toMatchObject({ status: 'issued', vendorId: newVendor, currentVersion: 1 });
+    const [v1] = await service.versions(draft.id);
+    expect(v1).toMatchObject({
+      version: 1,
+      total: '94920.00',
+      totalNpr: '94920.00',
+      band: 'base',
+    });
+  });
+
+  it('adds Management when the changed vendor quotation exceeds NPR 100,000 and updates approvedBand', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    // 2 x 55,000.00 + 13% VAT = 124,300.00 (> 100,000 NPR -> management band).
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '55000.00' }],
+    });
+    const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+    const requestId = submitted.pendingVendorChange!.approvalRequestId;
+    expect(await stepRoles(requestId)).toEqual(['accountant', 'finance', 'management']);
+
+    await approve(U.acct, 'accountant', requestId);
+    await approve(U.fin, 'finance', requestId);
+    expect((await poRow(draft.id)).vendorId).toBe(oldVendor);
+    await approve(U.mgmt, 'management', requestId);
+
+    const after = await service.get(draft.id);
+    expect(after).toMatchObject({
+      vendorId: newVendor,
+      approvedTotal: '124300.00',
+      approvedTotalNpr: '124300.00',
+      approvedBand: 'management',
+      pendingVendorChange: null,
+    });
+  });
+
+  it.each(['reject', 'return'] as const)(
+    'leaves the order unchanged and issues to the old vendor when the approval is %sed',
+    async (action) => {
+      const oldVendor = await vendor('approved', { vatRegistered: true });
+      const newVendor = await vendor('approved', { vatRegistered: true });
+      const { draft } = await commitmentDraft(oldVendor, {
+        extraQuotes: [{ vendorId: newVendor, unitPrice: '42000.00' }],
+      });
+      const submitted = await service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID());
+      const requestId = submitted.pendingVendorChange!.approvalRequestId;
+
+      await decide(U.acct, 'accountant', requestId, action, 'Stay with original vendor');
+
+      expect(await poRow(draft.id)).toEqual(draft);
+      expect(await lineCount(draft.id)).toBe(0);
+      expect((await service.get(draft.id)).pendingVendorChange).toBeNull();
+      expect(await auditRows(draft.id)).toEqual([]);
+      expect(
+        await auditRows(
+          draft.id,
+          action === 'reject'
+            ? 'procurement.po.vendor_change_rejected'
+            : 'procurement.po.vendor_change_returned',
+        ),
+      ).toHaveLength(1);
+
+      const issued = await service.issue(draft.id, randomUUID());
+      expect(issued).toMatchObject({ status: 'issued', vendorId: oldVendor, currentVersion: 1 });
+      const [v1] = await service.versions(draft.id);
+      expect(v1).toMatchObject({ version: 1, total: '88140.00', totalNpr: '88140.00' });
+    },
+  );
+
+  it('refuses with 422 NO_ELIGIBLE_APPROVER and writes nothing when the finance role directory is empty', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const newVendor = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: newVendor, unitPrice: '42000.00' }],
+    });
+    roles.finance = [];
+
+    const refused = await httpErrorOf(
+      service.changeVendor(draft.id, { vendorId: newVendor }, randomUUID()),
+    );
+
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('NO_ELIGIBLE_APPROVER');
+    expect(wireBody(refused)).toMatchObject({ status: 422, code: 'NO_ELIGIBLE_APPROVER' });
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await vendorChangeRequestsFor(draft.id)).toEqual([]);
+    expect(await auditRows(draft.id)).toEqual([]);
+    expect(await auditRows(draft.id, 'procurement.po.vendor_change_submitted')).toEqual([]);
+  });
+});
+
+describe('changeVendor currency and VAT rules (K3 Q2)', () => {
+  it('refuses 409 VENDOR_CURRENCY_NOT_SUPPORTED when the new vendor has no active bank account in the order currency', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const usdBankVendor = await vendor('approved', { bankCurrency: 'USD', vatRegistered: true });
+    const inrBankVendor = await vendor('approved', { bankCurrency: 'INR', vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [
+        { vendorId: usdBankVendor, unitPrice: '39000.00' },
+        { vendorId: inrBankVendor, unitPrice: '39000.00' },
+      ],
+    });
+
+    for (const candidate of [usdBankVendor, inrBankVendor]) {
+      const refused = await httpErrorOf(
+        service.changeVendor(draft.id, { vendorId: candidate }, randomUUID()),
+      );
+      expect(refused.getStatus()).toBe(409);
+      expect(codeOf(refused)).toBe('VENDOR_CURRENCY_NOT_SUPPORTED');
+      expect(wireBody(refused)).toMatchObject({
+        status: 409,
+        code: 'VENDOR_CURRENCY_NOT_SUPPORTED',
+      });
+    }
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await auditRows(draft.id)).toEqual([]);
+  });
+
+  it('refuses 409 VENDOR_CURRENCY_NOT_SUPPORTED when the new vendor quotation currency differs from the order currency', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    // Has an active NPR bank account, so only the quotation currency (USD vs PO's NPR) differs.
+    const usdQuoteVendor = await vendor('approved', { bankCurrency: 'NPR', vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: usdQuoteVendor, currency: 'USD', unitPrice: '300.00' }],
+    });
+
+    const refused = await httpErrorOf(
+      service.changeVendor(draft.id, { vendorId: usdQuoteVendor }, randomUUID()),
+    );
+
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('VENDOR_CURRENCY_NOT_SUPPORTED');
+    expect(wireBody(refused)).toMatchObject({
+      status: 409,
+      code: 'VENDOR_CURRENCY_NOT_SUPPORTED',
+    });
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await auditRows(draft.id)).toEqual([]);
+  });
+
+  it('warns 409 VENDOR_NOT_VAT_REGISTERED for a taxed quotation on a non-VAT vendor, then passes with acknowledgeVatWarning', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const nonVatVendor = await vendor('approved', { vatRegistered: false });
+    const { draft, quotesByVendor } = await commitmentDraft(oldVendor, {
+      extraQuotes: [{ vendorId: nonVatVendor, unitPrice: '39000.00' }],
+    });
+    const newQuote = quotesByVendor.get(nonVatVendor)!;
+
+    const warned = await httpErrorOf(
+      service.changeVendor(draft.id, { vendorId: nonVatVendor }, randomUUID()),
+    );
+    expect(warned.getStatus()).toBe(409);
+    expect(codeOf(warned)).toBe('VENDOR_NOT_VAT_REGISTERED');
+    expect(wireBody(warned)).toMatchObject({ status: 409, code: 'VENDOR_NOT_VAT_REGISTERED' });
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await auditRows(draft.id)).toEqual([]);
+
+    const dto = await service.changeVendor(
+      draft.id,
+      { vendorId: nonVatVendor, acknowledgeVatWarning: true },
+      randomUUID(),
+    );
+    expect(dto).toMatchObject({
+      status: 'draft',
+      vendorId: nonVatVendor,
+      vendorQuotationId: newQuote.id,
+    });
+    const [ev] = await auditRows(draft.id);
+    expect(ev?.after).toMatchObject({ vatWarningAcknowledged: true });
+  });
+
+  it('passes silently for a VAT-registered vendor, and for a non-VAT vendor on a tax-free quotation', async () => {
+    const oldVatVendor = await vendor('approved', { vatRegistered: true });
+    const newVatVendor = await vendor('approved', { vatRegistered: true });
+    const taxed = await commitmentDraft(oldVatVendor, {
+      extraQuotes: [{ vendorId: newVatVendor, unitPrice: '39000.00' }],
+    });
+    const taxedDto = await service.changeVendor(
+      taxed.draft.id,
+      { vendorId: newVatVendor },
+      randomUUID(),
+    );
+    expect(taxedDto.vendorId).toBe(newVatVendor);
+    expect((await auditRows(taxed.draft.id))[0]?.after).toMatchObject({
+      vatWarningAcknowledged: false,
+    });
+
+    const oldExemptVendor = await vendor('approved', { vatRegistered: false });
+    const newExemptVendor = await vendor('approved', { vatRegistered: false });
+    const exempt = await commitmentDraft(oldExemptVendor, {
+      taxCodeId: exemptCode,
+      extraQuotes: [{ vendorId: newExemptVendor, unitPrice: '39000.00', taxCodeId: exemptCode }],
+    });
+    const exemptDto = await service.changeVendor(
+      exempt.draft.id,
+      { vendorId: newExemptVendor },
+      randomUUID(),
+    );
+    expect(exemptDto.vendorId).toBe(newExemptVendor);
+    expect((await auditRows(exempt.draft.id))[0]?.after).toMatchObject({
+      vatWarningAcknowledged: false,
+    });
+  });
+});
+
+describe('changeVendor refusals', () => {
+  it('refuses a draft with no RFQ link (409 PO_VENDOR_CHANGE_NO_RFQ) and writes nothing', async () => {
+    const id = await plainDraft(await vendor('approved', { vatRegistered: true }));
+    const before = await poRow(id);
+
+    const refused = await httpErrorOf(
+      service.changeVendor(
+        id,
+        { vendorId: await vendor('approved', { vatRegistered: true }) },
+        randomUUID(),
+      ),
+    );
+
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('PO_VENDOR_CHANGE_NO_RFQ');
+    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_VENDOR_CHANGE_NO_RFQ' });
+    expect(await poRow(id)).toEqual(before);
+    expect(await auditRows(id)).toEqual([]);
+  });
+
+  it('refuses a vendor without a quotation on the RFQ (409 PO_VENDOR_NO_QUOTATION) and writes nothing', async () => {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const invitedNoQuote = await vendor('approved', { vatRegistered: true });
+    const uninvitedVendor = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, { invitedOnly: [invitedNoQuote] });
+
+    for (const candidate of [invitedNoQuote, uninvitedVendor]) {
+      const refused = await httpErrorOf(
+        service.changeVendor(draft.id, { vendorId: candidate }, randomUUID()),
+      );
+      expect(refused.getStatus()).toBe(409);
+      expect(codeOf(refused)).toBe('PO_VENDOR_NO_QUOTATION');
+      expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_VENDOR_NO_QUOTATION' });
+    }
+    expect(await poRow(draft.id)).toEqual(draft);
+    expect(await lineCount(draft.id)).toBe(0);
+    expect(await auditRows(draft.id)).toEqual([]);
+  });
 
   it('refuses a vendor without a verified bank account and writes nothing, not even the lines', async () => {
-    const { draft } = await commitmentDraft(await vendor());
-    for (const bank of ['proposed', 'none'] as const) {
+    const oldVendor = await vendor('approved', { vatRegistered: true });
+    const proposedBank = await vendor('approved', { bank: 'proposed', vatRegistered: true });
+    const noBank = await vendor('approved', { bank: 'none', vatRegistered: true });
+    const { draft } = await commitmentDraft(oldVendor, {
+      extraQuotes: [
+        { vendorId: proposedBank, unitPrice: '39000.00' },
+        { vendorId: noBank, unitPrice: '39000.00' },
+      ],
+    });
+    for (const candidate of [proposedBank, noBank]) {
       const refused = await httpErrorOf(
-        service.changeVendor(
-          draft.id,
-          { vendorId: await vendor('approved', { bank }) },
-          randomUUID(),
-        ),
+        service.changeVendor(draft.id, { vendorId: candidate }, randomUUID()),
       );
       expect(refused.getStatus()).toBe(409);
       expect(codeOf(refused)).toBe('VENDOR_NO_VERIFIED_BANK_ACCOUNT');
@@ -611,19 +1164,21 @@ describe('changeVendor on a commitment draft', () => {
     expect(await lineCount(draft.id)).toBe(0);
     expect(await auditRows(draft.id)).toEqual([]);
   });
-});
 
-describe('changeVendor refusals', () => {
   it.each(['issued', 'cancelled'] as const)(
     'refuses a %s order: cancel it and create a new one',
     async (status) => {
-      const id = await plainDraft(await vendor());
+      const id = await plainDraft(await vendor('approved', { vatRegistered: true }));
       await service.issue(id, randomUUID());
       if (status === 'cancelled') {
         await service.cancel(id, { reason: 'Wrong vendor' }, randomUUID());
       }
       const refused = await httpErrorOf(
-        service.changeVendor(id, { vendorId: await vendor() }, randomUUID()),
+        service.changeVendor(
+          id,
+          { vendorId: await vendor('approved', { vatRegistered: true }) },
+          randomUUID(),
+        ),
       );
       expect(refused.getStatus()).toBe(409);
       expect(codeOf(refused)).toBe('PO_VENDOR_CHANGE_NOT_DRAFT');
@@ -634,7 +1189,7 @@ describe('changeVendor refusals', () => {
   );
 
   it('refuses a vendor that is not approved', async () => {
-    const id = await plainDraft(await vendor());
+    const id = await plainDraft(await vendor('approved', { vatRegistered: true }));
     for (const status of ['suspended', 'pending_kyc'] as const) {
       const refused = await httpErrorOf(
         service.changeVendor(id, { vendorId: await vendor(status) }, randomUUID()),
@@ -645,11 +1200,11 @@ describe('changeVendor refusals', () => {
   });
 
   it('refuses a vendor with no account in the acting entity', async () => {
-    const id = await plainDraft(await vendor());
+    const id = await plainDraft(await vendor('approved', { vatRegistered: true }));
     const refused = await httpErrorOf(
       service.changeVendor(
         id,
-        { vendorId: await vendor('approved', { accountIn: [scopeB] }) },
+        { vendorId: await vendor('approved', { accountIn: [scopeB], vatRegistered: true }) },
         randomUUID(),
       ),
     );
@@ -681,7 +1236,7 @@ describe('changeVendor refusals', () => {
           VALUES (${other.tenantId}, ${other.organizationId}, ${foreign}, true)`,
     );
 
-    const id = await plainDraft(await vendor());
+    const id = await plainDraft(await vendor('approved', { vatRegistered: true }));
     const before = await poRow(id);
     const foreignErr = await httpErrorOf(
       service.changeVendor(id, { vendorId: foreign }, randomUUID()),
@@ -696,11 +1251,30 @@ describe('changeVendor refusals', () => {
     expect(await poRow(id)).toEqual(before);
   });
 
-  it('refuses the vendor the draft already has', async () => {
-    const current = await vendor();
-    const id = await plainDraft(current);
+  it('answers 404 for an order belonging to another entity', async () => {
+    const otherEntityVendor = await vendor('approved', {
+      accountIn: [scopeB],
+      vatRegistered: true,
+    });
+    const otherPoId = await plainDraft(otherEntityVendor, { scope: scopeB });
+
     const refused = await httpErrorOf(
-      service.changeVendor(id, { vendorId: current }, randomUUID()),
+      service.changeVendor(
+        otherPoId,
+        { vendorId: await vendor('approved', { vatRegistered: true }) },
+        randomUUID(),
+      ),
+    );
+
+    expect(refused.getStatus()).toBe(404);
+    expect(codeOf(refused)).toBe('not_found');
+  });
+
+  it('refuses the vendor the draft already has', async () => {
+    const existing = await vendor('approved', { vatRegistered: true });
+    const id = await plainDraft(existing);
+    const refused = await httpErrorOf(
+      service.changeVendor(id, { vendorId: existing }, randomUUID()),
     );
     expect(refused.getStatus()).toBe(409);
     expect(codeOf(refused)).toBe('PO_VENDOR_UNCHANGED');
@@ -709,13 +1283,13 @@ describe('changeVendor refusals', () => {
   });
 
   it('refuses the vendor the draft already has spelled in upper case, and changes nothing', async () => {
-    const current = await vendor();
-    const { draft } = await commitmentDraft(current);
+    const existing = await vendor('approved', { vatRegistered: true });
+    const { draft } = await commitmentDraft(existing);
     expect(draft.rfqId).not.toBeNull();
 
     // The rule compares lower-cased, also for a caller that skips the body schema.
     const refused = await httpErrorOf(
-      service.changeVendor(draft.id, { vendorId: current.toUpperCase() }, randomUUID()),
+      service.changeVendor(draft.id, { vendorId: existing.toUpperCase() }, randomUUID()),
     );
 
     expect(refused.getStatus()).toBe(409);
@@ -724,18 +1298,18 @@ describe('changeVendor refusals', () => {
     expect(await lineCount(draft.id)).toBe(0);
     expect(await auditRows(draft.id)).toEqual([]);
     // The body schema lower-cases the id, so the route never hands the service an upper-case spelling.
-    expect(ChangePurchaseOrderVendorBodySchema.parse({ vendorId: current.toUpperCase() })).toEqual({
-      vendorId: current,
-    });
+    expect(ChangePurchaseOrderVendorBodySchema.parse({ vendorId: existing.toUpperCase() })).toEqual(
+      { vendorId: existing },
+    );
   });
 
   it('refuses a draft a payment request already refers to, instead of failing on its foreign key', async () => {
-    const current = await vendor();
-    const id = await plainDraft(current);
+    const existing = await vendor('approved', { vatRegistered: true });
+    const id = await plainDraft(existing);
     const { rows } = await exec(
       scopeA,
       sql`SELECT id FROM app.vendor_bank_accounts
-          WHERE tenant_id = ${scopeA.tenantId} AND vendor_id = ${current} AND status = 'active'`,
+          WHERE tenant_id = ${scopeA.tenantId} AND vendor_id = ${existing} AND status = 'active'`,
     );
     const bankAccountId = (rows[0] as { id: string }).id;
     await exec(
@@ -743,13 +1317,17 @@ describe('changeVendor refusals', () => {
       sql`INSERT INTO app.payment_requests (tenant_id, organization_id, vendor_id, payment_type,
             purchase_order_id, currency, total_amount, from_bank_account_id, vendor_bank_account_id, bank_last4,
             requested_by)
-          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${current}, 'advance', ${id}, 'NPR', 1000,
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${existing}, 'advance', ${id}, 'NPR', 1000,
                   ${randomUUID()}, ${bankAccountId}, '1234', ${U.proc})`,
     );
     const before = await poRow(id);
 
     const refused = await httpErrorOf(
-      service.changeVendor(id, { vendorId: await vendor() }, randomUUID()),
+      service.changeVendor(
+        id,
+        { vendorId: await vendor('approved', { vatRegistered: true }) },
+        randomUUID(),
+      ),
     );
 
     expect(refused.getStatus()).toBe(409);
@@ -759,22 +1337,6 @@ describe('changeVendor refusals', () => {
     );
     expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_REFERENCED' });
     expect(await poRow(id)).toEqual(before);
-    expect(await auditRows(id)).toEqual([]);
-  });
-
-  it('refuses a draft with no lines and no quotation to copy them from, and writes nothing', async () => {
-    const id = await plainDraft(await vendor(), { withLine: false });
-    const before = await poRow(id);
-
-    const refused = await httpErrorOf(
-      service.changeVendor(id, { vendorId: await vendor() }, randomUUID()),
-    );
-
-    expect(refused.getStatus()).toBe(409);
-    expect(codeOf(refused)).toBe('PO_HAS_NO_LINES');
-    expect(wireBody(refused)).toMatchObject({ status: 409, code: 'PO_HAS_NO_LINES' });
-    expect(await poRow(id)).toEqual(before);
-    expect(await lineCount(id)).toBe(0);
     expect(await auditRows(id)).toEqual([]);
   });
 });

@@ -280,50 +280,6 @@ export function vendorChangeRefusal(i: {
   return null;
 }
 
-/** The header fields a vendor change rewrites. */
-export interface VendorChangeFields {
-  vendorId: string;
-  paymentTermsDays: number;
-  advancePercent: string;
-  rfqId: string | null;
-  vendorQuotationId: string | null;
-}
-
-/**
- * What a vendor change writes and audits: the new vendor with its account's payment terms, no advance, and the link
- * to the RFQ and quotation cleared (the quotation was the old vendor's; both are cleared together, as the
- * purchase_orders CHECK requires). Lines, prices, currency, rate and the approved total and band are left as the
- * commitment approved them. `cleared` names the fields the change reset.
- */
-export function vendorChangePatch(
-  current: VendorChangeFields,
-  next: { vendorId: string; paymentTermsDays: number },
-): {
-  set: VendorChangeFields;
-  before: VendorChangeFields;
-  cleared: (keyof VendorChangeFields)[];
-} {
-  const set: VendorChangeFields = {
-    vendorId: next.vendorId,
-    paymentTermsDays: next.paymentTermsDays,
-    advancePercent: '0',
-    rfqId: null,
-    vendorQuotationId: null,
-  };
-  const before: VendorChangeFields = {
-    vendorId: current.vendorId,
-    paymentTermsDays: current.paymentTermsDays,
-    advancePercent: current.advancePercent,
-    rfqId: current.rfqId,
-    vendorQuotationId: current.vendorQuotationId,
-  };
-  const cleared: (keyof VendorChangeFields)[] = [];
-  if (!new Decimal(current.advancePercent).isZero()) cleared.push('advancePercent');
-  if (current.rfqId !== null) cleared.push('rfqId');
-  if (current.vendorQuotationId !== null) cleared.push('vendorQuotationId');
-  return { set, before, cleared };
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // Bodies (the contracts own them; re-exported so the controller and the service keep one import)
 // ---------------------------------------------------------------------------------------------------------------

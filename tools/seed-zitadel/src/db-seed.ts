@@ -18,6 +18,7 @@ import {
   PAYMENT_REQUEST_WORKFLOW_SPEC,
   EMERGENCY_REVIEW_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
+  PO_VENDOR_CHANGE_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
   VENDOR_BILL_WORKFLOW_SPEC,
@@ -29,6 +30,7 @@ export {
   PAYMENT_REQUEST_WORKFLOW_SPEC,
   EMERGENCY_REVIEW_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
+  PO_VENDOR_CHANGE_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
   VENDOR_BILL_WORKFLOW_SPEC,
@@ -844,6 +846,7 @@ export async function seedKernelRows(
   const purchaseRequestSpec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
   const prCommitmentSpec = WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC);
   const poAmendmentSpec = WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC);
+  const poVendorChangeSpec = WorkflowSpecSchema.parse(PO_VENDOR_CHANGE_WORKFLOW_SPEC);
   const emergencyReviewSpec = WorkflowSpecSchema.parse(EMERGENCY_REVIEW_WORKFLOW_SPEC);
   const vendorBillSpec = WorkflowSpecSchema.parse(VENDOR_BILL_WORKFLOW_SPEC);
   const matchExceptionSpec = WorkflowSpecSchema.parse(MATCH_EXCEPTION_WORKFLOW_SPEC);
@@ -886,6 +889,13 @@ export async function seedKernelRows(
       name: 'Purchase order amendment',
       documentType: 'po_amendment',
       spec: poAmendmentSpec,
+    });
+    // A draft PO vendor swap whose total differs is re-approved on the commitment's route (K3 Q1).
+    changed += await seedWorkflow(client, scope, {
+      key: 'po_vendor_change',
+      name: 'Purchase order vendor change',
+      documentType: 'po_vendor_change',
+      spec: poVendorChangeSpec,
     });
     // Management reviews an emergency purchase once it is fully received (F1-Q41).
     changed += await seedWorkflow(client, scope, {
