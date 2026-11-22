@@ -46,6 +46,14 @@ export class Recorder {
     mkdirSync(path.dirname(file), { recursive: true });
   }
   put(row) {
+    // Several lanes may write the same file: re-read it first so no lane drops another lane's rows.
+    if (existsSync(this.file)) {
+      try {
+        this.rows = redactDeep(JSON.parse(readFileSync(this.file, 'utf8')));
+      } catch {
+        /* keep the rows in memory */
+      }
+    }
     const i = this.rows.findIndex((r) => r.guide === row.guide && r.id === row.id);
     const clean = redactDeep(row);
     if (i >= 0) this.rows[i] = clean;
