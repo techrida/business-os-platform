@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
 import { isQuotationClosed, QuotationClosed } from './quotation-closed';
+
+vi.mock('server-only', () => ({}));
 
 describe('QuotationClosed (R5 EF2)', () => {
   it('recognises the API answer for a cancelled quotation and nothing else', () => {
