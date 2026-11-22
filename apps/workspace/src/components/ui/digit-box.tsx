@@ -134,8 +134,10 @@ export function DigitBox({
       ? { shown: rules.parse(raw), raw }
       : null;
   });
-  const postedOf = (shown: string) =>
-    asStored !== null && !touched.current && shown === asStored.shown
+  // State, not the `touched` ref, because the hidden input reads it while rendering.
+  const [keepStored, setKeepStored] = useState(!(edited ?? false));
+  const postedOf = (shown: string, keep = keepStored) =>
+    asStored !== null && keep && shown === asStored.shown
       ? asStored.raw
       : foreign(shown)
         ? shown
@@ -171,10 +173,10 @@ export function DigitBox({
     setCaretTick((tick) => tick + 1);
   }
 
-  function commit(next: string) {
+  function commit(next: string, keep = false) {
     textRef.current = next;
     setText(next);
-    const posted = postedOf(next);
+    const posted = postedOf(next, keep);
     if (posted !== emitted.current) {
       emitted.current = posted;
       onValueChange?.(posted);
@@ -204,6 +206,7 @@ export function DigitBox({
   function accept(next: string, caret: number | null) {
     if (!touched.current) onEditedChange?.(true);
     touched.current = true;
+    setKeepStored(false);
     clearNotice();
     commit(next);
     if (caret !== null) placeCaret(caret);
@@ -215,16 +218,17 @@ export function DigitBox({
   useFormReset(rootRef, () => {
     if (touched.current) onEditedChange?.(false);
     touched.current = false;
+    setKeepStored(true);
     clearNotice();
     const next = rules.parse(controlled ? value : (defaultValue ?? ''));
     setError(null);
     if (controlled) {
       textRef.current = next;
-      emitted.current = postedOf(next);
+      emitted.current = postedOf(next, true);
       setText(next);
       return;
     }
-    commit(next);
+    commit(next, true);
   });
 
   // The forms that hold these boxes are `noValidate` and the contracts accept a shorter number, so a
