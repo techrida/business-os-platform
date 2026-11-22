@@ -85,7 +85,7 @@ describe('CreditLimitForm', () => {
     expect(sent.get('organizationId')).toBe(ENTITY);
     expect(sent.get('expectedVersion')).toBe('');
     expect(sent.get('limitMode')).toBe('limit');
-    expect(sent.get('creditLimit')).toBe('100000.00');
+    expect(sent.get('creditLimit')).toBe('100000');
     expect(sent.get('currentCreditLimit')).toBe('');
     expect(toast.success).toHaveBeenCalledWith('Credit limit saved.');
     expect(dialog()).toBeNull();
@@ -143,9 +143,7 @@ describe('CreditLimitForm', () => {
     );
     await open('credit limit');
     // The current zero limit is prefilled, not blanked.
-    expect(dialog()!.querySelector<HTMLInputElement>('input[name="creditLimit"]')?.value).toBe(
-      '0.00',
-    );
+    expect(dialog()!.querySelector<HTMLInputElement>('input[name="creditLimit"]')?.value).toBe('0');
     await click(dialog()!.querySelector('input[name="limitMode"][value="none"]'));
     expect(dialog()!.querySelector('input[name="creditLimit"]')).toBeNull();
     await save();

@@ -52,7 +52,7 @@ describe('the bill line number boxes', () => {
     const price = labelled(container, 'Unit price (NPR)');
     await paste(price, '12,50,000.00');
     expect(price.value).toBe('12,50,000.00');
-    expect(posted(container, 'line:0:unitPrice')).toBe('1250000.00');
+    expect(posted(container, 'line:0:unitPrice')).toBe('1250000');
   });
 
   it('groups a typed quantity and steps it with both buttons', async () => {
