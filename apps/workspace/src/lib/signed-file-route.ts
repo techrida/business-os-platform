@@ -2,7 +2,8 @@ import { SignedLinkDtoSchema, type SignedLinkDto } from '@bos/contracts';
 
 import { ApiError, apiFetch } from '@/lib/api';
 import { failureOf, openSignedFile } from '@/lib/api-kernel';
-import { dbBusyOf, routeSession } from '@/lib/bff';
+import { routeSession } from '@/lib/bff';
+import { dbBusyOf } from '@/lib/db-busy';
 import type { Session } from '@/lib/session';
 import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 

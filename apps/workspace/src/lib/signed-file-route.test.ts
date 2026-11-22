@@ -152,7 +152,12 @@ describe('signedFileResponse', () => {
   it('keeps a 503 db_busy and its wait instead of calling it a gateway fault', async () => {
     issueLink.mockRejectedValueOnce(
       new ApiError(503, 'busy', {
-        error: { code: 'db_busy', message: 'Busy', details: { retryAfterSeconds: 2 } },
+        error: {
+          code: 'db_busy',
+          message: 'Busy',
+          correlationId: 'c',
+          details: { retryAfterSeconds: 2 },
+        },
       }),
     );
     const res = await signedFileResponse({ mode: 'download', issueLink });
@@ -161,7 +166,9 @@ describe('signedFileResponse', () => {
     expect(res.headers.get('content-type')).toContain('text/plain');
     expect(await res.text()).toBe('Busy, please try again.');
     // Any other 503 is still a gateway fault.
-    issueLink.mockRejectedValueOnce(new ApiError(503, 'down', { error: { code: 'other' } }));
+    issueLink.mockRejectedValueOnce(
+      new ApiError(503, 'down', { error: { code: 'other', message: 'x', correlationId: 'c' } }),
+    );
     expect((await signedFileResponse({ mode: 'download', issueLink })).status).toBe(502);
   });
 
