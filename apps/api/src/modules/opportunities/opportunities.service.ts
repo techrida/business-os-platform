@@ -330,6 +330,7 @@ export class OpportunitiesService {
           await handler.onLost(tx, {
             opportunityId: id,
             scope,
+            actor,
             reason: plan.set.stageReason ?? '',
             note: plan.set.stageNote ?? '',
           });

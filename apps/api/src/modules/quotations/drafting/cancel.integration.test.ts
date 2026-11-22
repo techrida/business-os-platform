@@ -17,7 +17,13 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
-import { approvalRequests, quotations, quotationStatusHistory, quotationVersions } from '@bos/db';
+import {
+  approvalRequests,
+  opportunities,
+  quotations,
+  quotationStatusHistory,
+  quotationVersions,
+} from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -35,12 +41,17 @@ import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { LeadLostReasonsService } from '../../leads/lost-reasons.service';
+import type { OpportunityLostHandler } from '../../opportunities/opportunities.ports';
+import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { PricingService } from '../pricing/pricing.service';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
+import { QuotationLostHandler } from '../lost/quotation-lost.handler';
 import { CancelService } from './cancel.service';
 import { DraftingService } from './drafting.service';
 import {
   goldenCreateBody,
+  seedOtherStaffUser,
   seedQuotationFixture,
   type QuotationFixture,
   type QuotationFixtureDb,
@@ -413,5 +424,205 @@ describe('CancelService.cancel (F1-Q27)', () => {
     );
     expect(await statusOf(cancel(q, version))).toBe(404);
     expect(await versionRow(q.currentVersionId)).toMatchObject({ status: 'draft', version });
+  });
+});
+
+// ------------------------------------------------------------------------------------ Lost opportunity
+
+describe('the Lost cascade (QuotationLostHandler)', () => {
+  const lostActor = () => ({
+    kind: 'user' as const,
+    id: f.ownerUserId,
+    correlationId: 'lost-corr',
+  });
+  const lose = (opportunityId: string, afterHandler?: () => never) =>
+    withTx(db, scopeA, lostActor(), async (tx) => {
+      await new QuotationLostHandler(service).onLost(tx, {
+        opportunityId,
+        scope: scopeA,
+        actor: lostActor(),
+        reason: 'Price',
+        note: 'went elsewhere',
+      });
+      afterHandler?.();
+    });
+  const auditCancels = async (quotationId: string) =>
+    (
+      await new AuditService(db).list(scopeA, {
+        entityType: 'quotations',
+        entityId: quotationId,
+        limit: 50,
+      })
+    ).filter((e) => e.action === 'quotation.cancelled');
+  const opportunityInA = async (): Promise<string> => {
+    const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(opportunities)
+        .values({
+          ...scopeA,
+          number: `DEAL-${randomUUID().slice(0, 8)}`,
+          name: 'Another deal',
+          customerId: f.customerPartyId,
+          ownerUserId: f.ownerUserId,
+          stage: 'qualified',
+        })
+        .returning({ id: opportunities.id }),
+    );
+    return row!.id;
+  };
+
+  it('cancels a draft, a submitted (with its approval request), an approved and a sent version, with reason, history and audit', async () => {
+    const opportunityId = await opportunityInA();
+    const mk = () => drafting.create(goldenCreateBody(f, { opportunityId }), `c-${randomUUID()}`);
+    const draft = await mk();
+    const submitted = await mk();
+    const approved = await mk();
+    const sent = await mk();
+    const requestId = await seedPendingRequest(submitted.currentVersionId, submitted.number);
+    await advance(submitted.currentVersionId, 'submitted', requestId);
+    await advance(approved.currentVersionId, 'approved');
+    await advance(sent.currentVersionId, 'sent');
+
+    await lose(opportunityId);
+
+    for (const q of [draft, submitted, approved, sent]) {
+      const v = await versionRow(q.currentVersionId);
+      expect(v.status, q.number).toBe('cancelled');
+      expect(v.cancelReason).toBe('Opportunity marked lost: Price');
+      const h = (await historyOf(q.currentVersionId)).filter((x) => x.toStatus === 'cancelled');
+      expect(h).toHaveLength(1);
+      expect(h[0]).toMatchObject({
+        actorId: f.ownerUserId,
+        reason: 'Opportunity marked lost: Price',
+      });
+      const events = await auditCancels(q.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.meta).toMatchObject({ cause: 'opportunity_lost' });
+    }
+    const [request] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId));
+    expect(request!.status).toBe('cancelled');
+  });
+
+  it('leaves an accepted quotation, an already cancelled one, and a quotation of another opportunity as they are', async () => {
+    const opportunityId = await opportunityInA();
+    const accepted = await drafting.create(
+      goldenCreateBody(f, { opportunityId }),
+      `c-${randomUUID()}`,
+    );
+    await advance(accepted.currentVersionId, 'sent');
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.quotation_versions SET status = 'accepted', accepted_at = now(), version = version + 1
+             WHERE id = ${accepted.currentVersionId}`,
+      ),
+    );
+    const already = await drafting.create(
+      goldenCreateBody(f, { opportunityId }),
+      `c-${randomUUID()}`,
+    );
+    const { version } = await versionRow(already.currentVersionId);
+    await cancel(already, version);
+    const otherDeal = await createQuotation();
+    const before = await versionRow(already.currentVersionId);
+
+    await lose(opportunityId);
+
+    expect((await versionRow(accepted.currentVersionId)).status).toBe('accepted');
+    expect(await versionRow(already.currentVersionId)).toMatchObject({
+      status: 'cancelled',
+      version: before.version,
+      cancelReason: REASON,
+    });
+    expect((await versionRow(otherDeal.currentVersionId)).status).toBe('draft');
+  });
+
+  it('rolls the cancellations back when the transaction fails after the handler', async () => {
+    const opportunityId = await opportunityInA();
+    const q = await drafting.create(goldenCreateBody(f, { opportunityId }), `c-${randomUUID()}`);
+    await expect(
+      lose(opportunityId, () => {
+        throw new Error('the loss could not be recorded');
+      }),
+    ).rejects.toThrow('the loss could not be recorded');
+    expect((await versionRow(q.currentVersionId)).status).toBe('draft');
+  });
+
+  it('through the real changeStage route: the manager who marks the deal lost is the actor, a failing cascade keeps it open, and the quotation is cancelled with the lost reason', async () => {
+    const manager = await seedOtherStaffUser(db, f);
+    const routeCaller = {
+      current: () => ({
+        scope: scopeA,
+        actor: { kind: 'user' as const, id: manager, correlationId: 'route-corr' },
+        principal: {
+          ...principalNow(),
+          userId: manager,
+          zitadelUserId: `z-${manager}`,
+          level: 'manager',
+          grants: grantsOf('founder'),
+        } as Principal,
+      }),
+    };
+    const routeAuthz = {
+      assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+        const d = can(routeCaller.current().principal, action, ref);
+        if (!d.allowed) throw new ForbiddenException({ code: 'forbidden', reason: d.reason });
+      },
+    };
+    const audit = new AuditService(db);
+    const build = (handler: OpportunityLostHandler | undefined) => {
+      const svc = new OpportunitiesService(
+        db,
+        routeAuthz as unknown as AuthzService,
+        audit,
+        routeCaller,
+        new LeadLostReasonsService(db, audit, routeCaller),
+      );
+      svc.registerLostHandler(handler ?? new QuotationLostHandler(service));
+      return svc;
+    };
+    const opportunityId = await opportunityInA();
+    const q = await drafting.create(goldenCreateBody(f, { opportunityId }), `c-${randomUUID()}`);
+    await advance(q.currentVersionId, 'sent');
+    const stage = async () => {
+      const [row] = await db
+        .select()
+        .from(opportunities)
+        .where(eq(opportunities.id, opportunityId));
+      return row!;
+    };
+    const body = (expectedVersion: number) => ({
+      stage: 'lost' as const,
+      newLostReason: 'Went with a rival',
+      note: 'Signed elsewhere',
+      expectedVersion,
+    });
+
+    const failing = build({
+      name: 'quotations.cancel',
+      onLost: (tx, e) =>
+        new QuotationLostHandler(service)
+          .onLost(tx, e)
+          .then(() => Promise.reject(new Error('a later handler failed'))),
+    });
+    const before = await stage();
+    await expect(failing.changeStage(opportunityId, body(before.version))).rejects.toThrow(
+      'a later handler failed',
+    );
+    expect((await stage()).stage).toBe('qualified');
+    expect((await versionRow(q.currentVersionId)).status).toBe('sent');
+
+    await build(undefined).changeStage(opportunityId, body(before.version));
+    expect((await stage()).stage).toBe('lost');
+    expect(await versionRow(q.currentVersionId)).toMatchObject({
+      status: 'cancelled',
+      cancelReason: 'Opportunity marked lost: Went with a rival',
+    });
+    const history = (await historyOf(q.currentVersionId)).filter((h) => h.toStatus === 'cancelled');
+    expect(history).toEqual([expect.objectContaining({ actorId: manager, fromStatus: 'sent' })]);
+    const events = await auditCancels(q.id);
+    expect(events).toEqual([expect.objectContaining({ actorId: manager })]);
   });
 });
