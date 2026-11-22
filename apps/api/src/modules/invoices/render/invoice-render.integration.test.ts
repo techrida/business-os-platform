@@ -295,9 +295,9 @@ async function newScope(): Promise<TestScope> {
   const { partyId } = await createParty(pool, { tenantId, kind: 'customer' });
   const taxCodeId = await withTx(db, scope, seedActor(), async (tx) => {
     await tx.execute(sql`
-      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, country, address_line, address_city)
       VALUES (${partyId}::uuid, ${tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`},
-              'Himal Traders Pvt. Ltd.', 'himal traders', '{"line1":"Thamel 4","country":"NP"}'::jsonb)`);
+              'Himal Traders Pvt. Ltd.', 'himal traders', 'NP', 'Thamel 4', 'Kathmandu')`);
     const taxCode = await tx.execute<{ id: string }>(sql`
       INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
       VALUES (${tenantId}::uuid, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2026-01-01') RETURNING id`);
@@ -1189,7 +1189,7 @@ describe('render on commit (S3): the issue enqueues the render, the worker rende
     get: (_scope: unknown, key: string) =>
       Promise.resolve(
         key === 'entity.address'
-          ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+          ? { line: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
           : key === 'entity.pan_vat_no'
             ? PAN
             : null,
@@ -1201,12 +1201,7 @@ describe('render on commit (S3): the issue enqueues the render, the worker rende
     current.scope = scope;
     current.orgKind = 'staff';
     const draft = await seedInvoice(scope, { kind: 'proforma', status: 'draft' });
-    // The issue snapshots the buyer's address, which needs a city.
-    await withTx(db, scope, seedActor(), (tx) =>
-      tx.execute(sql`
-        UPDATE app.customers SET address = '{"line1":"Thamel 4","city":"Kathmandu","country":"NP"}'::jsonb
-         WHERE id = ${scope.customerId}::uuid`),
-    );
+    // The issue snapshots the buyer's address: newScope's customer has its line, city and country (FX9).
     // The API side: the real nudge on a queue that hands over what was enqueued.
     const renderQueue = { add: vi.fn().mockResolvedValue({}) };
     const issuing = new InvoiceIssueService(

@@ -6,6 +6,7 @@
 // the roles, migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
+import { SETTINGS } from '@bos/contracts';
 import { createTenantWithEntity, organizations } from '@bos/db';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
@@ -125,19 +126,26 @@ describe('SettingsService', () => {
     expect(history[0]?.createdAt).toBeInstanceOf(Date);
   });
 
-  it('writes the company PAN and phones strictly, and still reads a row written before the rules (FX8)', async () => {
+  it('writes the company PAN and phones strictly, and refuses a row written before the rules (FX9)', async () => {
     const scope = await newScope();
     const system = systemActor('test');
     const profile = { ...SETTING_DEFAULTS['entity.profile'] };
+    const phones = [
+      { country: 'NP', e164: '+9779812345678', label: 'mobile' },
+      { country: 'NP', e164: '+97714123456', label: 'landline' },
+    ];
 
     await expect(
       withTx(db, scope, system, (tx) => settingsService.set(tx, 'entity.pan_vat_no', '12345')),
     ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      withTx(db, scope, system, (tx) =>
-        settingsService.set(tx, 'entity.profile', { ...profile, phones: ['01-4123456'] }),
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    // A free-text phone, and an E.164 string without its country, are both refused (FX9: each phone is an object).
+    for (const phone of ['01-4123456', '+9779812345678']) {
+      await expect(
+        withTx(db, scope, system, (tx) =>
+          settingsService.set(tx, 'entity.profile', { ...profile, phones: [phone] }),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
     await expect(
       withTx(db, scope, system, (tx) =>
         settingsService.set(tx, 'entity.profile', { ...profile, panVatNo: 'AB-1234' }),
@@ -150,20 +158,31 @@ describe('SettingsService', () => {
       await settingsService.set(tx, 'entity.pan_vat_no', '301234567');
       await settingsService.set(tx, 'entity.profile', {
         ...profile,
-        phones: ['+9779812345678', '+97714123456'],
+        phones,
         panVatNo: '301234567',
       });
     });
     expect(await settingsService.get(scope, 'entity.pan_vat_no')).toBe('301234567');
+    const written = await settingsService.get(scope, 'entity.profile');
+    expect(written.phones).toEqual(phones);
+    expect(SETTINGS['entity.profile'].safeParse(written).success).toBe(true);
 
-    // A row written before the rules: GET returns it as stored instead of failing.
+    // Rows written before the rules: no tolerant read is left, so the schema every reader parses with refuses them.
     await withTx(db, scope, system, (tx) =>
       tx.execute(sql`
         INSERT INTO app.settings (tenant_id, organization_id, key, version, value)
-        VALUES (${scope.tenantId}::uuid, ${scope.organizationId}::uuid, 'entity.pan_vat_no', 9,
-                '"AB-1234"'::jsonb)`),
+        VALUES (${scope.tenantId}::uuid, ${scope.organizationId}::uuid, 'entity.pan_vat_no', 9, '"AB-1234"'::jsonb),
+               (${scope.tenantId}::uuid, ${scope.organizationId}::uuid, 'entity.profile', 9,
+                ${JSON.stringify({ ...profile, phones: ['01-4123456'], panVatNo: 'AB-1234' })}::jsonb)`),
     );
-    expect(await settingsService.get(scope, 'entity.pan_vat_no')).toBe('AB-1234');
+    expect(
+      SETTINGS['entity.pan_vat_no'].safeParse(await settingsService.get(scope, 'entity.pan_vat_no'))
+        .success,
+    ).toBe(false);
+    expect(
+      SETTINGS['entity.profile'].safeParse(await settingsService.get(scope, 'entity.profile'))
+        .success,
+    ).toBe(false);
   });
 
   it('rejects an invalid value and writes nothing', async () => {

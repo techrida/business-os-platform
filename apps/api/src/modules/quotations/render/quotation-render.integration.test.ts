@@ -69,7 +69,8 @@ import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
-const ADDRESS = { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' };
+// The `entity.address` setting and the customer's address columns: line, city, country (FX9).
+const ADDRESS = { line: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' };
 
 // What the fake Gotenberg answers: a small, valid-looking PDF, always the same bytes.
 const PDF = Buffer.concat([
@@ -239,9 +240,9 @@ async function newScope(options: { issuer?: boolean } = {}): Promise<TestScope> 
   const { partyId } = await createParty(pool, { tenantId, kind: 'customer' });
   const taxCodeId = await withTx(db, scope, seedActor(), async (tx) => {
     await tx.execute(sql`
-      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+      INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, country, address_line, address_city)
       VALUES (${partyId}::uuid, ${tenantId}::uuid, ${`CUS-${partyId.slice(0, 8)}`},
-              'Himal Traders Pvt. Ltd.', 'himal traders', ${JSON.stringify(ADDRESS)}::jsonb)`);
+              'Himal Traders Pvt. Ltd.', 'himal traders', ${ADDRESS.country}, ${ADDRESS.line}, ${ADDRESS.city})`);
     const taxCode = await tx.execute<{ id: string }>(sql`
       INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
       VALUES (${tenantId}::uuid, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2026-01-01') RETURNING id`);

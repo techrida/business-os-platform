@@ -595,12 +595,18 @@ describe('InvoiceRenderSweeper: the company logo', () => {
 
 describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U16-Q4)', () => {
   const profile = (over: Record<string, unknown> = {}) => ({ ...EMPTY_COMPANY_PROFILE, ...over });
+  // The profile stores each phone as its country and E.164 number (FX9); the print and its frozen copy carry the
+  // formatted number.
   const CONTACT_A = {
-    phones: ['01-4000000', '9800000000'],
+    phones: [
+      { country: 'NP', e164: '+97714000000', label: 'landline' },
+      { country: 'NP', e164: '+9779800000000', label: 'mobile' },
+    ],
     email: 'billing@techrida.example',
     signatoryName: 'Sita Sharma',
     signatoryTitle: 'Finance Manager',
   };
+  const PRINTED_CONTACT_A = { ...CONTACT_A, phones: ['+977 1-4000000', '+977 9800000000'] };
   const htmlOf = (f: ReturnType<typeof fixture>, n = 0) =>
     f.pdf.htmlToPdf.mock.calls[n]?.[0] as string;
 
@@ -614,13 +620,13 @@ describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U
     expect(html).toContain('<span class="name">Sita Sharma</span>');
     expect(html).toContain('<span>Finance Manager</span>');
     expect(html).toContain('Authorised signatory');
-    expect(html).toContain('Phones 01-4000000, 9800000000');
+    expect(html).toContain('Phones +977 1-4000000, +977 9800000000');
     expect(html).toContain('Email billing@techrida.example');
     // Only the four contact keys: never the website.
     expect(html).not.toContain('techrida.example"');
     expect(html).not.toContain('https://techrida.example');
     const stored = f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot;
-    expect(stored.sellerContact).toEqual(CONTACT_A);
+    expect(stored.sellerContact).toEqual(PRINTED_CONTACT_A);
   });
 
   it('prints a copy with the contact of print 1 after the profile changed', async () => {
@@ -639,7 +645,7 @@ describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U
 
     await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
     f.live['entity.profile'] = profile({
-      phones: ['01-5999999'],
+      phones: [{ country: 'NP', e164: '+97715999999', label: null }],
       email: 'new@techrida.example',
       signatoryName: 'Hari Rai',
       signatoryTitle: 'Director',
@@ -651,7 +657,7 @@ describe('InvoiceRenderSweeper: amount in words, signatory and seller contact (U
     expect(copy).toContain('Sita Sharma');
     expect(copy).toContain('Email billing@techrida.example');
     expect(copy).not.toContain('Hari Rai');
-    expect(copy).not.toContain('01-5999999');
+    expect(copy).not.toContain('5999999');
   });
 
   it('prints a copy of an original printed before contacts were frozen without one, but with the words', async () => {
