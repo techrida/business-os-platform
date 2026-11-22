@@ -167,7 +167,7 @@ describe('PaymentForm amount boxes', () => {
     await mount('INR', ['NPR', 'USD']);
     const box = boxOf(container, 'Amount paid');
     // A MoneyInput would group the prefill as 10,00,000.00 and carry an INR prefix.
-    expect(box.value).toBe('1000000');
+    expect(box.value).toBe('1000000.00');
     expect(box.parentElement?.textContent).not.toContain('INR');
     expect(posted(container, 'amount')).toBe('1000000');
     await fill(box, '12345678901234567');
