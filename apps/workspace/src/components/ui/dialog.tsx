@@ -39,6 +39,11 @@ export interface DialogProps {
   tone?: 'default' | 'destructive' | undefined;
   /** Where focus starts. Default: the first focusable thing in the body, else the first footer button. */
   initialFocusRef?: RefObject<HTMLElement | null> | undefined;
+  /**
+   * Runs as the dialog closes, before focus returns to the trigger (Radix `onCloseAutoFocus`). Call
+   * `event.preventDefault()` and focus an element yourself, for example the opener of a dialog with no `trigger`.
+   */
+  onCloseAutoFocus?: ((event: Event) => void) | undefined;
   /** Escape, a click outside and the close button do nothing while true (a request is in flight). */
   locked?: boolean | undefined;
   /** Set false for a dialog holding unsaved input, so a stray click outside cannot discard it. Escape still closes. */
@@ -79,6 +84,7 @@ export function Dialog({
   size = 'medium',
   tone = 'default',
   initialFocusRef,
+  onCloseAutoFocus,
   locked = false,
   closeOnOutsideClick = true,
   closeLabel = 'Close',
@@ -102,6 +108,7 @@ export function Dialog({
           ref={setContentEl}
           className={[styles.content, styles[size], className].filter(Boolean).join(' ')}
           {...(description ? {} : { 'aria-describedby': undefined })}
+          {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
           onOpenAutoFocus={(event) => {
             const target = initialFocusRef?.current;
             if (target) {
