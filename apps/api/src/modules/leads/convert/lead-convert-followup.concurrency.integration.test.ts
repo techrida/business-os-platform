@@ -73,7 +73,7 @@ vi.setConfig({ testTimeout: 600_000, hookTimeout: 180_000 });
 const ROUNDS = 32;
 const DUE = '2026-12-01T09:30:00.000Z';
 const NEW_DUE = '2026-12-03T11:00:00.000Z';
-const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
+const ADDRESS = { line: '1 Durbar Marg', city: 'Kathmandu' };
 
 let h: Harness;
 let leadsService: LeadsService;
@@ -145,6 +145,9 @@ async function qualifiedLeadWithFollowUp() {
     source: 'referral',
     companyName: 'Acme Pvt. Ltd.',
     contactName: 'Sita Rai',
+    country: 'NP',
+    email: 'sita.rai@race.example',
+    phones: [],
     currency: 'NPR',
   });
   await leadsService.changeStage(lead.id, {
@@ -170,8 +173,14 @@ type Fixture = Awaited<ReturnType<typeof qualifiedLeadWithFollowUp>>;
 const convertBody = (): ConvertLeadBody => {
   const tag = randomUUID();
   return ConvertLeadBodySchema.parse({
-    customer: { mode: 'create', customer: { legalName: `Race ${tag} Traders`, address: ADDRESS } },
-    contact: { mode: 'create', contact: { fullName: 'Buyer', email: `buyer.${tag}@race.example` } },
+    customer: {
+      mode: 'create',
+      customer: { legalName: `Race ${tag} Traders`, country: 'NP', address: ADDRESS },
+    },
+    contact: {
+      mode: 'create',
+      contact: { fullName: 'Buyer', email: `buyer.${tag}@race.example`, country: 'NP' },
+    },
     opportunityName: 'Acme website',
     expectedVersion: 3,
   });

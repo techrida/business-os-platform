@@ -197,6 +197,9 @@ async function seedLead() {
     source: 'referral',
     companyName: 'Acme Pvt. Ltd.',
     contactName: 'Sita Rai',
+    // FX9: a lead names its country and a way to reach the person (an email or a phone).
+    country: 'NP',
+    email: 'sita.rai@acme.example',
     currency: 'NPR',
   });
   expect(res.status, JSON.stringify(res.body)).toBe(201);

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Db } from '../../platform/db/db.module';
 import type { LeadsCaller } from './leads.caller';
-import { LeadDuplicatesService } from './lead-duplicates.service';
+import { duplicateProbe, LeadDuplicatesService } from './lead-duplicates.service';
 
 const typed = {
   email: 'ram.thapa@example.com',
@@ -34,7 +34,7 @@ async function errorOf(promise: Promise<unknown>): Promise<Error> {
 describe('LeadDuplicatesService.find on a database error', () => {
   it('rethrows a generic error without the bound values, the query or the cause', async () => {
     const driver = new DrizzleQueryError(
-      'select "id" from "app"."leads" where "email_norm" = $1 or right("phone_e164", $2) = $3',
+      'select "id" from "app"."leads" where "email_norm" = $1 or exists (select 1 from "app"."lead_phones" where right("e164", $2) = $3)',
       [typed.email, 10, '9800000001', typed.name, typed.company],
       new Error(`invalid input near "${typed.name}"`),
     );
@@ -57,5 +57,18 @@ describe('LeadDuplicatesService.find on a database error', () => {
       new LeadDuplicatesService(failingDb(forbidden), caller).find(typed),
     );
     expect(thrown).toBe(forbidden);
+  });
+});
+
+describe('duplicateProbe', () => {
+  it('takes the primary phone in E.164 as typed and compares its last ten digits', () => {
+    expect(duplicateProbe({ phone: '+9779801112233' })?.phoneTail).toBe('9801112233');
+    expect(duplicateProbe({ phone: '+1 415 555 2671' })?.phoneTail).toBe('4155552671');
+  });
+
+  it('waits for LEAD_DUPLICATE_MIN_PHONE_DIGITS digits before it looks a phone up', () => {
+    expect(duplicateProbe({ phone: '+977 980' })).toBeNull();
+    expect(duplicateProbe({ phone: '980111' })).toBeNull();
+    expect(duplicateProbe({ phone: '9801112' })?.phoneTail).toBe('9801112');
   });
 });

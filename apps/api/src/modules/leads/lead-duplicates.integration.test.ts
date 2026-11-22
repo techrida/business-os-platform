@@ -11,7 +11,14 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { CreateLeadBodySchema, LeadDuplicatesResponseSchema } from '@bos/contracts';
-import { createParty, createTenantWithEntity, customerContacts, leads } from '@bos/db';
+import {
+  createParty,
+  createTenantWithEntity,
+  customerContactPhones,
+  customerContacts,
+  leadPhones,
+  leads,
+} from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
@@ -37,7 +44,8 @@ import { startHarness, type Harness } from './test/harness';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
-const ADDRESS = JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' });
+/** A Nepal number in the shape the phone lists store (FX9: one row per number, its own country). */
+const np = (e164: string, isPrimary = true) => ({ country: 'NP', e164, isPrimary });
 
 let h: Harness;
 let app: INestApplication;
@@ -52,6 +60,8 @@ const seeded = {
   customerOfSalesB: '',
   otherTenantLead: '',
   otherTenantCustomer: '',
+  secondPhoneLead: '',
+  customerSecondPhone: '',
 };
 
 /** A customer party plus its customers row (they belong to no entity; organizationId only scopes the write). */
@@ -64,9 +74,10 @@ async function customer(
   const { partyId } = await createParty(h.appPool as never, { tenantId, kind: 'customer' });
   await withTx(h.db, { tenantId, organizationId }, systemActor('test'), (tx) =>
     tx.execute(
-      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address, owner_user_id)
+      sql`INSERT INTO app.customers
+            (id, tenant_id, number, legal_name, name_norm, country, address_line, address_city, owner_user_id)
           VALUES (${partyId}, ${tenantId}, ${`CUS-${partyId.slice(0, 13)}`}, ${legalName},
-                  ${legalName.toLowerCase()}, ${ADDRESS}::jsonb, ${owner})`,
+                  ${legalName.toLowerCase()}, 'NP', '1 Durbar Marg', 'Kathmandu', ${owner})`,
     ),
   );
   return partyId;
@@ -100,10 +111,15 @@ beforeAll(async () => {
   baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
 
   // Through the contract schema, as the controller does, so its defaults apply.
-  const lead = async (body: Record<string, string>) =>
+  const lead = async (body: Record<string, unknown>) =>
     (
       await leadsService.create(
-        CreateLeadBodySchema.parse({ title: 'Warehouse racks', source: 'referral', ...body }),
+        CreateLeadBodySchema.parse({
+          title: 'Warehouse racks',
+          source: 'referral',
+          country: 'NP',
+          ...body,
+        }),
       )
     ).id;
 
@@ -113,18 +129,28 @@ beforeAll(async () => {
     companyName: 'Himalayan Traders',
     contactName: 'Bikash Thapa',
     email: 'buyer@himalayan.example',
-    phone: '+9779801112233',
+    phones: [np('+9779801112233')],
+  });
+  // A lead whose matching number is its second, not its primary.
+  seeded.secondPhoneLead = await lead({
+    companyName: 'Kanchan Suppliers',
+    contactName: 'Mina Gurung',
+    phones: [np('+9779812345670'), np('+9779845551234', false)],
   });
   // Six newer leads of salesA that share only the contact name: the cap must not push out the exact match above.
   for (let i = 0; i < 6; i += 1) {
-    await lead({ companyName: `Unrelated Works ${i}`, contactName: 'Bikash Thapa' });
+    await lead({
+      companyName: `Unrelated Works ${i}`,
+      contactName: 'Bikash Thapa',
+      email: `works${i}@unrelated.example`,
+    });
   }
   h.as('salesB', 'sales');
   seeded.colleagueLead = await lead({
     companyName: 'Himalayan Secretco',
     contactName: 'Hidden Colleague',
     email: 'buyer@himalayan.example',
-    phone: '+9779801112233',
+    phones: [np('+9779801112233')],
   });
 
   // Two customers of tenant A, one owned by each salesperson; the second has a contact with the same phone.
@@ -140,22 +166,49 @@ beforeAll(async () => {
     'Everest Hiddenmark Ltd.',
     h.users.salesB,
   );
-  await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
-    tx.insert(customerContacts).values({
-      tenantId: h.tenantId,
-      customerId: seeded.customerOfSalesB,
-      fullName: 'Contact Of B',
-      emailNorm: 'ops@everest.example',
-      phoneE164: '+9779801112233',
-    }),
+  // A third customer whose contact holds the probed number as its second phone only.
+  seeded.customerSecondPhone = await customer(
+    h.tenantId,
+    h.scopeA.organizationId,
+    'Annapurna Fittings Ltd.',
+    h.users.salesA,
   );
+  await withTx(h.db, h.scopeA, systemActor('test'), async (tx) => {
+    const contacts = await tx
+      .insert(customerContacts)
+      .values([
+        {
+          tenantId: h.tenantId,
+          customerId: seeded.customerOfSalesB,
+          fullName: 'Contact Of B',
+          emailNorm: 'ops@everest.example',
+        },
+        {
+          tenantId: h.tenantId,
+          customerId: seeded.customerSecondPhone,
+          fullName: 'Two Phones',
+          emailNorm: 'desk@annapurna.example',
+        },
+      ])
+      .returning({ id: customerContacts.id });
+    await tx.insert(customerContactPhones).values([
+      { tenantId: h.tenantId, contactId: contacts[0]!.id, sortOrder: 0, ...np('+9779801112233') },
+      { tenantId: h.tenantId, contactId: contacts[1]!.id, sortOrder: 0, ...np('+9779860000001') },
+      {
+        tenantId: h.tenantId,
+        contactId: contacts[1]!.id,
+        sortOrder: 1,
+        ...np('+9779876543210', false),
+      },
+    ]);
+  });
 
   // Another tenant with a lead and a customer that match every field.
   const other = await createTenantWithEntity(h.appPool as never);
   const otherScope = { tenantId: other.tenantId, organizationId: other.organizationId };
   seeded.otherTenantLead = randomUUID();
-  await withTx(h.db, otherScope, systemActor('test'), (tx) =>
-    tx.insert(leads).values({
+  await withTx(h.db, otherScope, systemActor('test'), async (tx) => {
+    await tx.insert(leads).values({
       id: seeded.otherTenantLead,
       ...otherScope,
       number: 'LD-OTHER-1',
@@ -164,9 +217,15 @@ beforeAll(async () => {
       companyName: 'Himalayan Foreignco',
       contactName: 'Bikash Thapa',
       emailNorm: 'buyer@himalayan.example',
-      phoneE164: '+9779801112233',
-    }),
-  );
+      phonesSearch: '+9779801112233',
+    });
+    await tx.insert(leadPhones).values({
+      ...otherScope,
+      leadId: seeded.otherTenantLead,
+      sortOrder: 0,
+      ...np('+9779801112233'),
+    });
+  });
   seeded.otherTenantCustomer = await customer(
     other.tenantId,
     other.organizationId,
@@ -224,6 +283,26 @@ describe('GET /v1/leads/duplicates', () => {
     expect(ids).toContain(seeded.ownLead);
     expect(ids).toContain(seeded.customerOfSalesA);
     expectNoLeak(byCompany.text);
+  });
+
+  it('matches a lead by any of its numbers, not only the primary (FX9)', async () => {
+    // The lead's second number, typed in E.164 as the new-lead form sends its primary phone.
+    const { matches, text } = await lookup({ phone: '+9779845551234' });
+    expect(matches).toContainEqual(
+      expect.objectContaining({ kind: 'lead', id: seeded.secondPhoneLead, matchedOn: ['phone'] }),
+    );
+    expectNoLeak(text);
+  });
+
+  it('matches a customer through any number of any contact, not only the primary (FX9)', async () => {
+    const { matches, text } = await lookup({ phone: '+977 987-654 3210' });
+    expect(matches).toContainEqual({
+      kind: 'customer',
+      id: seeded.customerSecondPhone,
+      label: 'Annapurna Fittings Ltd.',
+      matchedOn: ['phone'],
+    });
+    expectNoLeak(text);
   });
 
   it('matches a misspelt company by trigram similarity', async () => {
