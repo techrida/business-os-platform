@@ -166,12 +166,13 @@ const SENT_STATUSES: ReadonlySet<string> = new Set(['sent', 'accepted', 'rejecte
 /**
  * The stages this deal has actually reached. Stage history starts with R4a Q13 and is listed on its
  * own, so the timeline counts only what the record proves: Qualified (deals start there), the stage
- * it stands at or was held at, Quotation Sent once a quotation went out, and the stages the state
+ * it stands at or was held at, Quotation Sent once a quotation went out (or the stage history shows
+ * the deal there), and the stages the state
  * machine says it passed through (`stagesBefore`). A stage it may have skipped reads "Not recorded",
  * never "Reached". A hold older than F1-Q53 has no recorded stage, so it proves nothing past Qualified.
  */
 function opportunityTimeline(
-  opp: Pick<OpportunityDto, 'stage' | 'heldFromStage'>,
+  opp: Pick<OpportunityDto, 'stage' | 'heldFromStage' | 'stageHistory'>,
   quotations: readonly Pick<QuotationListItem, 'status'>[],
 ): TimelineStep[] {
   const held = opp.stage === 'on_hold';
@@ -187,6 +188,13 @@ function opportunityTimeline(
   if (heldAt) add(heldAt);
   if (opp.stage === 'won' || quotations.some((q) => SENT_STATUSES.has(q.status))) {
     add('quotation_sent');
+  }
+  // A recorded move to or from a stage proves the deal stood there, even once its quotation is
+  // cancelled (losing a deal cancels its open quotations, sent ones included).
+  for (const move of opp.stageHistory ?? []) {
+    for (const stage of [move.from, move.to]) {
+      if (LINEAR_STAGES.some((linear) => linear === stage)) add(stage);
+    }
   }
   // How far along the deal is known to be: earlier stages without proof were maybe skipped.
   const furthest = Math.max(...LINEAR_STAGES.map((stage, i) => (reached.has(stage) ? i : -1)));

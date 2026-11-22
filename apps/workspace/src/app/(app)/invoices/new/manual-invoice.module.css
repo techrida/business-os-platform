@@ -14,6 +14,14 @@
   grid-column: 1 / -1;
 }
 
+/* Discount % and discount amount side by side, on their own row. */
+.discountPair {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px var(--grid-gutter);
+}
+
 /* Figma card eyebrow ("01 · The basics") above each card title, as on the create-lead form. */
 .eyebrow {
   display: block;
@@ -109,7 +117,8 @@
 }
 
 @media (max-width: 767px) {
-  .grid {
+  .grid,
+  .discountPair {
     grid-template-columns: minmax(0, 1fr);
   }
 }

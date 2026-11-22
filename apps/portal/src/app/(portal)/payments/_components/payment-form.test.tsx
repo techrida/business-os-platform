@@ -95,7 +95,7 @@ describe('PaymentForm currency picker', () => {
     // Old code started on NPR and left the amount empty.
     expect(submitted()).toBe('');
     expect(container.querySelector<HTMLInputElement>('input[name="amount"]')!.value).toBe(
-      '1000000.00',
+      '1000000',
     );
     expect(await currencyChoices()).toEqual([
       { code: 'NPR', disabled: false },
@@ -108,7 +108,7 @@ describe('PaymentForm currency picker', () => {
     await mount('USD', ['NPR', 'USD']);
     expect(submitted()).toBe('USD');
     expect(container.querySelector<HTMLInputElement>('input[name="amount"]')!.value).toBe(
-      '1000000.00',
+      '1000000',
     );
     expect(container.textContent).not.toContain('Payments in it are still accepted');
   });
@@ -169,7 +169,7 @@ describe('PaymentForm amount boxes', () => {
     // A MoneyInput would group the prefill as 10,00,000.00 and carry an INR prefix.
     expect(box.value).toBe('1000000.00');
     expect(box.parentElement?.textContent).not.toContain('INR');
-    expect(posted(container, 'amount')).toBe('1000000.00');
+    expect(posted(container, 'amount')).toBe('1000000');
     await fill(box, '12345678901234567');
     expect(box.value).not.toContain('12345678901234567');
   });

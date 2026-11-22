@@ -137,7 +137,11 @@ export function MarkLostDialog({
       title={noun === 'lead' ? 'Mark this lead lost?' : 'Mark this opportunity lost?'}
       // No promise about reopening (U22-Q1): who may reopen is the server's call, and the record
       // carries no reopen capability before it is lost.
-      description={`${number} will move to Lost.`}
+      description={
+        noun === 'lead'
+          ? `${number} will move to Lost.`
+          : `${number} will move to Lost. Open quotations on this deal will be cancelled.`
+      }
       tone="destructive"
       locked={pending}
       closeOnOutsideClick={false}
