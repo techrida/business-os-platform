@@ -55,6 +55,13 @@ describe('customer form', () => {
     expect(inputTag(html, 'contactCountry')).toContain('value="NP"');
   });
 
+  it("names the address country and the contact's country apart", () => {
+    const html = render('create');
+    const labels = [...html.matchAll(/<label[^>]*>([^<]*)<\/label>/g)].map((m) => m[1]);
+    expect(labels.filter((text) => text === 'Country')).toHaveLength(1);
+    expect(labels.filter((text) => text === 'Contact country')).toHaveLength(1);
+  });
+
   it('does not ask for a contact when editing the customer', () => {
     const html = render('edit');
     expect(html).not.toContain('Primary Contact');

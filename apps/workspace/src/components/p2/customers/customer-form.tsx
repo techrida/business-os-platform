@@ -368,7 +368,7 @@ export function CustomerForm({
                 />
               )}
             </Field>
-            <Field label="Country" error={err.contactCountry}>
+            <Field label="Contact country" error={err.contactCountry}>
               {(control) => (
                 <CountrySelect
                   id={control.id}
@@ -394,6 +394,7 @@ export function CustomerForm({
                 <PhoneListInput
                   name="contactPhones"
                   aria-labelledby={control['aria-labelledby']}
+                  aria-describedby={control['aria-describedby']}
                   defaultValue={phones}
                   defaultCountry={countryOf(values.contactCountry)}
                   rowErrors={err.phoneRows}

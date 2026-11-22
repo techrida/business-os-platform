@@ -23,10 +23,12 @@ function Harness({
   start = 'NP',
   compact,
   onChange,
+  onReselect,
 }: {
   start?: CountryCode;
   compact?: boolean;
   onChange?: (code: CountryCode) => void;
+  onReselect?: (code: CountryCode) => void;
 }) {
   const [value, setValue] = useState<CountryCode>(start);
   return (
@@ -42,6 +44,7 @@ function Harness({
             setValue(code);
             onChange?.(code);
           }}
+          onReselect={onReselect}
         />
       )}
     </Field>
@@ -149,6 +152,36 @@ describe('CountrySelect', () => {
     expect(select.box().value).toBe('India');
     expect(select.hidden()).toBe('IN');
     expect(changes).toEqual([]);
+  });
+
+  it('tells onReselect, not onChange, when the chosen country is picked again', async () => {
+    const changes: CountryCode[] = [];
+    const reselected: CountryCode[] = [];
+    const select = await mount({
+      onChange: (code) => changes.push(code),
+      onReselect: (code) => reselected.push(code),
+    });
+    await typeKeys(select.box(), 'nepal');
+    await key(select.box(), 'Enter');
+    expect(reselected).toEqual(['NP']);
+    expect(changes).toEqual([]);
+    expect(select.box().getAttribute('aria-expanded')).toBe('false');
+    // The list opens on the chosen country, so ArrowDown then Enter is a re-pick too.
+    await key(select.box(), 'ArrowDown');
+    await key(select.box(), 'Enter');
+    expect(reselected).toEqual(['NP', 'NP']);
+    expect(changes).toEqual([]);
+    // Another country goes to onChange only; Escape and leaving tell neither.
+    await act(() => Promise.resolve(select.box().select()));
+    await typeKeys(select.box(), 'india');
+    await key(select.box(), 'Enter');
+    expect(changes).toEqual(['IN']);
+    expect(reselected).toEqual(['NP', 'NP']);
+    await typeKeys(select.box(), 'jap');
+    await key(select.box(), 'Escape');
+    await act(() => Promise.resolve(select.box().blur()));
+    expect(changes).toEqual(['IN']);
+    expect(reselected).toEqual(['NP', 'NP']);
   });
 
   it('shows the calling code in the compact phone form and lists only countries with phones', async () => {
