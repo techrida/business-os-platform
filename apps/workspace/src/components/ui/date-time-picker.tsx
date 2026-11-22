@@ -19,7 +19,7 @@ import {
   useState,
 } from 'react';
 
-import { DatePicker, UnfinishedBlocker } from './date-picker';
+import { DatePicker, UnfinishedBlocker, useUnfinishedMessage } from './date-picker';
 import pickerStyles from './date-picker.module.css';
 import { useFormReset } from './use-form-reset';
 import styles from './date-time-picker.module.css';
@@ -114,7 +114,7 @@ export function DateTimePicker({
   required,
   invalid,
   'aria-labelledby': labelledBy,
-  'aria-describedby': describedBy,
+  'aria-describedby': callerDescribedBy,
   'aria-invalid': ariaInvalid,
   'aria-label': ariaLabel,
   className,
@@ -184,57 +184,75 @@ export function DateTimePicker({
   // A native datetime-local blocks a form while it is required and empty, or partly filled.
   const unfinished = (required === true && posted === '') || (day !== '') !== (shownTime !== '');
 
-  const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
+  const unfinishedMessage = useUnfinishedMessage(unfinished);
+  const describedBy =
+    [callerDescribedBy, unfinishedMessage.shown ? unfinishedMessage.id : undefined]
+      .filter(Boolean)
+      .join(' ') || undefined;
+
+  const isInvalid =
+    invalid === true || ariaInvalid === true || ariaInvalid === 'true' || unfinishedMessage.shown;
 
   return (
-    <div ref={rootRef} className={[styles.row, className].filter(Boolean).join(' ')}>
-      <DatePicker
-        {...(id === undefined ? {} : { id })}
-        className={styles.date ?? ''}
-        value={day}
-        onChange={(next) => update(next, time)}
-        min={min?.slice(0, 10)}
-        max={max?.slice(0, 10)}
-        disabled={disabled}
-        readOnly={readOnly}
-        required={required}
-        invalid={isInvalid}
-        aria-labelledby={labelledBy}
-        aria-describedby={describedBy}
-        aria-label={ariaLabel}
-        popoverContainer={popoverContainer}
-        showBs={showBs}
-      />
-      <TimeField
-        className={styles.time ?? ''}
-        value={fedTime}
-        onChange={(next) => update(day, next ? `${pad(next.hour)}:${pad(next.minute)}` : '')}
-        granularity="minute"
-        // The time is named by the field's own label plus "Time", and shares its hint and error.
-        {...(labelledBy === undefined
-          ? { 'aria-label': ariaLabel === undefined ? 'Time' : `${ariaLabel}, time` }
-          : { 'aria-labelledby': `${labelledBy} ${timeId}` })}
-        {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
-        isDisabled={disabled === true}
-        isReadOnly={readOnly === true}
-        isRequired={required === true}
-        isInvalid={isInvalid}
-      >
-        <Group className={pickerStyles.group ?? ''}>
-          <DateInput className={pickerStyles.input ?? ''}>
-            {(segment) => <DateSegment segment={segment} className={pickerStyles.segment ?? ''} />}
-          </DateInput>
-        </Group>
-        <TimeCompletenessWatch onChange={watchTime} />
-      </TimeField>
-      <span id={timeId} hidden>
-        Time
-      </span>
+    <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
+      <div className={styles.row}>
+        <DatePicker
+          {...(id === undefined ? {} : { id })}
+          className={styles.date ?? ''}
+          value={day}
+          onChange={(next) => update(next, time)}
+          min={min?.slice(0, 10)}
+          max={max?.slice(0, 10)}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          invalid={isInvalid}
+          aria-labelledby={labelledBy}
+          aria-describedby={describedBy}
+          aria-label={ariaLabel}
+          popoverContainer={popoverContainer}
+          showBs={showBs}
+        />
+        <TimeField
+          className={styles.time ?? ''}
+          value={fedTime}
+          onChange={(next) => update(day, next ? `${pad(next.hour)}:${pad(next.minute)}` : '')}
+          granularity="minute"
+          // The time is named by the field's own label plus "Time", and shares its hint and error.
+          {...(labelledBy === undefined
+            ? { 'aria-label': ariaLabel === undefined ? 'Time' : `${ariaLabel}, time` }
+            : { 'aria-labelledby': `${labelledBy} ${timeId}` })}
+          {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
+          isDisabled={disabled === true}
+          isReadOnly={readOnly === true}
+          isRequired={required === true}
+          isInvalid={isInvalid}
+        >
+          <Group className={pickerStyles.group ?? ''}>
+            <DateInput className={pickerStyles.input ?? ''}>
+              {(segment) => (
+                <DateSegment segment={segment} className={pickerStyles.segment ?? ''} />
+              )}
+            </DateInput>
+          </Group>
+          <TimeCompletenessWatch onChange={watchTime} />
+        </TimeField>
+        <span id={timeId} hidden>
+          Time
+        </span>
+      </div>
       {name ? (
         <input type="hidden" name={name} value={posted} disabled={disabled === true} />
       ) : null}
       {unfinished ? (
-        <UnfinishedBlocker message="Enter the date and time" root={rootRef} disabled={disabled} />
+        <UnfinishedBlocker
+          message="Enter the date and time"
+          root={rootRef}
+          disabled={disabled}
+          messageId={unfinishedMessage.id}
+          shown={unfinishedMessage.shown}
+          onBlocked={unfinishedMessage.onBlocked}
+        />
       ) : null}
     </div>
   );

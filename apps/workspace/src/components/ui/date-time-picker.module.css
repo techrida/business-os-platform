@@ -1,5 +1,9 @@
 /* The day picker and a time field side by side; the Bikram Sambat line sits under the day. */
 
+.root {
+  min-width: 0;
+}
+
 .row {
   display: flex;
   align-items: flex-start;

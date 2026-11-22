@@ -194,3 +194,38 @@ it('blocks a plain form when only part of an empty date is typed', async () => {
   expect(posted('from')).toBe('');
   expect(form.checkValidity()).toBe(false);
 }, 15_000);
+
+it('shows "Finish the date" beside the picker when an incomplete date blocks a plain form', async () => {
+  mounted = await mountForm(
+    <form method="get">
+      <DatePicker aria-label="From" name="from" defaultValue="2026-11-21" />
+    </form>,
+  );
+  await clearSegment(segment('day'));
+  await act(() => Promise.resolve((segment('month') as HTMLElement).focus()));
+  await submit(mounted.container);
+  const alerts = () =>
+    Array.from(mounted.container.querySelectorAll('[role="alert"]')).filter(
+      (node) => node.textContent === 'Finish the date',
+    );
+  expect(alerts()).toHaveLength(1);
+  const message = alerts()[0]!;
+  expect(message.id).not.toBe('');
+  expect(message.closest('[hidden], [aria-hidden="true"]')).toBeNull();
+  const focused = document.activeElement!;
+  expect(focused.getAttribute('data-type')).toBe('day');
+  expect(focused.hasAttribute('data-placeholder')).toBe(true);
+  expect(focused.getAttribute('aria-describedby')?.split(' ')).toContain(message.id);
+  const group = mounted.container.querySelector('[role="group"][aria-describedby]')!;
+  expect(group.getAttribute('aria-describedby')!.split(' ')).toContain(message.id);
+  // A second submit still lands on the empty segment and keeps one message.
+  await act(() => Promise.resolve((segment('month') as HTMLElement).focus()));
+  await submit(mounted.container);
+  expect(document.activeElement).toBe(segment('day'));
+  expect(alerts()).toHaveLength(1);
+  await typeSegment(segment('day'), '21');
+  expect(alerts()).toHaveLength(0);
+  expect(mounted.container.querySelector('form')!.checkValidity()).toBe(true);
+  expect(mounted.container.querySelector('[aria-invalid="true"]')).toBeNull();
+  expect(mounted.container.querySelector(`[aria-describedby~="${message.id}"]`)).toBeNull();
+});
