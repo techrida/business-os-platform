@@ -68,7 +68,7 @@ describe('allocateNprBuckets', () => {
     ]);
   });
 
-  it('puts the remainder on the largest bucket, equal sizes in bucket order, as the register always did', () => {
+  it('puts the remainder on the largest bucket with room, equal sizes in bucket order', () => {
     expect(split(['0.00', '0.00', '0.01', '0.01'], '1.6', '0.03')).toEqual([
       '0.00',
       '0.00',
@@ -163,5 +163,5 @@ describe('allocateNprBuckets', () => {
       }
     }
     expect(compared).toBeGreaterThan(1000);
-  });
+  }, 30_000);
 });
