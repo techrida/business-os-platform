@@ -632,6 +632,27 @@ describe('ReviseService.revise on a Lost deal', () => {
     expect((await parentRow(q.id)).currentVersionId).toBe(q.currentVersionId);
   });
 
+  it('answers 404, not the Lost 409, to a caller out of scope of the quotation, and adds no revision', async () => {
+    const { q, dealId, version } = await expiredOnOwnDeal();
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.execute(markLostSql(dealId));
+      // Own scope with another owner: out of scope, so the caller must not learn that the deal is Lost.
+      await tx.execute(sql`UPDATE app.quotations SET owner_user_id = NULL WHERE id = ${q.id}`);
+    });
+    current.grants = new Map(grantsOf('sales')).set('quotation.revise', 'own');
+    const error = await service
+      .revise(q.id, { reason: REASON, expectedVersion: version }, `revise-${randomUUID()}`)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NotFoundException);
+    expect(await versionRow(q.currentVersionId)).toMatchObject({ status: 'expired', version });
+    expect((await parentRow(q.id)).currentVersionId).toBe(q.currentVersionId);
+    const versions = await db
+      .select({ id: quotationVersions.id })
+      .from(quotationVersions)
+      .where(eq(quotationVersions.quotationId, q.id));
+    expect(versions).toHaveLength(1);
+  });
+
   it('refuses a revise queued behind Mark Lost once Mark Lost commits', async () => {
     const { q, dealId, version } = await expiredOnOwnDeal();
     let revise!: Promise<unknown>;

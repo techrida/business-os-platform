@@ -14,7 +14,7 @@
 // Only Approved and Sent become Superseded (QUOTATION_REVISION_RULES.supersededOnRevise); a Rejected or Expired
 // version keeps its status, and only its superseded_by link is set.
 //
-// Lock order: the quotation row, then the current version's approval request, then the version. CancelService and
+// Lock order: the deal row (Mark Lost takes it first), the quotation row, then the current version's approval request, then the version. CancelService and
 // ApprovalsService.act take the request before the version too, so an approver deciding while the owner revises
 // waits instead of deadlocking.
 import {
@@ -189,9 +189,14 @@ export class ReviseService {
     now: Date,
     validityDays: number,
   ): Promise<QuotationVersionDto> {
-    await this.assertDealNotLost(tx, scope, quotationId);
+    // The deal is locked first (Mark Lost's order); its stage is judged only after the record-level check, so a
+    // caller who may not see the quotation still gets the 404 and learns nothing of the deal.
+    const dealStage = await this.lockDealStage(tx, scope, quotationId);
     const quotation = await this.lockQuotation(tx, scope, quotationId);
     this.assertMayRevise(quotation);
+    if (dealStage === 'lost') {
+      throw conflict('This deal is Lost; a quotation on it cannot be revised');
+    }
     const requestId = await this.lockApprovalRequest(tx, scope, quotation);
     const old = await this.lockCurrentVersion(tx, scope, quotation);
     // Checked under the lock and before any write, so a stale caller changes nothing.
@@ -354,28 +359,26 @@ export class ReviseService {
   // ----------------------------------------------------------------------------------------------- helpers
 
   /**
-   * A Lost deal takes no new version. The deal row is locked first, in the order Mark Lost takes it (deal, then
-   * quotations), so a revise queued behind Mark Lost sees the committed stage and no lock cycle can form. A missing
-   * quotation is left to `lockQuotation`'s 404.
+   * The stage of the quotation's deal, with the deal row locked first, in the order Mark Lost takes it (deal, then
+   * quotations), so a revise queued behind Mark Lost sees the committed stage and no lock cycle can form. Undefined
+   * for a missing quotation, which `lockQuotation` answers with its 404.
    */
-  private async assertDealNotLost(
+  private async lockDealStage(
     tx: DbTransaction,
     scope: TxScope,
     quotationId: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const [peek] = await tx
       .select({ opportunityId: quotations.opportunityId })
       .from(quotations)
       .where(scoped(scope).where(quotations, eq(quotations.id, quotationId)));
-    if (peek === undefined) return;
+    if (peek === undefined) return undefined;
     const [deal] = await tx
       .select({ stage: opportunities.stage })
       .from(opportunities)
       .where(scoped(scope).where(opportunities, eq(opportunities.id, peek.opportunityId)))
       .for('update');
-    if (deal?.stage === 'lost') {
-      throw conflict('This deal is Lost; a quotation on it cannot be revised');
-    }
+    return deal?.stage;
   }
 
   /** The quotation of the acting entity, locked so a second revise waits for this one; 404 otherwise. */
