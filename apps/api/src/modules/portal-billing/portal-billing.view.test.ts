@@ -17,7 +17,11 @@ import { toCustomerInvoiceView, toSellerContact } from './portal-billing.service
 const PROFILE = {
   displayName: 'Techrida',
   logoDocumentId: null,
-  phones: ['+977 1 5550100', '+977 98 0000 0000'],
+  // Each phone is its country and E.164 number (FX9); the contact carries it formatted for print.
+  phones: [
+    { country: 'NP', e164: '+97715550100', label: 'landline' },
+    { country: 'NP', e164: '+9779800000000', label: 'mobile' },
+  ],
   email: 'billing@techrida.example',
   website: 'https://techrida.example',
   panVatNo: '301234567',
@@ -42,7 +46,7 @@ describe('toCustomerInvoiceView', () => {
     });
     expect(view.format).toEqual(STORED_FORMAT);
     expect(view.sellerContact).toEqual({
-      phones: ['+977 1 5550100', '+977 98 0000 0000'],
+      phones: ['+977 1-5550100', '+977 9800000000'],
       email: 'billing@techrida.example',
       signatoryName: 'Asha Shrestha',
       signatoryTitle: 'Director',
