@@ -389,6 +389,7 @@ export function QuoteForm({
                           {...control}
                           name={`lines.${i}.unitPrice`}
                           currency={asCurrency(values.currency)}
+                          intDigits={14}
                           value={line.unitPrice}
                           onValueChange={(plain) => setLine(i, { unitPrice: plain })}
                           disabled={!line.include}
