@@ -12,6 +12,7 @@ import { submitVendorBill } from '@/lib/api.vendor-writes';
 import { currencyNotEnabledText } from '@/lib/enabled-currencies';
 
 import {
+  codeOf,
   failed,
   type FormState,
   keyOf,
@@ -99,6 +100,14 @@ export async function submitBillAction(
                 'We could not find that purchase order. Choose it again, or leave it empty.',
             },
           };
+    }
+    if (err instanceof ApiError && err.status === 422 && codeOf(err) === 'BILL_DATE_IN_FUTURE') {
+      return {
+        key: randomUUID(),
+        fieldErrors: {
+          invoiceDate: 'The invoice date is after today. Enter the date printed on your invoice.',
+        },
+      };
     }
     // A 422 CURRENCY_NOT_ENABLED is a currency the company switched off since the page loaded (D44).
     const switchedOff = currencyNotEnabledText(err);

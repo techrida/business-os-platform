@@ -179,6 +179,31 @@ describe('submitBillAction', () => {
     expect(state.key).not.toBe(IDEM);
   });
 
+  it('names an invoice date after today against the date field, and rotates the key', async () => {
+    // The body the API's error filter sends when the date is after today in Kathmandu.
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'BILL_DATE_IN_FUTURE',
+            message:
+              'The invoice date 2026-11-23 is after today (2026-11-22); use today or an earlier date',
+            correlationId: 'req-12345678',
+            details: { invoiceDate: '2026-11-23', today: '2026-11-22' },
+          },
+        },
+        422,
+      ),
+    );
+    const state = await send({ invoiceDate: '2026-11-23' });
+    expect(callOf(fetchMock, 0).body).toMatchObject({ invoiceDate: '2026-11-23' });
+    expect(state.fieldErrors).toEqual({
+      invoiceDate: 'The invoice date is after today. Enter the date printed on your invoice.',
+    });
+    expect(state.error).toBeUndefined();
+    expect(state.key).not.toBe(IDEM);
+  });
+
   it('shows a 403 as the account, not the form', async () => {
     fetchMock.mockResolvedValueOnce(json({ error: { code: 'forbidden' } }, 403));
     const state = await send();
