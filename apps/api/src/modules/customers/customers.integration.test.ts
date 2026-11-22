@@ -353,7 +353,9 @@ describe('create a customer and read it back', () => {
     const byPan = await request(baseUrl).get('/v1/customers').query({ q: pan.toLowerCase() });
     expect((byPan.body as { items: { id: string }[] }).items.map((c) => c.id)).toEqual([acme.id]);
 
-    const page = await request(baseUrl).get('/v1/customers').query({ q: tag, limit: 1, offset: 1 });
+    const page = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `zeta${tag}`, limit: 1, offset: 1 });
     const paged = page.body as { items: unknown[]; total: number };
     expect(paged.items).toHaveLength(1);
     expect(paged.total).toBe(2);
