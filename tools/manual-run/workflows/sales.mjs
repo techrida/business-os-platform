@@ -765,7 +765,7 @@ export function workflow(cfg) {
               await fill('City', 'Kathmandu');
               // FX9: Country is the AddressFields CountrySelect, a searchable combobox. Typing highlights the best
               // match and Enter takes it; the list is in a popover outside the dialog, so no option click is scoped to d.
-              const country = d.getByRole('combobox', { name: 'Country', exact: true });
+              const country = d.getByRole('combobox', { name: 'Country', exact: true }).first();
               await country.fill('Nepal');
               await country.press('Enter');
               s.expect((await country.inputValue()) === 'Nepal', 'the Country box shows Nepal');

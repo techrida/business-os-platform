@@ -538,6 +538,228 @@ export const COMPANY_FLOWS = [
   },
 ];
 
+const OPP_NOQUOTE = '/opportunities/1f8c2e1b-64bd-483c-8110-22a92c232c6a'; // DEAL-2083/84-00002, Qualified, no quotation (seeded by earlier runs)
+
+export const FX5_FLOWS = [
+  {
+    area: 'sales',
+    flow: 'discount-pair-manual-invoice',
+    persona: 'Dev Finance',
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const pct = () => p().getByRole('spinbutton', { name: /Discount %/ });
+      const amt = () => p().getByRole('textbox', { name: /^Discount amount/ });
+      await step('1-as', 'Sign in as Dev Finance', async (c) => {
+        await c.as('Dev Finance');
+      });
+      await step('2-new', 'Invoices > Create Invoice opens the manual invoice form', async (c) => {
+        await goNav(c, S, 'Invoices', '/invoices');
+        await c.s.click(p().getByRole('link', { name: /Create Invoice/ }), 'Create Invoice');
+        await c.see(c.btn('Save draft invoice'), 'button Save draft invoice');
+        await c.see(pct(), 'spinbutton Discount %');
+        await c.see(amt(), 'textbox Discount amount');
+        await noSideScroll(c, '/invoices/new');
+      });
+      await step('3-line', 'A 5,000 line is the base for the discount', async (c) => {
+        await c.s.fill(p().getByRole('textbox', { name: 'Description (line 1)' }), 'FQA2 discount check');
+        await c.s.fill(p().getByRole('textbox', { name: 'Unit (line 1)' }), 'lot');
+        await c.s.fill(p().getByRole('textbox', { name: /^Unit price .*\(line 1\)/ }), '5000');
+        await p().keyboard.press('Tab');
+      });
+      await step('4-pct-to-amount', 'Typing 10 in Discount % fills Discount amount with 500.00', async (c) => {
+        await c.s.fill(pct(), '10');
+        await p().keyboard.press('Tab');
+        await p().waitForTimeout(600);
+        const v = await amt().inputValue();
+        c.ok(/^500(\.00)?$/.test(v.replace(/,/g, '')), `Discount amount reads 500.00 (${v})`);
+        await reachable(c, amt(), 'Discount amount');
+      });
+      await step('5-amount-to-pct', 'Clearing it and typing 250 in Discount amount shows 5 in Discount %', async (c) => {
+        await c.s.fill(pct(), '');
+        await c.s.fill(amt(), '250');
+        await p().keyboard.press('Tab');
+        await p().waitForTimeout(600);
+        const v = await pct().inputValue();
+        c.ok(/^5(\.0+)?$/.test(v), `Discount % reads 5 (${v})`);
+      });
+      await step('6-price-follows', 'Changing the line price: the other box follows', async (c) => {
+        await c.s.fill(p().getByRole('textbox', { name: /^Unit price .*\(line 1\)/ }), '10000');
+        await p().keyboard.press('Tab');
+        await p().waitForTimeout(800);
+        const v = await pct().inputValue();
+        c.ok(/^2\.5/.test(v), `Discount % follows the new base: 250 of 10,000 is 2.5 (${v})`);
+        await noSideScroll(c, 'manual invoice with discount');
+      });
+    },
+  },
+  {
+    area: 'sales',
+    flow: 'discount-pair-quote-builder',
+    persona: 'Dev Sales',
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const pct = () => p().getByRole('spinbutton', { name: /Discount %/ });
+      const amt = () => p().getByRole('textbox', { name: /^Discount amount/ });
+      await step('1-as', 'Sign in as Dev Sales', async (c) => {
+        await c.as('Dev Sales');
+      });
+      await step('2-builder', 'A Qualified deal opens the quotation builder', async (c) => {
+        await c.open(OPP_NOQUOTE);
+        const start = p().getByRole('link', { name: 'New quotation' }).or(c.btn('New quotation')).first();
+        await c.s.click(start, 'New quotation');
+        await c.see(c.heading('New quotation', { level: 1 }), 'heading New quotation');
+        await p().waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      });
+      await step('3-line', 'Add a 5,000 line', async (c) => {
+        await c.s.click(c.btn('Add the first line').or(c.btn('Add line')).first(), 'Add the first line');
+        const add = p().getByRole('dialog', { name: 'Add line' });
+        await add.getByLabel('Description').fill('FQA2 discount check');
+        await add.getByLabel('Unit', { exact: true }).fill('lot');
+        await add.getByLabel(/^Rate/).first().fill('5000');
+        await c.s.choose(c.s.select('Tax code', { scope: add }), /VAT13|VAT 13/);
+        await add.getByRole('button', { name: 'Add line', exact: true }).click();
+        await c.see(p().getByRole('table', { name: 'Quotation lines' }).getByText('FQA2 discount check'), 'the line in the table');
+      });
+      await step('4-pair', 'Discount % 10 gives amount 500.00; typing 250 in the amount gives 5; the two boxes stack on a narrow screen', async (c) => {
+        await c.s.fill(pct(), '10');
+        await p().keyboard.press('Tab');
+        await p().waitForTimeout(600);
+        const v = await amt().inputValue();
+        c.ok(/^500(\.00)?$/.test(v.replace(/,/g, '')), `Discount amount reads 500.00 (${v})`);
+        await c.s.fill(pct(), '');
+        await c.s.fill(amt(), '250');
+        await p().keyboard.press('Tab');
+        await p().waitForTimeout(600);
+        const w = await pct().inputValue();
+        c.ok(/^5(\.0+)?$/.test(w), `Discount % reads 5 (${w})`);
+        const a = await pct().boundingBox();
+        const b = await amt().boundingBox();
+        if (S.viewport.startsWith('390')) c.ok(b.y > a.y + a.height - 2, 'on a phone the two discount boxes stack (amount below percent)');
+        else c.controls.push(`discount boxes at ${S.viewport}: percent y=${Math.round(a.y)}, amount y=${Math.round(b.y)}`);
+        await reachable(c, amt(), 'Discount amount');
+        await noSideScroll(c, 'quote builder');
+      });
+    },
+  },
+];
+
+// One deal with a Sent quotation per size, made through the real sales workflow (prep-lost.sh); the label is in the deal name.
+const LOST_LABEL = { desktop: 'fqa2li', laptop: 'fqa2lf', tablet: 'fqa2lg', mobile: 'fqa2lh' };
+
+export const LOST_FLOWS = [
+  {
+    area: 'sales',
+    flow: 'deal-lost',
+    persona: 'Dev Sales',
+    mutates: true,
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const label = LOST_LABEL[S.size];
+      const reason = `FQA2 lost ${S.tag}`;
+      await step('1-as', 'Sign in as Dev Sales', async (c) => {
+        await c.as('Dev Sales');
+      });
+      await step('2-deal', `Open the deal with a Sent quotation (${label})`, async (c) => {
+        await goNav(c, S, 'Opportunities', '/opportunities');
+        const box = p().getByRole('searchbox', { name: /Search/ }).first();
+        await c.s.fill(box, `SCR-${label}`);
+        const link = p().locator('main a[href^="/opportunities/"]').filter({ hasText: `SCR-${label}` }).first();
+        await c.s.click(link, `the deal ${label}`);
+        await p().waitForURL((u) => /^\/opportunities\/[0-9a-f-]{36}$/.test(u.pathname), { timeout: 60000 });
+        S.deal = new URL(p().url()).pathname;
+        await c.see(p().getByText('Quotation Sent').first(), 'stage Quotation Sent', 30000);
+        await c.see(p().getByRole('button', { name: 'Mark lost', exact: true }), 'button Mark lost');
+        await noSideScroll(c, 'the deal');
+      });
+      await step('3-quote-sent', 'The quotation is Sent and offers no ordinary Cancel button', async (c) => {
+        const q = p().locator('main a[href^="/quotations/"]:not([href*="/new"])').first();
+        const href = await q.getAttribute('href');
+        S.quote = href;
+        await c.s.click(q, 'the quotation');
+        await c.see(p().getByText('Sent', { exact: true }).first(), 'status Sent', 30000);
+        await c.absent(p().getByRole('button', { name: /^Cancel/ }), 'a Cancel button on a Sent quotation');
+      });
+      await step('4-lost-dialog', 'Mark lost: the dialog says open quotations will be cancelled; a reason and note save it', async (c) => {
+        await c.open(S.deal);
+        await c.s.click(p().getByRole('button', { name: 'Mark lost', exact: true }), 'Mark lost');
+        const d = p().getByRole('dialog');
+        await c.see(d.getByText(/Open quotations on this deal will be cancelled/), 'text "Open quotations on this deal will be cancelled."');
+        await p().keyboard.press('Escape');
+        await d.waitFor({ state: 'hidden', timeout: 10000 });
+        await c.s.click(p().getByRole('button', { name: 'Mark lost', exact: true }), 'Mark lost');
+        const dlg = p().getByRole('dialog');
+        const cb = dlg.getByRole('combobox', { name: 'Reason' });
+        await cb.click();
+        await cb.fill(reason);
+        await p().getByRole('option').first().click({ delay: 80 });
+        await dlg.getByRole('textbox', { name: 'Note' }).fill('FQA2 note');
+        await dlg.getByRole('button', { name: 'Mark lost', exact: true }).click({ delay: 80 });
+        await c.see(p().getByText(/This opportunity is lost/), 'text "This opportunity is lost."', 60000);
+        ledger({ kind: `deal ${label} marked lost`, path: S.deal, size: S.size });
+      });
+      await step('5-timeline', 'After Lost, the timeline still reads Quotation Sent as reached', async (c) => {
+        await p().reload({ waitUntil: 'domcontentloaded' });
+        const sent = p().getByText('Quotation Sent').first();
+        await c.see(sent, 'timeline step Quotation Sent', 30000);
+        const box = sent.locator('xpath=ancestor::*[contains(., "Not yet") or contains(., "Reached")][1]');
+        const txt = (await box.innerText()).replace(/\s+/g, ' ');
+        c.ok(!/Quotation Sent\s+Not yet/.test(txt), 'Quotation Sent does not read "Not yet"', txt.slice(0, 160));
+      });
+      await step('6-quote-cancelled', 'The quotation is Cancelled; its history names the reason and who marked the deal lost', async (c) => {
+        await c.open(S.quote);
+        await c.see(p().getByText('Cancelled', { exact: true }).first(), 'status Cancelled', 30000);
+        await c.see(p().getByText(new RegExp(`Opportunity marked lost: ${reason}`)).first(), 'history reason "Opportunity marked lost: ..."');
+        await c.see(p().getByText(/Dev Sales/).first(), 'the history names Dev Sales');
+        await noSideScroll(c, 'cancelled quotation');
+      });
+    },
+  },
+];
+
+export const FLAG_FLOWS = [
+  {
+    area: 'parties',
+    flow: 'country-picker-flags',
+    persona: 'Dev Sales',
+    async steps(c, S, step) {
+      const p = () => c.page();
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const dir = path.join(process.env.FQA_EVIDENCE, 'flags');
+      fs.mkdirSync(dir, { recursive: true });
+      await step('1-as', 'Sign in as Dev Sales', async (c) => {
+        await c.as('Dev Sales');
+      });
+      await step('2-address-picker', 'FX9 Q3: the address Country list opens; screenshot of how the flags render', async (c) => {
+        await c.open('/customers/new');
+        const box = p().getByRole('combobox', { name: 'Country', exact: true }).nth(1);
+        await box.scrollIntoViewIfNeeded();
+        await box.click();
+        await box.fill('');
+        await p().waitForTimeout(800);
+        const opts = p().getByRole('option');
+        await opts.first().waitFor({ state: 'visible', timeout: 15000 });
+        const first = (await opts.first().innerText()).replace(/\s+/g, ' ');
+        c.ok(/Nepal/.test(first), `Nepal is listed first (${first})`);
+        await p().screenshot({ path: path.join(dir, `country-picker-${S.size}.png`) });
+        c.controls.push(`screenshot flags/country-picker-${S.size}.png`);
+        S.flagText = (await opts.nth(1).innerText()).replace(/\s+/g, ' ');
+        await p().keyboard.press('Escape');
+      });
+      await step('3-phone-picker', 'The phone country list opens; screenshot', async (c) => {
+        const box = p().getByRole('combobox', { name: 'Phone 1 country' });
+        await box.scrollIntoViewIfNeeded();
+        await box.click();
+        await p().waitForTimeout(800);
+        await p().getByRole('option').first().waitFor({ state: 'visible', timeout: 15000 });
+        await p().screenshot({ path: path.join(dir, `phone-country-picker-${S.size}.png`) });
+        c.controls.push(`screenshot flags/phone-country-picker-${S.size}.png`);
+        await p().keyboard.press('Escape');
+      });
+    },
+  },
+];
+
 export const FLOWS = [
   {
     area: 'payments',
@@ -709,4 +931,7 @@ export const FLOWS = [
   ...LEAD_FLOWS,
   ...VENDOR_FLOWS,
   ...COMPANY_FLOWS,
+  ...FX5_FLOWS,
+  ...LOST_FLOWS,
+  ...FLAG_FLOWS,
 ];
