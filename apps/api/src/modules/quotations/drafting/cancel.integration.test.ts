@@ -577,8 +577,8 @@ describe('the Lost cascade (QuotationLostHandler)', () => {
         db,
         routeAuthz as unknown as AuthzService,
         audit,
-        routeCaller as never,
-        new LeadLostReasonsService(db, audit, routeCaller as never),
+        routeCaller,
+        new LeadLostReasonsService(db, audit, routeCaller),
       );
       svc.registerLostHandler(handler ?? new QuotationLostHandler(service));
       return svc;
