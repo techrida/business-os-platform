@@ -363,11 +363,26 @@ export class FakeUsersStore extends UsersStore {
     return Promise.resolve();
   }
   founderLeases = new Map<string, string>();
-  claimFounderLease(tenantId: string, leaseId: string, _ttlSeconds?: number, _timeoutMs?: number) {
+  /** Tenants whose held lease counts as past its TTL: the next other holder takes it over. */
+  expiredLeases = new Set<string>();
+  /** Every claim that won, in order: whether it was a TTL takeover. */
+  claims: { tenantId: string; leaseId: string; ttlTakeover: boolean }[] = [];
+  claimFounderLeaseWithOrigin(
+    tenantId: string,
+    leaseId: string,
+    _ttlSeconds?: number,
+    _timeoutMs?: number,
+  ) {
     const held = this.founderLeases.get(tenantId);
-    if (held !== undefined && held !== leaseId) return Promise.resolve(false);
+    let ttlTakeover = false;
+    if (held !== undefined && held !== leaseId) {
+      if (!this.expiredLeases.has(tenantId)) return Promise.resolve({ claimed: false, ttlTakeover });
+      ttlTakeover = true;
+      this.expiredLeases.delete(tenantId);
+    }
     this.founderLeases.set(tenantId, leaseId);
-    return Promise.resolve(true);
+    this.claims.push({ tenantId, leaseId, ttlTakeover });
+    return Promise.resolve({ claimed: true, ttlTakeover });
   }
   releaseFounderLease(tenantId: string, leaseId: string) {
     if (this.founderLeases.get(tenantId) === leaseId) this.founderLeases.delete(tenantId);

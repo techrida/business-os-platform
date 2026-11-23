@@ -224,8 +224,8 @@ export class UserStatusService {
       scope.tenantId,
       () => this.run(scope, actor, userId, action, assertAccess),
       undefined,
-      (removal, clearRecord) =>
-        this.reconciler.settleOutstandingRemoval(scope, actor, removal, clearRecord),
+      (removal, clearRecord, origin) =>
+        this.reconciler.settleOutstandingRemoval(scope, actor, removal, clearRecord, origin),
     );
   }
 
