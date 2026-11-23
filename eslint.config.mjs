@@ -7,7 +7,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 import { NATIVE_INPUT_SELECTOR, NO_NATIVE_DIALOGS } from './tools/eslint/native-controls-rule.mjs';
-import { NATIVE_TITLE_RULE } from './tools/eslint/native-title-rule.mjs';
+import { RESTRICTED_SYNTAX } from './tools/eslint/native-title-rule.mjs';
 
 const WORKSPACE_FILES = [
   'apps/workspace/**/*.{js,jsx,mjs,ts,tsx}',
@@ -133,14 +133,13 @@ export default defineConfig([
     settings: { next: { rootDir: ['apps/workspace/', 'apps/portal/'] } },
   },
 
-  // UIP-BUILD-002: no browser-default hover tooltips (tools/eslint/native-title-rule.mjs), checkboxes, radios or
-  // confirm/alert/prompt dialogs (tools/eslint/native-controls-rule.mjs).
+  // UIP-BUILD-002: no browser-default hover tooltips (rules and reasons in tools/eslint/native-title-rule.mjs; header-action.tsx links its sr-only description on purpose).
   {
     files: WORKSPACE_FILES,
-    ignores: ['**/*.test.{ts,tsx}'],
+    ignores: ['**/*.test.{ts,tsx}', 'apps/workspace/src/components/ui/header-action.tsx'],
     rules: {
       // One entry: a later `no-restricted-syntax` config would replace this one, not add to it.
-      'no-restricted-syntax': [...NATIVE_TITLE_RULE, NATIVE_INPUT_SELECTOR],
+      'no-restricted-syntax': [...RESTRICTED_SYNTAX, NATIVE_INPUT_SELECTOR],
       'no-alert': NO_NATIVE_DIALOGS,
     },
   },

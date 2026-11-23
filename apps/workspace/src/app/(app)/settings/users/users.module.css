@@ -261,12 +261,22 @@
 }
 
 .rowActions {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  /* One fixed track per action slot, so every row's actions line up: picture, roles, check access, password reset,
+     lock/unlock, keep locked, deactivate/reactivate. */
+  grid-template-columns: 40px 40px 108px 40px 76px 108px 104px;
+  justify-content: end;
   gap: 4px;
 }
 
-.rowActions button {
+.slot {
+  display: flex;
+  min-width: 0;
+  justify-content: center;
+}
+
+.rowActions button,
+.rowActions a {
   min-width: 40px;
   min-height: 40px;
 }

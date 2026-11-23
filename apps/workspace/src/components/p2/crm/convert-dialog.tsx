@@ -1,24 +1,27 @@
 'use client';
 
-import { MAX_PARTY_PHONES, type CountryCode, type PartyPhoneInput } from '@bos/contracts';
-import { useActionState, useEffect, useId, useRef, useState } from 'react';
+import type { CountryCode, PartyPhoneInput } from '@bos/contracts';
+import { useActionState, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
-import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { CountrySelect } from '@/components/ui/country-select';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Input, Select } from '@/components/ui/field';
-import { PanInput } from '@/components/ui/pan-input';
-import { PhoneListInput } from '@/components/ui/phone-list-input';
-
-import { FactList, Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 
-import { loadConversionContacts, searchConversionCustomers } from './record-lookups';
+import { ContactStep } from './convert-contact-step';
+import { DetailsStep } from './convert-details-step';
+import { errorsOfStep, firstStepWithError, LAST_STEP, type ConvertStep } from './convert-model';
+import { OrganisationStep } from './convert-organisation-step';
+import { StepIndicator } from './convert-parts';
+import type { ChosenCustomer, ContactLookup, StepContext } from './convert-types';
+import { parseConvert } from './forms';
 import type { ConvertAction, ConvertState } from './types';
-import { Checkbox, Radio, RadioGroup } from '@/components/ui/checkbox';
+
+const UNREADABLE =
+  'You cannot open this customer, so the lead cannot be converted into it. Unlink it, or choose another organisation.';
+const NO_EMAIL =
+  'This contact has no email, so quotations could not be sent to it. Choose another contact, or create one from the lead.';
 
 export interface ConvertLead {
   id: string;
@@ -30,8 +33,16 @@ export interface ConvertLead {
   email: string;
   /** The lead person's country: the new customer and contact start in it. */
   country: CountryCode;
+  /** The lead's address, when it has one (D9): the new customer's Address and City start from it, editable. */
+  address?: { line: string; city: string } | null;
   /** The lead person's numbers (the DTO's `phones`, primary first): the new contact starts with them. */
   phones: readonly PartyPhoneInput[];
+  /**
+   * R6O: the customer (and contact) picked in the lead's company field. The dialog starts on converting INTO them, so
+   * there is no duplicate warning to answer; the API refuses a second customer for a linked lead.
+   */
+  customerId?: string | null;
+  contactId?: string | null;
   requirement?: string | null;
   value?: string | null;
   probability?: number | null;
@@ -40,15 +51,15 @@ export interface ConvertLead {
 
 function initialValues(lead: ConvertLead): Record<string, string> {
   return {
-    customerMode: 'create',
-    customerId: '',
+    customerMode: lead.customerId ? 'existing' : 'create',
+    customerId: lead.customerId ?? '',
     legalName: lead.companyName,
     panVatNo: '',
-    line: '',
-    city: '',
+    line: lead.address?.line ?? '',
+    city: lead.address?.city ?? '',
     country: lead.country,
-    contactMode: 'create',
-    contactId: '',
+    contactMode: lead.customerId && lead.contactId ? 'existing' : 'create',
+    contactId: lead.customerId ? (lead.contactId ?? '') : '',
     contactName: lead.contactName,
     contactEmail: lead.email,
     contactCountry: lead.country,
@@ -59,13 +70,30 @@ function initialValues(lead: ConvertLead): Record<string, string> {
 }
 
 /**
- * Convert a qualified lead into a customer, a contact and an opportunity. The contact is required
- * and needs an email (a new one types it; an existing one without an address cannot be chosen), so
- * the opportunity's quotations can be sent. When the server finds
- * duplicates, the dialog lists the candidates. The user can link a matching record or provide
- * a reason to create new records. Typed values survive every refusal.
+ * Convert a qualified lead into a customer, a contact and an opportunity, in three steps: the organisation, the
+ * contact, the deal (R6T). One form holds all three, so nothing typed is lost going back; a step that is not showing
+ * stays mounted but hidden. A lead without a link starts on "Create" with its company and person filled in; a lead
+ * whose company was picked from the customer list starts on that customer. The contact needs an email (a new one
+ * types it; an existing one without an address cannot be chosen), so the opportunity's quotations can be sent. When
+ * the server finds duplicates, the dialog lists the candidates: link a matching record, or give a reason to create
+ * new ones. Typed values survive every refusal, and a refusal on an earlier step takes the user back to it.
  */
-export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: ConvertAction }) {
+export function ConvertDialog({
+  lead,
+  action,
+  searchDelayMs,
+  unlinkAction,
+}: {
+  lead: ConvertLead;
+  action: ConvertAction;
+  /** Drops the lead's customer link and answers the lead's new version (R6T); without it there is no Unlink button. */
+  unlinkAction?: (
+    leadId: string,
+    version: number,
+  ) => Promise<{ ok: true; version: number } | { ok: false; error: string }>;
+  /** How long typing must pause before a live search; tests pass 0. */
+  searchDelayMs?: number;
+}) {
   const [state, formAction, pending] = useActionState<ConvertState, FormData>(action, {
     values: initialValues(lead),
     fieldErrors: {},
@@ -73,66 +101,58 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(lead));
   const [key, setKey] = useState('');
   const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<ConvertStep>(0);
+  // Errors found when moving on (the same rules the server applies); a server answer replaces them.
+  const [blocked, setBlocked] = useState(0);
+  const [local, setLocal] = useState<Partial<Record<string, string>> | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const summary = useRef<HTMLDivElement>(null);
   const formId = useId();
-  const err = state.fieldErrors;
+  const err = local ?? state.fieldErrors;
   const dupes = state.duplicates ?? [];
 
-  const [query, setQuery] = useState('');
-  const [customers, setCustomers] = useState<{ id: string; label: string }[]>([]);
-  const [lookupError, setLookupError] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [contacts, setContacts] = useState<{
-    customerId: string;
-    options: { id: string; label: string; disabled?: boolean }[];
-    error: string;
-  } | null>(null);
-  const customerId = values['customerId'] ?? '';
-  useEffect(() => {
-    if (!customerId) return;
-    let active = true;
-    void loadConversionContacts(customerId)
-      .then((result) => {
-        if (active) setContacts({ customerId, ...result });
-      })
-      .catch(() => {
-        if (active)
-          setContacts({
-            customerId,
-            options: [],
-            error: 'Contacts could not be loaded. Try again.',
-          });
-      });
-    return () => {
-      active = false;
-    };
-  }, [customerId]);
-
-  async function searchCustomers() {
-    setSearching(true);
-    try {
-      const result = await searchConversionCustomers(query);
-      setCustomers(result.options);
-      setLookupError(
-        !result.error && result.options.length === 0 ? 'No matching organizations.' : '',
-      );
-      if (result.error) toast.error(result.error);
-    } catch {
-      setLookupError('');
-      toast.error('Organizations could not be loaded. Try again.');
-    } finally {
-      setSearching(false);
+  const [chosen, setChosen] = useState<ChosenCustomer | null>(null);
+  // A linked lead cannot create a new customer. Unlinking makes it an ordinary lead again, at its new version.
+  const [unlinked, setUnlinked] = useState<{ version: number } | null>(null);
+  const [unlinking, setUnlinking] = useState({ pending: false, error: '' });
+  const [lookup, setLookup] = useState<ContactLookup | null>(null);
+  const linked = Boolean(lead.customerId) && unlinked === null;
+  // The lead was unlinked on the page while this dialog held its old link: start over as an unlinked lead, so it does
+  // not convert straight back into the customer just unlinked.
+  const [seenCustomerId, setSeenCustomerId] = useState(lead.customerId ?? null);
+  if ((lead.customerId ?? null) !== seenCustomerId) {
+    setSeenCustomerId(lead.customerId ?? null);
+    if (!lead.customerId && values['customerId'] === seenCustomerId) {
+      setValues((v) => ({
+        ...v,
+        customerMode: 'create',
+        customerId: '',
+        contactMode: 'create',
+        contactId: '',
+      }));
+      setChosen(null);
+      setLookup(null);
     }
   }
-
+  // The page may have moved on since (an owner or address edit): never convert at an older version.
+  const version = Math.max(lead.version, unlinked?.version ?? 0);
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
-  // The contract also takes the tax ids of customers abroad, so only a Nepal customer gets the
-  // digits-only PAN box.
+  const patch = (p: Record<string, string>) => {
+    setValues((v) => ({ ...v, ...p }));
+    // A new choice answers the dead end that was shown for the old one.
+    if ('customerId' in p || 'contactId' in p) {
+      setLocal((l) =>
+        l
+          ? Object.fromEntries(
+              Object.entries(l).filter(([k]) => k !== 'customerId' && k !== 'contactId'),
+            )
+          : l,
+      );
+    }
+  };
+  // The customer's country decides the PAN rules.
   const customerCountry = (values['country'] ?? lead.country) as CountryCode;
-  const contactCountry = (values['contactCountry'] ?? lead.country) as CountryCode;
-  const nepalCustomer = customerCountry === 'NP';
   // The PAN edit flag lives here, above the box that remounts on a country switch, so a short value
   // the user typed is still stopped at submit when its box comes back.
   const [panEdited, setPanEdited] = useState(false);
@@ -140,27 +160,151 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
   // then starts over from `defaultValue`. Holding its saved numbers here keeps what the user typed
   // through a refusal; incomplete rows never get that far, their boxes stop the submit.
   const [phones, setPhones] = useState<readonly PartyPhoneInput[]>(lead.phones);
-  const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
 
   // Keep one key per decision, even when the dialog is closed and reopened. Only a definite
   // refusal rotates it. A timeout keeps the key so a retry is the same request.
   const [seenState, setSeenState] = useState(state);
   if (state !== seenState) {
     setSeenState(state);
+    setLocal(null);
     if (state.definite) setKey(crypto.randomUUID());
+    // The step that can answer the refusal: the earliest field error, else the earliest duplicate (a customer
+    // match is step 1, a contact match step 2).
+    const back =
+      firstStepWithError(state.fieldErrors) ??
+      (lead.customerId && state.error?.includes('linked to a customer') ? 0 : null) ??
+      (state.duplicates?.length
+        ? (Math.min(...state.duplicates.map((d) => (d.kind === 'customer' ? 0 : 1))) as ConvertStep)
+        : null);
+    if (back !== null) setStep(back);
   }
   useEffect(() => {
     if (!open || pending) return;
     if (summary.current) summary.current.focus();
-    else form.current?.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled)')?.focus();
-  }, [open, pending, state]);
+    else {
+      form.current
+        ?.querySelector<HTMLElement>(
+          '[data-step-panel]:not([hidden]) [aria-invalid="true"]:not(:disabled)',
+        )
+        ?.focus();
+    }
+  }, [open, pending, state, local]);
+
+  useEffect(() => {
+    if (blocked === 0 || !form.current) return;
+    const panels = [...form.current.querySelectorAll<HTMLElement>('[data-step-panel]')];
+    const here = panels[step];
+    if (here?.querySelector('[aria-invalid="true"]:not(:disabled)')) return;
+    const other = panels.findIndex(
+      (panel, index) =>
+        index !== step && panel.querySelector('[aria-invalid="true"]:not(:disabled)'),
+    );
+    // Phones live on the Contact step: that is where an unfinished or doubled number waits.
+    const target = other >= 0 ? other : step === 1 ? -1 : 1;
+    if (target >= 0) setStep(target as ConvertStep);
+    // Only a new blocked submit matters, not a later change of step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked]);
 
   useEffect(() => {
     if (Object.keys(state.fieldErrors).length) toast.error('Check the highlighted fields.');
   }, [state]);
 
-  const customerExisting = values['customerMode'] === 'existing';
-  const contactMode = values['contactMode'];
+  const ctx: StepContext = {
+    values,
+    patch,
+    set,
+    err,
+    searchDelayMs,
+    onLookupError: (message) => toast.error(message),
+    linked,
+    lookup,
+    unlink:
+      linked && unlinkAction
+        ? {
+            pending: unlinking.pending,
+            error: unlinking.error,
+            run: () => {
+              setUnlinking({ pending: true, error: '' });
+              void unlinkAction(lead.id, version).then(
+                (result) => {
+                  if (result.ok) {
+                    setUnlinking({ pending: false, error: '' });
+                    setUnlinked({ version: result.version });
+                    setKey(crypto.randomUUID());
+                    setChosen(null);
+                    setLookup(null);
+                    patch({
+                      customerMode: 'create',
+                      customerId: '',
+                      contactMode: 'create',
+                      contactId: '',
+                    });
+                    toast.success('Customer unlinked. Create the organisation, or link another.');
+                  } else setUnlinking({ pending: false, error: result.error });
+                },
+                () => setUnlinking({ pending: false, error: 'Could not unlink. Try again.' }),
+              );
+            },
+          }
+        : undefined,
+  };
+
+  /** Dead ends a button would only run into at the API: said here, with the way out beside it. */
+  function linkProblems(forStep: ConvertStep): Partial<Record<string, string>> {
+    const customerId = values['customerId'] ?? '';
+    if (lookup?.customerId !== customerId || customerId === '') return {};
+    if (forStep === 0 && values['customerMode'] === 'existing' && lookup.unreadable) {
+      return { customerId: UNREADABLE };
+    }
+    if (
+      forStep === 1 &&
+      values['contactMode'] === 'existing' &&
+      lookup.noEmailIds.includes(values['contactId'] ?? '')
+    ) {
+      return { contactId: NO_EMAIL };
+    }
+    return {};
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    if (step === LAST_STEP) {
+      // A dead end found after the user moved on (the contacts answered late): say it on its own step.
+      const earlier = ([0, 1] as const).find((s) => Object.keys(linkProblems(s)).length > 0);
+      if (earlier !== undefined) {
+        event.preventDefault();
+        setLocal(linkProblems(earlier));
+        setStep(earlier);
+      }
+      return;
+    }
+    // Enter and Next both submit: on the first two steps that means "go on". A box that stops a submit (a short
+    // PAN, an unfinished phone) has already cancelled the event and shown its reason.
+    const stopped = event.defaultPrevented;
+    event.preventDefault();
+    if (stopped) {
+      // A box on ANOTHER step stopped the submit (a half-typed phone left behind with Back): its reason is not on
+      // screen, so take the user to it once the box has shown its error.
+      setBlocked((n) => n + 1);
+      return;
+    }
+    const parsed = parseConvert(new FormData(event.currentTarget));
+    const problems = {
+      ...(parsed.ok ? {} : errorsOfStep(parsed.fieldErrors, step)),
+      ...linkProblems(step),
+    };
+    if (Object.keys(problems).length > 0) {
+      setLocal(problems);
+      return;
+    }
+    setLocal(null);
+    setStep((step + 1) as ConvertStep);
+  }
+
+  const panel = (index: ConvertStep) => ({
+    hidden: step !== index,
+    'data-step-panel': index,
+  });
 
   return (
     <Dialog
@@ -182,18 +326,37 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
               Cancel
             </Button>
           </DialogClose>
-          <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
-            {pending ? 'Converting' : 'Convert'}
+          {step > 0 ? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={pending}
+              onClick={() => {
+                setLocal(null);
+                setStep((step - 1) as ConvertStep);
+              }}
+            >
+              Back
+            </Button>
+          ) : null}
+          <Button
+            type="submit"
+            form={formId}
+            disabled={pending || unlinking.pending}
+            aria-busy={pending || undefined}
+          >
+            {step < LAST_STEP ? 'Next' : pending ? 'Converting' : 'Convert'}
           </Button>
         </>
       }
     >
-      <form id={formId} ref={form} action={formAction} noValidate>
+      <form id={formId} ref={form} action={formAction} onSubmit={onSubmit} noValidate>
         <input type="hidden" name="leadId" value={lead.id} />
-        <input type="hidden" name="expectedVersion" value={lead.version} />
+        <input type="hidden" name="expectedVersion" value={version} />
         <input type="hidden" name="idempotencyKey" value={key} />
 
         <fieldset className={styles.convertFields} disabled={pending}>
+          <StepIndicator step={step} />
           {state.error ? (
             <Alert ref={summary} tabIndex={-1} tone="error" role="alert">
               {state.error}
@@ -252,351 +415,29 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
             </Alert>
           ) : null}
 
-          <Panel title="Carried over from the lead" headingLevel={3} className={styles.dialogPanel}>
-            <FactList
-              className={styles.conversionFacts ?? ''}
-              facts={[
-                { key: 'organization', label: 'Organization', value: lead.companyName },
-                { key: 'contact', label: 'Contact person', value: lead.contactName },
-              ]}
-            />
-            {lead.requirement ? (
-              <Alert tone="info">
-                <span className={styles.longText}>{lead.requirement}</span>
-              </Alert>
-            ) : null}
-          </Panel>
-
-          <fieldset className={styles.conversionSection}>
-            <legend className={styles.legend}>Organization</legend>
-            <RadioGroup
-              neutral
-              name="customerMode"
-              value={customerExisting ? 'existing' : 'create'}
-              onValueChange={(next) => patch({ customerMode: next })}
-            >
-              <label className={styles.choice}>
-                <Radio value="create" />
-                Create a new organization
-              </label>
-              <label className={styles.choice}>
-                <Radio value="existing" />
-                Link to an existing organization
-              </label>
-            </RadioGroup>
-
-            {customerExisting ? (
-              <>
-                <div className={styles.customerSearch}>
-                  <Field
-                    label="Find an organization"
-                    hint="Search by name, customer number or PAN/VAT."
-                  >
-                    {(c) => (
-                      <Input
-                        {...c}
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        maxLength={100}
-                      />
-                    )}
-                  </Field>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={searching}
-                    onClick={() => {
-                      void searchCustomers();
-                    }}
-                  >
-                    {searching ? 'Searching' : 'Search'}
-                  </Button>
-                </div>
-                {lookupError ? <p role="status">{lookupError}</p> : null}
-                <Field label="Organization" error={err['customerId']}>
-                  {(c) => (
-                    <Select
-                      {...c}
-                      name="customerId"
-                      value={customerId}
-                      onChange={(e) => patch({ customerId: e.target.value, contactId: '' })}
-                    >
-                      <option value="">Choose a customer</option>
-                      {customerId && !customers.some((c) => c.id === customerId) ? (
-                        <option value={customerId}>
-                          {dupes.find((d) => d.kind === 'customer' && d.id === customerId)?.label ??
-                            'Selected customer'}
-                        </option>
-                      ) : null}
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                </Field>
-              </>
-            ) : (
-              <div className={styles.convertFields}>
-                <div className={styles.formGrid}>
-                  <Field label="Legal name" error={err['legalName']}>
-                    {(c) => (
-                      <Input
-                        name="legalName"
-                        value={values['legalName']}
-                        onChange={set('legalName')}
-                        required
-                        maxLength={200}
-                        {...c}
-                      />
-                    )}
-                  </Field>
-                  <Field
-                    label="PAN or VAT number"
-                    hint={nepalCustomer ? 'Optional. Nine digits.' : 'Optional.'}
-                    error={err['panVatNo']}
-                  >
-                    {(c) =>
-                      nepalCustomer ? (
-                        <PanInput
-                          name="panVatNo"
-                          value={values['panVatNo']}
-                          onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
-                          edited={panEdited}
-                          onEditedChange={setPanEdited}
-                          {...c}
-                        />
-                      ) : (
-                        <Input
-                          name="panVatNo"
-                          value={values['panVatNo']}
-                          onChange={(e) => {
-                            // The same value becomes the PAN if the country turns NP.
-                            setPanEdited(true);
-                            set('panVatNo')(e);
-                          }}
-                          autoComplete="off"
-                          {...c}
-                        />
-                      )
-                    }
-                  </Field>
-                </div>
-                {/* The customer's one country: it sits with the address and decides the PAN rules. */}
-                <AddressFields
-                  name="address"
-                  required
-                  value={{
-                    line: values['line'] ?? '',
-                    city: values['city'] ?? '',
-                    country: customerCountry,
-                  }}
-                  onChange={(next) =>
-                    patch({ line: next.line, city: next.city, country: next.country })
-                  }
-                  errors={{
-                    line: err['address.line'],
-                    city: err['address.city'],
-                    country: err['address.country'],
-                  }}
-                />
-              </div>
-            )}
-          </fieldset>
-
-          <fieldset className={styles.conversionSection}>
-            <legend className={styles.legend}>Contact</legend>
-            <RadioGroup
-              neutral
-              name="contactMode"
-              value={contactMode ?? 'create'}
-              onValueChange={(next) => patch({ contactMode: next })}
-            >
-              <label className={styles.choice}>
-                <Radio value="create" />
-                Create a contact from the lead
-              </label>
-              <label className={styles.choice}>
-                <Radio value="existing" />
-                Link to an existing contact
-              </label>
-            </RadioGroup>
-
-            {/* Kept mounted while an existing contact is chosen, so the typed numbers and their checks
-                come back with it; disabled, nothing in it posts or stops the submit. */}
-            <div hidden={contactMode !== 'create'}>
-              <fieldset className={styles.convertFields} disabled={contactMode !== 'create'}>
-                <div className={styles.formGrid}>
-                  <Field label="Contact name" error={err['contactName']}>
-                    {(c) => (
-                      <Input
-                        name="contactName"
-                        value={values['contactName']}
-                        onChange={set('contactName')}
-                        required
-                        maxLength={200}
-                        {...c}
-                      />
-                    )}
-                  </Field>
-                  <Field
-                    label="Email"
-                    hint="Required: quotations are sent to it."
-                    error={err['contactEmail']}
-                  >
-                    {(c) => (
-                      <Input
-                        name="contactEmail"
-                        type="email"
-                        value={values['contactEmail']}
-                        onChange={set('contactEmail')}
-                        autoComplete="off"
-                        spellCheck={false}
-                        maxLength={254}
-                        required
-                        {...c}
-                      />
-                    )}
-                  </Field>
-                  <Field label="Contact country" error={err['contactCountry']}>
-                    {(c) => (
-                      <CountrySelect
-                        id={c.id}
-                        aria-labelledby={c['aria-labelledby']}
-                        aria-describedby={c['aria-describedby']}
-                        aria-invalid={c['aria-invalid']}
-                        name="contactCountry"
-                        required
-                        value={contactCountry}
-                        onChange={(country) => patch({ contactCountry: country })}
-                      />
-                    )}
-                  </Field>
-                </div>
-                <Field
-                  label="Phone"
-                  hint="Optional. Pick each number's country, or type + and its code."
-                >
-                  {(c) => (
-                    <PhoneListInput
-                      key={`${lead.id}-${lead.version}`}
-                      name="contactPhones"
-                      aria-labelledby={c['aria-labelledby']}
-                      aria-describedby={c['aria-describedby']}
-                      defaultValue={phones}
-                      defaultCountry={contactCountry}
-                      onChange={setPhones}
-                      rowErrors={Array.from(
-                        { length: MAX_PARTY_PHONES },
-                        (_, row) => err[`contactPhones.${row}`],
-                      )}
-                      error={err['contactPhones']}
-                      disabled={contactMode !== 'create'}
-                    />
-                  )}
-                </Field>
-              </fieldset>
+          <div className={styles.convertFields}>
+            <div {...panel(0)}>
+              <OrganisationStep
+                lead={lead}
+                ctx={{ ...ctx, err: { ...linkProblems(0), ...err } }}
+                dupes={dupes}
+                org={{ chosen, setChosen, panEdited, setPanEdited, customerCountry }}
+              />
             </div>
-            {contactMode === 'existing' ? (
-              <Field
-                label="Contact"
-                hint={
-                  contacts?.customerId === customerId
-                    ? contacts.error || undefined
-                    : 'Choose a customer to load contacts.'
-                }
-                error={err['contactId']}
-              >
-                {(c) => (
-                  <Select
-                    {...c}
-                    name="contactId"
-                    value={values['contactId'] ?? ''}
-                    onChange={set('contactId')}
-                  >
-                    <option value="">Choose a contact</option>
-                    {values['contactId'] &&
-                    !(
-                      contacts?.customerId === customerId &&
-                      contacts.options.some((c) => c.id === values['contactId'])
-                    ) ? (
-                      <option value={values['contactId']}>
-                        {dupes.find((d) => d.kind === 'contact' && d.id === values['contactId'])
-                          ?.label ?? 'Selected contact'}
-                      </option>
-                    ) : null}
-                    {(contacts?.customerId === customerId ? contacts.options : []).map((c) => (
-                      <option key={c.id} value={c.id} disabled={c.disabled}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-            ) : null}
-          </fieldset>
-
-          <Panel title="Opportunity details" headingLevel={3} className={styles.dialogPanel}>
-            <Field label="Opportunity name" error={err['opportunityName']}>
-              {(c) => (
-                <Input
-                  name="opportunityName"
-                  value={values['opportunityName']}
-                  onChange={set('opportunityName')}
-                  maxLength={200}
-                  required
-                  {...c}
-                />
-              )}
-            </Field>
-            <FactList
-              className={styles.conversionFacts ?? ''}
-              facts={[
-                { key: 'stage', label: 'Pipeline stage', value: 'Qualified' },
-                { key: 'value', label: 'Estimated value', value: lead.value ?? 'Not set' },
-                {
-                  key: 'probability',
-                  label: 'Probability',
-                  value: lead.probability == null ? 'Not set' : `${lead.probability}%`,
-                },
-                {
-                  key: 'close',
-                  label: 'Expected closing date',
-                  value: lead.expectedClose ?? 'Not set',
-                },
-              ]}
-            />
-          </Panel>
-
-          {dupes.length > 0 ? (
-            <fieldset className={styles.conversionSection}>
-              <legend className={styles.legend}>Or create anyway</legend>
-              <label className={styles.choice}>
-                <Checkbox
-                  name="createAnyway"
-                  checked={values['createAnyway'] !== ''}
-                  onCheckedChange={(nextChecked) =>
-                    patch({ createAnyway: nextChecked ? 'on' : '' })
-                  }
-                />
-                Create new records even though a match exists
-              </label>
-              {values['createAnyway'] !== '' ? (
-                <Field label="Reason" hint="Kept in the audit trail." error={err['overrideReason']}>
-                  {(c) => (
-                    <Input
-                      name="overrideReason"
-                      value={values['overrideReason']}
-                      onChange={set('overrideReason')}
-                      maxLength={500}
-                      {...c}
-                    />
-                  )}
-                </Field>
-              ) : null}
-            </fieldset>
-          ) : null}
+            <div {...panel(1)}>
+              <ContactStep
+                lead={lead}
+                ctx={{ ...ctx, err: { ...linkProblems(1), ...err } }}
+                phones={phones}
+                setPhones={setPhones}
+                dupes={dupes}
+                onLookup={setLookup}
+              />
+            </div>
+            <div {...panel(2)}>
+              <DetailsStep lead={lead} ctx={ctx} hasDuplicates={dupes.length > 0} />
+            </div>
+          </div>
         </fieldset>
         <span className="sr-only" role="status">
           {pending ? 'Converting' : ''}

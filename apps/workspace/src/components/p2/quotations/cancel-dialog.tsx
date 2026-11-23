@@ -16,6 +16,10 @@ export interface CancelDialogProps {
   number: string;
   /** The version is waiting for approval: cancelling it also ends that approval request. */
   awaitingApproval?: boolean | undefined;
+  /** This version is a revision: cancelling it gives a sent or approved earlier revision back (R6D). */
+  isRevision?: boolean | undefined;
+  /** The revision number, for the title of a revision's dialog. */
+  revisionNo?: number | undefined;
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
   reloadHref: string;
@@ -28,6 +32,8 @@ export interface CancelDialogProps {
 export function CancelDialog({
   number,
   awaitingApproval = false,
+  isRevision = false,
+  revisionNo,
   quotationId,
   versionId,
   version,
@@ -46,15 +52,21 @@ export function CancelDialog({
 
   return (
     <ActionDialog
-      triggerLabel="Cancel quotation"
-      title={`Cancel ${number}?`}
+      triggerLabel={isRevision ? 'Discard revision' : 'Cancel quotation'}
+      title={
+        isRevision
+          ? `Cancel revision ${revisionNo === undefined ? '' : `${revisionNo} `}of ${number}?`
+          : `Cancel ${number}?`
+      }
       intro={
-        awaitingApproval
-          ? 'Cancelling ends this quotation and its approval request: the approver no longer sees it. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled.'
-          : 'Cancelling ends this quotation. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled.'
+        isRevision
+          ? `Cancelling discards this revision${awaitingApproval ? ' and its approval request' : ''}. If the earlier revision was sent or approved, it becomes the live quotation again (a sent one can be answered by the customer again); otherwise the quotation ends as Cancelled.`
+          : awaitingApproval
+            ? 'Cancelling ends this quotation and its approval request: the approver no longer sees it. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled.'
+            : 'Cancelling ends this quotation. It cannot be edited, submitted or sent afterwards, and it stays in the list as Cancelled.'
       }
       formId={formId}
-      submitLabel="Cancel quotation"
+      submitLabel={isRevision ? 'Discard revision' : 'Cancel quotation'}
       pending={pending}
       done={state.done}
     >

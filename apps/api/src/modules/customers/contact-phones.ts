@@ -2,8 +2,13 @@
 // numbers are written as a whole set inside the transaction that creates or changes the contact (the rows carry no
 // version of their own), and read back primary first, then in their saved order. Lead conversion writes the new
 // contact's numbers through replaceContactPhones too, so every path is held to the same rules.
-import { type PartyPhone, type PartyPhoneInput, PartyPhonesSchema } from '@bos/contracts';
-import { customerContactPhones } from '@bos/db';
+import {
+  type PartyPhone,
+  type PartyPhoneInput,
+  PartyPhoneSchema,
+  PartyPhonesSchema,
+} from '@bos/contracts';
+import { customerContactPhones, customerContacts } from '@bos/db';
 import { BadRequestException } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
@@ -92,4 +97,50 @@ export async function loadContactPhones(
     byContact.get(contactId)?.push({ ...phone, country: country as PartyPhone['country'] });
   }
   return byContact;
+}
+
+/**
+ * The primary phone of each customer in `customerIds`: the primary number of the customer's primary contact (R6A, for
+ * the customers list). One query for the whole page, so the list has no N+1. A customer without a primary contact, or
+ * whose primary contact has no primary number, is not a key of the result. Tenant-level tables, so the read filters on
+ * the tenant itself; the caller has already limited `customerIds` to customers it may read.
+ */
+export async function loadPrimaryPhones(
+  db: Db | DbTransaction,
+  tenantId: string,
+  customerIds: readonly string[],
+): Promise<Map<string, PartyPhone>> {
+  const byCustomer = new Map<string, PartyPhone>();
+  if (customerIds.length === 0) return byCustomer;
+  const rows = await db
+    .select({
+      customerId: customerContacts.customerId,
+      country: customerContactPhones.country,
+      e164: customerContactPhones.e164,
+      label: customerContactPhones.label,
+      isPrimary: customerContactPhones.isPrimary,
+    })
+    .from(customerContacts)
+    .innerJoin(
+      customerContactPhones,
+      and(
+        eq(customerContactPhones.tenantId, customerContacts.tenantId),
+        eq(customerContactPhones.contactId, customerContacts.id),
+        eq(customerContactPhones.isPrimary, true),
+      ),
+    )
+    .where(
+      and(
+        eq(customerContacts.tenantId, tenantId),
+        inArray(customerContacts.customerId, [...customerIds]),
+        eq(customerContacts.isPrimary, true),
+      ),
+    );
+  for (const { customerId, country, ...phone } of rows) {
+    // The list is parsed as strictly as a write; one stored number that no longer passes (a libphonenumber upgrade)
+    // is left out of its row rather than failing every page that reads the customers list.
+    const checked = PartyPhoneSchema.safeParse({ ...phone, country });
+    if (checked.success) byCustomer.set(customerId, checked.data);
+  }
+  return byCustomer;
 }

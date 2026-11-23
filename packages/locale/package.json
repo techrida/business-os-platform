@@ -2,6 +2,7 @@
   "name": "@bos/locale",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Money (decimal.js, lakh grouping), Kathmandu time, Bikram Sambat dates and the Nepali fiscal year.",
   "type": "module",
   "main": "./dist/index.js",

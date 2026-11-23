@@ -136,6 +136,17 @@ export class LeadConvertService {
 
     // 2. The customer the lead becomes: checked before anything is written.
     const choice = body.customer;
+    // R6O: a lead whose company field was picked from the customers converts INTO that customer (the workspace dialog
+    // starts there). A "create" on top of the link would make a second customer next to the one the user chose, and
+    // would run the duplicate check the link already answers, so it is refused; pick the linked or another existing
+    // customer instead.
+    if (lead.customerId !== null && choice.mode === 'create') {
+      throw new BadRequestException({
+        code: 'lead_linked_customer',
+        message:
+          'This lead is linked to a customer. Convert into that customer, or choose another existing one.',
+      });
+    }
     const existing =
       choice.mode === 'existing'
         ? await this.loadExisting(tx, principal, scope, choice)

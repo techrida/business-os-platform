@@ -99,6 +99,7 @@ export const QUOTATION_ACTIONS = [
   'customer_reject',
   'expire',
   'revise',
+  'restore',
   'cancel',
   'cancel_on_lost',
 ] as const;
@@ -143,6 +144,10 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('expire', 'sent', 'expired', false, 'system'),
   edge('revise', 'approved', 'superseded', true),
   edge('revise', 'sent', 'superseded', true),
+  // Cancelling an unsent revision gives the version it replaced back (R6D): the one way out of Superseded. Written
+  // by the cancel route for a caller who may revise, never by the Lost cascade.
+  edge('restore', 'superseded', 'approved', true),
+  edge('restore', 'superseded', 'sent', true),
   edge('cancel', 'draft', 'cancelled', true),
   edge('cancel', 'returned', 'cancelled', true),
   edge('cancel', 'submitted', 'cancelled', true),
