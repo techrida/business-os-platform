@@ -630,19 +630,18 @@ export default async function VendorPage({
               as="aside"
               description="Lets one contact sign in to the vendor portal. While KYC is pending they can only complete onboarding."
             >
-              {contactList.length === 0 ? (
-                <p className={styles.note}>Add a contact with an email address first.</p>
-              ) : (
-                <PortalForm
-                  vendorId={vendor.id}
-                  idempotencyKey={randomUUID()}
-                  contacts={contactList.map((c) => ({
-                    id: c.id,
-                    label: c.name,
-                    hasEmail: c.email !== null,
-                  }))}
-                />
-              )}
+              <PortalForm
+                vendorId={vendor.id}
+                vendorCountry={vendor.country}
+                idempotencyKey={randomUUID()}
+                addContactKey={randomUUID()}
+                contacts={contactList.map((c) => ({
+                  id: c.id,
+                  label: c.name,
+                  email: c.email,
+                  hasEmail: c.email !== null,
+                }))}
+              />
             </Panel>
           ) : null}
         </div>

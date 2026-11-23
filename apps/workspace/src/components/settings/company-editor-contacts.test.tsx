@@ -71,7 +71,7 @@ describe('CompanyEditor contact boxes', () => {
   it('shows the company PAN in a nine-digit box that posts the digits', async () => {
     const editor = await mountEditor({ phones: [], panVatNo: '301234567' });
     expect(editor.hidden('panVatNo').map((i) => i.value)).toEqual(['301234567']);
-    expect(editor.container.textContent).toContain('9 of 9');
+    expect(editor.container.textContent).not.toContain('9 of 9');
   });
 
   it('opens each saved phone in its own country box and posts its number and country', async () => {

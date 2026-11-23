@@ -275,16 +275,13 @@ export function CompanyEditor({
                   />
                 )}
               </Field>
-              <Field
-                label="PAN number"
-                hint="Your company's PAN: exactly 9 digits."
-                error={errors['panVatNo']}
-              >
+              <Field label="PAN number" error={errors['panVatNo']}>
                 {(control) => (
                   <PanInput
                     name="panVatNo"
                     value={identity.panVatNo}
                     onValueChange={(panVatNo) => edit('identity', { ...identity, panVatNo })}
+                    placeholder="123456789"
                     {...control}
                   />
                 )}

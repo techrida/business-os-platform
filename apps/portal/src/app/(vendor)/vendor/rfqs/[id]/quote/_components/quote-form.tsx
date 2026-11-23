@@ -112,7 +112,7 @@ export function QuoteForm({
         </Field>
         <Field
           label="Total of your quotation"
-          hint="The amount printed on your quotation, for example 20,18,180.00. We check it against the file."
+          hint="We check it against the file."
           error={fe.total}
         >
           {(control) => (
@@ -123,6 +123,7 @@ export function QuoteForm({
               numberSystems={numberSystems}
               required
               showWords
+              placeholder="20,18,180.00"
               value={total}
               onValueChange={setTotal}
             />
@@ -131,27 +132,20 @@ export function QuoteForm({
       </div>
 
       <div className={styles.grid}>
-        <Field
-          label="Your reference (optional)"
-          hint="The number on your quotation, if it has one."
-          error={fe.vendorRef}
-        >
+        <Field label="Your reference" optional error={fe.vendorRef}>
           {(control) => (
             <Input
               name="vendorRef"
               autoComplete="off"
               maxLength={64}
+              placeholder="QT-2083-0412"
               value={vendorRef}
               onChange={(e) => setVendorRef(e.target.value)}
               {...control}
             />
           )}
         </Field>
-        <Field
-          label="Prices valid until (optional)"
-          hint="The last day we can accept these prices."
-          error={fe.validUntil}
-        >
+        <Field label="Prices valid until" optional error={fe.validUntil}>
           {(control) => (
             <DatePicker
               {...control}
@@ -165,8 +159,9 @@ export function QuoteForm({
       </div>
 
       <Field
-        label="Delivery time in days (optional)"
-        hint="Whole days from our order to delivery."
+        label="Delivery time in days"
+        optional
+        hint="Counted from our order to delivery."
         error={fe.deliveryDays}
       >
         {(control) => (
@@ -176,6 +171,7 @@ export function QuoteForm({
             intDigits={4}
             scale={0}
             max="1000"
+            placeholder="14"
             value={deliveryDays}
             onValueChange={setDeliveryDays}
           />

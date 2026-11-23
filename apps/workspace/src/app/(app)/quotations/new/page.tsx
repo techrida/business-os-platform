@@ -4,6 +4,7 @@ import type { CustomerDto, OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 
+import { addContactAction } from '@/components/p2/customers/actions';
 import { ContextCard } from '@/components/p2/quote-builder/context-card';
 import { LoadFailure } from '@/components/p2/quote-builder/load-failure';
 import { loadLookups } from '@/components/p2/quote-builder/lookups';
@@ -25,6 +26,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 export const metadata: Metadata = { title: 'New quotation · Business OS' };
@@ -88,6 +90,7 @@ export default async function NewQuotationPage({
     if (entry.kind === 'choose') redirect(opportunityQuotationsHref(opportunityId));
   }
 
+  const mayAddContact = (await getPermissionCheck(session))('customer.write');
   const [customerResult, lookups, enabledCurrencies] = await Promise.all([
     api.getCustomer(session, opportunity.customerId).then(
       (c): CustomerDto | null => c,
@@ -141,6 +144,15 @@ export default async function NewQuotationPage({
         initial={startValues}
         context={<ContextCard customer={customerResult} opportunity={opportunity} />}
         contacts={lookups.contacts}
+        createContact={
+          mayAddContact
+            ? {
+                action: addContactAction,
+                customerId: opportunity.customerId,
+                ...(customerResult ? { customerCountry: customerResult.country } : {}),
+              }
+            : null
+        }
         taxCodes={lookups.taxCodes}
         paymentTerms={lookups.paymentTerms}
         termPresets={lookups.termPresets}

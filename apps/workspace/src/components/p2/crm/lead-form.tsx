@@ -355,7 +355,7 @@ export function LeadForm({
                 </Select>
               )}
             </Field>
-            <Field label="Campaign" hint="Optional." error={err['campaign']}>
+            <Field label="Campaign" optional error={err['campaign']}>
               {(c) => (
                 <Input
                   name="campaign"
@@ -450,7 +450,7 @@ export function LeadForm({
                 />
               )}
             </Field>
-            <Field label="Email" hint="Optional." error={err['email']}>
+            <Field label="Email" optional error={err['email']}>
               {(c) => (
                 <Input
                   name="email"
@@ -484,7 +484,7 @@ export function LeadForm({
             }}
           />
 
-          <Field label="Phone" hint="Optional. Pick each number's country, or type its code.">
+          <Field label="Phone" optional>
             {(c) => (
               <PhoneListInput
                 key={phonesKey}
@@ -508,11 +508,7 @@ export function LeadForm({
             )}
           </Field>
 
-          <Field
-            label="Requirement"
-            hint="What they asked for. Optional."
-            error={err['requirement']}
-          >
+          <Field label="Requirement" optional error={err['requirement']}>
             {(c) => (
               <Textarea
                 name="requirement"
@@ -544,22 +540,19 @@ export function LeadForm({
                 </Select>
               )}
             </Field>
-            <Field
-              label="Expected value"
-              hint="Optional. For example 12,50,000."
-              error={err['expectedValue']}
-            >
+            <Field label="Expected value" optional error={err['expectedValue']}>
               {(c) => (
                 <MoneyInput
                   name="expectedValue"
                   currency={values['currency'] as Currency}
                   value={values['expectedValue']}
                   onValueChange={(value) => update('expectedValue', value)}
+                  placeholder="12,50,000.00"
                   {...c}
                 />
               )}
             </Field>
-            <Field label="Probability (%)" hint="Optional. 0 to 100." error={err['probability']}>
+            <Field label="Probability (%)" optional error={err['probability']}>
               {(c) => (
                 <PercentInput
                   name="probability"
@@ -570,7 +563,7 @@ export function LeadForm({
                 />
               )}
             </Field>
-            <Field label="Expected close" hint="Optional." error={err['expectedClose']}>
+            <Field label="Expected close" optional error={err['expectedClose']}>
               {(c) => (
                 <DatePicker
                   name="expectedClose"
@@ -582,7 +575,7 @@ export function LeadForm({
             </Field>
           </div>
 
-          <Field label="Notes" hint="Optional." error={err['notes']}>
+          <Field label="Notes" optional error={err['notes']}>
             {(c) => (
               <Textarea
                 name="notes"
@@ -598,7 +591,7 @@ export function LeadForm({
 
         <Panel
           title="Schedule a follow-up"
-          description="Optional. Leave the time empty to skip it; you can plan one from the lead later."
+          description="Leave the time empty to skip it; you can plan one from the lead later."
         >
           <ActivityTypeButtons
             kinds={SCHEDULE_ACTIVITY_KINDS}
@@ -644,7 +637,8 @@ export function LeadForm({
           </div>
           <Field
             label="Subject"
-            hint="Optional. Without one it is named after the type, for example “Call”."
+            optional
+            hint="Without one it is named after the type, for example “Call”."
             error={err['followUpSubject']}
           >
             {(c) => (

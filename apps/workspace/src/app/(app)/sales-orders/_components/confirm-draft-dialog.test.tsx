@@ -327,7 +327,11 @@ it("uploads to the draft's quotation version, blocks Confirm while it uploads, t
   mocks.getOpportunity.mockRejectedValue(new Error('404'));
   grants('sales_order.confirm');
   const mounted = await openDraft();
-  expect(draftDialog().textContent).toContain('Evidence document (optional)');
+  expect(draftDialog().textContent).toContain('Evidence document');
+  // UIP-FORM-008: "Optional" sits beside the label, not in it or in the hint.
+  expect(draftDialog().textContent).toContain('Optional');
+  expect(draftDialog().textContent).not.toContain('(optional)');
+  expect(draftDialog().textContent).not.toContain('Optional. A file');
   expect(evidenceField().value).toBe('');
   expect(submitButton().disabled).toBe(false);
 

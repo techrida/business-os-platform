@@ -39,6 +39,8 @@ export async function loadLookups(session: Session, customerId: string): Promise
         ? contacts.value.map((c) => ({
             id: c.id,
             label: [c.fullName, c.title, c.email].filter(Boolean).join(' · '),
+            name: c.fullName,
+            detail: [c.title, c.email].filter(Boolean).join(' · ') || undefined,
           }))
         : null,
     termPresets: presets.status === 'fulfilled' ? presets.value : null,

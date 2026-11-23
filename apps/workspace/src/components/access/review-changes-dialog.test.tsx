@@ -275,3 +275,17 @@ it('shows a refused dry run with its reason and Back, with no Try again', async 
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(document.activeElement).toBe(opener);
 });
+
+it('marks the reason Optional beside its label, keeps its counter, and has no "(optional)" in the label', async () => {
+  await openDialog({});
+  const dialog = document.querySelector('[role="dialog"]')!;
+  const label = [...dialog.querySelectorAll('label')].find((l) =>
+    l.textContent?.startsWith('Why are you changing this?'),
+  )!;
+  expect(label.textContent).toBe('Why are you changing this?');
+  expect(label.parentElement?.textContent).toContain('Optional');
+  const note = document.getElementById(label.htmlFor) as HTMLTextAreaElement;
+  expect(document.getElementById(note.getAttribute('aria-describedby')!)?.textContent).toContain(
+    '0 of 280 characters',
+  );
+});
