@@ -50,6 +50,8 @@ function leadRow(over: Partial<LeadRow> = {}): LeadRow {
     companyName: 'Acme Pvt. Ltd.',
     contactName: 'Sita Rai',
     country: 'NP',
+    addressLine: null,
+    addressCity: null,
     emailNorm: 'sita@acme.example',
     phonesSearch: null,
     customerId: null,
