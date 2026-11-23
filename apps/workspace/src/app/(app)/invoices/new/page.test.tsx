@@ -10,7 +10,11 @@ import { ManualInvoiceForm } from './manual-invoice-form';
 import NewInvoicePage from './page';
 
 vi.mock('server-only', () => ({}));
-const mocks = vi.hoisted(() => ({ listCustomers: vi.fn(), call: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  listCustomers: vi.fn(),
+  call: vi.fn(),
+  formProps: vi.fn<(props: Parameters<typeof ManualInvoiceForm>[0]) => void>(),
+}));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ accessToken: 'test-token', roles: ['accountant'] }),
 }));
@@ -19,6 +23,17 @@ vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: () => Promise.resolve([]) 
 // The real `loadEnabledCurrencies` reads `GET /v1/settings/display` through this client.
 vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
 vi.mock('./actions', () => ({ createManualInvoiceAction: vi.fn() }));
+// The real form, with what the page handed it recorded: the picker's options are only in the markup while it is open.
+vi.mock('./manual-invoice-form', async (original) => {
+  const actual = await original<typeof import('./manual-invoice-form')>();
+  return {
+    ...actual,
+    ManualInvoiceForm: (props: Parameters<typeof actual.ManualInvoiceForm>[0]) => {
+      mocks.formProps(props);
+      return actual.ManualInvoiceForm(props);
+    },
+  };
+});
 // GET /v1/me for an unedited role answers the role's default grants.
 vi.mock('@/lib/live-permissions', async () => {
   const { permissionChecker } = await import('@/components/p2/customers/permissions');
@@ -40,7 +55,10 @@ const customerPage = {
   total: 1,
 };
 
+const lastFormProps = () => mocks.formProps.mock.calls.at(-1)![0];
+
 beforeEach(() => {
+  mocks.formProps.mockReset();
   mocks.listCustomers.mockReset().mockResolvedValue(customerPage);
   mocks.call
     .mockReset()
@@ -76,10 +94,47 @@ it('loads the manual invoice picker using a query accepted by the real customer 
 
   const html = renderToStaticMarkup(await NewInvoicePage());
   expect(html).toContain('Save draft invoice');
-  // The customer box is one combobox; its options (name, then number and PAN) show only while it is open.
   expect(html).toContain('role="combobox"');
   expect(html).toContain('<input type="hidden" name="customerId" value=""');
   expect(html).not.toContain('The customers did not load');
+  // The picker's options are only in the markup while it is open: assert what the page handed the form.
+  expect(lastFormProps().customers).toEqual([
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      label: 'Invoice customer',
+      detail: 'CUS-001',
+      currency: 'NPR',
+    },
+  ]);
+  expect(lastFormProps().customersCutOff).toBe(false);
+});
+
+it('hands the form each live customer with its number and PAN, and leaves merged ones out', async () => {
+  const [first] = customerPage.items;
+  mocks.listCustomers.mockResolvedValue({
+    items: [
+      { ...first, panVatNo: '301234567' },
+      {
+        ...first,
+        id: '22222222-2222-4222-8222-222222222222',
+        legalName: 'Old Co',
+        mergedIntoId: first!.id,
+      },
+    ],
+    total: 2,
+  });
+  renderToStaticMarkup(await NewInvoicePage());
+  expect(lastFormProps().customers).toEqual([
+    expect.objectContaining({ label: 'Invoice customer', detail: 'CUS-001 · 301234567' }),
+  ]);
+});
+
+it('tells the form the list is cut off when there are more customers than it loaded', async () => {
+  // The form then searches the server while the person types, instead of calling a loaded-list miss "add the customer".
+  mocks.listCustomers.mockResolvedValue({ ...customerPage, total: 450 });
+  renderToStaticMarkup(await NewInvoicePage());
+  expect(lastFormProps().customersCutOff).toBe(true);
+  expect(lastFormProps().customers).toHaveLength(1);
 });
 
 it('offers only the currencies the company has switched on', async () => {
