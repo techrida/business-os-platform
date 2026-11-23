@@ -24,7 +24,10 @@ async function mount(url: string, documentType: string[] = [], decided?: string)
   );
 }
 
-const trigger = () => mounted.container.querySelector<HTMLButtonElement>('form button')!;
+const trigger = () =>
+  mounted.container.querySelector<HTMLButtonElement>(
+    'form button:not([aria-label="Clear search"])',
+  )!;
 const option = (label: string) =>
   Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
     (o) => o.textContent?.trim() === label,
