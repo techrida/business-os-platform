@@ -366,3 +366,21 @@ it('leaves focus on the first wrong field when the server names one after Confir
   expect(document.activeElement).toBe(invalid);
   expect(document.activeElement).not.toBe(opener);
 });
+
+it('returns focus to the opener after Back when an earlier request was refused', async () => {
+  actions.createPaymentRequestAction.mockImplementationOnce(() =>
+    Promise.resolve({ key: 'key', error: 'The bill is no longer open.' }),
+  );
+  await filledForm();
+  await openReview();
+  await click(button('Create draft request'));
+  await flush();
+  await flush();
+  expect(mounted!.container.querySelector('[role="alert"]')).not.toBeNull();
+
+  const opener = await openReview();
+  await click(button('Back'));
+  await flush();
+  await flush();
+  expect(document.activeElement).toBe(opener);
+});

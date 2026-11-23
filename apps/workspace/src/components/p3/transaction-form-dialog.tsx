@@ -91,8 +91,7 @@ export function TransactionFormDialog<State extends TransactionState>({
         ? {
             onCloseAutoFocus: (event: Event) => {
               if (!succeeded.current) return;
-              event.preventDefault();
-              focusPageHeading();
+              if (focusPageHeading()) event.preventDefault();
             },
           }
         : {})}
