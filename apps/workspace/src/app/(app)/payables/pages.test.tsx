@@ -592,6 +592,10 @@ describe('bill entry', () => {
   it('opens standalone entry with a vendor picker, invoice details and upload', async () => {
     const out = await html(NewBillPage({ searchParams: search() }));
     expect(out).toContain('name="vendorPartyId"');
+    // One live-search box: no separate Find box, no Search button (UIP-FORM-009).
+    expect(out).not.toContain('Find a vendor');
+    expect(out).not.toMatch(/Find vendor|>Search</);
+    expect(out).toContain('role="combobox"');
     expect(out).toContain('name="vendorInvoiceNo"');
     expect(out).toContain('name="invoiceDate"');
     expect(out).toContain('type="file"');
