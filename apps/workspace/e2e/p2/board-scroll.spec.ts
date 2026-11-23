@@ -58,8 +58,6 @@ for (const route of BOARDS) {
         const measure = await board.evaluate((el) => ({
           scroll: el.scrollWidth,
           client: el.clientWidth,
-          bar: el.offsetHeight - el.clientHeight,
-          columns: el.querySelectorAll(':scope > section').length,
         }));
         // Fixed-width columns: more of them than fit means the board, not the page, is the wide thing.
         if (width <= 834) expect(measure.scroll, `${width}px`).toBeGreaterThan(measure.client);
