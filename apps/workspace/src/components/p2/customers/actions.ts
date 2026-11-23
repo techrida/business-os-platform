@@ -232,8 +232,9 @@ export async function addContactAction(
   });
   if (!parsed.ok) return { key, errors: parsed.errors, ...same };
 
+  let created: Awaited<ReturnType<typeof createContact>>;
   try {
-    await createContact(session, customerId, parsed.data, key);
+    created = await createContact(session, customerId, parsed.data, key);
   } catch (err) {
     const failure = failureOf(err);
     const code = apiCodeOf(err);
@@ -261,6 +262,7 @@ export async function addContactAction(
     key: randomUUID(),
     errors: {},
     saved: `${parsed.data.fullName} was added.`,
+    contactId: created.id,
     savedCount: prev.savedCount + 1,
   };
 }
