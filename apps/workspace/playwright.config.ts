@@ -99,6 +99,12 @@ export default defineConfig({
       use: { ...common, baseURL: devBaseURL },
     },
     {
+      // The shell's real CSS and components in a hermetic page; needs no stack.
+      name: 'ui',
+      testMatch: ['ui-harness/*.spec.ts'],
+      use: { ...common },
+    },
+    {
       name: 'prod',
       testMatch: ['prod-no-switcher.spec.ts', 'lcp.spec.ts'],
       use: { ...common, baseURL: prodBaseURL },
