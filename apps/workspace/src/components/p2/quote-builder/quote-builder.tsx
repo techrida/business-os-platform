@@ -28,6 +28,7 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './actions';
 import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
+import { leaveAction } from './leave-link';
 import { LinesSection } from './lines-section';
 import {
   currencyChoiceText,
@@ -454,7 +455,12 @@ export function QuoteBuilder({
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
       const a = (e.target as Element | null)?.closest?.('a[href]');
-      if (!a || a.getAttribute('target') === '_blank' || a.getAttribute('href')?.startsWith('#')) {
+      if (
+        !a ||
+        a.getAttribute('target') === '_blank' ||
+        a.hasAttribute('download') ||
+        a.getAttribute('href')?.startsWith('#')
+      ) {
         return;
       }
       // Hold the click and ask in the design-system dialog; confirming then follows the link.
@@ -592,10 +598,9 @@ export function QuoteBuilder({
 
   function leaveTo(href: string) {
     leaving.current = true;
-    const url = new URL(href, window.location.href);
-    if (url.origin === window.location.origin)
-      router.push(`${url.pathname}${url.search}${url.hash}`);
-    else window.location.assign(url.href);
+    const action = leaveAction(href, window.location.href);
+    if (action.kind === 'push') router.push(action.path);
+    else window.location.assign(action.href);
   }
 
   return (
