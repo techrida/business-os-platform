@@ -30,12 +30,16 @@ it('makes the board a visible, sideways scroll container with fixed-width column
   expect(board).toMatch(/overflow-x: auto;/);
   expect(board).toMatch(/grid-auto-columns: 280px;/);
   expect(board).toMatch(/overscroll-behavior-x: contain;/);
-  // Edge fades: a shadow that shows only while content is hidden on that side.
-  expect(board).toMatch(/local,/);
-  expect(board).toMatch(/scroll;/);
   // Classic scrollbar, so it is drawn even where the platform uses overlay scrollbars.
   expect(board).toMatch(/scrollbar-width: auto;/);
   expect(crm).toMatch(/\.board::-webkit-scrollbar \{[^}]*height: \d+px;/);
+});
+
+it('draws edge fades over the board only while columns are hidden on that side', () => {
+  expect(rule(crm, '.boardFrame::before')).toMatch(/linear-gradient/);
+  expect(rule(crm, '.boardFrame::after')).toMatch(/linear-gradient/);
+  expect(crm).toMatch(/\.boardFrame\[data-more-left='true'\]::before,/);
+  expect(crm).toMatch(/\.boardFrame\[data-more-right='true'\]::after \{\s*opacity: 1;/);
 });
 
 it('scrolls each column on its own under a header that stays put', () => {
