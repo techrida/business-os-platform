@@ -7,7 +7,7 @@ import { Field } from '@/components/ui/field';
 import type { ComboboxOption } from '@/components/ui/combobox-model';
 import { fill, mountForm, settle } from '@/test/form-interactions';
 
-import { PickExisting, type PickSearcher } from './pick-existing';
+import { PickExisting, SEARCH_FAILED_TEXT, type PickSearcher } from './pick-existing';
 import { listedOptions, pickBox, pickByTyping } from './pick-existing.test-helpers';
 
 const OPTIONS: ComboboxOption[] = [
@@ -87,5 +87,39 @@ describe('PickExisting', () => {
     // Editing the text after a pick unlinks the vendor.
     await fill(pickBox(container, 'vendorId'), 'Karnali Metal');
     expect(posted(container)).toBe('');
+  });
+
+  it('does not ask the server for one letter: the loaded list is narrowed here', async () => {
+    const search = vi.fn<PickSearcher>().mockResolvedValue([]);
+    mounted = await mountForm(<Host search={search} />);
+    const { container } = mounted;
+    await fill(pickBox(container, 'vendorId'), 'h');
+    await settle();
+    expect(search).not.toHaveBeenCalled();
+    expect(listedOptions()).toEqual(['Himal TradersPAN 111111111']);
+    // Two letters is enough for the server.
+    await fill(pickBox(container, 'vendorId'), 'hi');
+    await settle();
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(search).toHaveBeenCalledWith('hi', expect.anything());
+  });
+
+  it('says the search did not load, not that no vendor matches, when the server refuses; the next good answer clears it', async () => {
+    const far: ComboboxOption = { id: 'v9', label: 'Karnali Metals', description: 'PAN 999999999' };
+    const search = vi
+      .fn<PickSearcher>()
+      .mockRejectedValueOnce(new Error('502'))
+      .mockResolvedValue([far]);
+    mounted = await mountForm(<Host search={search} />);
+    const { container } = mounted;
+    await fill(pickBox(container, 'vendorId'), 'karnali');
+    await settle();
+    expect(listedOptions()).toEqual([]);
+    expect(document.body.textContent).toContain(SEARCH_FAILED_TEXT);
+    expect(document.body.textContent).not.toContain('No vendor matches.');
+    await fill(pickBox(container, 'vendorId'), 'karnal');
+    await settle();
+    expect(listedOptions()).toEqual(['Karnali MetalsPAN 999999999']);
+    expect(document.body.textContent).not.toContain(SEARCH_FAILED_TEXT);
   });
 });

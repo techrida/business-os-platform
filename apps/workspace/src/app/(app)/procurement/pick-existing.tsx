@@ -3,6 +3,7 @@
 // search icon inside, no Search button and no second select. No Create row: the record must already exist, and
 // `noMatchText` says so. The chosen id posts under `name`. A short list is filtered here as the user types; a
 // list too long to load whole passes `search`, which asks the server for the matches after typing pauses.
+import { MIN_SEARCH_LENGTH } from '@bos/contracts';
 import { useEffect, useMemo, useState } from 'react';
 
 import { Combobox, type ComboboxProps } from '@/components/ui/combobox';
@@ -11,6 +12,9 @@ import type { FieldControlProps } from '@/components/ui/field';
 
 /** How long typing must pause before a server search. */
 export const PICK_SEARCH_DELAY_MS = 250;
+
+/** Said in place of the no-match text when the server search was refused or did not answer. */
+export const SEARCH_FAILED_TEXT = 'Search did not load. Try again.';
 
 export type PickSearcher = (query: string, signal: AbortSignal) => Promise<ComboboxOption[]>;
 
@@ -118,21 +122,27 @@ function SearchingPick({
   const [known] = useState(() => new Map<string, ComboboxOption>());
   for (const o of options) known.set(o.id, o);
   const [text, setText] = useState(() => known.get(value)?.label ?? '');
-  const [found, setFound] = useState<{ query: string; items: ComboboxOption[] } | null>(null);
+  // The last answer: the matches, or `failed` when the search was refused. Either belongs to one typed text.
+  const [found, setFound] = useState<{
+    query: string;
+    items: ComboboxOption[];
+    failed: boolean;
+  } | null>(null);
   const query = text.trim();
 
   useEffect(() => {
-    if (query === '') return;
+    // The server takes no search shorter than MIN_SEARCH_LENGTH: one letter is narrowed from the loaded list.
+    if (query.length < MIN_SEARCH_LENGTH) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       search(query, controller.signal).then(
         (items) => {
           if (controller.signal.aborted) return;
           for (const o of items) known.set(o.id, o);
-          setFound({ query, items });
+          setFound({ query, items, failed: false });
         },
         () => {
-          if (!controller.signal.aborted) setFound({ query, items: [] });
+          if (!controller.signal.aborted) setFound({ query, items: [], failed: true });
         },
       );
     }, delayMs);
@@ -145,20 +155,29 @@ function SearchingPick({
 
   const shown = useMemo<ComboboxOption[]>(() => {
     if (query === '') return [...options];
-    // Until the answer for this text arrives, the page's own list narrowed by the same words.
+    // Until the answer for this text arrives (or for text too short to ask), the page's own list narrowed by the same words.
     return found?.query === query ? found.items : options.filter((o) => matchesQuery(o, query));
   }, [options, found, query]);
+
+  const failed = found?.failed === true && found.query === query;
+  const noneText = failed ? SEARCH_FAILED_TEXT : shared.noMatchText;
 
   return (
     <>
       <Combobox
         {...shared}
+        noMatchText={noneText}
+        // The Combobox says "empty" when it was handed no options at all, which is what a server answer with no
+        // matches is: once something is typed, that is a no-match (or a failed search), not an empty list.
+        emptyText={query === '' ? shared.emptyText : noneText}
         serverFiltered
         options={shown}
         value={value}
         inputValue={text}
         onInputChange={(next) => {
           setText(next);
+          // A new text starts clean: an old refusal must not label the answer to different words.
+          setFound(null);
           // Editing the text after a pick means that vendor is no longer the one named.
           if (value !== '' && next !== known.get(value)?.label) onChange('');
         }}
