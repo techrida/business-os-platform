@@ -24,3 +24,30 @@ it('never lets the shell itself scroll sideways', () => {
   expect(rule(shell, '.frame')).toMatch(/overflow-x: clip;/);
   expect(rule(shell, '.column')).toMatch(/overflow-x: clip;/);
 });
+
+it('makes the board a visible, sideways scroll container with fixed-width columns', () => {
+  const board = rule(crm, '.board');
+  expect(board).toMatch(/overflow-x: auto;/);
+  expect(board).toMatch(/grid-auto-columns: 280px;/);
+  expect(board).toMatch(/overscroll-behavior-x: contain;/);
+  // Edge fades: a shadow that shows only while content is hidden on that side.
+  expect(board).toMatch(/local,/);
+  expect(board).toMatch(/scroll;/);
+  // Classic scrollbar, so it is drawn even where the platform uses overlay scrollbars.
+  expect(board).toMatch(/scrollbar-width: auto;/);
+  expect(crm).toMatch(/\.board::-webkit-scrollbar \{[^}]*height: \d+px;/);
+});
+
+it('scrolls each column on its own under a header that stays put', () => {
+  expect(rule(crm, '.column')).toMatch(/max-height: calc\(var\(--board-height\)/);
+  expect(rule(crm, '.cards')).toMatch(/overflow-y: auto;/);
+  expect(rule(crm, '.columnHead')).toMatch(/flex: none;/);
+});
+
+it('snaps one column per view on a phone, and stops snapping while a card is dragged', () => {
+  const afterCards = crm.slice(crm.indexOf('.cards {'));
+  const phone = /@media \(max-width: 767\.98px\) \{([\s\S]*?)\n\}\n/.exec(afterCards)?.[1] ?? '';
+  expect(phone).toMatch(/scroll-snap-type: x mandatory;/);
+  expect(phone).toMatch(/\.board\[data-dragging='true'\] \{\s*scroll-snap-type: none;/);
+  expect(phone).toMatch(/scroll-snap-align: start;/);
+});

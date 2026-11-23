@@ -1,0 +1,63 @@
+import { expect, test } from '@playwright/test';
+
+import { signInAs } from '../helpers/memo-flow';
+
+/**
+ * Kanban boards scroll inside themselves, never the whole app (Kuu, 2026-11-23: on Leads > Board,
+ * shift + wheel moved the sidebar, header and page sideways, with no scrollbar to show it). The
+ * board wrapper could not shrink below its columns side by side, so the page grew wider than the
+ * screen. Standard (Trello, Jira, Linear, GitHub Projects): the shell is fixed, the board is its
+ * own horizontal scroll box. Real layout, so it runs against the stack; the seed holds leads and
+ * opportunities, which is what draws the columns.
+ */
+
+const WIDTHS = [390, 834, 1440] as const;
+const BOARDS = ['/leads?view=board', '/opportunities?view=board'] as const;
+
+for (const route of BOARDS) {
+  test(`${route}: the board scrolls sideways inside itself and the shell never does`, async ({
+    browser,
+    baseURL,
+  }) => {
+    test.setTimeout(180_000);
+    const { context, page } = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
+    try {
+      for (const width of WIDTHS) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(route);
+        const board = page.getByRole('region', { name: /board \(scrolls sideways\)/ });
+        await expect(board).toBeVisible();
+
+        const shell = () =>
+          page.evaluate(() => ({
+            doc: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            left: document.documentElement.scrollLeft,
+          }));
+        expect(await shell(), `${route} shell overflows at ${width}px`).toEqual({ doc: 0, left: 0 });
+
+        const measure = await board.evaluate((el) => ({
+          scroll: el.scrollWidth,
+          client: el.clientWidth,
+          bar: el.offsetHeight - el.clientHeight,
+          columns: el.querySelectorAll(':scope > section').length,
+        }));
+        // Fixed-width columns: more of them than fit means the board, not the page, is the wide thing.
+        if (width <= 834) expect(measure.scroll, `${width}px`).toBeGreaterThan(measure.client);
+
+        // Shift + wheel over the board moves the board, not the app.
+        await board.hover();
+        await page.keyboard.down('Shift');
+        await page.mouse.wheel(0, 400);
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(150);
+        const after = await shell();
+        expect(after.left, `${route} shell scrolled at ${width}px`).toBe(0);
+        if (width <= 834) {
+          expect(await board.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+        }
+      }
+    } finally {
+      await context.close();
+    }
+  });
+}
