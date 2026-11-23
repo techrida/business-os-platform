@@ -270,13 +270,15 @@ describe('GET /v1/leads/duplicates', () => {
     const byPhone = await lookup({ phone: '980-111 2233' });
     expect(byPhone.matches.map((m) => m.id)).toContain(seeded.ownLead);
     // salesA reads every customer, so the contact's phone finds the customer salesB owns.
-    expect(byPhone.matches).toContainEqual({
-      kind: 'customer',
-      id: seeded.customerOfSalesB,
-      label: 'Everest Hiddenmark Ltd.',
-      country: 'NP',
-      matchedOn: ['phone'],
-    });
+    expect(byPhone.matches).toContainEqual(
+      expect.objectContaining({
+        kind: 'customer',
+        id: seeded.customerOfSalesB,
+        label: 'Everest Hiddenmark Ltd.',
+        country: 'NP',
+        matchedOn: ['phone'],
+      }),
+    );
     expectNoLeak(byPhone.text);
 
     const byCompany = await lookup({ company: 'Himalayan' });
@@ -297,13 +299,15 @@ describe('GET /v1/leads/duplicates', () => {
 
   it('matches a customer through any number of any contact, not only the primary (FX9)', async () => {
     const { matches, text } = await lookup({ phone: '+977 987-654 3210' });
-    expect(matches).toContainEqual({
-      kind: 'customer',
-      id: seeded.customerSecondPhone,
-      label: 'Annapurna Fittings Ltd.',
-      country: 'NP',
-      matchedOn: ['phone'],
-    });
+    expect(matches).toContainEqual(
+      expect.objectContaining({
+        kind: 'customer',
+        id: seeded.customerSecondPhone,
+        label: 'Annapurna Fittings Ltd.',
+        country: 'NP',
+        matchedOn: ['phone'],
+      }),
+    );
     expectNoLeak(text);
   });
 
@@ -323,6 +327,14 @@ describe('GET /v1/leads/duplicates', () => {
     } finally {
       await stageOf('new');
     }
+  });
+
+  it('finds a customer by its number prefix and shows its number, PAN and country (UIP-FORM-009)', async () => {
+    const number = `CUS-${seeded.customerOfSalesA.slice(0, 13)}`;
+    const { matches } = await lookup({ company: number.slice(0, 10) });
+    expect(matches).toContainEqual(
+      expect.objectContaining({ kind: 'customer', id: seeded.customerOfSalesA, number, pan: null }),
+    );
   });
 
   it('matches a misspelt company by trigram similarity', async () => {
