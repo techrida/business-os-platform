@@ -95,6 +95,9 @@ const BILL_KEYS = [
 ];
 const ONBOARDING_KEYS = [
   'capability',
+  'detailsChanged',
+  'detailsChanged.at',
+  'detailsChanged.by',
   'documents',
   'documents.[].docType',
   'documents.[].state',
@@ -274,7 +277,16 @@ describe('vendor portal mappers', () => {
       ],
       '2026-11-10',
     );
-    expect(sorted(valuePaths(view))).toEqual(ONBOARDING_KEYS);
+    expect(sorted(valuePaths(view))).toEqual(
+      ONBOARDING_KEYS.filter((k) => !k.startsWith('detailsChanged.')),
+    );
+    expect(view.detailsChanged).toBeNull();
+    const changed = toOnboardingView('pending_kyc', [], '2026-11-10', {
+      at: '2026-11-23T04:00:00.000Z',
+      by: 'Sita Founder',
+    });
+    expect(sorted(valuePaths(changed))).toEqual(ONBOARDING_KEYS);
+    expect(forbiddenPortalKeys(changed)).toEqual([]);
     expect(forbiddenPortalKeys(view)).toEqual([]);
     expect(view.capability).toBe('onboarding_only');
     const state = Object.fromEntries(view.documents.map((d) => [d.docType, d.state]));
