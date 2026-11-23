@@ -6,6 +6,7 @@ import nextVitals from 'eslint-config-next/core-web-vitals';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+import { NATIVE_INPUT_SELECTOR, NO_NATIVE_DIALOGS } from './tools/eslint/native-controls-rule.mjs';
 import { RESTRICTED_SYNTAX } from './tools/eslint/native-title-rule.mjs';
 
 const WORKSPACE_FILES = [
@@ -136,7 +137,11 @@ export default defineConfig([
   {
     files: WORKSPACE_FILES,
     ignores: ['**/*.test.{ts,tsx}', 'apps/workspace/src/components/ui/header-action.tsx'],
-    rules: { 'no-restricted-syntax': RESTRICTED_SYNTAX },
+    rules: {
+      // One entry: a later `no-restricted-syntax` config would replace this one, not add to it.
+      'no-restricted-syntax': [...RESTRICTED_SYNTAX, NATIVE_INPUT_SELECTOR],
+      'no-alert': NO_NATIVE_DIALOGS,
+    },
   },
 
   // k6 scripts run inside k6's own JS runtime, which provides these globals.

@@ -100,11 +100,9 @@
   cursor: pointer;
 }
 
-.confirm input {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 1px 0 0;
+/* Lines the box up with the first line of the warning text. */
+.confirm button[role='checkbox'] {
+  margin-top: 2px;
 }
 
 .noteLabel {
@@ -162,10 +160,5 @@
 
   .sheet.sheet > footer {
     border-radius: 0;
-  }
-
-  .confirm input {
-    width: 22px;
-    height: 22px;
   }
 }

@@ -34,6 +34,7 @@ import {
 import { useLeaveGuard } from '../_lib/use-leave-guard';
 import styles from '../roles.module.css';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export const FOUNDER_LOCKED_MESSAGE = 'Founders always have full access. This cannot be changed.';
 export const VIEW_ONLY_MESSAGE = 'Only a Founder can change access.';
@@ -114,14 +115,12 @@ function PermissionControl({
           </>
         ) : (
           <span className={styles.rowToggle}>
-            <input
+            <Checkbox
               id={controlId}
-              type="checkbox"
-              className={styles.checkbox}
               checked={value !== null}
               disabled={readOnly || row.onValue === null}
               aria-describedby={describedBy}
-              onChange={(event) => onChange(event.target.checked ? row.onValue : null)}
+              onCheckedChange={(nextChecked) => onChange(nextChecked ? row.onValue : null)}
             />
           </span>
         )}
@@ -247,11 +246,9 @@ export function RoleEditor({ role, roles, groups, edited, canWrite, revision }: 
           )}
         </Field>
         <label className={styles.check}>
-          <input
-            type="checkbox"
-            className={styles.checkbox}
+          <Checkbox
             checked={onlyGranted}
-            onChange={(event) => setOnlyGranted(event.target.checked)}
+            onCheckedChange={(nextChecked) => setOnlyGranted(nextChecked)}
           />
           Only show what this role can do
         </label>
