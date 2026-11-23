@@ -66,6 +66,7 @@ import { CreditOverrideDialog } from './credit-override-dialog';
 import { OpportunityOwnerField } from './opportunity-owner-field';
 import styles from './detail.module.css';
 import { OwnerCell } from '../../leads/lead-cells';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = { title: 'Opportunity · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -507,14 +508,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             <span className={styles.metadata}>
               <StageBadge kind="opportunity" stage={opp.stage} />
               {creditHeld ? (
-                <Badge
-                  tone="warning"
-                  className={styles.holdBadge}
-                  title="With this deal's order the customer is over its credit limit: no sales order until the hold is overridden or lifted."
-                >
-                  <Icon name="credit-card" size={12} />
-                  Credit hold
-                </Badge>
+                <Tooltip content="With this deal's order the customer is over its credit limit: no sales order until the hold is overridden or lifted.">
+                  <Badge tone="warning" className={styles.holdBadge}>
+                    <Icon name="credit-card" size={12} />
+                    Credit hold
+                  </Badge>
+                </Tooltip>
               ) : null}
               <span>{opp.number}</span>
             </span>
@@ -523,12 +522,11 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             <>
               {!canDraft ? (
                 <>
-                  {draftBlocker !== null ? (
-                    <span className={styles.quiet}>{draftBlocker}</span>
-                  ) : null}
-                  <LinkButton href={quotesHref} variant="secondary">
-                    View quotations
-                  </LinkButton>
+                  <Tooltip content={draftBlocker}>
+                    <LinkButton href={quotesHref} variant="secondary">
+                      View quotations
+                    </LinkButton>
+                  </Tooltip>
                 </>
               ) : entry.kind === 'resume' ? (
                 <>

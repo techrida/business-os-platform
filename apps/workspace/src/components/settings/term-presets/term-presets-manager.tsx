@@ -22,6 +22,7 @@ import {
   termKindLabel,
 } from './term-preset-model';
 import styles from './term-presets.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 type Editing = { kind: TermPresetKind; preset?: TermPreset };
 
@@ -112,24 +113,26 @@ export function TermPresetsManager({ presets }: { presets: readonly TermPreset[]
                             {preset.isDefault === true ? 'Clear default' : 'Make default'}
                           </Button>
                         ) : null}
-                        <button
-                          type="button"
-                          className={styles.iconButton}
-                          aria-label={`Edit ${preset.name}`}
-                          title="Edit"
-                          onClick={() => setEditing({ kind, preset })}
-                        >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className={`${styles.iconButton} ${styles.remove}`}
-                          aria-label={`Remove ${preset.name}`}
-                          title="Remove"
-                          onClick={() => setRemoving(preset)}
-                        >
-                          <TrashIcon />
-                        </button>
+                        <Tooltip content="Edit">
+                          <button
+                            type="button"
+                            className={styles.iconButton}
+                            aria-label={`Edit ${preset.name}`}
+                            onClick={() => setEditing({ kind, preset })}
+                          >
+                            <PencilIcon />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Remove">
+                          <button
+                            type="button"
+                            className={`${styles.iconButton} ${styles.remove}`}
+                            aria-label={`Remove ${preset.name}`}
+                            onClick={() => setRemoving(preset)}
+                          >
+                            <TrashIcon />
+                          </button>
+                        </Tooltip>
                       </div>
                     </li>
                   ))}
