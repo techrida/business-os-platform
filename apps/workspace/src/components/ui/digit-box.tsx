@@ -11,6 +11,7 @@ import {
   type ClipboardEvent,
 } from 'react';
 
+import { useInFieldScope } from './field-scope';
 import { useFormReset } from './use-form-reset';
 import styles from './digit-box.module.css';
 
@@ -382,6 +383,7 @@ export function DigitBox({
       .filter(Boolean)
       .join(' ') || undefined;
   const posted = postedOf(text);
+  const inField = useInFieldScope();
 
   return (
     <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
@@ -426,7 +428,12 @@ export function DigitBox({
       {name ? (
         <input type="hidden" name={name} value={posted} disabled={disabled === true} />
       ) : null}
-      <div className={styles.meta}>
+      <div
+        className={[styles.meta, inField ? styles.metaInField : undefined]
+          .filter(Boolean)
+          .join(' ')}
+        {...(inField && (status || countText) ? { 'data-field-override': '' } : {})}
+      >
         <div
           id={statusId}
           role="status"

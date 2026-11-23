@@ -32,6 +32,20 @@ async function blur(element: HTMLElement) {
 }
 
 describe('PanInput', () => {
+  it("in a Field, a refusal takes the field's one message line instead of adding a second (UIP-FORM-010)", async () => {
+    const pan = await mount(
+      <Field label="PAN" hint="Printed on the certificate.">
+        {(control) => <PanInput {...control} name="pan" />}
+      </Field>,
+    );
+    expect(pan.container.querySelector('[data-field-override]')).toBeNull();
+    await typeKeys(pan.box, '12');
+    await typeKeys(pan.box, 'A');
+    expect(pan.container.querySelector('[data-field-override]')).not.toBeNull();
+    // The status line is out of flow, so it adds no height under the box.
+    expect(pan.container.querySelector('[data-field-override]')?.className).toMatch(/metaInField/);
+  });
+
   it('refuses a letter and says so in the status line', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
     await typeKeys(pan.box, '123');

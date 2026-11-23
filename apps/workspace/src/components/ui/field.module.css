@@ -1,5 +1,7 @@
 .field {
   display: grid;
+  /* A taller neighbour must not stretch this field's rows and move its box (UIP-FORM-010). */
+  align-content: start;
   gap: 8px;
   min-width: 0;
 }
@@ -93,4 +95,9 @@
   .control {
     font-size: max(16px, var(--font-size-body-small));
   }
+}
+
+/* A control that prints its own message (the digits boxes) takes the line; the field's text steps aside. */
+.field:has([data-field-override]) > [data-message] {
+  visibility: hidden;
 }
