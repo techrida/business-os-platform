@@ -10,6 +10,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog } from '@/components/ui/dialog';
 import { RowMenu } from '@/components/ui/row-menu';
 import { Select } from '@/components/ui/select';
+import { Tooltip } from '@/components/ui/tooltip';
 import shell from '@/components/shell/shell.module.css';
 import sidebar from '@/components/shell/sidebar.module.css';
 
@@ -42,6 +43,11 @@ function Controls({ scope }: { scope: 'page' | 'dialog' }) {
         onOpenChange={setOpen}
       />
       <DatePicker aria-label={`${scope} date`} />
+      <Tooltip content="A hint">
+        <button type="button" aria-label={`${scope} tip`}>
+          Tip
+        </button>
+      </Tooltip>
       <RowMenu label={`${scope} actions`} items={[{ href: '#one', label: 'One' }]} />
     </div>
   );
