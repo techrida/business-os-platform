@@ -24,7 +24,7 @@ import {
   createStaffUser,
   createTenantWithEntity,
 } from '@bos/db';
-import { HttpException } from '@nestjs/common';
+import { ConflictException, HttpException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -381,6 +381,51 @@ describe('a pending_kyc vendor (done check 13)', () => {
       status: 'provided',
       documentId: f.documentId,
     });
+  });
+
+  it('refuses a KYC file sent before the details changed, and takes one sent after (R6AE)', async () => {
+    const v = await vendor('pending_kyc');
+    const caseId = await kybCase(v.partyId);
+    const before = await kycFile(v);
+    await as(v, (who) =>
+      service.submitKycDocument(
+        who,
+        { docType: 'pan_certificate', documentId: before.documentId },
+        randomUUID(),
+      ),
+    );
+    // A staff edit of the vendor's identity empties the checklist and stamps the case (resetForIdentityChangeInTx).
+    await exec(
+      sql`UPDATE app.verification_cases
+             SET checklist = ${JSON.stringify(VENDOR_DEFAULT_CHECKLIST)}::jsonb, status = 'draft',
+                 identity_reset_at = now(), identity_reset_by_user_id = ${staffId}
+           WHERE id = ${caseId}`,
+    );
+    const reuse = await as(v, (who) =>
+      service
+        .submitKycDocument(
+          who,
+          { docType: 'pan_certificate', documentId: before.documentId },
+          randomUUID(),
+        )
+        .then(
+          () => undefined,
+          (e: unknown) => e as ConflictException,
+        ),
+    );
+    expect(reuse).toBeInstanceOf(ConflictException);
+    expect(reuse!.getResponse()).toMatchObject({
+      message: expect.stringMatching(/before the details changed/),
+    });
+    const after = await kycFile(v);
+    const receipt = await as(v, (who) =>
+      service.submitKycDocument(
+        who,
+        { docType: 'pan_certificate', documentId: after.documentId },
+        randomUUID(),
+      ),
+    );
+    expect(receipt.state).toBe('submitted');
   });
 
   it('gets 403 on every quotation route, before any id is looked at', async () => {

@@ -75,6 +75,8 @@ import {
 import {
   attachDocument,
   checklistKeysFor,
+  documentsBeforeReset,
+  FILE_BEFORE_CHANGE_MESSAGE,
   isEditable,
   requiresExpiry,
 } from '../../verification/verification.rules';
@@ -231,6 +233,15 @@ export class VendorPortalInboxService {
             .for('update');
           if (row === undefined) throw notFound();
           await this.assertDocument(tx, who.scope, VERIFICATION_OWNER_TYPE, row.id, b.documentId);
+          const versions = await this.documents.listForOwner(
+            who.scope,
+            VERIFICATION_OWNER_TYPE,
+            row.id,
+            tx,
+          );
+          if (documentsBeforeReset(versions, row.identityResetAt).has(b.documentId)) {
+            throw new ConflictException({ code: 'conflict', message: FILE_BEFORE_CHANGE_MESSAGE });
+          }
           if (!isEditable(row.status)) {
             throw new ConflictException({
               code: 'conflict',

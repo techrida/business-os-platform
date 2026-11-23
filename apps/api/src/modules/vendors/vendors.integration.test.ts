@@ -692,8 +692,14 @@ describe('R6AA: an identity edit before approval voids the KYB case; a foreign v
     VendorDtoSchema.parse((await api().get(`/v1/vendors/${id}`)).body);
   const caseRow = async (id: string) =>
     (
-      await rowOf<{ status: string; checklist: { status: string; documentId: string | null }[] }>(
-        'SELECT status, checklist FROM app.verification_cases WHERE tenant_id = $1 AND party_id = $2',
+      await rowOf<{
+        status: string;
+        checklist: { status: string; documentId: string | null }[];
+        identity_reset_at: Date | null;
+        identity_reset_by_user_id: string | null;
+      }>(
+        `SELECT status, checklist, identity_reset_at, identity_reset_by_user_id
+           FROM app.verification_cases WHERE tenant_id = $1 AND party_id = $2`,
         [tenantId, id],
       )
     )[0];
@@ -719,6 +725,9 @@ describe('R6AA: an identity edit before approval voids the KYB case; a foreign v
     const c = await caseRow(v.id);
     expect(c?.status).toBe('draft');
     expect(c?.checklist.every((i) => i.status === 'missing' && i.documentId === null)).toBe(true);
+    // R6AE: the case remembers when the details changed and who changed them, for the reset note and the re-upload rule.
+    expect(c?.identity_reset_at).toBeInstanceOf(Date);
+    expect(c?.identity_reset_by_user_id).not.toBeNull();
     const [audit] = await resetAudit(v.id);
     expect(audit?.before).toMatchObject({ status: 'pending_kyc', legalName: v.legalName });
     expect(audit?.after).toMatchObject({
@@ -759,6 +768,7 @@ describe('R6AA: an identity edit before approval voids the KYB case; a foreign v
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.status).toBe('under_review');
     expect((await caseRow(v.id))?.status).toBe('submitted');
+    expect((await caseRow(v.id))?.identity_reset_at).toBeNull();
     expect(await resetAudit(v.id)).toHaveLength(0);
   });
 
