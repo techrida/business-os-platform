@@ -10,6 +10,7 @@ import { getEvidence, getQuotation } from '@/components/p2/quotations/api';
 import { AcceptancePanel } from '@/components/p2/quotations/acceptance-panel';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
+import { addContactAction } from '@/components/p2/customers/actions';
 import { DetailActions, hasDetailActions } from '@/components/p2/quotations/detail-actions';
 import { opportunityBlockers } from '@/components/p2/quotations/opportunity-gate';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
@@ -355,6 +356,11 @@ export default async function QuotationDetailPage({
               number={quotation.number}
               current={current}
               contacts={contacts}
+              createContact={
+                allowed('customer.write')
+                  ? { action: addContactAction, customerId: quotation.customerId }
+                  : null
+              }
               capabilities={detail.capabilities}
               reloadHref={path}
               includeOutcome={true}

@@ -299,6 +299,11 @@
   align-items: end;
 }
 
+/* The Field above ends in a reserved message line (UIP-FORM-010); lift the button to the input box. */
+.dateField > button {
+  margin-block-end: calc(var(--line-height-caption) + 8px);
+}
+
 .danger.danger {
   border-color: var(--button-danger-bg);
   background: var(--button-danger-bg);

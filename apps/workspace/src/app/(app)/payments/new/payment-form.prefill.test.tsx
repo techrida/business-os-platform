@@ -130,13 +130,13 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
     const mounted = await mount();
     try {
       const box = mounted.container;
-      const customerTrigger = box.querySelector<HTMLButtonElement>(
-        `button#${CSS.escape(box.querySelector('label[for]')!.getAttribute('for')!)}`,
+      const customerBox = box.querySelector<HTMLInputElement>(
+        `input#${CSS.escape(box.querySelector('label[for]')!.getAttribute('for')!)}`,
       );
-      await click(customerTrigger);
+      await click(customerBox);
       await click(
-        Array.from(document.querySelectorAll('[role="option"]')).find(
-          (o) => o.textContent?.trim() === 'Rupee Co (CUST-0002)',
+        Array.from(document.querySelectorAll('[role="option"]')).find((o) =>
+          o.textContent?.startsWith('Rupee Co'),
         ) ?? null,
       );
       expect(value(box, 'customerId')).toBe(OTHER_ID);
@@ -159,7 +159,7 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       // 750.00 is a USD figure: the person enters what arrived in INR. Old code kept 750.00 and submitted it as INR.
       expect(value(box, 'amount')).toBe('');
       expect(box.textContent).not.toContain('The open amount of');
-      expect(box.textContent).toContain('The cash that arrived');
+      expect(boxFor(box, 'Amount received')?.placeholder).toBe('25,000.00');
       // A typed amount survives a currency change, even one equal to the open amount.
       await fill(boxFor(box, 'Amount received'), '750.00');
       await pick(box, 'Currency', 'NPR (Nepalese rupee)');
@@ -188,7 +188,7 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       expect(value(box, 'currency')).toBe('INR');
       // Old code compared the text with the open amount, took the padded 750.00 for it and cleared the box.
       expect(Number(value(box, 'amount'))).toBe(750);
-      expect(box.textContent).toContain('The cash that arrived');
+      expect(boxFor(box, 'Amount received')?.placeholder).toBe('25,000.00');
     } finally {
       await mounted.unmount();
     }
@@ -219,7 +219,7 @@ describe('payment form, opened from an invoice (U16-Q8 a)', () => {
       amountBox?.focus();
       amountBox?.select();
       await paste(amountBox, '20000');
-      expect(box.textContent).toContain('The cash that arrived');
+      expect(boxFor(box, 'Amount received')?.placeholder).toBe('25,000.00');
       await pick(box, 'Currency', 'INR (Indian rupee)');
       expect(Number(value(box, 'amount'))).toBe(20000);
     } finally {

@@ -533,6 +533,14 @@ describe('vendor portal capability by vendor status (done check 13)', () => {
     expect(view.detailsChanged?.by).not.toBe('');
     asVendor(other);
     expect((await service.onboarding()).detailsChanged).toBeNull();
+    // Once the case is submitted again the note goes.
+    await exec(
+      scopeA,
+      sql`UPDATE app.verification_cases SET status = 'submitted', submitted_by_user_id = ${staffId},
+            submitted_at = now() WHERE party_id = ${changed}`,
+    );
+    asVendor(changed);
+    expect((await service.onboarding()).detailsChanged).toBeNull();
   });
 
   it('refuses a staff or customer principal, and a vendor party with no vendor record, with 403', async () => {

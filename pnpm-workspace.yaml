@@ -31,6 +31,16 @@ ignoredOptionalDependencies:
   - canvas
   - '@napi-rs/canvas'
 
+# Security overrides (Dependabot alerts 1-3). Each selector names the one package that pins the
+# vulnerable range; drop an entry once that package ships a fixed range itself.
+overrides:
+  # glob < 14.0.2 (alert 2). archiver-utils (via testcontainers > archiver) pins glob ^10 and only calls glob.sync.
+  'archiver-utils>glob': ^14.0.2
+  # minimatch < 11.0.1 (alert 3). @swc/cli pins ^9 and only calls the named minimatch() export.
+  '@swc/cli>minimatch': ^11.0.1
+  # esbuild < 0.25.0 (alert 1). @esbuild-kit/core-utils (via drizzle-kit) pins ~0.18.20; drizzle-kit itself already uses 0.25.x.
+  '@esbuild-kit/core-utils>esbuild': ^0.25.4
+
 # One place for every external version. Workspace package.json files use "catalog:".
 catalog:
   # Runtime and language

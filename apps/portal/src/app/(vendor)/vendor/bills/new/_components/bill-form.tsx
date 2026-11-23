@@ -100,17 +100,14 @@ export function BillForm({
       />
 
       <div className={styles.grid}>
-        <Field
-          label="Your invoice number"
-          hint="As printed on your bill."
-          error={fe.vendorInvoiceNo}
-        >
+        <Field label="Your invoice number" error={fe.vendorInvoiceNo}>
           {(control) => (
             <Input
               name="vendorInvoiceNo"
               autoComplete="off"
               required
               maxLength={64}
+              placeholder="INV-2083-0412"
               value={invoiceNo}
               onChange={(e) => setInvoiceNo(e.target.value)}
               {...control}
@@ -151,7 +148,7 @@ export function BillForm({
         </Field>
         <Field
           label="Total on your invoice"
-          hint="The amount printed on your bill, for example 20,18,180.00. We check it against our records."
+          hint="We check it against our records."
           error={fe.claimedTotal}
         >
           {(control) => (
@@ -162,6 +159,7 @@ export function BillForm({
               numberSystems={numberSystems}
               required
               showWords
+              placeholder="20,18,180.00"
               value={total}
               onValueChange={setTotal}
             />
@@ -170,12 +168,9 @@ export function BillForm({
       </div>
 
       <Field
-        label="Purchase order (optional)"
-        hint={
-          orders.length === 0
-            ? 'You have no purchase orders to link this bill to.'
-            : 'The order this bill is for.'
-        }
+        label="Purchase order"
+        optional
+        hint={orders.length === 0 ? 'You have no purchase orders to link this bill to.' : undefined}
         error={fe.purchaseOrderId}
       >
         {(control) => (

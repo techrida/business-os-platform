@@ -99,7 +99,6 @@ export function ReviewForm({
       ) : null}
       <HeaderAction
         missing={approvalProblems}
-        pills={false}
         missingTitle="Approval requirements"
         missingLabel="Approval blocked"
         onClick={(event) => open('approve', event.currentTarget)}

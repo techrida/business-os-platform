@@ -17,7 +17,6 @@ import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 import type { ConvertLead } from './convert-dialog';
 import { customerDescription, panToLookUp } from './convert-model';
-import { OptionalLabel } from './convert-parts';
 import type { ChosenCustomer, OrganisationState, StepContext } from './convert-types';
 import convert from './convert-dialog.module.css';
 import type { ConversionCustomer } from './record-lookups';
@@ -284,7 +283,7 @@ function CreateOrganisation({ ctx, org }: { ctx: StepContext; org: OrganisationS
             />
           )}
         </Field>
-        <Field label={<OptionalLabel>PAN or VAT number</OptionalLabel>} error={err['panVatNo']}>
+        <Field label="PAN or VAT number" optional error={err['panVatNo']}>
           {(c) =>
             nepalCustomer ? (
               <PanInput
@@ -293,7 +292,6 @@ function CreateOrganisation({ ctx, org }: { ctx: StepContext; org: OrganisationS
                 onValueChange={(next) => set('panVatNo')({ target: { value: next } })}
                 edited={panEdited}
                 onEditedChange={setPanEdited}
-                hideCount
                 placeholder="601234567"
                 {...c}
               />

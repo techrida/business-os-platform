@@ -187,6 +187,11 @@
   min-width: 0;
 }
 
+/* The level filter is a bare box: lift it past the Fields' message line (UIP-FORM-010). */
+.toolbarFilter {
+  margin-block-end: calc(var(--line-height-caption) + 8px);
+}
+
 .memberTable {
   width: 100%;
   border-collapse: collapse;

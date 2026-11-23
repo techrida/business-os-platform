@@ -26,14 +26,13 @@ const PAN_RULES: DigitRules = {
       ? `A PAN is exactly ${PAN_DIGITS} digits; this has ${digits.length}.`
       : `A PAN is ${PAN_DIGITS} digits; this has ${digits.length}.`;
   },
-  count: (digits) => `${digits.length} of ${PAN_DIGITS}`,
 };
 
 export type PanInputProps = DigitBoxProps;
 
 /**
  * Nepal PAN: exactly nine digits, typed to its data. Letters and a tenth digit are refused before
- * they go in (announced in a status line), a live "7 of 9" count sits under the box, the phone
+ * they go in (announced in a status line), no counter (UIP-FORM-008), the phone
  * keypad is numeric, and a paste has its spaces and dashes taken out. A hidden input named `name`
  * posts the digits, so a plain `<form action>` works; `onValueChange` reports the same string.
  *
