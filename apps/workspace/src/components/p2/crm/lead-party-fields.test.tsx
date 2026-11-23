@@ -26,6 +26,8 @@ const MATCHES: LeadDuplicateMatch[] = [
     id: CUSTOMER,
     label: 'Himalayan Traders Pvt. Ltd.',
     country: 'IN',
+    number: 'CUS-0001',
+    pan: '301234567',
     matchedOn: ['company'],
   },
 ];
@@ -119,7 +121,7 @@ it('lists customers, then "Already a lead", then Create "<text>" last and highli
   await t.settleSearch();
   expect(t.search).toHaveBeenCalledWith('Himalayan', expect.anything());
   expect(t.options()).toEqual([
-    expect.stringContaining('Himalayan Traders Pvt. Ltd.'),
+    expect.stringContaining('Himalayan Traders Pvt. Ltd.PAN 301234567 · CUS-0001 · India'),
     expect.stringContaining('Himalayan Traders (LD-2083/84-00001)'),
     'Create "Himalayan"',
   ]);
