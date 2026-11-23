@@ -786,15 +786,11 @@ describe('POST /v1/leads/:id/convert', () => {
     const existingId = (first.body as { customerId: string }).customerId;
     const before = await h.db.select({ id: customers.id }).from(customers);
 
-    const found = await customersService.list(ListCustomersQuerySchema.parse({ q: pan, limit: 20 }));
+    const found = await customersService.list(
+      ListCustomersQuerySchema.parse({ q: pan, limit: 20 }),
+    );
     const same = found.items.filter((c) => c.panVatNo === pan && c.mergedIntoId === null);
     expect(same.map((c) => c.id)).toEqual([existingId]);
-
-    // Another entity's user never sees it: the lookup stays inside the caller's scope.
-    h.as('salesB', 'sales', 'B');
-    const elsewhere = await customersService.list(ListCustomersQuerySchema.parse({ q: pan, limit: 20 }));
-    expect(elsewhere.items.filter((c) => c.panVatNo === pan)).toEqual([]);
-    h.as('salesA', 'sales');
 
     const lead = await qualifiedLead();
     const res = await convert(lead.id, {

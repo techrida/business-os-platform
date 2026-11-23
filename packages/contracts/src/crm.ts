@@ -814,6 +814,13 @@ export type CreateLeadBody = z.infer<typeof CreateLeadBodySchema>;
  * is refused by the API against the stored lead: this body alone cannot see what it keeps.
  */
 export const UpdateLeadBodySchema = LeadFieldsSchema.partial().extend({
+  /**
+   * R6T: `null` unlinks the lead from the customer picked in its company field (the contact goes with it); `null` on
+   * `contactId` alone unlinks just the contact. An edit never links: only `null` is accepted, so it cannot be used to
+   * probe for customers. Leaving a link alone is leaving the field out.
+   */
+  customerId: z.null().optional(),
+  contactId: z.null().optional(),
   expectedVersion: z.number().int().min(1),
 });
 export type UpdateLeadBody = z.infer<typeof UpdateLeadBodySchema>;

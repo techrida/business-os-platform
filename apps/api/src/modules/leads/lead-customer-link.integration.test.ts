@@ -222,3 +222,84 @@ describe('POST /v1/leads with a linked customer (R6O)', () => {
     expect(orphan.status).toBe(400);
   });
 });
+
+describe('PATCH /v1/leads/:id unlinks the customer (R6T)', () => {
+  const patch = (id: string, body: Record<string, unknown>) =>
+    request(baseUrl).patch(`/v1/leads/${id}`).send(body);
+  const auditOf = async (leadId: string) =>
+    (
+      await h.ownerPool.query(
+        `SELECT before, after FROM audit.audit_events
+          WHERE tenant_id = $1 AND entity_id = $2 AND action = 'lead.updated'`,
+        [h.tenantId, leadId],
+      )
+    ).rows[0] as { before: Record<string, unknown>; after: Record<string, unknown> } | undefined;
+
+  it('customerId null drops the customer and its contact, bumps the version and writes an audit row', async () => {
+    const created = LeadDtoSchema.parse(
+      (await post({ customerId: seeded.ownCustomer, contactId: seeded.ownContact })).body,
+    );
+    const res = await patch(created.id, { customerId: null, expectedVersion: created.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(LeadDtoSchema.parse(res.body)).toMatchObject({
+      customerId: null,
+      contactId: null,
+      version: created.version + 1,
+      companyName: created.companyName,
+    });
+    const audit = await auditOf(created.id);
+    expect(audit?.before).toMatchObject({
+      customerId: seeded.ownCustomer,
+      contactId: seeded.ownContact,
+    });
+    expect(audit?.after).toMatchObject({ customerId: null, contactId: null });
+  });
+
+  it('contactId null alone keeps the customer', async () => {
+    const created = LeadDtoSchema.parse(
+      (await post({ customerId: seeded.ownCustomer, contactId: seeded.ownContact })).body,
+    );
+    const res = await patch(created.id, { contactId: null, expectedVersion: created.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(LeadDtoSchema.parse(res.body)).toMatchObject({
+      customerId: seeded.ownCustomer,
+      contactId: null,
+    });
+  });
+
+  it('works for a caller who can no longer read the customer, and says nothing about it', async () => {
+    h.as('salesB', 'sales');
+    const created = LeadDtoSchema.parse(
+      (await post({ customerId: seeded.colleagueCustomer })).body,
+    );
+    h.as('salesB', 'sales');
+    const res = await patch(created.id, { customerId: null, expectedVersion: created.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(LeadDtoSchema.parse(res.body).customerId).toBeNull();
+  });
+
+  it('refuses to link through an edit (only null is accepted), a stale version and nothing to change', async () => {
+    const linked = LeadDtoSchema.parse((await post({ customerId: seeded.ownCustomer })).body);
+    const link = await patch(linked.id, {
+      customerId: seeded.colleagueCustomer,
+      expectedVersion: linked.version,
+    });
+    expect(link.status).toBe(400);
+    const stale = await patch(linked.id, { customerId: null, expectedVersion: linked.version + 5 });
+    expect(stale.status).toBe(409);
+    const free = LeadDtoSchema.parse((await post()).body);
+    const nothing = await patch(free.id, { customerId: null, expectedVersion: free.version });
+    expect(nothing.status).toBe(400);
+    expect(errorOf(nothing.body).message).toBe('Nothing to change');
+  });
+
+  it("another user's lead answers 404 and keeps its link", async () => {
+    h.as('salesB', 'sales');
+    const theirs = LeadDtoSchema.parse((await post({ customerId: seeded.ownCustomer })).body);
+    h.as('salesA', 'sales');
+    const res = await patch(theirs.id, { customerId: null, expectedVersion: theirs.version });
+    expect(res.status).toBe(404);
+    h.as('salesB', 'sales');
+    expect(LeadDtoSchema.parse((await get(theirs.id)).body).customerId).toBe(seeded.ownCustomer);
+  });
+});
