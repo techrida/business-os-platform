@@ -144,7 +144,8 @@ export function MemberPicker({
       open={open ?? ownOpen}
       onOpenChange={onOpenChange ?? setOwnOpen}
       placeholder={placeholder}
-      groupThreshold={MEMBER_GROUPING_THRESHOLD}
+      // Headings only when the people carry a department; otherwise one flat list however long.
+      groupThreshold={options.some((o) => o.group) ? MEMBER_GROUPING_THRESHOLD : Infinity}
       emptyText={emptyText}
       noMatchText={noMatchText}
       showDescriptionWhenClosed

@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
@@ -187,6 +187,20 @@ export function CreateGroupForm() {
   );
 }
 
+/**
+ * Counts the successes of a form action. A person picker keyed on it starts empty again after each one, as the
+ * form reset React runs after an action cannot clear the picker's own state.
+ */
+function useSuccessCount(state: { status: string }): number {
+  const seen = useRef(state);
+  const count = useRef(0);
+  if (seen.current !== state) {
+    seen.current = state;
+    if (state.status === 'ok') count.current += 1;
+  }
+  return count.current;
+}
+
 export function AddMemberForm({
   groupId,
   groupName,
@@ -197,11 +211,13 @@ export function AddMemberForm({
   users: readonly UserOption[] | null;
 }) {
   const [state, formAction, pending] = useActionState(addMemberAction, IDLE);
+  const saved = useSuccessCount(state);
   return (
     <form action={formAction} className={styles.form}>
       <input type="hidden" name="groupId" value={groupId} />
       <div className={styles.addRow}>
         <UserField
+          key={saved}
           name="userId"
           label={
             <>
@@ -227,6 +243,7 @@ export function DelegationForm({
   documentTypes: readonly string[];
 }) {
   const [state, formAction, pending] = useActionState(createDelegationAction, IDLE);
+  const saved = useSuccessCount(state);
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
   // Controlled, so the form reset React runs after every action keeps the times a refusal sent back.
   const [startsAt, setStartsAt] = useState('');
@@ -235,12 +252,14 @@ export function DelegationForm({
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
         <UserField
+          key={`from-${saved}`}
           name="fromUserId"
           label="Handing over (from)"
           users={users}
           defaultValue={kept.fromUserId ?? ''}
         />
         <UserField
+          key={`to-${saved}`}
           name="toUserId"
           label="Taking over (to)"
           users={users}

@@ -153,3 +153,27 @@ it('works uncontrolled from a default value', async () => {
   expect(input(mounted.container).value).toBe('Bina Gurung Accountant · Finance');
   expect(mounted.container.querySelector<HTMLInputElement>('input[name="o"]')?.value).toBe('u2');
 });
+
+it('shows the person an empty value stands for while posting nothing, and flat lists stay ungrouped', async () => {
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    id: `u${i}`,
+    name: `Person ${String(i).padStart(2, '0')}`,
+    role: 'Sales',
+  }));
+  mounted = await mountForm(
+    <form>
+      <MemberPicker label="Owner" name="o" people={many} value="" emptyStandsFor="u3" />
+    </form>,
+  );
+  const box = input(mounted.container);
+  expect(box.value).toBe('Person 03 Sales');
+  expect(mounted.container.querySelector<HTMLInputElement>('input[name="o"]')?.value).toBe('');
+  await act(() => {
+    box.focus();
+    box.click();
+    return Promise.resolve();
+  });
+  // 25 people without departments: one flat list, no "Unassigned" heading.
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(25);
+  expect(document.body.textContent).not.toContain('Unassigned');
+});

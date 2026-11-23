@@ -10,17 +10,21 @@ import { expect, it } from 'vitest';
 // (owners, people, users, staff, members, assignees, approvers) and fails naming the component and file.
 
 const repo = fileURLToPath(new URL('../../../../../', import.meta.url));
-const WORD = '(?:owners?|people|persons?|users?|staff|members?|assignees?|approvers?|candidates?)';
+const WORD = '(?:owners?|people|persons?|users?|staff|members?|assignees?|approvers?|candidates?|available)';
 // A list of people turned into options (`owners.map(...)`, `options={people}`, `options={staffOptions(...)}`), not a
 // control that merely mentions a person (a level, a sort order, "One person" as a kind of step).
 const PERSON = new RegExp(
-  `\\b${WORD}\\b(?:\\([^)]*\\))?(?:\\.\\w+)*\\.map\\(|\\boptions=\\{[^}]*\\b${WORD}\\b`,
+  `\\b${WORD}\\b(?:\\s*\\?\\?\\s*\\[\\]\\))?(?:\\([^)]*\\))?(?:\\.\\w+)*\\.map\\(|\\boptions=\\{[^}]*\\b${WORD}\\b`,
   'i',
 );
 // A raw Combobox is only for non-person lists (vendors, lost reasons); any person word in it is a person picker.
 const PERSON_WORD = new RegExp(`\\b${WORD}\\b`, 'i');
+// A control that posts a person's id (`name="ownerUserId"`, `assigneeUserId`, `v:crm.default_lead_owner`'s sibling) is a person picker whatever its options variable is called.
+const POSTS_PERSON = /\bname=(?:"|'|\{[`'"])[^"'`}$]*(?:userid|owner|assignee|approver)/i;
 const isPersonList = (el: { tag: string; text: string }) =>
-  PERSON.test(el.text) || (el.tag === 'Combobox' && PERSON_WORD.test(el.text));
+  PERSON.test(el.text) ||
+  POSTS_PERSON.test(el.text) ||
+  (el.tag === 'Combobox' && PERSON_WORD.test(el.text));
 
 function sources(dir: string): string[] {
   const found: string[] = [];
@@ -75,6 +79,20 @@ const offenders = ['apps/workspace/src', 'apps/portal/src']
 
 it('no person or user list is rendered through a plain Select or a raw Combobox', () => {
   expect(offenders).toEqual([]);
+});
+
+it('recognises the shapes the replaced person selects really had', () => {
+  const shapes = [
+    // owner-field.tsx and schedule-follow-up-dialog.tsx before BOS-UI-001: options built elsewhere.
+    `<Select name="ownerUserId" value={chosen} onChange={(e) => setChosen(e.target.value)} options={options} disabled={pending} {...c} />`,
+    `<Select name="assigneeUserId" defaultValue={defaultAssignee} options={options} {...c} />`,
+    // user-field.tsx and the workflow editor's person step: `available.map` / `(users ?? []).map`.
+    `<Select {...control} name={name} required>{available.map((u) => (<option key={u.id}>{u.label}</option>))}</Select>`,
+    `<Select {...control} value={step.target}>{(users ?? []).map((u) => (<option key={u.id}>{u.label}</option>))}</Select>`,
+  ];
+  for (const shape of shapes) {
+    expect(selectElements(shape).filter(isPersonList), shape).toHaveLength(1);
+  }
 });
 
 it('recognises a person list in a plain Select (the guard fails on the old lead-form shape)', () => {
