@@ -21,6 +21,7 @@ import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
 import { type InvitedUser, type InviteInput, type ResolvedUser, UserMirror } from './user-mirror';
 import {
+  assertFounderLeaseHeld,
   assertWithinOperationDeadline,
   IDENTITY_REVIEW_RESOLVED,
   withFounderRemovalLease,
@@ -206,10 +207,11 @@ export class UsersService extends UserDirectory {
         scope,
         actor,
         async (tx) => {
-          if (assignsAccess) {
-            await lockAccessRevision(tx, scope.tenantId);
-            if (assertAccess) await assertAccess(tx);
-          }
+          // The lease must still be held (a stalled invite that was taken over writes nothing). Taken in the order every
+          // access write takes: the access lock, then the lease row.
+          await lockAccessRevision(tx, scope.tenantId);
+          await assertFounderLeaseHeld(tx);
+          if (assignsAccess && assertAccess) await assertAccess(tx);
           const entityId =
             placement !== null ? await this.assertPlacement(tx, scope, placement) : null;
           if (!prepared.created) {
@@ -241,6 +243,23 @@ export class UsersService extends UserDirectory {
    * flag and records the audit row. The caller invalidates authz after this resolves.
    */
   async resolveIdentityReview(
+    scope: TxScope,
+    actor: Actor,
+    userId: string,
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
+  ): Promise<void> {
+    // Under the tenant's identity lease, like every other identity change: a resolve never reads ZITADEL while a status
+    // action or role set is half done, and never writes over one.
+    return withFounderRemovalLease(
+      this.store,
+      scope.tenantId,
+      () => this.resolveIdentityReviewOnce(scope, actor, userId, assertAccess),
+      undefined,
+      this.mirror.settleOutstandingRemoval(scope, actor),
+    );
+  }
+
+  private async resolveIdentityReviewOnce(
     scope: TxScope,
     actor: Actor,
     userId: string,
@@ -281,6 +300,7 @@ export class UsersService extends UserDirectory {
       actor,
       async (tx) => {
         await lockAccessRevision(tx, scope.tenantId);
+        await assertFounderLeaseHeld(tx);
         if (assertAccess) await assertAccess(tx);
         const before = await this.mirror.commitResolve(
           tx,
