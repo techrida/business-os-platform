@@ -33,6 +33,37 @@ vi.mock('@/lib/live-permissions', () => ({
   getPermissionCheck: () => Promise.resolve((permission: string) => held.has(permission)),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The member picker keeps its people in a closed list; this page test only needs to see who it was given.
+vi.mock('@/components/ui/member-picker', async () => {
+  const { createElement } = await import('react');
+  return {
+    MEMBER_GROUPING_THRESHOLD: 20,
+    MemberPicker: ({
+      people,
+      value,
+      defaultValue,
+    }: {
+      people: { id: string; name: string }[];
+      value?: string;
+      defaultValue?: string;
+    }) =>
+      createElement(
+        'ul',
+        { 'data-member-picker': '' },
+        people.map((p) =>
+          createElement(
+            'li',
+            {
+              key: p.id,
+              'data-user': p.id,
+              'data-selected': (value ?? defaultValue) === p.id ? '' : undefined,
+            },
+            p.name,
+          ),
+        ),
+      ),
+  };
+});
 let session: Session;
 const first = '11111111-1111-4111-8111-000000000200';
 const second = '22222222-2222-4222-8222-222222222222';
@@ -94,7 +125,7 @@ beforeEach(() => {
 
 it('enables named group and delegation assignments without general directory access', async () => {
   const html = renderToStaticMarkup(await WorkflowsPage());
-  expect(html).toContain(`<option value="${second}">Second page person</option>`);
+  expect(html).toContain(`<li data-user="${second}">Second page person</li>`);
   expect(html).not.toMatch(/disabled=""[^>]*>Add</);
   expect(html).not.toMatch(/disabled=""[^>]*>Create delegation</);
   expect((await addMemberAction(IDLE, form({ groupId: group, userId: second }))).status).toBe('ok');
@@ -166,7 +197,7 @@ it('offers and saves a new approver from the second API page through the normal 
       }))}
     />,
   );
-  expect(html).toContain(`<option value="${second}" selected="">Second page person</option>`);
+  expect(html).toContain(`<li data-user="${second}" data-selected="">Second page person</li>`);
   const encoded = html.match(/name="spec" value="([^"]*)"/)?.[1];
   expect(encoded).toBeDefined();
   const serialized = encoded!.replaceAll('&quot;', '"').replaceAll('&amp;', '&');
@@ -202,7 +233,7 @@ it('includes second-page users in workflow page selectors without directory read
   });
   const html = renderToStaticMarkup(await WorkflowsPage());
   const workflows = html.slice(0, html.indexOf('id="groups"'));
-  expect(workflows).toContain(`<option value="${second}">Second page person</option>`);
+  expect(workflows).toContain(`<li data-user="${second}">Second page person</li>`);
 });
 
 it('includes second-page users in workflow page selectors when the general directory is allowed', async () => {
@@ -256,7 +287,7 @@ it('includes second-page users in workflow page selectors when the general direc
   });
   const html = renderToStaticMarkup(await WorkflowsPage());
   const workflows = html.slice(0, html.indexOf('id="groups"'));
-  expect(workflows).toContain(`<option value="${second}">Second page person</option>`);
+  expect(workflows).toContain(`<li data-user="${second}">Second page person</li>`);
 });
 
 // The timing block of the new-workflow form: from its first label to the submit button.

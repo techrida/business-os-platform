@@ -383,6 +383,8 @@ describe('Revise', () => {
   });
 });
 
+const V_EARLIER = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
 describe('Cancel quotation (F1-Q27: Cancel only)', () => {
   const cancelTriggers = (html: string): number =>
     [...html.matchAll(/<button[^>]*>Cancel quotation<\/button>/g)].length;
@@ -419,6 +421,23 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
       'Cancelling ends this quotation and its approval request',
     );
     expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('approval request');
+  });
+
+  it('tells the person that cancelling a revision gives the earlier sent or approved one back (R6D)', () => {
+    const html = renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={{ ...current({ status: 'draft' }), supersedesVersionId: V_EARLIER }}
+        contacts={contacts}
+        capabilities={{ ...ALLOWED, canCancel: true }}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+      />,
+    );
+    expect(html).toContain('becomes the live quotation again');
+    expect(html).not.toContain('it stays in the list as Cancelled');
+    expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('live quotation again');
   });
 
   it.each(['approved', 'sent', 'accepted', 'rejected', 'expired', 'cancelled'] as const)(

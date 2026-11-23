@@ -426,7 +426,10 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const canDraft = opp.canDraftQuotation === true;
   // Said in place of New quotation on an open deal the server refuses (R4a Q4 a).
   const draftBlocker = startQuotationBlocker(opp);
-  const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
+  const meRead = await getMeOrNull(session.accessToken);
+  const currentUserId = meRead?.id ?? null;
+  const me =
+    meRead?.id && meRead.displayName ? { userId: meRead.id, name: meRead.displayName } : null;
   const moves = resolvedMoves(
     'opportunity',
     opp.stage,
@@ -718,6 +721,8 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         opportunityId={opp.id}
         canEdit={canEdit}
         ownerUserId={opp.ownerUserId}
+        ownerName={opp.ownerName ?? null}
+        me={me}
         owners={assigneeChoices}
         planned={
           plannedProblem !== null ? (

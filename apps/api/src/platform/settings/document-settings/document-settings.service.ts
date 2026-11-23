@@ -55,9 +55,24 @@ export const TERM_PRESET_READERS: readonly Permission[] = [
 export const TERM_PRESET_WRITERS: readonly Permission[] = FINANCE_SETTINGS_EDITORS;
 
 const CreateBody = TermPresetSchema.omit({ id: true });
-const PatchBody = TermPresetSchema.pick({ name: true, body: true })
+const PatchBody = TermPresetSchema.pick({ name: true, body: true, isDefault: true })
   .partial()
-  .refine((b) => b.name !== undefined || b.body !== undefined, 'send name, body or both');
+  .refine(
+    (b) => b.name !== undefined || b.body !== undefined || b.isDefault !== undefined,
+    'send name, body, isDefault or any of them',
+  );
+
+/** Makes `target` the kind's only default (or clears it). Other kinds are untouched. */
+function withDefault(list: readonly TermPreset[], target: TermPreset): TermPreset[] {
+  return list.map((p) => {
+    if (p.id === target.id) return target;
+    if (target.isDefault === true && p.kind === target.kind && p.isDefault === true) {
+      const { isDefault: _cleared, ...rest } = p;
+      return rest;
+    }
+    return p;
+  });
+}
 const ListQuery = z.object({ kind: TermPresetKindSchema.optional() });
 
 export interface DisplaySettings {
@@ -218,9 +233,10 @@ export class DocumentSettingsService {
     this.assertAnyOf(TERM_PRESET_WRITERS);
     const body = parse(CreateBody, rawBody, 'term preset');
     const created: TermPreset = { id: randomUUID(), ...body };
+    if (created.isDefault !== true) delete created.isDefault;
     await this.modify((list) => {
       assertNameFree(list, created);
-      return [...list, created];
+      return withDefault([...list, created], created);
     });
     return created;
   }
@@ -238,11 +254,19 @@ export class DocumentSettingsService {
         name: patch.name ?? current.name,
         body: patch.body ?? current.body,
       };
+      if (patch.isDefault === true) next.isDefault = true;
+      else if (patch.isDefault === false) delete next.isDefault;
       result = next;
       // Nothing changed: no new version, so the history only records real edits.
-      if (next.name === current.name && next.body === current.body) return null;
+      if (
+        next.name === current.name &&
+        next.body === current.body &&
+        (next.isDefault ?? false) === (current.isDefault ?? false)
+      ) {
+        return null;
+      }
       assertNameFree(list, next, id);
-      return list.map((p) => (p.id === id ? next : p));
+      return withDefault(list, next);
     });
     return result as TermPreset;
   }

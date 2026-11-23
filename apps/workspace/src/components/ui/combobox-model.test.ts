@@ -148,12 +148,36 @@ describe('keepOrder', () => {
   });
 });
 
+describe('keepOrder with groups', () => {
+  const options: ComboboxOption[] = [
+    { id: 'l1', label: 'Zed Leads', group: 'Customers' },
+    { id: 'c1', label: 'Alpha Co', group: 'Already a lead' },
+    { id: 'c2', label: 'Beta Co', group: 'Customers' },
+    { id: 'add', label: 'Create "x"' },
+  ];
+
+  it('keeps the groups in the order they first appear, the ungrouped row last, under no heading', () => {
+    const layout = layoutOptions(options, '', 0, '', true);
+    expect(layout.groups.map((g) => g.label)).toEqual(['Customers', 'Already a lead', '']);
+    expect(layout.flat.map((o) => o.id)).toEqual(['l1', 'c2', 'c1', 'add']);
+  });
+
+  it('still sorts the groups by name when the order is not kept', () => {
+    const layout = layoutOptions(options, '', 0, '');
+    expect(layout.groups.map((g) => g.label)).toEqual(['Already a lead', 'Customers', '']);
+  });
+});
+
 describe('addOptionFor', () => {
   const reasons: ComboboxOption[] = [
     { id: 'a', label: 'Price' },
     { id: 'b', label: 'No budget' },
   ];
   const label = (text: string) => `Add "${text}"`;
+
+  it('keeps the row for text an option already has when asked to (a new record may share a name)', () => {
+    expect(addOptionFor(reasons, 'price', label, true)?.label).toBe('Add "price"');
+  });
 
   it('offers the typed text, trimmed, when no option has those words', () => {
     expect(addOptionFor(reasons, '  Slow to reply ', label)).toEqual({

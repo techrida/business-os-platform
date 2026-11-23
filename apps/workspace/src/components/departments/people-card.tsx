@@ -21,7 +21,7 @@ import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Combobox } from '@/components/ui/combobox';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { Field, Input, Select } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { MultiSelect } from '@/components/ui/multi-select';
@@ -160,22 +160,22 @@ export function PeopleCard({
     .filter((person) => person.leaving === null)
     .map((person) => ({
       id: person.userId,
-      label: person.name,
+      name: person.name,
+      role: person.jobTitle.trim() || name,
       searchText: person.email ?? '',
-      ...(person.email !== null ? { description: person.email } : {}),
     }));
 
   const addOptions = staff
     .filter((candidate) => !listed.has(candidate.id))
     .map((candidate) => ({
       id: candidate.id,
-      label: candidate.name,
+      name: candidate.name,
+      // Where they are now, so a move is plain before it is chosen.
+      role:
+        candidate.department !== null && candidate.department.id !== detail.id
+          ? `Moves from ${candidate.department.name}`
+          : null,
       searchText: candidate.email ?? '',
-      ...(candidate.department !== null && candidate.department.id !== detail.id
-        ? { description: `Moves from ${candidate.department.name}` }
-        : candidate.email !== null
-          ? { description: candidate.email }
-          : {}),
     }));
 
   const emptyText = `No one is in ${name} yet. Add people to get started.`;
@@ -186,10 +186,10 @@ export function PeopleCard({
         {editable ? (
           <Field label="Department head" hint="The head sees all of this department's work.">
             {(control) => (
-              <Combobox
+              <MemberPicker
                 labelledBy={control['aria-labelledby']}
                 describedBy={control['aria-describedby']}
-                options={headOptions}
+                people={headOptions}
                 value={head?.userId ?? ''}
                 onChange={(id) => setStaged((current) => setHead(current, id === '' ? null : id))}
                 open={headOpen}
@@ -210,10 +210,10 @@ export function PeopleCard({
           {editable && (
             <Field label="Add people" hint="Someone in another department moves here.">
               {(control) => (
-                <Combobox
+                <MemberPicker
                   labelledBy={control['aria-labelledby']}
                   describedBy={control['aria-describedby']}
-                  options={addOptions}
+                  people={addOptions}
                   value=""
                   onChange={(id) => {
                     const candidate = staff.find((person) => person.id === id);
