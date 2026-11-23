@@ -1,0 +1,183 @@
+# Browser QA on GitHub-hosted runners: the whole stack (containers + compiled apps, devtools profile) is brought up
+# by .github/qa/up.sh, the dev personas are seeded, and the Playwright specs of apps/workspace and apps/portal run
+# against it. Videos, screenshots and the HTML report are uploaded as artifacts.
+# Standard runners only (free for public repositories): never switch `runs-on` to a larger runner, those are billed.
+name: qa
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec_filter:
+        description: 'Playwright file filter (a path or regex, empty = all), e.g. p4/list-filters'
+        required: false
+        default: ''
+  push:
+    branches: [main, p4-main]
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'infra/**'
+      - 'tools/seed-zitadel/**'
+      - '.github/qa/**'
+      - '.github/workflows/qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  workspace:
+    # Three shards of the specs that pass today, plus one non-blocking job for the specs in .github/qa/quarantine.txt
+    # (they fail on the current code for reasons that are not the stack: see that file's history and the QA report).
+    # 4 jobs per run, so with ci.yml (5) a push stays far below the 20 concurrent jobs of the free plan.
+    name: qa ${{ matrix.mode }} ${{ matrix.id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: ${{ matrix.mode == 'quarantined' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: specs, id: '1', shard: '1/3' }
+          - { mode: specs, id: '2', shard: '2/3' }
+          - { mode: specs, id: '3', shard: '3/3' }
+          - { mode: quarantined, id: '-', shard: '1/1' }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Bring up the stack and seed the dev personas
+        run: bash .github/qa/up.sh
+
+      - name: Install Chromium
+        run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
+
+      # A staff user gets its membership (and so appears in owner and approver pickers) on its first request. Many specs
+      # need the other personas to exist, and Playwright runs files alphabetically, so every persona signs in once first.
+      # The sign-ins are independent, so they run in parallel (each waits for a fresh TOTP window, 30 s).
+      - name: Playwright warm-up (every persona signs in and out once)
+        if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
+        env:
+          BOS_E2E_RECORD: '1'
+          BOS_E2E_BRANDED_LOGIN: '1'
+          BOS_E2E_REPORT_DIR: playwright-report-signin
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+        run: |
+          cd apps/workspace
+          pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --output=test-results-signin
+
+      # Memberships exist now: put those without a department into General (the SQL is idempotent; up.sh ran it once
+      # for the entity address, before any membership existed).
+      - name: Demo fixtures for the memberships the sign-ins created
+        run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
+
+      - name: Playwright (workspace, dev project)
+        if: ${{ matrix.mode == 'specs' }}
+        env:
+          BOS_E2E_RECORD: '1'
+          # The compiled devtools build carries the dev switcher and the dev shell, like `next dev`; the login is the Business OS image.
+          BOS_E2E_NEXT_DEV: '1'
+          BOS_E2E_BRANDED_LOGIN: '1'
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+          SPEC_FILTER: ${{ inputs.spec_filter }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          cd apps/workspace
+          skip="persona sign-in and sign-out|$(cat ../../.github/qa/quarantine.txt)"
+          # No quotes around the filter on purpose: an empty value must disappear, a value may hold two words.
+          # The persona sign-ins already ran in the warm-up step.
+          # shellcheck disable=SC2086
+          pnpm exec playwright test --project=dev --shard="$SHARD" --grep-invert "$skip" $SPEC_FILTER
+
+      - name: Playwright (quarantined specs, informational)
+        if: ${{ matrix.mode == 'quarantined' }}
+        env:
+          BOS_E2E_RECORD: '1'
+          BOS_E2E_NEXT_DEV: '1'
+          BOS_E2E_BRANDED_LOGIN: '1'
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+        run: |
+          cd apps/workspace
+          # A shorter test limit: these fail by timeout, and 4 minutes each would run the job for half an hour.
+          pnpm exec playwright test --project=dev --timeout=60000 --grep "$(cat ../../.github/qa/quarantine.txt)"
+
+      - name: Portal specs (they skip themselves without their fixtures)
+        if: ${{ !cancelled() && matrix.mode == 'specs' && matrix.id == '1' }}
+        env:
+          PORTAL_E2E_BASE_URL: https://portal.localhost
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+        run: pnpm --filter @bos/portal e2e
+
+      # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
+      - name: Remove any file that holds a persona password or TOTP secret
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          node -e "
+          const fs=require('fs');
+          const list=JSON.parse(fs.readFileSync('.dev/personas.json','utf8'));
+          const out=[]; for (const e of list) for (const k of ['password','totpSecret']) if (typeof e[k]==='string' && e[k].length>=8) out.push(e[k]);
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\\n')+'\\n');"
+          dirs=()
+          for d in apps/workspace/playwright-report apps/workspace/playwright-report-signin apps/workspace/test-results apps/workspace/test-results-signin apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
+          if [ "${#dirs[@]}" -gt 0 ]; then
+            grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}" > "$RUNNER_TEMP/leaks.txt" || true
+            if [ -s "$RUNNER_TEMP/leaks.txt" ]; then
+              echo "::warning::a seeded credential was found in these files; they are deleted and not uploaded:"
+              cat "$RUNNER_TEMP/leaks.txt"
+              xargs -d '\n' rm -f < "$RUNNER_TEMP/leaks.txt"
+            fi
+          fi
+          rm -f "$RUNNER_TEMP/needles.txt"
+
+      - name: Upload Playwright report, screenshots and videos
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-${{ matrix.mode }}-${{ matrix.id }}
+          path: |
+            apps/workspace/playwright-report
+            apps/workspace/playwright-report-signin
+            apps/workspace/test-results
+            apps/workspace/test-results-signin
+            apps/portal/test-results
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Directory diagnostics on failure (counts only)
+        if: ${{ failure() }}
+        run: |
+          q() { docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -P pager=off -c "$1" || true; }
+          q "select count(*) users from app.users"
+          q "select ue.level, ue.role_keys, (ue.department_id is not null) has_dept, count(*) from app.user_entities ue group by 1,2,3"
+          q "select status, count(*) from app.users group by 1"
+          q "select role_key, scope, count(*) from app.role_permissions where permission='approvals.requests.act' group by 1,2"
+          q "select ur.role_key, count(*) from app.user_roles ur group by 1 order by 1"
+
+      - name: Stack logs on failure (env files are never printed)
+        if: ${{ failure() }}
+        run: |
+          for f in .dev/logs/*.log .dev/compose-up.log; do echo "::group::$f"; tail -n 80 "$f" || true; echo "::endgroup::"; done
+          docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml ps -a || true

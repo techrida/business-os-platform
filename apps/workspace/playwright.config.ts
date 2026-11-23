@@ -60,11 +60,16 @@ const tlsOrigins = [
 ];
 const launchArgs = devCaLaunchArgs([...new Set(tlsOrigins)], caFile);
 
+// GitHub QA run (.github/workflows/qa.yml): keep a video of every test and an HTML report. Traces stay off, because
+// Playwright records fill() values and the persona passwords would end up in them. Videos mask password inputs;
+// the workflow scans the report for the seeded passwords before it uploads anything.
+const record = process.env.BOS_E2E_RECORD === '1';
+
 const common: NonNullable<PlaywrightTestConfig['use']> = {
   ...devices['Desktop Chrome'],
   ignoreHTTPSErrors: false,
   trace: 'off',
-  video: 'off',
+  video: record ? 'on' : 'off',
   screenshot: 'only-on-failure',
   launchOptions: { args: launchArgs },
 };
@@ -79,7 +84,15 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 15_000 },
   forbidOnly: !!process.env.CI,
-  reporter: [['list']],
+  reporter: record
+    ? [
+        ['list'],
+        [
+          'html',
+          { open: 'never', outputFolder: process.env.BOS_E2E_REPORT_DIR ?? 'playwright-report' },
+        ],
+      ]
+    : [['list']],
   outputDir: 'test-results',
 
   projects: [
