@@ -6,7 +6,7 @@
 # Stage 1 installs and builds inside the monorepo. Stage 2 copies only Next's traced output,
 # so the runtime image has no pnpm, no source and no dev dependencies.
 
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS build
+FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS build
 # Corepack is deprecated, so pnpm comes from npm. Keep the version equal to the root `packageManager`.
 RUN npm i -g pnpm@11.28.11
 WORKDIR /repo
@@ -29,7 +29,7 @@ RUN pnpm --filter "@bos/portal..." build
 RUN mkdir -p apps/portal/public
 
 
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS runtime
+FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS runtime
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \

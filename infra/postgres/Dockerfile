@@ -1,6 +1,6 @@
 # Postgres 16 + pgBackRest (from the PGDG apt repository that the official image already configures).
 # Build context is infra/postgres. U2 owns pgbackrest.conf (mounted at run time, not baked in).
-FROM postgres:16-bookworm@sha256:5264710be20f409750ac6dc4e5706dcef929c87e241605463f0f9aefa932a8d9
+FROM postgres:19-bookworm@sha256:f4859caf96de494e38efa69ed703b08a5bbd9605e152e604f2daec8841c87c41
 
 # Debian's own pgbackrest is old (2.44); PGDG carries 2.60. The glob pins the minor version.
 ARG PGBACKREST_VERSION=2.60
