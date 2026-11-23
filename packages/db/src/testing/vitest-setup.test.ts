@@ -22,3 +22,12 @@ describe('vitest setup: a database dropped under an idle pool', () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+describe('vitest setup: a lent-out client', () => {
+  it('does not fail the run for 57P01 on a client without an error listener', () => {
+    const client = new pg.Client();
+    expect(() =>
+      client.emit('error', Object.assign(new Error('terminating connection'), { code: '57P01' })),
+    ).not.toThrow();
+  });
+});
