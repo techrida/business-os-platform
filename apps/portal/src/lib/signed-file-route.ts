@@ -1,7 +1,8 @@
 import 'server-only';
 
-import { isQuotationClosed } from '@/components/portal/quotation-closed';
 import { ApiError } from '@/lib/api';
+import { DOCUMENT_STATE_HEADER, type DocumentState } from '@/lib/document-state';
+import { isQuotationClosed } from '@/lib/quotation-closed';
 import { getSession, type Session } from '@/lib/session';
 import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 
@@ -29,11 +30,13 @@ export interface SignedFileRouteOptions {
 }
 
 /** A file route is a page navigation, so a failure is plain text a person can read, not JSON. */
-function plain(message: string, status: number): Response {
-  return new Response(message, {
-    status,
-    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+function plain(message: string, status: number, state?: DocumentState): Response {
+  const headers = new Headers({
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-store',
   });
+  if (state !== undefined) headers.set(DOCUMENT_STATE_HEADER, state);
+  return new Response(message, { status, headers });
 }
 
 /** The download headers the API sets that are safe to pass on. */
@@ -124,9 +127,9 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
     return new Response(file.body, { status: 200, headers });
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
-    if (status === 404 || status === 403) return plain(opts.notFound, 404);
+    if (status === 404 || status === 403) return plain(opts.notFound, 404, 'not-found');
     if (stage === 'file' && (status === 401 || status === 410))
-      return plain(LINK_EXPIRED_MESSAGE, 410);
+      return plain(LINK_EXPIRED_MESSAGE, 410, 'expired');
     if (status === 401) return plain(opts.signIn, 401);
     if (status === 503) {
       const response = plain('This is busy right now. Please try again in a moment.', 503);
@@ -134,7 +137,9 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
       return response;
     }
     // The company closed the quotation (a Lost deal): not a wait, so no "try again" (R6D).
-    if (status === 409 && isQuotationClosed(err)) return plain(QUOTATION_CLOSED_MESSAGE, 410);
+    if (status === 409 && isQuotationClosed(err)) {
+      return plain(QUOTATION_CLOSED_MESSAGE, 410, 'closed');
+    }
     if (status === 409 || status === 410) {
       return plain(
         'This PDF is not available to download yet. Please try again in a few minutes.',
@@ -143,6 +148,6 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
     }
     // Only the customer document routes have the failed-PDF state; vendor PO routes are unchanged.
     if (status === 424 && opts.orgKind === 'customer') return plain(DELAYED_MESSAGE, 424);
-    return plain('We could not fetch the PDF just now. Please try again.', 502);
+    return plain('We could not fetch the PDF just now. Please try again.', 502, 'error');
   }
 }

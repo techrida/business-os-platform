@@ -40,6 +40,11 @@ export interface InvitePlacement {
 // DepartmentsAdminService, AccessSettingsService, UserMirror.apply and UserLocks.whileLockHeld.
 const AFTER_ACCESS_LOCK: TxOptions = { audit: 'lazy' };
 
+/** The flag's audit row is written just after the flag; this much earlier still reaches it (clock skew). */
+const FLAG_AUDIT_SKEW_MS = 60_000;
+/** At most this many 500-row pages of audit rows are read for the flag reasons; past it the rest show no reason. */
+const FLAG_REASON_MAX_PAGES = 20;
+
 @Injectable()
 export class UsersService extends UserDirectory {
   private readonly logger = new Logger(UsersService.name);
@@ -82,21 +87,58 @@ export class UsersService extends UserDirectory {
 
   /**
    * Staff users flagged for identity review, with why: the reason on the newest `identity.review_required` audit row
-   * of each person. A person whose audit row was never written (it is recorded in its own transaction) has no reason.
+   * of each person, read tenant-wide (a flag raised in another entity still shows its reason). One forward read of the
+   * tenant's `users` audit rows since the oldest flag serves everyone, not one read per person. A person whose audit
+   * row was never written (it is recorded in its own transaction), or a read that fails, has no reason: the list
+   * itself never fails because of it.
    */
   async listFlagged(scope: TxScope): Promise<FlaggedUser[]> {
     const flagged = await this.store.listFlagged(scope);
-    return Promise.all(
-      flagged.map(async (user) => {
-        const events = await this.audit.list(scope, {
-          entityType: 'users',
-          entityId: user.id,
-          order: 'desc',
-          limit: 50,
-        });
-        const reason = events.find((e) => e.action === IDENTITY_REVIEW_REQUIRED)?.meta;
-        const text = (reason as { reason?: unknown } | null | undefined)?.reason;
-        return { ...user, reason: typeof text === 'string' ? text : null };
+    if (flagged.length === 0) return [];
+    const reasons = await this.flagReasons(scope, flagged).catch((error: unknown) => {
+      this.logger.warn(`Could not read flag reasons (kind=${(error as Error)?.name ?? 'unknown'})`);
+      return new Map<string, string>();
+    });
+    return flagged.map((user) => ({ ...user, reason: reasons.get(user.id) ?? null }));
+  }
+
+  private async flagReasons(
+    scope: TxScope,
+    flagged: readonly { id: string; flaggedAt: string | null }[],
+  ): Promise<Map<string, string>> {
+    const wanted = new Set(flagged.map((u) => u.id.toLowerCase()));
+    const times = flagged.map((u) => (u.flaggedAt ? Date.parse(u.flaggedAt) : Number.NaN));
+    // A row flagged before the time was kept reads the whole history (bounded by the page cap below).
+    const from = times.some(Number.isNaN)
+      ? undefined
+      : new Date(Math.min(...times) - FLAG_AUDIT_SKEW_MS);
+    const reasons = new Map<string, string>();
+    let afterId: string | undefined;
+    for (let page = 0; page < FLAG_REASON_MAX_PAGES; page += 1) {
+      const events = await this.audit.list(scope, {
+        entityType: 'users',
+        tenantWide: true,
+        order: 'asc',
+        from,
+        afterId,
+        limit: 500,
+      });
+      for (const e of events) {
+        if (e.action !== IDENTITY_REVIEW_REQUIRED || !wanted.has(e.entityId.toLowerCase()))
+          continue;
+        const text = (e.meta as { reason?: unknown } | null | undefined)?.reason;
+        // Ascending, so a later row overwrites an earlier one: the newest flag's reason wins.
+        if (typeof text === 'string') reasons.set(e.entityId.toLowerCase(), text);
+        else reasons.delete(e.entityId.toLowerCase());
+      }
+      const last = events.at(-1);
+      if (events.length < 500 || last === undefined) break;
+      afterId = last.id;
+    }
+    return new Map(
+      flagged.flatMap((u) => {
+        const r = reasons.get(u.id.toLowerCase());
+        return r === undefined ? [] : [[u.id, r] as const];
       }),
     );
   }
