@@ -56,7 +56,9 @@ it('opens a profile picture dialog for that user, refreshes the page on a change
       imageDocumentId={PICTURE}
     />,
   );
-  expect(trigger()?.getAttribute('title')).toBe('Change Asha picture');
+  expect(trigger()?.getAttribute('aria-label')).toBe('Change Asha picture');
+  // The hint is the design-system Tooltip, not the browser's native title bubble.
+  expect(trigger()?.hasAttribute('title')).toBe(false);
   expect(upload.props).toBeNull();
 
   await click(trigger());

@@ -58,19 +58,3 @@
   display: grid;
   gap: 16px;
 }
-
-/* Record promise shown but off, with the reason under it. */
-.blocked {
-  display: grid;
-  gap: 4px;
-  max-width: 36ch;
-  justify-items: start;
-}
-
-.blockedReason {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
-}

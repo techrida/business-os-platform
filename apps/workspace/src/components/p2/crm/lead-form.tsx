@@ -18,9 +18,9 @@ import {
 } from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
+import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
-import { CountrySelect } from '@/components/ui/country-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { MemberPicker } from '@/components/ui/member-picker';
@@ -52,6 +52,9 @@ const EMPTY: Record<string, string> = {
   companyName: '',
   contactName: '',
   email: '',
+  // The optional address (D9); its country is the lead's country, held in its own state.
+  addressLine: '',
+  addressCity: '',
   requirement: '',
   expectedValue: '',
   currency: 'NPR',
@@ -394,9 +397,6 @@ export function LeadForm({
                 />
               )}
             </Field>
-            <Field label="Country" error={err['country']}>
-              {(c) => <CountrySelect name="country" value={country} onChange={setCountry} {...c} />}
-            </Field>
             <Field label="Email" hint="Optional." error={err['email']}>
               {(c) => (
                 <Input
@@ -410,6 +410,26 @@ export function LeadForm({
               )}
             </Field>
           </div>
+
+          {/* The lead's Country is the address's country, so the two sit together; the address itself is optional. */}
+          <AddressFields
+            name="address"
+            value={{
+              line: values['addressLine'] ?? '',
+              city: values['addressCity'] ?? '',
+              country,
+            }}
+            onChange={(next) => {
+              update('addressLine', next.line);
+              update('addressCity', next.city);
+              setCountry(next.country);
+            }}
+            errors={{
+              line: err['address.line'],
+              city: err['address.city'],
+              country: err['country'],
+            }}
+          />
 
           <Field label="Phone" hint="Optional. Pick each number's country, or type + and its code.">
             {(c) => (
