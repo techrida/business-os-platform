@@ -10,11 +10,24 @@
 
 /* A table wider than its card scrolls inside the card. Overlay scrollbars hide until touched, so a
    clipped last column (a Score, an Action) gave no sign that there was more. A styled scrollbar is
-   always drawn, which shows the table can be scrolled. The standard properties are used: Chrome
-   ignores the old WebKit scrollbar pseudo-elements once the global skin sets scrollbar-color. */
+   always drawn, which shows the table can be scrolled. The WebKit pseudo-elements only apply while
+   the standard scrollbar properties are `auto`, so this wrapper resets the global thin skin. */
 .wrap {
   scrollbar-width: auto;
-  scrollbar-color: var(--border-strong) var(--surface-muted);
+  scrollbar-color: auto;
+}
+
+.wrap::-webkit-scrollbar {
+  height: 10px;
+}
+
+.wrap::-webkit-scrollbar-track {
+  background: var(--surface-muted);
+}
+
+.wrap::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-md);
+  background: var(--border-strong);
 }
 
 .table {
