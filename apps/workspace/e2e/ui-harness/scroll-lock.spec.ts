@@ -117,7 +117,7 @@ for (const viewport of viewports) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto(origin);
       await page.getByTestId('page-controls').scrollIntoViewIfNeeded();
-      await page.evaluate(() => window.scrollBy(0, 300));
+      await page.evaluate(() => window.scrollBy(0, 100));
       if (control.scope === 'dialog') {
         await page.getByRole('button', { name: 'Open dialog' }).click();
         await expect(page.getByRole('dialog')).toBeVisible();
@@ -177,3 +177,20 @@ test('the page stays locked behind a dialog while a Select is open', async ({ pa
   await page.mouse.wheel(0, 300);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(before.scrollY);
 });
+
+for (const scope of ['page', 'dialog'] as const) {
+  test(`a Tooltip ${scope === 'dialog' ? 'in a dialog' : 'on the page'} leaves the shell where it was`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(origin);
+    await page.getByTestId('page-controls').scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, 100));
+    if (scope === 'dialog') await page.getByRole('button', { name: 'Open dialog' }).click();
+    await page.waitForTimeout(300);
+    const before = await frame(page);
+    await page.getByRole('button', { name: new RegExp(`${scope} tip`, 'i') }).hover();
+    await expect(page.getByRole('tooltip').first()).toBeVisible();
+    expect(await frame(page)).toEqual(before);
+  });
+}
