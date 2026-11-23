@@ -91,6 +91,8 @@ export function ContactPicker({
         showDescriptionWhenClosed
         searchIcon
         keepOrder
+        // A list of any length is one flat list: its options carry no group, so a header would only say "Unassigned".
+        groupThreshold={Number.POSITIVE_INFINITY}
         noMatchText={create ? 'No matching contact.' : 'No matching contact for this customer.'}
         emptyText={create ? 'Type a name to add a contact.' : 'This customer has no contacts.'}
         {...(create

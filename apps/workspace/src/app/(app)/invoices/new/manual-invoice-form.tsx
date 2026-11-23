@@ -220,6 +220,8 @@ export function ManualInvoiceForm({
                 invalid={control['aria-invalid'] === true}
                 name="customerId"
                 searchIcon
+                // Customers carry no group: a long list stays flat instead of showing an "Unassigned" header.
+                groupThreshold={Number.POSITIVE_INFINITY}
                 options={customerOptions}
                 value={customerId}
                 onChange={choose}

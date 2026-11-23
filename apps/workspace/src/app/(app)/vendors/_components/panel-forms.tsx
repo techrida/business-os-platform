@@ -822,6 +822,8 @@ export function PortalForm({
             invalid={c['aria-invalid'] === true}
             searchIcon
             keepOrder
+            // Contacts have no group: a long list stays flat instead of showing an "Unassigned" header.
+            groupThreshold={Number.POSITIVE_INFINITY}
             options={options}
             value={choice}
             onChange={setChoice}
