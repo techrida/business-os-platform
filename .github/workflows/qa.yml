@@ -149,6 +149,8 @@ jobs:
           q "select count(*) users from app.users"
           q "select ue.level, ue.role_keys, (ue.department_id is not null) has_dept, count(*) from app.user_entities ue group by 1,2,3"
           q "select status, count(*) from app.users group by 1"
+          q "select role_key, scope, count(*) from app.role_permissions where permission='approvals.requests.act' group by 1,2"
+          q "select ur.role_key, count(*) from app.user_roles ur group by 1 order by 1"
 
       - name: Stack logs on failure (env files are never printed)
         if: ${{ failure() }}
