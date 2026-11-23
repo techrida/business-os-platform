@@ -80,6 +80,8 @@ export interface MemberPickerProps {
   invalid?: boolean;
   disabled?: boolean;
   onBlurEmpty?: () => void;
+  /** The person an empty value stands for (a default applied elsewhere): shown while nothing is chosen. */
+  emptyStandsFor?: string | undefined;
   inputRef?: Ref<HTMLInputElement>;
   className?: string;
 }
@@ -103,6 +105,7 @@ export function MemberPicker({
   invalid,
   disabled,
   onBlurEmpty,
+  emptyStandsFor,
   inputRef,
   className,
 }: MemberPickerProps) {
@@ -146,6 +149,7 @@ export function MemberPicker({
       {...(required ? { required } : {})}
       {...(invalid ? { invalid } : {})}
       {...(disabled ? { disabled } : {})}
+      {...(emptyStandsFor ? { emptyStandsFor } : {})}
       {...(onBlurEmpty ? { onBlurEmpty } : {})}
       {...(inputRef ? { inputRef } : {})}
       {...(className ? { className } : {})}
