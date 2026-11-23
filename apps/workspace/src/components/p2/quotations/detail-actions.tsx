@@ -162,6 +162,7 @@ export function DetailActions({
         <CancelDialog
           {...ids}
           awaitingApproval={status === 'submitted'}
+          isRevision={(current.supersedesVersionId ?? null) !== null}
           idempotencyKey={randomUUID()}
         />
       ) : null}
