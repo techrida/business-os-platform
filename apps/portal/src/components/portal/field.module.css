@@ -14,6 +14,7 @@
 .labelRow {
   display: flex;
   align-items: baseline;
+  min-height: var(--line-height-body-small);
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
@@ -27,13 +28,17 @@
   line-height: var(--line-height-caption);
 }
 
+.message,
 .hint {
+  /* The reserved message line (UIP-FORM-010): one line high even when empty. */
+  min-height: var(--line-height-caption);
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
 }
 
 .error {
+  min-height: var(--line-height-caption);
   color: var(--status-error);
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);

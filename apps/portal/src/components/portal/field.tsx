@@ -1,5 +1,6 @@
 import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
 
+import { FieldScope } from './field-scope';
 import styles from './field.module.css';
 
 /** What `Field` hands to its control so the label, hint and error are all wired up. */
@@ -48,8 +49,11 @@ export function Field({
   const labelId = `${base}-label`;
   const hintId = `${base}-hint`;
   const errorId = `${base}-error`;
-  const describedBy =
-    [hint ? hintId : undefined, error ? errorId : undefined].filter(Boolean).join(' ') || undefined;
+  // One reserved message line (UIP-FORM-010): an error replaces the hint, so it is that one element's id.
+  const optionalId = `${base}-optional`;
+  const describedBy = [optional ? optionalId : undefined, error ? errorId : hintId]
+    .filter(Boolean)
+    .join(' ');
   const cls = [styles.field, className].filter(Boolean).join(' ');
   return (
     <div className={cls}>
@@ -57,24 +61,20 @@ export function Field({
         <label id={labelId} htmlFor={base} className={styles.label}>
           {label}
         </label>
-        {optional ? <span className={styles.optional}>Optional</span> : null}
+        {optional ? (
+          <span id={optionalId} className={styles.optional}>
+            Optional
+          </span>
+        ) : null}
       </div>
-      {hint ? (
-        <span id={hintId} className={styles.hint}>
-          {hint}
-        </span>
-      ) : null}
-      {children({
-        id: base,
-        'aria-describedby': describedBy,
-        'aria-invalid': error ? true : undefined,
-        'aria-labelledby': labelId,
-      })}
-      {error ? (
-        <span id={errorId} className={styles.error}>
-          {error}
-        </span>
-      ) : null}
+      <FieldScope hint={hint} error={error} hintId={hintId} errorId={errorId}>
+        {children({
+          id: base,
+          'aria-describedby': describedBy,
+          'aria-invalid': error ? true : undefined,
+          'aria-labelledby': labelId,
+        })}
+      </FieldScope>
     </div>
   );
 }
