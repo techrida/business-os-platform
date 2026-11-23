@@ -81,6 +81,7 @@ let app: INestApplication;
 let baseUrl: string;
 let storageRoot: string;
 let documents: DocumentsService;
+let verificationService: VerificationService;
 let scope: { tenantId: string; organizationId: string };
 let staffIdpOrgId: string;
 /** A second tenant: its cases must be invisible to the first. */
@@ -174,6 +175,7 @@ beforeAll(async () => {
     new AuditService(db),
     caller,
   );
+  verificationService = service;
   // onModuleInit (the owner policy of the case's documents) runs when the Nest app below starts.
   const moduleRef = await Test.createTestingModule({
     controllers: [VerificationController],
@@ -1683,5 +1685,189 @@ describe('the own-scope case list is scoped in SQL, before its limit (audit #9)'
     // At least the 501 bulk cases (earlier tests in this file also gave Sales B a few of their own).
     expect(Number(resB.headers['x-total-count'])).toBeGreaterThanOrEqual(501);
     expect(theirs.map((c) => c.id)).not.toContain(mine.id);
+  });
+});
+
+describe('R6AE: a customer identity edit locks after approval and resets the review before it', () => {
+  const customersService = () =>
+    new CustomersService(
+      db,
+      new NumberingService(),
+      authz as unknown as AuthzService,
+      caller,
+      new AuditService(db),
+      () => clock,
+      verificationService,
+    );
+  const customerVersion = async (id: string) =>
+    (
+      await ownerPool.query<{ version: number }>(
+        'SELECT version FROM app.customers WHERE id = $1',
+        [id],
+      )
+    ).rows[0]!.version;
+  const getCase = async (id: string) =>
+    VerificationCaseDtoSchema.parse((await api().get(`/v1/verification-cases/${id}`)).body);
+  const resetAudit = async (partyId: string) =>
+    (
+      await ownerPool.query<{ before: Record<string, unknown>; after: Record<string, unknown> }>(
+        `SELECT before, after FROM audit.audit_events
+          WHERE entity_id = $1 AND action = 'customer.verification_reset' ORDER BY id`,
+        [partyId],
+      )
+    ).rows;
+  const approvedCase = async () => {
+    const partyId = await newCustomer();
+    const submitted = await fillRequired(await openCase(partyId)).then((c) => submitCase(c.id));
+    as(U.pmo, 'pmo');
+    const reviewed = await reviewAll(VerificationCaseDtoSchema.parse(submitted.body));
+    const done = await decide(reviewed.id, {
+      decision: 'approve',
+      comment: 'Checked every document',
+      expectedVersion: reviewed.version,
+    });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    as(U.founder, 'founder');
+    return { partyId, caseId: reviewed.id };
+  };
+
+  it('refuses a change of the legal name, PAN or country of a verified customer with customer_identity_locked', async () => {
+    const { partyId, caseId } = await approvedCase();
+    const version = await customerVersion(partyId);
+    const attempts: Parameters<CustomersService['update']>[2][] = [
+      { legalName: 'Renamed Ltd' },
+      { panVatNo: '123456789' },
+      { country: 'IN' },
+    ];
+    for (const fields of attempts) {
+      const err = await customersService()
+        .update(partyId, version, fields)
+        .then(
+          () => undefined,
+          (e: unknown) => e as ConflictException,
+        );
+      expect(err, JSON.stringify(fields)).toBeInstanceOf(ConflictException);
+      const response = err!.getResponse() as { code: string; message: string };
+      expect(response.code).toBe('customer_identity_locked');
+      expect(response.message).toMatch(/of a verified customer cannot be edited$/);
+    }
+    expect((await getCase(caseId)).status).toBe('approved');
+    expect(await customerVersion(partyId)).toBe(version);
+    // What is not identity still saves, and the same name sent again is not a change.
+    const same = await customersService().update(partyId, version, {
+      legalName: 'Acme Pvt. Ltd.',
+      industry: 'Retail',
+    });
+    expect(same.industry).toBe('Retail');
+    expect((await getCase(caseId)).status).toBe('approved');
+  });
+
+  it('resets a submitted case to an empty draft in a new review round when the identity changes', async () => {
+    const partyId = await newCustomer();
+    const filled = await fillRequired(await openCase(partyId));
+    const submitted = VerificationCaseDtoSchema.parse((await submitCase(filled.id)).body);
+    const oldDocs = submitted.checklist.flatMap((i) => i.documentId ?? []);
+    expect(oldDocs).toHaveLength(3);
+    const before = await customerVersion(partyId);
+    const founder = await customersService().update(partyId, before, { legalName: 'Renamed Ltd' });
+    expect(founder.legalName).toBe('Renamed Ltd');
+    const c = await getCase(filled.id);
+    expect(c.status).toBe('draft');
+    expect(c.checklist.every((i) => i.status === 'missing' && i.documentId === null)).toBe(true);
+    expect(c.reviewRound).toBe((submitted.reviewRound ?? 0) + 1);
+    expect(c.identityReset?.by).toBe(U.founder);
+    expect(typeof c.identityReset?.byName).toBe('string');
+    expect([...(c.beforeChangeDocumentIds ?? [])].sort()).toEqual([...oldDocs].sort());
+    // The files stay on the case as history.
+    expect(c.looseEvidence?.map((v) => v.documentId).sort()).toEqual([...oldDocs].sort());
+    const [audit] = await resetAudit(partyId);
+    expect(audit?.before).toMatchObject({ legalName: 'Acme Pvt. Ltd.', country: 'NP' });
+    expect(audit?.after).toMatchObject({ legalName: 'Renamed Ltd', country: 'NP' });
+    // Submitting again needs every required document again.
+    expect((await submitCase(filled.id)).status).toBe(409);
+  });
+
+  it('refuses a file from before the change on the checklist, and takes a new one', async () => {
+    const partyId = await newCustomer();
+    const filled = await fillRequired(await openCase(partyId));
+    const oldDoc = filled.checklist.find((i) => i.key === 'registration_certificate')!.documentId!;
+    await customersService().update(partyId, await customerVersion(partyId), {
+      panVatNo: '123456789',
+    });
+    const reset = await getCase(filled.id);
+    const reuse = await putDocument(filled.id, 'registration_certificate', oldDoc, reset.version);
+    expect(reuse.status, JSON.stringify(reuse.body)).toBe(409);
+    expect(ErrorBodySchema.parse(reuse.body).error.message).toMatch(/before the details changed/);
+    const fresh = await attach(filled.id, 'clean');
+    const ok = await putDocument(
+      filled.id,
+      'registration_certificate',
+      fresh.documentId,
+      reset.version,
+    );
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const after = await getCase(filled.id);
+    expect(after.beforeChangeDocumentIds).not.toContain(fresh.documentId);
+    expect(after.beforeChangeDocumentIds).toContain(oldDoc);
+  });
+
+  it('writes nothing when the PATCH repeats the stored values, and leaves a draft with no file alone', async () => {
+    const partyId = await newCustomer();
+    const empty = await openCase(partyId);
+    const version = await customerVersion(partyId);
+    const same = await customersService().update(partyId, version, {
+      legalName: 'Acme Pvt. Ltd.',
+      country: 'NP',
+    });
+    expect(same.version).toBe(version);
+    expect(await customerVersion(partyId)).toBe(version);
+    // An identity change with nothing on the case resets nothing and writes no reset audit.
+    await customersService().update(partyId, version, { legalName: 'Another Name Ltd' });
+    const c = await getCase(empty.id);
+    expect(c.version).toBe(empty.version);
+    expect(c.identityReset ?? null).toBeNull();
+    expect(await resetAudit(partyId)).toHaveLength(0);
+  });
+
+  it('stamps a draft that holds only an unattached file, and keeps that file as undeletable history', async () => {
+    const partyId = await newCustomer();
+    const draft = await openCase(partyId);
+    const loose = await attach(draft.id, 'clean');
+    await customersService().update(partyId, await customerVersion(partyId), {
+      legalName: 'Third Name Ltd',
+    });
+    const c = await getCase(draft.id);
+    expect(c.identityReset).not.toBeNull();
+    expect(c.beforeChangeDocumentIds).toContain(loose.documentId);
+    const reuse = await putDocument(
+      draft.id,
+      'registration_certificate',
+      loose.documentId,
+      c.version,
+    );
+    expect(reuse.status).toBe(409);
+    const del = await api().delete(
+      `/v1/verification-cases/${draft.id}/loose-documents/${loose.documentId}`,
+    );
+    expect(del.status, JSON.stringify(del.body)).toBe(409);
+  });
+
+  it('shows the reset only to the tenant that owns the case', async () => {
+    const partyId = await newCustomer();
+    const filled = await fillRequired(await openCase(partyId));
+    await customersService().update(partyId, await customerVersion(partyId), {
+      legalName: 'X Ltd',
+    });
+    expect((await getCase(filled.id)).identityReset).not.toBeNull();
+    const other = await newCustomer(scope2);
+    const foreignId = randomUUID();
+    await withTx(db, scope2, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`INSERT INTO app.verification_cases (id, tenant_id, party_id, party_kind, status, checklist, review_policy)
+            VALUES (${foreignId}, ${scope2.tenantId}, ${other}, 'customer', 'draft', '[]'::jsonb, 'document_review_v1')`,
+      ),
+    );
+    const res = await api().get(`/v1/verification-cases/${foreignId}`);
+    expect(res.status).toBe(404);
   });
 });

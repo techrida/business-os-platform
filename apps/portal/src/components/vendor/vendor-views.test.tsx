@@ -41,6 +41,17 @@ describe('fixtures', () => {
 });
 
 describe('OnboardingView', () => {
+  it('tells the vendor when its details changed, by whom, and to upload the documents again', () => {
+    const view = sampleOnboarding({
+      detailsChanged: { at: '2026-11-23T18:30:00.000Z', by: 'Sita Founder' },
+    });
+    const t = text(renderToStaticMarkup(<OnboardingView view={view} />));
+    // 18:30 UTC is already 24 November in Kathmandu (UTC+5:45).
+    expect(t).toMatch(/Details changed on .*24.* by Sita Founder; upload the documents again\./);
+    const quiet = text(renderToStaticMarkup(<OnboardingView view={sampleOnboarding()} />));
+    expect(quiet).not.toContain('Details changed');
+  });
+
   it('shows the status and every checklist item with its own state', () => {
     const html = renderToStaticMarkup(<OnboardingView view={sampleOnboarding()} />);
     const t = text(html);

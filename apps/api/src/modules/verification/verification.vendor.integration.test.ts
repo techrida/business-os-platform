@@ -573,8 +573,9 @@ describe('a vendor case, once the vendor adapter is registered', () => {
     const asSubmitter = VerificationCaseDtoSchema.parse(mine.body);
     expect(asSubmitter.can?.review).toBe(false);
     expect(asSubmitter.reviewBlockedReason).toBe('The submitter cannot review this case.');
-    // The vendor case gains only the blocked reason: none of the customer review fields ride along.
-    for (const key of ['reviewerNames', 'looseEvidence', 'approvalBlockedReason']) {
+    // The vendor case gains the blocked reason and its earlier files (R6AE): none of the customer review fields ride along.
+    expect(mine.body).toHaveProperty('looseEvidence');
+    for (const key of ['reviewerNames', 'approvalBlockedReason']) {
       expect(mine.body).not.toHaveProperty(key);
     }
 
