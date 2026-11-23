@@ -19,9 +19,12 @@ CREATE TABLE "app"."logo_image_stats" (
 	"luminance" real NOT NULL,
 	"has_transparency" boolean NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "logo_image_stats_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "app"."tenants"("id"),
 	CONSTRAINT "logo_image_stats_pk" PRIMARY KEY ("tenant_id", "organization_id", "document_id"),
 	CONSTRAINT "logo_image_stats_tenant_org_fk" FOREIGN KEY ("tenant_id", "organization_id") REFERENCES "app"."organizations"("tenant_id", "id"),
 	CONSTRAINT "logo_image_stats_document_fk" FOREIGN KEY ("tenant_id", "organization_id", "document_id") REFERENCES "app"."documents"("tenant_id", "organization_id", "id"),
 	CONSTRAINT "logo_image_stats_variant_check" CHECK ("variant" IN ('primary', 'on_dark', 'on_light')),
 	CONSTRAINT "logo_image_stats_luminance_check" CHECK ("luminance" >= 0 AND "luminance" <= 1)
 );
+--> statement-breakpoint
+SELECT audit.attach('app.logo_image_stats');

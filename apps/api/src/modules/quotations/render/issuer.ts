@@ -107,9 +107,9 @@ async function resolveSnapshotLogo(
   profile: CompanyProfile,
   resolveLogo: DocumentLogoResolver,
   backgroundColour: string,
-): Promise<string | null> {
+): Promise<{ logo: string | null; chosenFor: string | null }> {
   const legacy = profile.legacyLogoDataUrl ?? null;
-  if (profile.logoDocumentId === null) return legacy;
+  if (profile.logoDocumentId === null) return { logo: legacy, chosenFor: null };
   let resolved: string | null;
   try {
     resolved = await resolveLogo(profile.logoDocumentId, {
@@ -120,7 +120,10 @@ async function resolveSnapshotLogo(
   } catch {
     throw new DocumentLogoUnavailableError();
   }
-  return resolved ?? legacy;
+  // Only a logo that came from the uploaded document was chosen for the background; a legacy one was not.
+  return resolved === null
+    ? { logo: legacy, chosenFor: null }
+    : { logo: resolved, chosenFor: backgroundColour };
 }
 
 /**
@@ -150,7 +153,7 @@ export async function buildDocumentStyleSnapshot(
   // The logo is chosen for the colour the style's layout prints it on, then frozen as bytes. A style that does not
   // validate is refused below, with the whole snapshot; until then the default layout's colour stands in.
   const parsedStyle = DocumentStyleSchema.safeParse(style);
-  const logo = await resolveSnapshotLogo(
+  const { logo, chosenFor } = await resolveSnapshotLogo(
     rawProfile.data,
     resolveLogo,
     logoBackgroundHex(parsedStyle.success ? parsedStyle.data : DEFAULT_DOCUMENT_STYLE),
@@ -166,6 +169,7 @@ export async function buildDocumentStyleSnapshot(
     ),
     numberSystems,
     dateFormat,
+    ...(chosenFor === null ? {} : { logoForBackground: chosenFor }),
     capturedAt: capturedAt.toISOString(),
   });
   if (!parsed.success) throw new DocumentStyleInvalidError();

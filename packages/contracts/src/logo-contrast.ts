@@ -1,7 +1,9 @@
 // Which logo to print on which background (R6AC). A company may upload a primary logo and, optionally, one for dark
 // backgrounds (the "reversed" or light version) and one for light backgrounds (the dark version). The primary is used
 // unless it would be hard to see on the background it lands on; then the variant made for that background; then, for
-// a logo with transparency, a one-colour (white or black) copy of the primary; and last the primary on a white plate.
+// a logo with transparency, a one-colour (white or black) copy of the primary; and last, on a dark background only,
+// the primary on a white plate. On a light background a logo is never recoloured or plated unless it is nearly
+// invisible (below 1.5:1): a mid-tone brand colour or a white-backed JPEG on white paper prints as it was uploaded.
 //
 // The test is WCAG 2.2 success criterion 1.4.11 (Non-text Contrast): a graphical object needs a contrast ratio of at
 // least 3:1 against its adjacent colours. The ratio is (L1 + 0.05) / (L2 + 0.05) on relative luminance (WCAG 2.2
@@ -14,6 +16,9 @@ import { z } from 'zod';
 
 /** The contrast ratio a logo needs against its background (WCAG 1.4.11, non-text contrast). */
 export const MIN_LOGO_CONTRAST = 3;
+
+/** On a light background a logo is replaced by a generated copy only below this ratio (nearly invisible). */
+export const NEARLY_INVISIBLE_CONTRAST = 1.5;
 
 /** WCAG relative luminance of one sRGB channel (0..255) as a linear value. */
 export function linearChannel(value: number): number {
@@ -68,7 +73,7 @@ export type LogoChoice =
   | { use: 'forLight' }
   /** A one-colour copy of the primary: white on a dark background, black on a light one. Needs transparency. */
   | { use: 'mono'; colour: 'white' | 'black' }
-  /** Nothing reaches 3:1 and the primary is opaque: print the primary on a white plate. */
+  /** On a dark background nothing reaches 3:1 and the primary is opaque: print it on a white plate. */
   | { use: 'plate' };
 
 const reaches = (logo: LogoStats, background: number): boolean =>
@@ -77,7 +82,7 @@ const reaches = (logo: LogoStats, background: number): boolean =>
 /**
  * The logo for a background. The primary when it reaches 3:1; else the variant made for this background kind when it
  * reaches 3:1 itself; else a white or black copy of the primary when the primary has transparency; else the plate.
- * An upload that is the wrong way round (a light logo in the "for light backgrounds" slot) never wins: it is
+ * On a light background the primary is kept unless it is nearly invisible. An upload that is the wrong way round (a light logo in the "for light backgrounds" slot) never wins: it is
  * checked against the background like any other.
  */
 export function chooseLogo(set: LogoSet, backgroundLuminance: number): LogoChoice {
@@ -87,8 +92,12 @@ export function chooseLogo(set: LogoSet, backgroundLuminance: number): LogoChoic
   if (variant !== null && reaches(variant, backgroundLuminance)) {
     return { use: kind === 'dark' ? 'forDark' : 'forLight' };
   }
-  if (set.primary.hasTransparency) {
-    return { use: 'mono', colour: kind === 'dark' ? 'white' : 'black' };
+  if (kind === 'light') {
+    const invisible =
+      luminanceContrast(set.primary.luminance, backgroundLuminance) < NEARLY_INVISIBLE_CONTRAST;
+    return invisible && set.primary.hasTransparency
+      ? { use: 'mono', colour: 'black' }
+      : { use: 'primary' };
   }
-  return { use: 'plate' };
+  return set.primary.hasTransparency ? { use: 'mono', colour: 'white' } : { use: 'plate' };
 }

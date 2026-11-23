@@ -339,6 +339,12 @@ export const DocumentStyleSnapshotSchema = z
     numberSystems: NumberSystemsSchema.optional(),
     /** Absent on snapshots taken before the date format existed: they print the default. */
     dateFormat: DateFormatSchema.optional(),
+    /**
+     * The colour the frozen logo was chosen against (R6AC), set when the logo came from an uploaded document. A
+     * snapshot without it (an older one, a legacy logo) was not chosen for any background, so the banded layout keeps
+     * the white plate behind it.
+     */
+    logoForBackground: HexColourSchema.optional(),
     capturedAt: z.iso.datetime(),
   })
   .refine((v) => v.numberSystem !== undefined || v.numberSystems !== undefined, {

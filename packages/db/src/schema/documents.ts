@@ -211,6 +211,11 @@ export const logoImageStats = appSchema.table(
       columns: [t.tenantId, t.organizationId, t.documentId],
     }),
     foreignKey({
+      name: 'logo_image_stats_tenant_id_tenants_id_fk',
+      columns: [t.tenantId],
+      foreignColumns: [tenants.id],
+    }),
+    foreignKey({
       name: 'logo_image_stats_tenant_org_fk',
       columns: [t.tenantId, t.organizationId],
       foreignColumns: [organizations.tenantId, organizations.id],

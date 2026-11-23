@@ -31,6 +31,7 @@
 // worker can both import it: DocumentsModule (API only) does not export its storage adapter, and the worker has no
 // AppConfig. The adapter is stateless, so a second instance on the same root is harmless.
 import {
+  backgroundKind,
   chooseLogo,
   IMAGE_MIME,
   LogoDataUrlSchema,
@@ -245,9 +246,10 @@ export class DocumentLogoResolverFactory {
     documentId: string,
     loaded: LoadedLogo,
   ): Promise<LogoStats | null> {
-    const stored = (await this.statsLookup?.(scope, documentId)) ?? null;
-    if (stored !== null) return stored;
     try {
+      // The recorded numbers are a cache: a failed read measures the bytes instead of failing the render.
+      const stored = (await this.statsLookup?.(scope, documentId)) ?? null;
+      if (stored !== null) return stored;
       return await measureLogo(loaded.bytes);
     } catch {
       this.logger.warn(`document logo could not be measured: document=${documentId}`);
@@ -271,22 +273,30 @@ export class DocumentLogoResolverFactory {
     const primaryStats = await this.statsOf(scope, documentId, primary);
     if (primaryStats === null) return asIs();
 
-    const variant = async (id: string | null | undefined, ownerType: string) => {
+    // The primary alone first: a variant is read (and may be awaited) only when the primary does not do, so a variant
+    // still being scanned never delays a document whose primary prints fine.
+    const primaryOnly = { primary: primaryStats, forDark: null, forLight: null };
+    let choice = chooseLogo(primaryOnly, backgroundLuminance);
+    const loadVariant = async (id: string | null | undefined, ownerType: string) => {
       if (id === null || id === undefined) return null;
       const loaded = await this.load(scope, id, ownerType);
       if (loaded === null) return null;
       const stats = await this.statsOf(scope, id, loaded);
       return stats === null ? null : { loaded, stats, id };
     };
-    const [onDark, onLight] = await Promise.all([
-      variant(request.onDarkDocumentId, ON_DARK),
-      variant(request.onLightDocumentId, ON_LIGHT),
-    ]);
-
-    const choice = chooseLogo(
-      { primary: primaryStats, forDark: onDark?.stats ?? null, forLight: onLight?.stats ?? null },
-      backgroundLuminance,
-    );
+    let onDark: Awaited<ReturnType<typeof loadVariant>> = null;
+    let onLight: Awaited<ReturnType<typeof loadVariant>> = null;
+    if (choice.use !== 'primary') {
+      if (backgroundKind(backgroundLuminance) === 'dark') {
+        onDark = await loadVariant(request.onDarkDocumentId, ON_DARK);
+      } else {
+        onLight = await loadVariant(request.onLightDocumentId, ON_LIGHT);
+      }
+      choice = chooseLogo(
+        { primary: primaryStats, forDark: onDark?.stats ?? null, forLight: onLight?.stats ?? null },
+        backgroundLuminance,
+      );
+    }
     try {
       switch (choice.use) {
         case 'primary':

@@ -184,6 +184,23 @@ describe('logo for a background', () => {
     expect(out.equals(lightBytes)).toBe(false);
   });
 
+  it('does not wait for a variant still being scanned when the primary prints fine', async () => {
+    const resolve = setup([
+      { id: PRIMARY, ownerType: 'entity_logo', bytes: darkBytes },
+      { id: ON_DARK, ownerType: 'entity_logo_on_dark', bytes: lightBytes, status: 'quarantined' },
+    ]);
+    const out = decode(await resolve(PRIMARY, request(PAPER_LOGO_BACKGROUND, { dark: ON_DARK })));
+    expect(out.equals(darkBytes)).toBe(true);
+  });
+
+  it('keeps a mid-tone transparent logo on white as uploaded', async () => {
+    const orange = await mark('#e8590c');
+    const resolve = setup([{ id: PRIMARY, ownerType: 'entity_logo', bytes: orange }]);
+    expect(decode(await resolve(PRIMARY, request(PAPER_LOGO_BACKGROUND))).equals(orange)).toBe(
+      true,
+    );
+  });
+
   it('retries (pending) while a variant still awaits its scan, rather than freezing without it', async () => {
     const resolve = setup([
       { id: PRIMARY, ownerType: 'entity_logo', bytes: darkBytes },

@@ -64,7 +64,17 @@ describe('chooseLogo', () => {
     });
   });
 
-  it('falls back to a plate for an opaque logo that fails and has no variant', () => {
+  it('keeps a mid-tone transparent logo on white as uploaded (no black silhouette)', () => {
+    const orange: LogoStats = { luminance: 0.4, hasTransparency: true };
+    expect(chooseLogo({ primary: orange, ...none }, WHITE)).toEqual({ use: 'primary' });
+  });
+
+  it('never plates or recolours an opaque near-white logo on white paper', () => {
+    const opaqueLight: LogoStats = { luminance: 0.9, hasTransparency: false };
+    expect(chooseLogo({ primary: opaqueLight, ...none }, WHITE)).toEqual({ use: 'primary' });
+  });
+
+  it('falls back to a plate for an opaque logo that fails on a dark background and has no variant', () => {
     expect(chooseLogo({ primary: opaqueDark, ...none }, BLUE)).toEqual({ use: 'plate' });
   });
 
