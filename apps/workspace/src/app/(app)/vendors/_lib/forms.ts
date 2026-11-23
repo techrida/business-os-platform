@@ -1,4 +1,5 @@
 import {
+  type CountryCode,
   CreateVendorBodySchema,
   PHONE_LABELS,
   type PhoneLabel,
@@ -61,7 +62,7 @@ export interface VendorValues {
   kind: string;
   pan: string;
   vatRegistered: boolean;
-  /** ISO 3166-1 alpha-2. Fixed once the vendor is added; it is also the address's country. */
+  /** ISO 3166-1 alpha-2; it is also the address's country. Editable until the vendor is approved (D10). */
   country: string;
   /** The street lines and city: both or neither (the address is optional). */
   addressLine: string;
@@ -84,7 +85,7 @@ export const VENDOR_FIELDS = Object.keys(EMPTY_VENDOR_VALUES) as VendorField[];
 
 /**
  * The name each value posts under. The address posts through `AddressFields` named `address`, whose Country is the
- * vendor's country (shown once, on create; edit shows it as fixed text and posts none).
+ * vendor's country (asked once; a locked edit form posts none).
  */
 export const VENDOR_POSTED_NAME: Readonly<Record<VendorField, string>> = {
   legalName: 'legalName',
@@ -218,14 +219,18 @@ export type ParsedUpdate =
 
 /**
  * Only what changed goes to the API, with the version the person was looking at. On an approved or
- * suspended vendor the legal name and PAN are ignored: those inputs are locked, and a crafted post
- * would only earn a 409. The country is fixed, so it is read from the vendor, never the post: it decides
- * whether the PAN is a Nepal PAN (nine digits) or a foreign tax id. A cleared address is sent as null.
+ * suspended vendor the legal name, PAN, kind and country are ignored: those inputs are locked, and a crafted post
+ * would only earn a 409. Until then the kind and country can change (D10), and the form holds the same rules as the
+ * API: a foreign vendor is outside Nepal and any other kind is in it, and a vendor that will be in Nepal needs a
+ * nine-digit PAN, so a switch to Nepal with no PAN, or with a foreign tax id left in the box, is stopped here on the
+ * PAN. The PAN is checked against the country and kind the vendor will have, whether or not it was touched. A
+ * cleared address is sent as null.
  */
 export function parseUpdateVendor(
   input: VendorValues,
   original: {
     legalName: string;
+    kind: VendorKind;
     pan: string | null;
     vatRegistered: boolean;
     status: VendorStatus;
@@ -244,16 +249,38 @@ export function parseUpdateVendor(
       errors.legalName = VENDOR_WORDS.legalName as string;
     else data.legalName = v.legalName;
   }
-  if (!locked && v.pan !== (original.pan ?? '')) {
-    if (original.country === 'NP') {
-      if (!PAN.test(v.pan)) errors.pan = PAN_RULE;
-      else data.pan = v.pan;
-    } else if (v.pan === '') {
-      errors.pan = 'A saved tax ID cannot be removed. Enter the vendor’s tax ID.';
-    } else if (!TAX_ID.test(v.pan)) {
-      errors.pan = TAX_ID_RULE;
-    } else data.pan = v.pan;
+
+  // The kind and country the vendor will have. A locked vendor keeps its own; an unlocked form posts both.
+  let kindAfter: VendorKind = original.kind;
+  let countryAfter = original.country;
+  if (!locked) {
+    if (!isKind(v.kind)) errors.kind = VENDOR_WORDS.kind as string;
+    else kindAfter = v.kind;
+    if (!/^[A-Z]{2}$/.test(v.country)) errors.country = VENDOR_WORDS.country as string;
+    else countryAfter = v.country;
   }
+  if (errors.kind === undefined && errors.country === undefined) {
+    const problem = kindCountry(kindAfter, countryAfter);
+    if (problem !== undefined) errors.country = problem;
+  }
+  const identityChanged = kindAfter !== original.kind || countryAfter !== original.country;
+
+  if (!locked && (v.pan !== (original.pan ?? '') || identityChanged)) {
+    if (kindAfter === 'foreign') {
+      if (v.pan === '' && original.pan !== null) {
+        errors.pan = 'A saved tax ID cannot be removed. Enter the vendor’s tax ID.';
+      } else if (v.pan !== '' && !TAX_ID.test(v.pan)) errors.pan = TAX_ID_RULE;
+    } else if (v.pan === '') {
+      errors.pan = 'A PAN is required unless the vendor is foreign.';
+    } else if (!PAN.test(v.pan)) errors.pan = PAN_RULE;
+    if (errors.pan === undefined && v.pan !== (original.pan ?? '') && v.pan !== '')
+      data.pan = v.pan;
+  }
+  if (identityChanged && errors.kind === undefined && errors.country === undefined) {
+    data.kind = kindAfter;
+    data.country = countryAfter as CountryCode;
+  }
+
   const before = original.address ?? { line: '', city: '' };
   if (v.addressLine !== before.line || v.addressCity !== before.city) {
     const problems = addressErrors(v);
