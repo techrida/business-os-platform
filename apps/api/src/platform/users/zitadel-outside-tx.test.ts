@@ -2348,6 +2348,23 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     expect(rows).toHaveLength(1);
   }, 60_000);
 
+  it('lists the flagged person with the reason and time of the flag, and drops them once resolved', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    const { users } = services(zitadel);
+    expect(await users.listFlagged(f.scope)).toEqual([]);
+    await timedOutDeactivate(f, zitadel);
+
+    const [flagged, ...rest] = await users.listFlagged(f.scope);
+    expect(rest).toEqual([]);
+    expect(flagged).toMatchObject({ id: f.userId, status: 'inactive' });
+    expect(flagged!.reason).toMatch(/^users\.deactivate:/);
+    expect(Number.isNaN(Date.parse(flagged!.flaggedAt ?? ''))).toBe(false);
+
+    await users.resolveIdentityReview(f.scope, adminActor(f.adminId), f.userId);
+    expect(await users.listFlagged(f.scope)).toEqual([]);
+  }, 60_000);
+
   it('an admin resolves a flagged person: ZITADEL is read again, the flag clears, the row follows ZITADEL, audited; 409 when not flagged', async () => {
     const f = await fixture('active');
     const zitadel = zitadelFor(f, 'active');

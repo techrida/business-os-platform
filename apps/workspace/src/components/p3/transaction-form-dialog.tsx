@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
+import { focusPageHeading } from '@/components/ui/focus-on-arrival';
 import { toast } from '@/components/ui/toast';
 import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 
@@ -33,6 +34,7 @@ export function TransactionFormDialog<State extends TransactionState>({
   children,
   size = 'small',
   blocked = false,
+  focusHeadingOnDone = false,
 }: {
   trigger: string;
   primary?: boolean;
@@ -48,13 +50,20 @@ export function TransactionFormDialog<State extends TransactionState>({
   size?: 'small' | 'large';
   /** Keeps the submit button off while a field is not ready (a file still uploading, an infected file). */
   blocked?: boolean | undefined;
+  /**
+   * After a successful submit, focus goes to the page heading instead of back to the trigger. For an
+   * action that removes its own trigger from the page (the button is gone once the status changes).
+   */
+  focusHeadingOnDone?: boolean | undefined;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const succeeded = useRef(false);
   const [{ value: state }, dispatch, pending] = useActionState<{ value: State }, FormData>(
     async ({ value: previous }, form) => {
       const result = await action(previous, form);
       if (result.done) {
+        succeeded.current = true;
         setOpen(false);
         toast.success(successMessage);
         router.refresh();
@@ -74,7 +83,18 @@ export function TransactionFormDialog<State extends TransactionState>({
       description={description}
       size={size}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        if (next) succeeded.current = false;
+        setOpen(next);
+      }}
+      {...(focusHeadingOnDone
+        ? {
+            onCloseAutoFocus: (event: Event) => {
+              if (!succeeded.current) return;
+              if (focusPageHeading()) event.preventDefault();
+            },
+          }
+        : {})}
       trigger={<Button variant={primary ? 'primary' : 'secondary'}>{trigger}</Button>}
       locked={pending}
       tone={destructive ? 'destructive' : 'default'}

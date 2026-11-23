@@ -1,7 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { IDLE } from '../action-state';
-import { changeUserStatusAction, inviteUserAction, setRolesAction } from './actions';
+import {
+  changeUserStatusAction,
+  inviteUserAction,
+  resolveIdentityAction,
+  setRolesAction,
+} from './actions';
 
 vi.mock('server-only', () => ({}));
 vi.mock('../guard', () => ({ requireSection: () => ({ accessToken: 'test-token' }) }));
@@ -144,4 +149,38 @@ it("shows the API's refusal of a lock in the user's words", async () => {
   const result = await changeUserStatusAction('00000000-0000-4000-8000-000000000001', 'lock');
 
   expect(result.status).toBe('error');
+});
+
+it('resolves a flagged person through the resolve-identity route and reports a 503 with the flag left set', async () => {
+  const userId = '00000000-0000-4000-8000-000000000001';
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(
+      Response.json(
+        {
+          error: {
+            code: 'unavailable',
+            message: 'The identity provider could not be read.',
+            correlationId: 'c1',
+          },
+        },
+        { status: 503 },
+      ),
+    );
+  expect(await resolveIdentityAction(userId)).toMatchObject({
+    status: 'ok',
+    message: 'Flag resolved.',
+  });
+  expect(await resolveIdentityAction(userId)).toMatchObject({
+    status: 'error',
+    message:
+      'The identity provider could not be read, so nothing changed and the flag stays. Try again later.',
+  });
+  const [url, init] = fetch.mock.calls[0]!;
+  expect(url instanceof Request ? url.url : new URL(url).pathname).toContain(
+    `/v1/admin/users/${userId}/resolve-identity`,
+  );
+  expect(init?.method ?? (url as Request).method).toBe('POST');
+  expect(await resolveIdentityAction('not-a-uuid')).toMatchObject({ status: 'error' });
 });

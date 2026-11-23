@@ -2,7 +2,7 @@
 // Serves the NFR "authorization decisions use current data": the tenancy interceptor resolves every
 // caller through resolve() here. The logic lives in UserMirror (no authz imports, so the worker can
 // use it); this class adapts it to the port U1 injects, and repairs a half-finished invite.
-import type { AccessLevel, AdminUsersQuery, RoleKey } from '@bos/contracts';
+import type { AccessLevel, AdminUsersQuery, FlaggedUser, RoleKey } from '@bos/contracts';
 import {
   BadRequestException,
   ConflictException,
@@ -22,6 +22,7 @@ import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../
 import { type InvitedUser, type InviteInput, type ResolvedUser, UserMirror } from './user-mirror';
 import {
   assertWithinOperationDeadline,
+  IDENTITY_REVIEW_REQUIRED,
   IDENTITY_REVIEW_RESOLVED,
   withFounderRemovalLease,
 } from './identity-reconcile';
@@ -75,6 +76,27 @@ export class UsersService extends UserDirectory {
 
   list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers> {
     return this.mirror.list(scope, q);
+  }
+
+  /**
+   * Staff users flagged for identity review, with why: the reason on the newest `identity.review_required` audit row
+   * of each person. A person whose audit row was never written (it is recorded in its own transaction) has no reason.
+   */
+  async listFlagged(scope: TxScope): Promise<FlaggedUser[]> {
+    const flagged = await this.store.listFlagged(scope);
+    return Promise.all(
+      flagged.map(async (user) => {
+        const events = await this.audit.list(scope, {
+          entityType: 'users',
+          entityId: user.id,
+          order: 'desc',
+          limit: 50,
+        });
+        const reason = events.find((e) => e.action === IDENTITY_REVIEW_REQUIRED)?.meta;
+        const text = (reason as { reason?: unknown } | null | undefined)?.reason;
+        return { ...user, reason: typeof text === 'string' ? text : null };
+      }),
+    );
   }
 
   summary(scope: TxScope) {
