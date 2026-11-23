@@ -47,7 +47,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
@@ -221,6 +221,8 @@ export class CancelService {
       body.reason,
       now,
     );
+    // A revision that is cancelled hands the quotation back to the version it replaced (R6D restore).
+    await this.restoreReplaced(tx, scope, actor, quotation, old, body.reason, now);
 
     const lines = await tx
       .select()
@@ -351,6 +353,111 @@ export class CancelService {
       ...(meta === undefined ? {} : { meta }),
     });
     return { cancelled };
+  }
+
+  /**
+   * Cancelling an unsent revision (v2, a Draft, Returned or Submitted version) must not end the quotation: the
+   * version it replaced (v1, Approved or Sent before the revise made it Superseded) goes back to the status it had
+   * and becomes the quotation's current version again, so the customer can still accept it. Its previous status is
+   * read from its own history row (the revise wrote `from -> superseded`), so no new column is needed. Only the
+   * route does this: the Lost cascade ends the whole deal and restores nothing. A Rejected or Expired version was
+   * never superseded by its revision, so there is nothing to restore for it.
+   *
+   * Order matters: the cancelled draft has left the live set (one_live_version) before v1 re-enters it. The restored
+   * version keeps its valid-until date, so one that is already past it expires normally in the next sweep.
+   */
+  private async restoreReplaced(
+    tx: DbTransaction,
+    scope: TxScope,
+    actor: Actor,
+    quotation: typeof quotations.$inferSelect,
+    cancelledRevision: typeof quotationVersions.$inferSelect,
+    reason: string,
+    now: Date,
+  ): Promise<void> {
+    if (cancelledRevision.supersedesVersionId === null) return;
+    const [replaced] = await tx
+      .select()
+      .from(quotationVersions)
+      .where(
+        and(
+          eq(quotationVersions.tenantId, scope.tenantId),
+          eq(quotationVersions.id, cancelledRevision.supersedesVersionId),
+          eq(quotationVersions.quotationId, quotation.id),
+        ),
+      )
+      .for('update');
+    if (
+      replaced === undefined ||
+      replaced.status !== 'superseded' ||
+      replaced.supersededByVersionId !== cancelledRevision.id
+    ) {
+      return;
+    }
+    const [superseding] = await tx
+      .select({ fromStatus: quotationStatusHistory.fromStatus })
+      .from(quotationStatusHistory)
+      .where(
+        and(
+          eq(quotationStatusHistory.tenantId, scope.tenantId),
+          eq(quotationStatusHistory.versionId, replaced.id),
+          eq(quotationStatusHistory.toStatus, 'superseded'),
+        ),
+      )
+      .orderBy(desc(quotationStatusHistory.at))
+      .limit(1);
+    const previous = superseding?.fromStatus;
+    if (previous !== 'approved' && previous !== 'sent') return;
+
+    const restored = await tx
+      .update(quotationVersions)
+      .set({
+        status: previous,
+        supersededByVersionId: null,
+        updatedAt: now,
+        version: sql`${quotationVersions.version} + 1`,
+      })
+      .where(
+        and(
+          eq(quotationVersions.tenantId, scope.tenantId),
+          eq(quotationVersions.id, replaced.id),
+          eq(quotationVersions.status, 'superseded'),
+        ),
+      )
+      .returning({ id: quotationVersions.id });
+    if (restored.length !== 1) throw changed();
+    await tx
+      .update(quotations)
+      .set({
+        currentVersionId: replaced.id,
+        updatedAt: now,
+        version: sql`${quotations.version} + 1`,
+      })
+      .where(and(eq(quotations.tenantId, scope.tenantId), eq(quotations.id, quotation.id)));
+    const note = `Revision ${cancelledRevision.revisionNo} cancelled: ${reason}`;
+    await tx.insert(quotationStatusHistory).values({
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      versionId: replaced.id,
+      fromStatus: 'superseded',
+      toStatus: previous,
+      actorId: actor.kind === 'user' ? actor.id : null,
+      reason: note,
+      at: now,
+    });
+    await this.audit.record(tx, {
+      action: 'quotation.restored',
+      entityType: AUDIT_ENTITY,
+      entityId: quotation.id,
+      before: { versionId: replaced.id, revisionNo: replaced.revisionNo, status: 'superseded' },
+      after: {
+        versionId: replaced.id,
+        revisionNo: replaced.revisionNo,
+        status: previous,
+        cancelledRevisionId: cancelledRevision.id,
+        reason,
+      },
+    });
   }
 
   /**
