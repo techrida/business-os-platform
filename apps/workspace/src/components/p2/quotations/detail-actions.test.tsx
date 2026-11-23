@@ -331,13 +331,11 @@ describe('Send', () => {
     ['a file not yet clean', { renderedScanStatus: 'quarantined' as const }, /still being scanned/],
     ['a past validity date', { validUntil: '2026-11-07' }, /has expired/],
     ['the expired status', { status: 'expired' as const }, /has expired/],
-  ])('is off for %s, with the reason linked by aria-describedby', (_name, over, words) => {
+  ])('is off for %s, with no caption beside it', (_name, over, words) => {
     const html = render(over);
-    const described = /<button[^>]*aria-describedby="([^"]+)"[^>]*>Send to customer/.exec(html);
-    expect(described?.[1]).toBeTruthy();
-    expect(html).toMatch(new RegExp(`aria-disabled="true"`));
-    const reason = new RegExp(`<p id="${described?.[1]}"[^>]*>([^<]+)</p>`).exec(html);
-    expect(reason?.[1]).toMatch(words);
+    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Send to customer<\/button>/);
+    // UIP-FORM-011: the reason is the Tooltip's (blocked-action-tooltips.test.tsx), not a caption.
+    expect(html).not.toMatch(words);
     // Off means no form to submit: the dialog and its fields are not in the page.
     expect(html).not.toContain('name="recipientContactId"');
   });
@@ -345,7 +343,7 @@ describe('Send', () => {
   it('is off, with one line of words, when no contact has an email', () => {
     const html = render({}, [{ id: BOB, name: 'Bob NoMail', email: null }]);
     expect(html).toContain('aria-disabled="true"');
-    expect(html).toContain('No contact for this customer has an email address');
+    expect(html).not.toContain('No contact for this customer has an email address');
   });
 
   it('keeps a very long contact name as text', () => {

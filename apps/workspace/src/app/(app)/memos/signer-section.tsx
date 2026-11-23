@@ -17,6 +17,7 @@ import {
 } from './signer-rows';
 import styles from './memo-template.module.css';
 import { approverChoices, StaffPicker } from './staff-picker';
+import { Tooltip } from '@/components/ui/tooltip';
 
 type Person = MemoDirectory['people'][number];
 
@@ -160,21 +161,22 @@ export function SignerSection({
                 inputs.current[i] = el;
               }}
             />
-            <button
-              type="button"
-              className={styles.remove}
-              aria-label={`Remove recommender ${i + 1}`}
-              title={`Remove recommender ${i + 1}`}
-              onClick={() => {
-                onRecommenders(removeRecommender(recommenders, i));
-                exclusive.setOpen(`r${i}`, false);
-                setStatus(`Recommender ${i + 1} removed.`);
-                const next = focusAfterRemoval(i, recommenders.length);
-                pendingFocus.current = next === null ? 'add' : next;
-              }}
-            >
-              <TrashIcon />
-            </button>
+            <Tooltip content={`Remove recommender ${i + 1}`}>
+              <button
+                type="button"
+                className={styles.remove}
+                aria-label={`Remove recommender ${i + 1}`}
+                onClick={() => {
+                  onRecommenders(removeRecommender(recommenders, i));
+                  exclusive.setOpen(`r${i}`, false);
+                  setStatus(`Recommender ${i + 1} removed.`);
+                  const next = focusAfterRemoval(i, recommenders.length);
+                  pendingFocus.current = next === null ? 'add' : next;
+                }}
+              >
+                <TrashIcon />
+              </button>
+            </Tooltip>
           </div>
         ))}
         <div className={styles.addRow}>

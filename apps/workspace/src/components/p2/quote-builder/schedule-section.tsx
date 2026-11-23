@@ -4,6 +4,7 @@ import { trimPercent } from '@bos/contracts';
 import { Dec, formatMoney } from '@bos/locale';
 
 import { Button } from '@/components/ui/button';
+import { Tooltip } from '@/components/ui/tooltip';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input } from '@/components/ui/field';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
@@ -56,6 +57,7 @@ export function ScheduleSection({
   onRemove: (key: string) => void;
 }) {
   const numberSystems = useNumberSystems();
+  const atMax = milestones.length >= MAX_MILESTONES;
   const state = scheduleState(milestones);
   const amounts = milestoneAmounts(milestones, total);
   const zeroTotal = total !== null && new Dec(total).isZero();
@@ -238,9 +240,18 @@ export function ScheduleSection({
       )}
 
       <div className={styles.actions}>
-        <Button variant="secondary" onClick={onAdd} disabled={milestones.length >= MAX_MILESTONES}>
-          Add milestone
-        </Button>
+        {/* aria-disabled, not disabled: it stays focusable so the Tooltip can say why (UIP-FORM-011). */}
+        <Tooltip content={atMax ? `Up to ${MAX_MILESTONES} milestones.` : undefined}>
+          <Button
+            variant="secondary"
+            aria-disabled={atMax || undefined}
+            onClick={() => {
+              if (!atMax) onAdd();
+            }}
+          >
+            Add milestone
+          </Button>
+        </Tooltip>
         {milestones.length > 0 ? (
           <p
             role="status"
@@ -249,9 +260,6 @@ export function ScheduleSection({
           >
             {scheduleProgress(milestones)}% / 100% allocated
           </p>
-        ) : null}
-        {milestones.length >= MAX_MILESTONES ? (
-          <span className={styles.muted}>Up to {MAX_MILESTONES} milestones.</span>
         ) : null}
       </div>
     </div>

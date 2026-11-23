@@ -1838,18 +1838,134 @@
   fill: currentColor;
 }
 
-/* Keep the switcher compact and reserve room for its centred chevron. */
-.bos-footer-end button[aria-haspopup='listbox'] {
-  min-height: 28px;
-  padding-block: 2px;
-  padding-inline: 8px 32px;
-  font-size: 11px;
-  line-height: 1.4;
+/* Language dropdown: the product Select look (border, 8px radius, turning chevron, floating list with a tick). */
+.bos-lang {
+  min-width: 0;
 }
 
-.bos-footer-end button[aria-haspopup='listbox'] > svg {
-  top: 50%;
-  transform: translateY(-50%);
+.bos-lang__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 112px;
+  min-height: 32px;
+  padding: 4px 8px 4px 12px;
+  border: var(--border-width-thin, 1px) solid var(--select-border);
+  border-radius: var(--radius-lg);
+  background: var(--select-bg);
+  color: var(--select-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: start;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.bos-lang__trigger:hover {
+  border-color: var(--select-hover-border);
+}
+
+.bos-lang__trigger[data-open] {
+  border-color: var(--select-focus-border);
+  box-shadow: inset 0 0 0 1px var(--select-focus-border);
+}
+
+.bos-lang__trigger[data-focus] {
+  border-color: var(--select-focus-border);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.bos-lang__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bos-lang__chevron {
+  flex: none;
+  color: var(--icon-secondary);
+  transition: transform 120ms ease;
+}
+
+.bos-lang__trigger[data-open] .bos-lang__chevron {
+  transform: rotate(180deg);
+}
+
+.bos-lang__list {
+  z-index: 110;
+  font-family: var(--font-family-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: max(var(--button-width), 160px);
+  --anchor-max-height: 280px;
+  padding: 8px;
+  overflow-y: auto;
+  border: var(--border-width-thin, 1px) solid var(--dropdown-border);
+  border-radius: var(--radius-lg);
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
+  box-shadow: var(--shadow-section);
+}
+
+.bos-lang__list:focus {
+  outline: none;
+}
+
+.bos-lang__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.bos-lang__item[data-focus] {
+  background: var(--dropdown-hover-bg);
+}
+
+.bos-lang__item[data-selected] {
+  background: var(--interactive-selected);
+  color: var(--action-primary);
+}
+
+.bos-lang__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.bos-lang__tick {
+  flex: none;
+  visibility: hidden;
+  color: var(--action-primary);
+}
+
+.bos-lang__item[data-selected] .bos-lang__tick {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .bos-lang__trigger,
+  .bos-lang__item {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bos-lang__chevron,
+  .bos-lang__trigger {
+    transition: none;
+  }
 }
 
 /* Keep the hint clear of the button on the setup screen */
