@@ -590,6 +590,57 @@ export class VerificationService implements OnModuleInit {
     });
   }
 
+  /**
+   * Returns a party's submitted or approved case to draft with every checklist item empty, so the documents have to
+   * be uploaded again. Runs inside the caller's transaction: the vendor edit that changed the party's identity (legal
+   * name, PAN, kind or country) resets the vendor and its case together. Authorization is the caller's (it holds the
+   * party's write permission). Returns whether a case was reset: no case, a draft, a rejected or an expired one
+   * already needs documents and stays as it is. The uploaded files stay on the case as history; only the checklist
+   * rows are emptied. `note` is the decision note the party's users read.
+   */
+  async returnToDraftInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    partyId: string,
+    note: string,
+  ): Promise<boolean> {
+    const [existing] = await tx
+      .select({ id: verificationCases.id })
+      .from(verificationCases)
+      .where(
+        and(eq(verificationCases.tenantId, scope.tenantId), eq(verificationCases.partyId, partyId)),
+      );
+    if (existing === undefined) return false;
+    const l = await this.lock(tx, scope.tenantId, existing.id);
+    if (l.row.partyKind !== 'vendor') return false;
+    if (l.row.status !== 'submitted' && l.row.status !== 'approved') return false;
+    await this.preserveLegacyDecision(tx, l.row);
+    const emptied = checklistOf(l.row).map((i) => ({
+      key: i.key,
+      required: i.required,
+      status: 'missing' as const,
+      documentId: null,
+      expiresOn: null,
+    }));
+    const updated = await updateVersioned(tx, verificationCases, l.row.id, l.row.version, {
+      status: 'draft',
+      checklist: emptied,
+      reviewerUserId: null,
+      decidedAt: null,
+      reason: note,
+      updatedAt: this.now(),
+    });
+    await this.audit.record(tx, {
+      action: 'verification.returned_to_draft',
+      entityType: 'verification_case',
+      entityId: updated.id,
+      before: { status: l.row.status, version: l.row.version },
+      after: { status: 'draft', version: updated.version },
+      meta: { partyId, note },
+    });
+    return true;
+  }
+
   // ---------------------------------------------------------------------------------------------- checklist
 
   /**
