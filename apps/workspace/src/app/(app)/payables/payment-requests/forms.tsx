@@ -8,6 +8,7 @@ import { useActionState, useId, useRef, useState } from 'react';
 import {
   ActionDialog,
   PendingLine,
+  focusProblem,
   useFocusOnProblem,
 } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
@@ -87,6 +88,9 @@ export function PaymentRequestEntry({
   const summary = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrap, summary);
   const errors = state.errors ?? {};
+  // Read by the review dialog's close handler, which can run after the server's answer has arrived.
+  const problem = useRef(false);
+  problem.current = Boolean(state.error) || Object.keys(errors).length > 0;
   const vendors = [
     ...new Map(items.map((item) => [item.vendorPartyId, item.vendorName])).entries(),
   ];
@@ -179,9 +183,15 @@ export function PaymentRequestEntry({
                 if (!open) setReview(null);
               }}
               // No Radix trigger (the opener is the form's submit button), so focus goes back to
-              // the opener here.
+              // the opener here. Confirm closes the review and sends the form, so the server's refusal
+              // can land before this runs: then the message or the wrong field already has focus, and
+              // the opener must not take it back.
               onCloseAutoFocus={(event) => {
                 event.preventDefault();
+                if (problem.current) {
+                  focusProblem(state, wrap.current, summary.current);
+                  return;
+                }
                 opener.current?.focus();
               }}
               title="Review the payment request"
