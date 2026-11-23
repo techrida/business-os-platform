@@ -2,10 +2,10 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fill, mountForm, settle, submit } from '@/test/form-interactions';
+import { click, fill, mountForm, settle, submit } from '@/test/form-interactions';
 
 import type { InvoiceFormState } from './form-state';
-import { ManualInvoiceForm } from './manual-invoice-form';
+import { type CustomerOption, ManualInvoiceForm } from './manual-invoice-form';
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
@@ -26,15 +26,22 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
+const CUSTOMERS = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
+    label: 'Invoice customer',
+    currency: 'NPR' as const,
+  },
+];
+
 async function mount(
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState> = vi.fn(),
+  customers: readonly CustomerOption[] = CUSTOMERS,
 ) {
   mounted = await mountForm(
     <ManualInvoiceForm
       action={action}
-      customers={[
-        { id: '11111111-1111-4111-8111-111111111111', label: 'Invoice customer', currency: 'NPR' },
-      ]}
+      customers={customers}
       taxCodes={[]}
       enabledCurrencies={['NPR']}
       idempotencyKey="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -61,6 +68,64 @@ async function blur(element: HTMLInputElement) {
   await act(() => Promise.resolve(element.focus()));
   await act(() => Promise.resolve(element.blur()));
 }
+
+// UIP-FORM-009: the organization is one search-as-you-type box showing what the search matched. The old form was a
+// plain select, so there was no combobox to type in and no options to read.
+describe('the organization picker', () => {
+  const EVEREST = '22222222-2222-4222-8222-222222222222';
+  const people: CustomerOption[] = [
+    ...CUSTOMERS,
+    {
+      id: EVEREST,
+      label: 'Everest Foods Pvt. Ltd.',
+      detail: 'CUS-0007 · 301234567',
+      currency: 'INR',
+    },
+  ];
+  const options = () =>
+    Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent?.trim());
+
+  it('lists matches while typing, with number and PAN, and posts the chosen id', async () => {
+    const { container, box, form } = await mount(vi.fn(), people);
+    const input = box('Organization legal name');
+    expect(input.getAttribute('role')).toBe('combobox');
+    expect(container.querySelector('select[name="customerId"]')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('button')).map((b) => b.textContent?.trim()),
+    ).not.toContain('Search');
+
+    // By name, then by the PAN the option shows: no button pressed in between.
+    await fill(input, 'everest');
+    expect(options()).toEqual(['Everest Foods Pvt. Ltd.CUS-0007 · 301234567']);
+    await fill(input, '3012');
+    expect(options()).toEqual(['Everest Foods Pvt. Ltd.CUS-0007 · 301234567']);
+    // A pick-existing field: nothing found says so and offers no Create row.
+    await fill(input, 'zzz');
+    expect(options()).toEqual([]);
+    expect(document.body.textContent).toContain('No matching customer.');
+
+    await fill(input, 'everest');
+    await click(document.querySelector('[role="option"]'));
+    expect(form().get('customerId')).toBe(EVEREST);
+    expect(input.value).toBe('Everest Foods Pvt. Ltd.');
+    // Their usual currency (INR) is switched off here, so it is not preselected: the select would blank.
+    expect(form().get('currency')).toBe('NPR');
+  });
+});
+
+// UIP-FORM-008: Optional sits beside the label; the hint keeps only what the label cannot say.
+describe('optional fields', () => {
+  it('marks Due date and both discounts Optional in the label row and no hint starts "Optional."', async () => {
+    const { container } = await mount();
+    for (const label of ['Due date', 'Discount %', 'Discount amount (NPR)']) {
+      const el = Array.from(container.querySelectorAll('label[for]')).find((l) =>
+        l.textContent?.startsWith(label),
+      );
+      expect(el?.parentElement?.textContent).toBe(`${label}Optional`);
+    }
+    expect(container.textContent).not.toMatch(/Optional\./);
+  });
+});
 
 // Each test fails on the old form: it had one discount box behind a type select, with no "Discount %" box next to
 // an amount box, so `box('Discount %')` finds nothing and nothing was worked out from the subtotal.
