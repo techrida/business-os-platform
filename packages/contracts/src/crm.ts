@@ -759,8 +759,13 @@ const LeadFieldsSchema = z.strictObject({
   /** Free text until conversion creates or links a customer. */
   companyName: text(200),
   contactName: text(200),
-  /** The lead's country (FX9). A lead has no address; conversion asks for the customer's. */
+  /** The lead's country (FX9); also the country of its address. */
   country: CountryCodeSchema,
+  /**
+   * The lead's optional address (D9): street lines and city together, or none. An edit sends `null` to clear it;
+   * leaving it out keeps what is stored. Conversion prefills the new customer's address from it.
+   */
+  address: AddressLinesSchema.nullable().optional(),
   email: EmailSchema.optional(),
   /** The lead person's numbers, each with its own country. No default here, so an edit never clears them unasked. */
   phones: PartyPhonesSchema.optional(),
@@ -834,6 +839,8 @@ export const LeadDtoSchema = z.object({
   companyName: z.string(),
   contactName: z.string(),
   country: CountryCodeSchema,
+  /** The street lines and city, or null when the lead has no address; the country is `country`. */
+  address: AddressLinesSchema.nullable(),
   email: z.string().nullable(),
   /**
    * The lead person's numbers, primary first, then in their saved order (one primary, no repeats). A list shows the

@@ -28,7 +28,7 @@ import {
   salesOrders,
   scoped,
 } from '@bos/db';
-import { Dec, toNpr } from '@bos/money-rules';
+import { Dec } from '@bos/money-rules';
 import { Injectable } from '@nestjs/common';
 import { formatBs } from '@bos/locale';
 import { and, asc, desc, eq, isNull, ne, notExists, sql } from 'drizzle-orm';
@@ -56,6 +56,7 @@ import {
   withNote,
   type StoredParts,
 } from './note-drafting.service';
+import { creditNoteNpr } from './credit-note-npr';
 
 /** The numbering series of a credit note: CN-2083/84-00001 (plan A15). */
 export const CREDIT_NOTE_SERIES = 'CN';
@@ -202,14 +203,21 @@ export class CreditNoteIssueService {
     });
     const fullyCredited = creditsEveryLine(originalParts.lines, withNote(issued, noteParts));
 
-    // FX: the note reverses part of the original, so it takes the original's rate (no new rate, no stale check). The
-    // credit that completes the full credit takes what is left of the original's NPR value, so the NPR values net to 0.
+    // FX: the note reverses part of the original, so it takes the original's rate (no new rate, no stale check). Its NPR
+    // is the original's NPR times the share credited so far, less what earlier notes took, so the credit that completes
+    // the original takes exactly what is left and the NPR values net to 0 (credit-note-npr.ts).
     const nprIsBooks = note.currency === 'NPR';
     const amountNpr = nprIsBooks
       ? total.toFixed(2)
       : fullyCredited
         ? new Dec(original.amountNpr).minus(new Dec(prior?.amountNpr ?? '0')).toFixed(2)
-        : toNpr(total, note.currency, original.fxRate).toFixed(2);
+        : creditNoteNpr({
+            originalTotal,
+            originalNpr: new Dec(original.amountNpr),
+            creditedBefore,
+            creditedNprBefore: new Dec(prior?.amountNpr ?? '0'),
+            noteTotal: total,
+          }).toFixed(2);
     const fx = {
       fxRate: nprIsBooks ? '1' : original.fxRate,
       fxSource: nprIsBooks ? null : original.fxSource,

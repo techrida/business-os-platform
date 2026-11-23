@@ -258,7 +258,7 @@ it('tells a controlled parent the date is empty while incomplete, without wiping
   expect(mounted.container.textContent).toContain('05 Mangsir 2083 BS');
 });
 
-it('after a refused submit resets an incomplete controlled date, it shows, posts and reports empty', async () => {
+it('holds a noValidate action form while a controlled date is incomplete, keeping the other segments', async () => {
   const heard: string[] = [];
   const sent: unknown[] = [];
   function Harness() {
@@ -288,27 +288,58 @@ it('after a refused submit resets an incomplete controlled date, it shows, posts
   expect(posted('d')).toBe('');
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['']);
-  // React Aria would refill the day from the date it held (2, after the first Backspace).
+  // Without the hold the action ran with '' and reset the form, which left every segment empty.
+  expect(sent).toEqual([]);
   expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
+  expect(segment('year').hasAttribute('data-placeholder')).toBe(false);
   expect(posted('d')).toBe('');
   expect(heard).toEqual(['2026-11-02', '']);
+  await typeSegment(segment('day'), '21');
   await submit(mounted.container);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['', '']);
+  expect(sent).toEqual(['2026-11-21']);
 });
 
-it('an uncontrolled date left incomplete returns to its default when the form resets', async () => {
+it('holds a noValidate action form while an uncontrolled date is incomplete', async () => {
+  const action = vi.fn(async () => {});
   mounted = await mountForm(
-    <form noValidate action={async () => {}}>
+    <form noValidate action={action}>
       <DatePicker aria-label="Received on" name="d" defaultValue="2026-11-21" />
     </form>,
   );
   await clearSegment(segment('day'));
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(action).not.toHaveBeenCalled();
+  expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
+});
+
+it('holds a noValidate action form when only part of an empty date is typed', async () => {
+  const action = vi.fn(async () => {});
+  mounted = await mountForm(
+    <form noValidate action={action}>
+      <DatePicker aria-label="Received on" name="d" />
+    </form>,
+  );
+  await act(() => Promise.resolve((segment('day') as HTMLElement).focus()));
+  await typeSegment(segment('day'), '21');
+  await submit(mounted.container);
+  expect(action).not.toHaveBeenCalled();
   expect(segment('day').textContent).toBe('21');
-  expect(posted('d')).toBe('2026-11-21');
+});
+
+it('holds an aria-validated noValidate action form too, but does not block a plain form natively', async () => {
+  const action = vi.fn(async () => {});
+  mounted = await mountForm(
+    <form noValidate action={action}>
+      <DatePicker aria-label="From" name="from" defaultValue="2026-11-21" validation="aria" />
+    </form>,
+  );
+  await clearSegment(segment('day'));
+  await submit(mounted.container);
+  expect(action).not.toHaveBeenCalled();
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
 });
 
 it('lets the browser block a required picker left incomplete in a plain form', async () => {
@@ -436,25 +467,20 @@ it('shows "Finish the date" beside the picker when an incomplete date blocks a p
   expect(mounted.container.querySelector(`[aria-describedby~="${message.id}"]`)).toBeNull();
 });
 
-it('holds the submit of a noValidate action form that asks for it (validation="hold") while a date is partly typed, keeps the segments and shows "Finish the date"', async () => {
+it('holds the submit of a noValidate action form while a date is partly typed, keeps the segments and shows "Finish the date"', async () => {
   const action = vi.fn(async () => {});
   const onSubmit = vi.fn();
   mounted = await mountForm(
     <form action={action} onSubmit={onSubmit} noValidate>
-      <DatePicker
-        aria-label="Needed by"
-        name="neededBy"
-        defaultValue="2027-12-15"
-        validation="hold"
-      />
+      <DatePicker aria-label="Needed by" name="neededBy" defaultValue="2027-12-15" />
     </form>,
   );
   await clearSegment(segment('day'));
   await act(() => Promise.resolve((segment('month') as HTMLElement).focus()));
   await submit(mounted.container);
 
-  // Without `hold` (the default) the browser was never asked to validate, so the form went to its action with '' and was
-  // reset, which left every segment empty and the generic server message.
+  // The browser is never asked to validate a noValidate form, so without the hold the form went to its action with ''
+  // and was reset, which left every segment empty and the generic server message.
   expect(action).not.toHaveBeenCalled();
   expect(onSubmit).not.toHaveBeenCalled();
   const alerts = Array.from(mounted.container.querySelectorAll('[role="alert"]')).filter(

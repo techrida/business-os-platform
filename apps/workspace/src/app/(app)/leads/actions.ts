@@ -39,6 +39,7 @@ import {
   parseCompleteActivity,
   parseConvert,
   parseLead,
+  parseLeadAddress,
   parseLeadUpdate,
   parseRescheduleActivity,
   parseScheduleFollowUp,
@@ -287,6 +288,35 @@ export async function updateLeadOwnerAction(
   } catch (err) {
     const refused = assignmentRefusalText(err);
     if (refused) return { fieldErrors: { ownerUserId: refused } };
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  return { ok: true };
+}
+
+/**
+ * Change the lead's optional address (`PATCH /v1/leads/:id` with `address`, `null` to clear it, and the version the
+ * page showed). Half an address comes back under the field it lacks; a stale version (409) as the reload message.
+ */
+export async function updateLeadAddressAction(
+  _prev: LeadContactState,
+  form: FormData,
+): Promise<LeadContactState> {
+  const leadValue = form.get('leadId');
+  const leadId = typeof leadValue === 'string' ? leadValue : '';
+  if (!UUID.test(leadId)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/leads/${leadId}`);
+  const parsed = parseLeadAddress(form);
+  if (!parsed.ok) {
+    const { expectedVersion, ...fieldErrors } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    return { fieldErrors };
+  }
+  try {
+    await updateLead(session, leadId, parsed.data);
+  } catch (err) {
     const f = failureOf(err);
     return { error: f.message, reload: f.reload };
   }

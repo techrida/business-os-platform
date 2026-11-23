@@ -25,6 +25,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // A database dropped under a lent-out connection must not fail the run (packages/db/src/testing/vitest-setup.ts).
+    setupFiles: [source('../../packages/db/src/testing/vitest-setup.ts')],
     include: ['test/e2e/**/*.e2e.test.ts'],
     // Starts the containers once for the whole run and hands their addresses to the tests.
     // The shared Postgres first (it sets the environment the second one reads), then Valkey, Mailpit and the seed.
