@@ -85,7 +85,13 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   forbidOnly: !!process.env.CI,
   reporter: record
-    ? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
+    ? [
+        ['list'],
+        [
+          'html',
+          { open: 'never', outputFolder: process.env.BOS_E2E_REPORT_DIR ?? 'playwright-report' },
+        ],
+      ]
     : [['list']],
   outputDir: 'test-results',
 

@@ -63,6 +63,20 @@ jobs:
       - name: Install Chromium
         run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
 
+      # A staff user gets its membership (and so appears in owner and approver pickers) on its first request. Many specs
+      # need the other personas to exist, and Playwright runs files alphabetically, so every persona signs in once first.
+      # The sign-ins are independent, so they run in parallel (each waits for a fresh TOTP window, 30 s).
+      - name: Playwright warm-up (every persona signs in and out once)
+        env:
+          BOS_E2E_RECORD: '1'
+          BOS_E2E_BRANDED_LOGIN: '1'
+          BOS_E2E_REPORT_DIR: playwright-report-signin
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+        run: |
+          cd apps/workspace
+          pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --output=test-results-signin
+
       - name: Playwright (workspace, dev project)
         env:
           BOS_E2E_RECORD: '1'
@@ -76,8 +90,9 @@ jobs:
         run: |
           cd apps/workspace
           # No quotes around the filter on purpose: an empty value must disappear, a value may hold two words.
+          # The persona sign-ins already ran in the warm-up step.
           # shellcheck disable=SC2086
-          pnpm exec playwright test --project=dev --shard="$SHARD" $SPEC_FILTER
+          pnpm exec playwright test --project=dev --shard="$SHARD" --grep-invert "persona sign-in and sign-out" $SPEC_FILTER
 
       - name: Portal specs (they skip themselves without their fixtures)
         if: ${{ !cancelled() && matrix.shard == 1 }}
@@ -97,7 +112,7 @@ jobs:
           const out=[]; for (const e of list) for (const k of ['password','totpSecret']) if (typeof e[k]==='string' && e[k].length>=8) out.push(e[k]);
           fs.writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\\n')+'\\n');"
           dirs=()
-          for d in apps/workspace/playwright-report apps/workspace/test-results apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
+          for d in apps/workspace/playwright-report apps/workspace/playwright-report-signin apps/workspace/test-results apps/workspace/test-results-signin apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
           if [ "${#dirs[@]}" -gt 0 ]; then
             grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}" > "$RUNNER_TEMP/leaks.txt" || true
             if [ -s "$RUNNER_TEMP/leaks.txt" ]; then
@@ -115,7 +130,9 @@ jobs:
           name: playwright-workspace-${{ matrix.shard }}
           path: |
             apps/workspace/playwright-report
+            apps/workspace/playwright-report-signin
             apps/workspace/test-results
+            apps/workspace/test-results-signin
             apps/portal/test-results
           retention-days: 14
           if-no-files-found: ignore
