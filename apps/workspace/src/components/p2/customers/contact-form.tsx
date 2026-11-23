@@ -230,7 +230,7 @@ function ContactFields({
         </Field>
         <Field
           label="Phone"
-          hint="Optional. Pick each number's country, or type + and its code."
+          hint="Optional. Pick each number's country, or type its code."
           className={styles.wide ?? ''}
         >
           {(control) => (
