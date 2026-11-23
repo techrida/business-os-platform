@@ -102,7 +102,7 @@ export function VendorForm({
   // Send focus to what needs attention: the summary, the same-name warning (nothing was added, and the
   // person may have pressed the button at the bottom), else the first field that is wrong.
   useEffect(() => {
-    if (state.error) summaryRef.current?.focus();
+    if (state.error || state.notice) summaryRef.current?.focus();
     else if (state.sameName !== undefined && state.sameName.length > 0)
       sameNameRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
@@ -271,6 +271,12 @@ export function VendorForm({
           <input type="hidden" name="expectedVersion" value={version} />
         </>
       )}
+
+      {state.notice && !state.error ? (
+        <Alert ref={summaryRef} tabIndex={-1} tone="info" role="status" title="Nothing changed">
+          {state.notice}
+        </Alert>
+      ) : null}
 
       {state.error ? (
         <Alert
