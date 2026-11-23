@@ -42,6 +42,7 @@ import templateStyles from './memo-template.module.css';
 import { SignerSection } from './signer-section';
 import { useMemoDraftSync } from './use-memo-draft-sync';
 import { useMemoPdfActions } from './use-memo-pdf-actions';
+import { Tooltip } from '@/components/ui/tooltip';
 
 const NO_SOURCE: PdfSource = { kind: 'saved', memoId: '' };
 
@@ -399,14 +400,15 @@ function MemoFormInner({
             {canDiscard ? (
               <ConfirmDialog
                 trigger={
-                  <button
-                    type="button"
-                    className={`${templateStyles.iconAction} ${templateStyles.iconDanger}`}
-                    aria-label="Delete draft"
-                    title="Delete draft"
-                  >
-                    <TrashIcon size={18} />
-                  </button>
+                  <Tooltip content="Delete draft">
+                    <button
+                      type="button"
+                      className={`${templateStyles.iconAction} ${templateStyles.iconDanger}`}
+                      aria-label="Delete draft"
+                    >
+                      <TrashIcon size={18} />
+                    </button>
+                  </Tooltip>
                 }
                 title="Delete this draft?"
                 description={
@@ -430,25 +432,27 @@ function MemoFormInner({
             ) : null}
             {directory ? (
               <>
-                <button
-                  type="button"
-                  className={templateStyles.iconAction}
-                  aria-label="Download preview as PDF"
-                  title="Download preview as PDF"
-                  disabled={pdf.busy}
-                  onClick={() => void pdf.download()}
-                >
-                  <DownloadIcon size={18} />
-                </button>
-                <button
-                  type="button"
-                  className={templateStyles.iconAction}
-                  aria-label="Print preview"
-                  title="Print preview"
-                  onClick={() => void pdf.print()}
-                >
-                  <PrintIcon size={18} />
-                </button>
+                <Tooltip content="Download preview as PDF">
+                  <button
+                    type="button"
+                    className={templateStyles.iconAction}
+                    aria-label="Download preview as PDF"
+                    disabled={pdf.busy}
+                    onClick={() => void pdf.download()}
+                  >
+                    <DownloadIcon size={18} />
+                  </button>
+                </Tooltip>
+                <Tooltip content="Print preview">
+                  <button
+                    type="button"
+                    className={templateStyles.iconAction}
+                    aria-label="Print preview"
+                    onClick={() => void pdf.print()}
+                  >
+                    <PrintIcon size={18} />
+                  </button>
+                </Tooltip>
               </>
             ) : null}
           </div>
