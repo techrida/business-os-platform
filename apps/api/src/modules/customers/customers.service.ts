@@ -66,6 +66,7 @@ import { READ_ONLY, withTx, type Actor, type TxScope } from '../../platform/db/t
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
+import { roleLines } from '../../platform/users/person-role';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
 import { loadContactPhones, replaceContactPhones } from './contact-phones';
@@ -421,6 +422,13 @@ export class CustomersService {
       person.roles.push(r.roleKey as RoleKey);
       people.set(r.userId, person);
     }
+    const roles = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => roleLines(tx, scope, [...people.keys()]),
+      READ_ONLY,
+    );
     const out: CustomerOwnerOption[] = [];
     for (const [userId, person] of people) {
       if (
@@ -431,7 +439,11 @@ export class CustomersService {
           'customer.write',
         )
       ) {
-        out.push({ userId, displayName: personLabel(person.displayName) });
+        out.push({
+          userId,
+          displayName: personLabel(person.displayName),
+          role: roles.get(userId) ?? null,
+        });
       }
     }
     return out.sort(

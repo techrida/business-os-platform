@@ -15,7 +15,9 @@ const spec = {
   steps: [{ id: 'review', kind: 'user', user: id, reason: 'Review' }],
   rules: [],
 };
-function render(users: { id: string; label: string; name: string; email: null }[] | null) {
+function render(
+  users: { id: string; label: string; name: string; email: null; role?: string }[] | null,
+) {
   return renderToStaticMarkup(
     <WorkflowEditor
       action={() => Promise.resolve(IDLE)}
@@ -29,16 +31,15 @@ function render(users: { id: string; label: string; name: string; email: null }[
   );
 }
 it('shows names in person selectors while retaining the internal target', () => {
-  const html = render([{ id, label: 'Mina', name: 'Mina', email: null }]);
-  expect(html).toContain(`<option value="${id}" selected="">Mina</option>`);
+  const html = render([{ id, label: 'Mina', name: 'Mina', email: null, role: 'Sales' }]);
+  // The person reads by name and role in the one member picker, never by the id the form keeps.
+  expect(html).toMatch(/role="combobox"[^>]*value="Mina Sales"/);
   expect(html).not.toContain(`value="${id}" list=`);
   expect(html).not.toContain('User id');
 });
 it('retains a missing directory target instead of silently substituting a person', () => {
   const html = render(null);
-  expect(html).toContain(
-    `<option value="${id}" selected="">Current person (name unavailable)</option>`,
-  );
+  expect(html).toMatch(/role="combobox"[^>]*value="Current person \(name unavailable\)"/);
   expect(html).toContain('&quot;user&quot;:&quot;' + id);
 });
 

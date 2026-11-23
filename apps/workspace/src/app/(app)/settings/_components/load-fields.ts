@@ -37,27 +37,32 @@ function defaultLabel(key: SettingKey, kind: FieldKind): string {
 type Option = { value: string; label: string };
 
 /**
- * The people a `person` field offers, by the name the API sends. A saved person
- * the list no longer holds stays selectable under a plain label, so the field never shows the Sales head while the
- * stored value names someone else; the API hands such leads to the Sales head.
+ * The people a `person` field offers, by name and role as the API sends them, and the Sales head an unset value
+ * stands for. A saved person the list no longer holds stays in the box under a plain label, so the field never shows
+ * the Sales head while the stored value names someone else; the API hands such leads to the Sales head.
  */
-function personOptions(people: readonly SettingsPerson[], saved: unknown): Option[] {
-  const options = people.map((p) => ({ value: p.userId, label: p.displayName || 'Unnamed user' }));
-  if (typeof saved === 'string' && saved !== '' && !options.some((o) => o.value === saved)) {
-    options.push({ value: saved, label: 'Unavailable person (Sales head is used)' });
-  }
-  return options;
+function personFields(
+  people: readonly SettingsPerson[],
+  saved: unknown,
+): Pick<FieldSpec, 'people' | 'salesHeadId' | 'unavailablePerson'> {
+  const head = people.find((p) => p.salesHead === true);
+  return {
+    people: people.map((p) => ({
+      id: p.userId,
+      name: p.displayName || 'Unnamed user',
+      role: p.role ?? null,
+    })),
+    ...(head ? { salesHeadId: head.userId } : {}),
+    ...(typeof saved === 'string' && saved !== '' && !people.some((p) => p.userId === saved)
+      ? { unavailablePerson: { id: saved, name: 'Unavailable person (Sales head is used)' } }
+      : {}),
+  };
 }
 
-function optionsFor(
-  kind: FieldKind,
-  saved: unknown,
-  people: readonly SettingsPerson[],
-): Option[] | undefined {
+function optionsFor(kind: FieldKind): Option[] | undefined {
   if (kind === 'select') {
     return EVIDENCE_POLICIES.map((value) => ({ value, label: EVIDENCE_LABEL[value] }));
   }
-  if (kind === 'person') return personOptions(people, saved);
   return undefined;
 }
 
@@ -68,7 +73,7 @@ function toSpec(
 ): FieldSpec {
   const copy = SETTING_COPY[key];
   if (copy === undefined) throw new Error(`No settings copy for ${key}`);
-  const options = optionsFor(copy.kind, current.value, people);
+  const options = optionsFor(copy.kind);
   return {
     key,
     label: copy.label,
@@ -81,6 +86,7 @@ function toSpec(
     isDefault: isDefaultValue(key, current.value),
     ...(copy.numberBounds ? { numberBounds: copy.numberBounds } : {}),
     ...(options ? { options } : {}),
+    ...(copy.kind === 'person' ? personFields(people, current.value) : {}),
   };
 }
 
