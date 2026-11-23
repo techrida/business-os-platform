@@ -200,7 +200,8 @@ describe('parseUpdateVendor', () => {
       { ...foreign, pan: 'EIN-1234567' },
       3,
     );
-    expect(cleared.ok).toBe(false);
+    // R6AA: an unapproved foreign vendor may clear its tax id; the API takes null.
+    expect(cleared).toEqual({ ok: true, data: { expectedVersion: 3, pan: null } });
   });
 
   describe('D10: the kind and country', () => {
