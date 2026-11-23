@@ -18,6 +18,7 @@
     "@bos/pdf-viewer": "workspace:*",
     "@fontsource-variable/outfit": "catalog:",
     "@internationalized/date": "catalog:",
+    "@radix-ui/react-tooltip": "catalog:",
     "ioredis": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",

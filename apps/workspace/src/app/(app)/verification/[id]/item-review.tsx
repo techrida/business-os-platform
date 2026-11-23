@@ -1,11 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useId, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
 import styles from '../verification.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Tooltip } from '@/components/ui/tooltip';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
@@ -25,7 +26,6 @@ export function ItemReview({
   canApprove: boolean;
 }) {
   const router = useRouter();
-  const hintId = useId();
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState('');
   const reasonRef = useRef<HTMLTextAreaElement>(null);
@@ -75,16 +75,17 @@ export function ItemReview({
   return (
     <div className={styles.itemReview}>
       <div className={styles.headerActions}>
-        <Button
-          size="small"
-          variant="secondary"
-          aria-label={`Approve ${label}`}
-          aria-disabled={!canApprove || pending}
-          aria-describedby={!canApprove ? hintId : undefined}
-          onClick={() => void decide('approve')}
-        >
-          Approve
-        </Button>
+        <Tooltip content={canApprove ? undefined : 'Approval requires a clean, unexpired file.'}>
+          <Button
+            size="small"
+            variant="secondary"
+            aria-label={`Approve ${label}`}
+            aria-disabled={!canApprove || pending}
+            onClick={() => void decide('approve')}
+          >
+            Approve
+          </Button>
+        </Tooltip>
         <ConfirmDialog
           open={open}
           onOpenChange={(next) => {
@@ -132,11 +133,6 @@ export function ItemReview({
           </div>
         </ConfirmDialog>
       </div>
-      {!canApprove && (
-        <p id={hintId} className={styles.note}>
-          Approval requires a clean, unexpired file.
-        </p>
-      )}
     </div>
   );
 }

@@ -32,6 +32,7 @@ import {
 } from '../_lib/role-model';
 import { useLeaveGuard } from '../_lib/use-leave-guard';
 import styles from '../roles.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export const FOUNDER_LOCKED_MESSAGE = 'Founders always have full access. This cannot be changed.';
 export const VIEW_ONLY_MESSAGE = 'Only a Founder can change access.';
@@ -126,15 +127,16 @@ function PermissionControl({
       </div>
       <div className={styles.undoSlot}>
         {showUndo ? (
-          <button
-            type="button"
-            className={styles.undo}
-            aria-label={undoLabel(roleLabel, row)}
-            title={undoLabel(roleLabel, row)}
-            onClick={onUndo}
-          >
-            <Icon name="undo-2" size={16} />
-          </button>
+          <Tooltip content={undoLabel(roleLabel, row)}>
+            <button
+              type="button"
+              className={styles.undo}
+              aria-label={undoLabel(roleLabel, row)}
+              onClick={onUndo}
+            >
+              <Icon name="undo-2" size={16} />
+            </button>
+          </Tooltip>
         ) : null}
       </div>
     </li>
