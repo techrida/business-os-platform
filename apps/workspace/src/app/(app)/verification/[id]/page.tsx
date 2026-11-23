@@ -132,6 +132,7 @@ export default async function VerificationCasePage({
     files.set(documentId, fileOf(document, bound));
   });
   const vendor = c.partyKind === 'vendor';
+  const beforeChange = new Set(c.beforeChangeDocumentIds ?? []);
   const history = vendor
     ? null
     : await getVerificationReviewHistory(session, id, before).catch(() => null);
@@ -193,6 +194,13 @@ export default async function VerificationCasePage({
       </div>
 
       <div className={styles.caseNotices}>
+        {c.identityReset ? (
+          <Alert tone="warning" role="region" aria-label="Details changed">
+            Details changed on <time dateTime={c.identityReset.at}>{when(c.identityReset.at)}</time>{' '}
+            by <span>{c.identityReset.byName ?? 'a staff member'}</span>; upload the documents
+            again.
+          </Alert>
+        ) : null}
         {legacy ? (
           <Alert tone="info">
             {c.status === 'approved'
@@ -411,8 +419,12 @@ export default async function VerificationCasePage({
         {c.looseEvidence?.length ? (
           <Panel
             as="aside"
-            title="Other case attachments"
-            description="All active attachments must pass scanning."
+            title={vendor ? 'Earlier files' : 'Other case attachments'}
+            description={
+              vendor
+                ? 'Kept as history. Upload the documents again.'
+                : 'All active attachments must pass scanning.'
+            }
           >
             <ul className={styles.attachments}>
               {c.looseEvidence.map((file) => {
@@ -422,6 +434,9 @@ export default async function VerificationCasePage({
                     <Icon name="file-text" size={18} />
                     <div>
                       <p className={styles.itemName}>{file.filename}</p>
+                      {beforeChange.has(file.documentId) ? (
+                        <Badge tone="neutral">Before the change</Badge>
+                      ) : null}
                       <Badge
                         tone={
                           scan.tone === 'good'
@@ -434,7 +449,7 @@ export default async function VerificationCasePage({
                         {scan.text}
                       </Badge>
                     </div>
-                    {mayAttach ? (
+                    {mayAttach && !vendor ? (
                       <RemoveLoose
                         caseId={c.id}
                         documentId={file.documentId}
