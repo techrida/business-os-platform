@@ -498,7 +498,7 @@ describe('edit', () => {
         api().patch(`/v1/vendors/${v.id}`).send({ expectedVersion: version, legalName: 'Renamed' }),
       );
     expect(locked.status).toBe(409);
-    expect(locked.body.error.message).toMatch(/new KYB review/);
+    expect(locked.body.error.message).toMatch(/cannot be edited/);
   });
 
   it('answers 404 for an unknown vendor', async () => {
@@ -658,8 +658,12 @@ describe('D10: the kind and country of a vendor can be edited', () => {
       country: 'IN',
     });
     expect(inReview.status, JSON.stringify(inReview.body)).toBe(200);
-    expect(inReview.body.status).toBe('under_review');
+    // R6AA: an identity change in review sends the vendor back to pending_kyc; it goes through review again.
+    expect(inReview.body.status).toBe('pending_kyc');
     await setCase(v.id, 'approved');
+    as('procurement', 'procurement');
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+    as('founder', 'founder');
     expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(200);
     const version = (await api().get(`/v1/vendors/${v.id}`)).body.version as number;
     const locked = await patchVendor(v.id, {
@@ -669,6 +673,7 @@ describe('D10: the kind and country of a vendor can be edited', () => {
     });
     expect(locked.status, JSON.stringify(locked.body)).toBe(409);
     expect(locked.body.error.code).toBe('vendor_identity_locked');
+    expect(locked.body.error.message).not.toMatch(/KYB review/);
     // The kind and country it already has are not a change, so an approved vendor's other edits still work.
     const same = await patchVendor(v.id, {
       expectedVersion: version,
@@ -677,6 +682,142 @@ describe('D10: the kind and country of a vendor can be edited', () => {
       vatRegistered: false,
     });
     expect(same.status, JSON.stringify(same.body)).toBe(200);
+  });
+});
+
+describe('R6AA: an identity edit before approval voids the KYB case; a foreign vendor may clear its PAN', () => {
+  const patchVendor = (id: string, body: Record<string, unknown>) =>
+    api().patch(`/v1/vendors/${id}`).send(body);
+  const current = async (id: string) =>
+    VendorDtoSchema.parse((await api().get(`/v1/vendors/${id}`)).body);
+  const caseRow = async (id: string) =>
+    (
+      await rowOf<{ status: string; checklist: { status: string; documentId: string | null }[] }>(
+        'SELECT status, checklist FROM app.verification_cases WHERE tenant_id = $1 AND party_id = $2',
+        [tenantId, id],
+      )
+    )[0];
+  const resetAudit = (id: string) =>
+    rowOf<{ before: Record<string, unknown>; after: Record<string, unknown> }>(
+      `SELECT before, after FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.kyb_reset' ORDER BY id`,
+      [tenantId, id],
+    );
+
+  it('a legal-name edit while the case is submitted sends the vendor to pending_kyc and the case to an empty draft', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+    await setCase(v.id, 'submitted');
+    as('founder', 'founder');
+    const res = await patchVendor(v.id, {
+      expectedVersion: (await current(v.id)).version,
+      legalName: 'Renamed Traders Pvt Ltd',
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('pending_kyc');
+    const c = await caseRow(v.id);
+    expect(c?.status).toBe('draft');
+    expect(c?.checklist.every((i) => i.status === 'missing' && i.documentId === null)).toBe(true);
+    const [audit] = await resetAudit(v.id);
+    expect(audit?.before).toMatchObject({ status: 'pending_kyc', legalName: v.legalName });
+    expect(audit?.after).toMatchObject({
+      status: 'pending_kyc',
+      legalName: 'Renamed Traders Pvt Ltd',
+    });
+    // The vendor cannot be sent for review until the documents are back and submitted.
+    as('procurement', 'procurement');
+    const again = await post(`/v1/vendors/${v.id}/submit-kyc`);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('kyb_not_submitted');
+  });
+
+  it('a PAN edit while under review with an approved case returns the vendor to pending_kyc and voids the approval', async () => {
+    const v = await newVendor();
+    await toUnderReview(v);
+    await setCase(v.id, 'approved');
+    const res = await patchVendor(v.id, {
+      expectedVersion: (await current(v.id)).version,
+      pan: nextPan(),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('pending_kyc');
+    const c = await caseRow(v.id);
+    expect(c?.status).toBe('draft');
+    expect(c?.checklist.every((i) => i.status === 'missing')).toBe(true);
+    as('founder', 'founder');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(409);
+  });
+
+  it('an edit that leaves the identity alone keeps the review and the case', async () => {
+    const v = await newVendor();
+    await toUnderReview(v);
+    const res = await patchVendor(v.id, {
+      expectedVersion: (await current(v.id)).version,
+      vatRegistered: false,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('under_review');
+    expect((await caseRow(v.id))?.status).toBe('submitted');
+    expect(await resetAudit(v.id)).toHaveLength(0);
+  });
+
+  it('an identity edit on a draft vendor opens no KYB case', async () => {
+    const v = await newVendor();
+    const res = await patchVendor(v.id, {
+      expectedVersion: v.version,
+      legalName: 'Draft Rename Pvt Ltd',
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('draft');
+    expect(await caseRow(v.id)).toBeUndefined();
+  });
+
+  it('an approved vendor stays locked, with a sentence that names no review path', async () => {
+    const v = await newVendor();
+    await toUnderReview(v);
+    await setCase(v.id, 'approved');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(200);
+    const res = await patchVendor(v.id, {
+      expectedVersion: (await current(v.id)).version,
+      legalName: 'Locked Rename Pvt Ltd',
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('vendor_identity_locked');
+    expect(res.body.error.message).toMatch(/cannot be edited/);
+    expect(res.body.error.message).not.toMatch(/review/i);
+    expect((await caseRow(v.id))?.status).toBe('approved');
+  });
+
+  it('a foreign vendor may clear its PAN; a Nepal vendor may not', async () => {
+    const foreign = await createVendor({ kind: 'foreign', country: 'DE', pan: 'DE12345678' });
+    expect(foreign.status, JSON.stringify(foreign.body)).toBe(201);
+    const cleared = await patchVendor(foreign.body.id, {
+      expectedVersion: foreign.body.version,
+      pan: null,
+    });
+    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
+    expect(cleared.body.pan).toBeNull();
+
+    const nepal = await newVendor();
+    const refused = await patchVendor(nepal.id, { expectedVersion: nepal.version, pan: null });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect((await current(nepal.id)).pan).toBe(nepal.pan);
+  });
+
+  it('a PATCH that repeats the stored values writes nothing and keeps the version', async () => {
+    const v = await newVendor();
+    const res = await patchVendor(v.id, {
+      expectedVersion: v.version,
+      kind: v.kind,
+      country: v.country,
+      legalName: v.legalName,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.version).toBe(v.version);
+    expect((await current(v.id)).version).toBe(v.version);
+    const stale = await patchVendor(v.id, { expectedVersion: v.version + 5, kind: v.kind });
+    expect(stale.status).toBe(409);
   });
 });
 
