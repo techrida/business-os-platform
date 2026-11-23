@@ -170,3 +170,181 @@ code {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Browser-default widgets (UIP-BUILD-002) ----
+   Every skin below uses tokens only, so the platform's own scrollbar, file row, progress bar,
+   range slider and search clear button never show. */
+
+/* The type-selector skins sit in :where() so they have no specificity: a component's own class
+   (the colour picker's hue slider, a sized progress bar) always wins.
+
+   Scrollbars: thin and token-coloured everywhere. The standard properties are enough for Firefox
+   and for Chrome and Safari 18.2+; the ::-webkit-scrollbar block covers older WebKit. Chrome
+   ignores the ::-webkit-scrollbar rules wherever scrollbar-color is set, so a component that wants
+   a different look sets scrollbar-color/scrollbar-width itself, not the pseudo-elements. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
+    background: var(--border-strong);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* File inputs: the "Choose file" part is a secondary button; the "No file chosen" text keeps the
+   secondary text colour. The control keeps the default focus ring (:focus-visible above). */
+:where(input[type='file']) {
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+:where(input[type='file'])::file-selector-button {
+  margin-inline-end: 12px;
+  padding: 6px 12px;
+  border: var(--border-width-thin) solid var(--button-secondary-border);
+  border-radius: var(--radius-lg);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-text);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+:where(input[type='file']):hover:not(:disabled)::file-selector-button {
+  background: var(--button-secondary-bg-hover);
+}
+
+:where(input[type='file']):active:not(:disabled)::file-selector-button {
+  background: var(--button-secondary-bg-active);
+}
+
+:where(input[type='file']):disabled {
+  cursor: not-allowed;
+}
+
+:where(input[type='file']):disabled::file-selector-button {
+  border-color: var(--border-default);
+  background: var(--button-disabled-bg);
+  color: var(--button-secondary-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Progress and meter: a rounded token bar. A component that needs another height sets it on the
+   element; the track and fill colours come from the progress tokens. */
+progress,
+meter {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--progress-track-bg);
+  color: var(--progress-fill-bg);
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar,
+meter::-webkit-meter-bar {
+  border: 0;
+  border-radius: inherit;
+  background: var(--progress-track-bg);
+}
+
+progress::-webkit-progress-value,
+meter::-webkit-meter-optimum-value,
+meter::-webkit-meter-suboptimum-value,
+meter::-webkit-meter-even-less-good-value {
+  border-radius: inherit;
+  background: var(--progress-fill-bg);
+}
+
+progress::-moz-progress-bar,
+meter::-moz-meter-bar {
+  border-radius: inherit;
+  background: var(--progress-fill-bg);
+}
+
+/* Range sliders: token track and thumb. A component with its own track (the colour picker's hue
+   slider) overrides the track and thumb rules; its class selector is more specific. */
+:where(input[type='range']) {
+  appearance: none;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+
+:where(input[type='range'])::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-default);
+}
+
+:where(input[type='range'])::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-default);
+}
+
+:where(input[type='range'])::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border: 2px solid var(--surface-default);
+  border-radius: 50%;
+  background: var(--action-primary);
+  box-shadow: 0 0 0 1px var(--action-primary);
+}
+
+:where(input[type='range'])::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--surface-default);
+  border-radius: 50%;
+  background: var(--action-primary);
+  box-shadow: 0 0 0 1px var(--action-primary);
+}
+
+:where(input[type='range']):disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Search fields: the browser's own clear "x" is hidden; the field is cleared with the keyboard
+   (Escape) or by selecting the text. */
+:where(input[type='search'])::-webkit-search-cancel-button,
+:where(input[type='search'])::-webkit-search-decoration {
+  appearance: none;
+  display: none;
+}
+
+/* Number fields: no stepper arrows. Amounts are typed (the app's number input is text-based). */
+:where(input[type='number']) {
+  appearance: textfield;
+}
+
+:where(input[type='number'])::-webkit-inner-spin-button,
+:where(input[type='number'])::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
