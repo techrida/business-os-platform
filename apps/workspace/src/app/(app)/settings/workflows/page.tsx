@@ -169,6 +169,7 @@ export default async function WorkflowsPage() {
             label: u.email ? `${name} (${u.email})` : name,
             name,
             email: u.email ?? null,
+            role: u.role ?? null,
           };
         })
       : null;

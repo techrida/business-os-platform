@@ -36,6 +36,7 @@ import {
 } from '../../platform/authz/sole-eligible';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxOptions, type TxScope } from '../../platform/db/tx';
+import { departmentNames, roleLine } from '../../platform/users/person-role';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { APPROVALS_CLOCK, ApprovalsAudit, ApprovalsCaller, type Clock } from './ports';
 import { activeEntityStaff, pgCode } from './requests.service';
@@ -201,7 +202,13 @@ export class ApprovalsAdminService {
   async listAssignmentPeople(q: { limit: number; after?: string | undefined }) {
     const { scope } = this.caller.current();
     const items = await this.db
-      .select({ id: users.id, displayName: users.displayName, email: users.email })
+      .select({
+        id: users.id,
+        displayName: users.displayName,
+        email: users.email,
+        jobTitle: userEntities.jobTitle,
+        departmentId: userEntities.departmentId,
+      })
       .from(users)
       .innerJoin(
         userEntities,
@@ -222,7 +229,19 @@ export class ApprovalsAdminService {
       )
       .orderBy(asc(users.id))
       .limit(q.limit);
-    return { items, nextAfter: items.length === q.limit ? (items.at(-1)?.id ?? null) : null };
+    const deptNames = await departmentNames(
+      this.db,
+      scope,
+      items.map((i) => i.departmentId),
+    );
+    return {
+      // The role line is what a member picker shows after the name (BOS-UI-001).
+      items: items.map(({ jobTitle, departmentId, ...person }) => ({
+        ...person,
+        role: roleLine(jobTitle, departmentId === null ? null : (deptNames.get(departmentId) ?? null)),
+      })),
+      nextAfter: items.length === q.limit ? (items.at(-1)?.id ?? null) : null,
+    };
   }
 
   // ---- workflows -----------------------------------------------------------------------------------

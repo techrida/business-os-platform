@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { click, mountForm } from '@/test/form-interactions';
+import { mountForm } from '@/test/form-interactions';
 import { UserField } from './user-field';
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
@@ -28,21 +28,31 @@ it('shows named choices, retains an unavailable selection, and offers no raw-ID 
   // The saved target is retained and shown by a name, never by its raw id.
   const hidden = container.querySelector<HTMLInputElement>('input[name="userId"]')!;
   expect(hidden.value).toBe('old-opaque');
-  const trigger = container.querySelector('button')!;
-  expect(trigger.textContent).toContain('Current person (name unavailable)');
-  // The user can pick a named person; the raw id is submitted but never shown.
-  await click(trigger);
-  const labels = Array.from(document.querySelectorAll('[role="option"]')).map((o) =>
-    o.textContent?.trim(),
+  const box = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+  expect(box.value).toBe('Current person (name unavailable)');
+  // Nothing shows the raw id.
+  expect(`${container.textContent}${box.value}`.replace(/old-opaque/g, '')).not.toContain('opaque');
+  // The one named input is the hidden one; the visible box posts nothing.
+  expect(Array.from(container.querySelectorAll('input[name="userId"]'))).toHaveLength(1);
+  expect(Array.from(new FormData(container.querySelector('form')!).entries())).toEqual([
+    ['userId', 'old-opaque'],
+  ]);
+});
+
+it('shows a chosen person as name and role', async () => {
+  mounted = await mountForm(
+    <form>
+      <UserField
+        name="userId"
+        label="Person"
+        users={[{ id: 'p1', label: 'Mina (m@x.test)', name: 'Mina', email: 'm@x.test', role: 'Sales' }]}
+        defaultValue="p1"
+      />
+    </form>,
   );
-  expect(labels).toEqual(['Current person (name unavailable)', 'Mina']);
-  expect(
-    `${container.textContent}${document.body.textContent}`.replace(/old-opaque/g, ''),
-  ).not.toContain('opaque');
-  // No raw-ID text input: the only visible control is the dropdown; the one named input is hidden.
-  const named = Array.from(container.querySelectorAll('input[name="userId"]'));
-  expect(named).toHaveLength(1);
-  expect(container.querySelectorAll('input:not([type="hidden"])')).toHaveLength(0);
+  expect(mounted.container.querySelector<HTMLInputElement>('input[role="combobox"]')!.value).toBe(
+    'Mina Sales',
+  );
 });
 
 it('disables new selection when the directory could not load', async () => {
@@ -55,8 +65,8 @@ it('disables new selection when the directory could not load', async () => {
   expect(container.textContent).toContain('People could not be loaded');
   // The field is disabled and so is its trigger; nothing is submitted.
   expect(container.querySelector<HTMLInputElement>('input[name="userId"]')!.disabled).toBe(true);
-  expect(container.querySelector('button')!.disabled).toBe(true);
+  expect(container.querySelector<HTMLInputElement>('input[role="combobox"]')!.disabled).toBe(true);
   expect(Array.from(new FormData(container.querySelector('form')!).keys())).toEqual([]);
-  // No raw-ID text box is offered; the only input is the hidden form field.
-  expect(container.querySelectorAll('input:not([type="hidden"])')).toHaveLength(0);
+  // Nothing the user could type an id into: the search box is disabled.
+  expect(container.querySelectorAll('input:not([type="hidden"]):not(:disabled)')).toHaveLength(0);
 });
