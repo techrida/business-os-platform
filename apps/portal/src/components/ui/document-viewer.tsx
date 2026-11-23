@@ -5,6 +5,8 @@ import { useCallback, useEffect, useId, useRef, useState, type ComponentProps } 
 
 import { Button } from './button';
 import styles from './document-viewer.module.css';
+import { documentStateOf } from '@/lib/document-state';
+
 import { downloadFile } from './download-file';
 import { Icon } from './icon';
 
@@ -36,7 +38,8 @@ export interface ViewDocumentProps {
  * still being prepared (HTTP 409 or 425) or fails, the dialog shows a message and a Retry button that makes
  * one new request per click. A 424 (the PDF failed or was refused) says it is delayed and the team has been told,
  * with no Retry. A 404 (not available, or access taken away) shows a plain "not available" message with
- * no Retry and no reason; nothing polls, because every call to such a route issues a single-use signed link.
+ * no Retry and no reason. A 410 shows the closed message (no Retry) or, for a link that ran out, a Retry that asks for
+ * a fresh link. Nothing polls, because every call to such a route issues a single-use signed link.
  * Download fetches the file and saves it, so a refusal (not ready yet, signed out) is a sentence beside the button and
  * the page stays as it was (round 4, R4c2: TR-Q4). Light mode only. Full screen at 480px and below.
  *
@@ -212,19 +215,25 @@ type PdfState =
   | { status: 'preparing' }
   | { status: 'delayed' }
   | { status: 'unavailable' }
+  | { status: 'expired' }
+  | { status: 'closed' }
   | { status: 'denied' }
   | { status: 'error' };
+
+type NotReady = Exclude<PdfState['status'], 'loading' | 'ready'>;
 
 /**
  * 409 and 425 mean "still being prepared"; 424 means the PDF failed or was refused and the team has been told, so
  * retrying now cannot help; 404 means the document is not available (never ready, or revoked), so retrying cannot
- * help; 401 and 403 mean access was lost; other non-2xx is a failure.
+ * help; 410 is either a download link that ran out (a new request issues a fresh one, so Retry helps) or a quotation
+ * the company closed (nothing to retry), told apart by the route's state header; 401 and 403 mean access was lost;
+ * other non-2xx is a failure.
  */
-function fetchOutcome(
-  status: number,
-): 'ready' | 'preparing' | 'delayed' | 'unavailable' | 'denied' | 'error' {
+function fetchOutcome(response: Response): 'ready' | NotReady {
+  const { status } = response;
   if (status >= 200 && status < 300) return 'ready';
   if (status === 404) return 'unavailable';
+  if (status === 410) return documentStateOf(response) === 'closed' ? 'closed' : 'expired';
   if (status === 409 || status === 425) return 'preparing';
   if (status === 424) return 'delayed';
   if (status === 401 || status === 403) return 'denied';
@@ -265,7 +274,7 @@ function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
     };
     fetch(previewUrl, { credentials: 'same-origin', cache: 'no-store', signal: own.signal })
       .then(async (response) => {
-        const outcome = fetchOutcome(response.status);
+        const outcome = fetchOutcome(response);
         if (outcome === 'ready') {
           settle({ status: 'ready', data: new Uint8Array(await response.arrayBuffer()) });
         } else {
@@ -318,6 +327,23 @@ function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
   }
   if (state.status === 'unavailable') {
     return <Message title="Not available" text="This document is not available." />;
+  }
+  if (state.status === 'closed') {
+    return (
+      <Message
+        title="No longer open"
+        text="This quotation is no longer open. Contact the company if you have a question."
+      />
+    );
+  }
+  if (state.status === 'expired') {
+    return (
+      <Message
+        title="Link expired"
+        text="The link to this document ran out. Retry to open it again."
+        onRetry={retry}
+      />
+    );
   }
   if (state.status === 'denied') {
     return <Message title="No access" text="You no longer have access to this file." />;
