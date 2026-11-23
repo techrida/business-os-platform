@@ -104,4 +104,3 @@ export const FlaggedUserSchema = z.object({
 export type FlaggedUser = z.infer<typeof FlaggedUserSchema>;
 
 export const FlaggedUsersSchema = z.object({ items: z.array(FlaggedUserSchema) });
-
