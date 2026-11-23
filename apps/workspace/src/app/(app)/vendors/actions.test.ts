@@ -252,7 +252,7 @@ describe('updateVendorAction', () => {
     api.getVendor.mockResolvedValue(original);
     api.updateVendor.mockRejectedValue(apiError(409, 'vendor_identity_locked'));
     const r = await updateVendorAction(start, form(fields));
-    expect(r.error).toMatch(/KYB review/);
+    expect(r.error).toMatch(/cannot be edited/);
     expect(r.reload).toBeUndefined();
   });
 });

@@ -144,7 +144,7 @@ describe('CreditLimitForm', () => {
     await open('credit limit');
     // The current zero limit is prefilled, not blanked.
     expect(dialog()!.querySelector<HTMLInputElement>('input[name="creditLimit"]')?.value).toBe('0');
-    await click(dialog()!.querySelector('input[name="limitMode"][value="none"]'));
+    await click(dialog()!.querySelector('button[role="radio"][value="none"]'));
     expect(dialog()!.querySelector('input[name="creditLimit"]')).toBeNull();
     await save();
     const sent = action.mock.calls[0]![1];

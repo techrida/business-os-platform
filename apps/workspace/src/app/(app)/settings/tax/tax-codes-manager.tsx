@@ -28,6 +28,7 @@ import {
   statusText,
 } from './tax-code-model';
 import tax from './tax.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /** Tax-code rates take two decimals here, though the column stores four ("13.0000"). */
 const RATE_SCALE = 2;
@@ -261,11 +262,9 @@ function AddTaxCodeDialog({ today, onClose }: { today: string; onClose: () => vo
           )}
         </Field>
         <label className={styles.checkLabel}>
-          <input
-            type="checkbox"
-            className={styles.checkbox}
+          <Checkbox
             checked={creditable}
-            onChange={(e) => setCreditable(e.target.checked)}
+            onCheckedChange={(nextChecked) => setCreditable(nextChecked)}
           />
           Input tax can be claimed back
         </label>
@@ -371,11 +370,9 @@ function ChangeTaxCodeDialog({
           )}
         </Field>
         <label className={styles.checkLabel}>
-          <input
-            type="checkbox"
-            className={styles.checkbox}
+          <Checkbox
             checked={creditable}
-            onChange={(e) => setCreditable(e.target.checked)}
+            onCheckedChange={(nextChecked) => setCreditable(nextChecked)}
           />
           Input tax can be claimed back
         </label>

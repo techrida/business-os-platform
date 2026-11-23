@@ -5,6 +5,7 @@ import styles from '@/app/(app)/leads/leads.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Field, Input } from '@/components/ui/field';
 import { FactList, Panel } from '@/components/ui/panel';
+import { Checkbox } from '@/components/ui/checkbox';
 
 import type { ConvertLead } from './convert-dialog';
 import type { StepContext } from './convert-types';
@@ -62,11 +63,10 @@ export function DetailsStep({
         <fieldset className={styles.conversionSection}>
           <legend className={styles.legend}>Or create anyway</legend>
           <label className={styles.choice}>
-            <input
-              type="checkbox"
+            <Checkbox
               name="createAnyway"
               checked={values['createAnyway'] !== ''}
-              onChange={(e) => patch({ createAnyway: e.target.checked ? 'on' : '' })}
+              onCheckedChange={(checked) => patch({ createAnyway: checked ? 'on' : '' })}
             />
             Create new records even though a match exists
           </label>

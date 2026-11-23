@@ -14,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 import type { ContactFormState } from './form-state';
 import { EMPTY_CONTACT_VALUES, type ContactField, type ContactValues } from './forms';
 import styles from './customer-form.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /** Why the main-contact box is off, linked to it with aria-describedby. */
 export const PRIMARY_TAKEN_REASON = 'This customer already has a main contact.';
@@ -247,13 +248,12 @@ function ContactFields({
         </Field>
       </div>
       <label className={styles.check}>
-        <input
-          type="checkbox"
+        <Checkbox
           name="isPrimary"
           checked={isPrimary}
           disabled={hasPrimary}
           aria-describedby={hasPrimary ? primaryReasonId : undefined}
-          onChange={(e) => onChange({ ...values, isPrimary: e.target.checked })}
+          onCheckedChange={(nextChecked) => onChange({ ...values, isPrimary: nextChecked })}
         />
         Make this the main contact
       </label>

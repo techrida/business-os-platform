@@ -26,6 +26,7 @@ import { ColourPicker } from './colour-picker';
 import styles from './document-style-form.module.css';
 import { LayoutThumbnail } from './layout-thumbnail';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 export interface DocumentStyleFormProps {
   /** What is saved now. Read once; after a save the form tracks its own baseline. */
@@ -234,14 +235,15 @@ export function DocumentStyleForm({
                     </span>
                     <span className={styles.meta}>
                       <span className={styles.nameRow}>
-                        <input
-                          type="radio"
+                        {/* One group per card: the expand button sits between the cards' radios. */}
+                        <RadioGroup
+                          neutral
                           name="layout"
-                          value={value}
-                          checked={selected}
-                          onChange={() => setLayout(value)}
-                          className={styles.radio}
-                        />
+                          value={selected ? value : ''}
+                          onValueChange={() => setLayout(value)}
+                        >
+                          <Radio value={value} />
+                        </RadioGroup>
                         <span className={styles.name}>{name}</span>
                       </span>
                       <span className={styles.hint}>{hint}</span>

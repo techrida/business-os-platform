@@ -25,6 +25,7 @@ import { EMPTY_BANK_VALUES, type BankField, type ContactField } from '../_lib/fo
 import type { LifecycleOption } from '../_lib/model';
 import { panelStart, type PanelState } from '../_lib/state';
 import styles from '../vendors.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * The small forms on the vendor detail page. Each is a Client Component only so a refusal shows
@@ -214,11 +215,10 @@ function ContactFields({
         </div>
       </div>
       <label className={styles.check}>
-        <input
-          type="checkbox"
+        <Checkbox
           name="isPortalAdmin"
           checked={v.isPortalAdmin}
-          onChange={(e) => setV((x) => ({ ...x, isPortalAdmin: e.target.checked }))}
+          onCheckedChange={(nextChecked) => setV((x) => ({ ...x, isPortalAdmin: nextChecked }))}
         />
         Marks this person as the vendor’s portal administrator
       </label>

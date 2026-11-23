@@ -35,17 +35,17 @@ const mount = (skip?: DocumentLayout) =>
   );
 
 const radio = (root: HTMLElement, layout: string) =>
-  root.querySelector<HTMLInputElement>(`input[type="radio"][value="${layout}"]`);
+  root.querySelector<HTMLButtonElement>(`button[role="radio"][value="${layout}"]`);
 const saveButton = (root: HTMLElement) =>
   [...root.querySelectorAll('button')].find((b) => b.textContent === 'Save') as HTMLButtonElement;
 const dot = (root: HTMLElement, label: string) =>
   root.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`);
 
 describe('DocumentStyleForm', () => {
-  it('draws five native radios with the saved layout selected, and a sandboxed frame in each card', async () => {
+  it('draws five design-system radios with the saved layout selected, and a sandboxed frame in each card', async () => {
     const { container, unmount } = await mount();
-    expect(container.querySelectorAll('input[type="radio"]')).toHaveLength(5);
-    expect(radio(container, 'banded')?.checked).toBe(true);
+    expect(container.querySelectorAll('button[role="radio"]')).toHaveLength(5);
+    expect(radio(container, 'banded')?.getAttribute('aria-checked')).toBe('true');
     const frames = container.querySelectorAll('iframe');
     expect(frames).toHaveLength(5);
     for (const frame of frames) {
@@ -159,7 +159,7 @@ describe('DocumentStyleForm', () => {
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('Ledger layout');
     expect(dialog?.querySelector('iframe')?.getAttribute('srcdoc')).toContain('ledger');
-    expect(radio(container, 'banded')?.checked).toBe(true);
+    expect(radio(container, 'banded')?.getAttribute('aria-checked')).toBe('true');
     await unmount();
     vi.unstubAllGlobals();
   });

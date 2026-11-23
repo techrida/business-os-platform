@@ -45,6 +45,7 @@ import {
   type ThresholdOp,
 } from './spec-form';
 import { memberOptions, type UserOption } from './user-field';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type SlaDefaults = Parameters<typeof emptySpecForm>[1];
 
@@ -494,10 +495,10 @@ export function WorkflowEditor({
                   )}
                 </Field>
                 <label className={`${styles.check} ${SPAN}`}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
+                    className={styles.checkBox}
                     checked={form.distinctApprovers}
-                    onChange={(e) => patch({ distinctApprovers: e.target.checked })}
+                    onCheckedChange={(nextChecked) => patch({ distinctApprovers: nextChecked })}
                   />
                   One person cannot approve two steps of the same request
                 </label>
