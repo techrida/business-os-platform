@@ -34,7 +34,7 @@ function stub(flagged: number) {
           orgKind: 'staff',
           partyId: null,
           roles: ['founder'],
-          correlationId: 'c-1',
+          correlationId: 'corr-0001-flagged',
         }),
       );
     }
