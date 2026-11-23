@@ -19,6 +19,8 @@ import { Card } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Select } from '@/components/ui/field';
+
+import { ContactPicker, type ContactCreate } from '../customers/contact-picker';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -62,6 +64,9 @@ export type BuilderTarget =
 export interface ContactOption {
   id: string;
   label: string;
+  /** The contact's name and what else a search matches (title, email); the picker falls back to `label`. */
+  name?: string;
+  detail?: string | undefined;
 }
 
 interface PreviewView {
@@ -170,6 +175,7 @@ export function QuoteBuilder({
   initial,
   context,
   contacts,
+  createContact = null,
   taxCodes,
   paymentTerms,
   termPresets,
@@ -189,6 +195,8 @@ export function QuoteBuilder({
   context: ReactNode;
   /** null when the contact list failed to load. */
   contacts: readonly ContactOption[] | null;
+  /** When set, the Contact picker's last row adds a contact to the customer and chooses it. */
+  createContact?: ContactCreate | null;
   taxCodes: readonly TaxCode[] | null;
   paymentTerms: readonly PaymentTerm[] | null;
   /** Saved term sets for the Terms fields; null when they could not be loaded (no dropdown is shown). */
@@ -691,27 +699,29 @@ export function QuoteBuilder({
           {context}
           <Field
             label="Contact"
+            optional
             hint={
               contacts === null
                 ? 'The contact list did not load. Reload the page to choose one.'
-                : 'Optional. Who at the customer receives this quotation.'
+                : 'Who at the customer receives this quotation.'
             }
             error={errors['contactId']}
           >
             {(control) => (
-              <Select
+              <ContactPicker
+                control={control}
+                name="contactId"
+                options={(contacts ?? []).map((c) => ({
+                  id: c.id,
+                  name: c.name ?? c.label,
+                  detail: c.detail,
+                }))}
                 value={values.contactId}
-                onChange={(e) => set('contactId')(e.target.value)}
+                onChange={set('contactId')}
+                create={contacts === null ? null : createContact}
                 disabled={contacts === null}
-                {...control}
-              >
-                <option value="">No contact chosen</option>
-                {(contacts ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
+                placeholder="Search a contact"
+              />
             )}
           </Field>
         </Card>
