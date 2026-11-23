@@ -15,6 +15,7 @@ import { Field, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
 import styles from './promise-card.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export interface PromiseDialogProps {
   invoiceId: string;
@@ -144,15 +145,16 @@ export function PromiseBlocked({ reason }: { reason: string }) {
   const reasonId = useId();
   return (
     <div className={styles.blocked}>
-      <Button
-        variant="secondary"
-        aria-disabled="true"
-        aria-describedby={reasonId}
-        title={reason}
-        onClick={(e) => e.preventDefault()}
-      >
-        Record promise
-      </Button>
+      <Tooltip content={reason}>
+        <Button
+          variant="secondary"
+          aria-disabled="true"
+          aria-describedby={reasonId}
+          onClick={(e) => e.preventDefault()}
+        >
+          Record promise
+        </Button>
+      </Tooltip>
       <p id={reasonId} className={styles.blockedReason}>
         {reason}
       </p>
