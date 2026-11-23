@@ -9,6 +9,7 @@ import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
 import {
   nepalPhoneProblem,
+  PartyPhoneSchema,
   PartyPhonesSchema,
   phoneCountryFromE164,
   phoneProblem,
@@ -163,6 +164,11 @@ export const CustomerDtoSchema = z.object({
    * on the staff list (`GET /v1/customers`); absent elsewhere and for portal callers.
    */
   ownerName: z.string().nullable().optional(),
+  /**
+   * R6A (D8): the primary number of the customer's primary contact, null when it has none. Sent on the staff list
+   * (`GET /v1/customers`); absent elsewhere and for portal callers.
+   */
+  primaryPhone: PartyPhoneSchema.nullable().optional(),
   defaultCurrency: CurrencySchema.nullable(),
   country: CountryCodeSchema,
   address: AddressLinesSchema,

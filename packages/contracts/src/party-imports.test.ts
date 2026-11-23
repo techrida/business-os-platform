@@ -39,6 +39,16 @@ describe('phones cell (FX9)', () => {
     });
   });
 
+  it('gives a shared calling code its main country, not the smaller region of the number (R6A)', () => {
+    expect(parsePhonesCell('+44 7911 123456; +39 06 69812345')).toEqual({
+      ok: true,
+      phones: [
+        { country: 'GB', e164: '+447911123456', isPrimary: true },
+        { country: 'IT', e164: '+390669812345', isPrimary: false },
+      ],
+    });
+  });
+
   it('drops spaces, hyphens and brackets inside a number, and takes plain E.164', () => {
     const parsed = parsePhonesCell('+977 (1) 412-3456;+14155552671');
     expect(parsed.ok && parsed.phones.map((p) => [p.country, p.e164])).toEqual([

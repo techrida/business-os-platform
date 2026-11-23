@@ -128,16 +128,17 @@ function mainCountryOfCallingCode(code: string): CountryCode | null {
 
 /**
  * The country a typed number most likely belongs to, or null. Works on a partial number too, so a phone field can
- * switch its country as the user types `+1 4…` (US) or `+977 98…` (NP). A complete number of a shared calling code
- * resolves to its own country (`+77012345678` is KZ); an incomplete one to the code's main country.
+ * switch its country as the user types `+1 4…` (US) or `+977 98…` (NP). A calling code several countries share
+ * (+44, +39, +1, +7, +61, +47, +590 and a few more) resolves to its main country (GB, IT, US, RU, AU, NO, GP), also
+ * for a complete number that libphonenumber's own patterns would place in a smaller region (`+447911123456` is GB,
+ * not GG; `+390612345678` is IT, not VA): people expect the main country (R6A, Kuu 2026-11-23). The answer follows the
+ * calling code alone, so a half-typed number shows the same country as the finished one. A deliberate country pick is never overridden here.
  */
 export function phoneCountryFromE164(e164: string): CountryCode | null {
   if (!e164.startsWith('+')) return null;
   const digits = e164.slice(1).replace(/\D/g, '');
   if (digits === '') return null;
   if (digits.startsWith(NEPAL_CODE.slice(1))) return 'NP';
-  const parsed = parsePhoneNumberFromString(`+${digits}`);
-  if (parsed?.country !== undefined && isCountryCode(parsed.country)) return parsed.country;
   // Calling codes are prefix-free, so the first prefix that is one is the only one.
   for (let length = 1; length <= 3 && length <= digits.length; length += 1) {
     const prefix = digits.slice(0, length);
