@@ -538,7 +538,7 @@ All shared components live in `apps/workspace/src/components/ui/` and `apps/work
 
 ### Index of Kuu's UI Preferences Cited
 
-Source: `/home/crestia/.agents/knowledge/ui-product-preferences.md` and sibling files (`forms-and-inputs.md`, `feedback-and-dialogs.md`, `data-display.md`, `ui-review-process.md`, `cases/business-os-memo-attachments.md`).
+Source: Kuu's UI preferences (`UIP-*` IDs), kept outside this repository.
 
 - `UIP-FORM-001`: Direct file upload on selection and drag-and-drop (no extra Upload step).
 - `UIP-FORM-002`: Clear delete/remove icon button on editable attachments with a filename-specific accessible name.
