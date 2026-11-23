@@ -189,7 +189,7 @@ describe('TermsField', () => {
     const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
       o.textContent?.trim(),
     );
-    expect(options).toEqual(['Saved options', 'Net 30', 'Older plain set', 'Two lists']);
+    expect(options).toEqual(['Net 30', 'Older plain set', 'Two lists']);
     await view.unmount();
   });
 
