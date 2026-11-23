@@ -98,6 +98,25 @@ describe('PhoneListInput, country from a typed code', () => {
     expect(document.activeElement).toBe(list.number(1));
   });
 
+  it('gives a typed +44 number the United Kingdom, not Guernsey (R6A)', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '+');
+    await typeKeys(list.number(1), '447911123456');
+    expect(list.posted('0.country')).toBe('GB');
+    expect(list.last()).toEqual([
+      { country: 'GB', e164: '+447911123456', label: null, isPrimary: true },
+    ]);
+  });
+
+  it('keeps a country the user picked when a pasted number only shares its calling code (R6A)', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'canada');
+    expect(list.posted('0.country')).toBe('CA');
+    await paste(list.number(1), '+1 204 555 1234');
+    expect(list.posted('0.country')).toBe('CA');
+    expect(list.posted('0.number')).toBe('+12045551234');
+  });
+
   it('leaves the full-number box when the same country is picked again', async () => {
     const list = await mount();
     await typeKeys(list.number(1), '+');

@@ -131,20 +131,14 @@ function mainCountryOfCallingCode(code: string): CountryCode | null {
  * switch its country as the user types `+1 4…` (US) or `+977 98…` (NP). A calling code several countries share
  * (+44, +39, +1, +7, +61, +47, +590 and a few more) resolves to its main country (GB, IT, US, RU, AU, NO, GP), also
  * for a complete number that libphonenumber's own patterns would place in a smaller region (`+447911123456` is GB,
- * not GG; `+390612345678` is IT, not VA): people expect the main country (R6A, Kuu 2026-11-23). The number only
- * has to be valid for the code, as `phoneProblem` checks. A deliberate country pick is never overridden here.
+ * not GG; `+390612345678` is IT, not VA): people expect the main country (R6A, Kuu 2026-11-23). The answer follows the
+ * calling code alone, so a half-typed number shows the same country as the finished one. A deliberate country pick is never overridden here.
  */
 export function phoneCountryFromE164(e164: string): CountryCode | null {
   if (!e164.startsWith('+')) return null;
   const digits = e164.slice(1).replace(/\D/g, '');
   if (digits === '') return null;
   if (digits.startsWith(NEPAL_CODE.slice(1))) return 'NP';
-  const parsed = parsePhoneNumberFromString(`+${digits}`);
-  if (parsed !== undefined && parsed.country !== undefined) {
-    const main = mainCountryOfCallingCode(parsed.countryCallingCode);
-    if (main !== null && phoneProblem(main, `+${digits}`) === null) return main;
-    if (isCountryCode(parsed.country)) return parsed.country;
-  }
   // Calling codes are prefix-free, so the first prefix that is one is the only one.
   for (let length = 1; length <= 3 && length <= digits.length; length += 1) {
     const prefix = digits.slice(0, length);

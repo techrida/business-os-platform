@@ -307,7 +307,7 @@ export default async function CustomersPage({
             </Alert>
           ) : null}
           <div className={styles.directory}>
-            <Table caption="Organizations" minWidth={1020} className={styles.table ?? ''}>
+            <Table caption="Organizations" minWidth={1180} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th className={styles.organizationColumn}>Organization</Th>
