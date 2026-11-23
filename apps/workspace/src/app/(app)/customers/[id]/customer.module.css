@@ -30,6 +30,7 @@
 
 .main,
 .profile,
+.attention,
 .verification {
   min-width: 0;
 }
@@ -205,6 +206,23 @@
   .verification {
     grid-area: verification;
   }
+
+  /* Not verified: the Verification card leads the right column, above the profile. */
+  .columnsUnverified {
+    grid-template-areas:
+      'main attention'
+      'main profile'
+      'main verification';
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .attention {
+    grid-area: attention;
+  }
+}
+
+.verificationCard {
+  scroll-margin-top: 24px;
 }
 
 @media (max-width: 767.98px) {
