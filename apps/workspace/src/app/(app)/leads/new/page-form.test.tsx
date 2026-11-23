@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LeadForm } from '@/components/p2/crm/lead-form';
 import { parseLead } from '@/components/p2/crm/forms';
@@ -121,39 +121,85 @@ it('preselects nobody else when the signed-in user is not placed in the owner li
   }
 });
 
-// Finance, Accountant and PMO are not placed in the owner list: an empty owner goes to the default lead owner,
-// so the choice must not say "You". Only when who the caller is did not load does the API make it theirs.
-it('labels the empty owner Default owner for a caller who is not placed, and You when unknown', async () => {
-  /** What the owner select shows before anyone is chosen: the empty choice's label. */
-  const emptyOwner = async (callerUnplaced: boolean | undefined) => {
-    const mounted = await mountForm(
+// Finance, Accountant and PMO are not placed in the owner list: an ownerless lead goes to the default lead owner. The
+// owner box names that real person (BOS-UI-001), and the hint says where the default comes from.
+describe('the owner of a lead the caller may not own', () => {
+  const PEOPLE = [
+    { value: RAM, label: 'Ram Thapa', role: 'Head · Sales' },
+    { value: SITA, label: 'Sita Rai', role: 'Sales' },
+  ];
+  const mountUnplaced = (
+    defaultOwnerId: string | undefined,
+    defaultOwnerSource: 'settings' | 'sales_head' | undefined,
+  ) =>
+    mountForm(
       <LeadForm
         action={vi.fn<FormAction>()}
         sources={[{ label: 'Referral', value: 'referral' }]}
-        owners={OWNERS}
+        owners={PEOPLE}
         enabledCurrencies={ALL_CURRENCIES}
-        defaultOwnerId={undefined}
-        callerUnplaced={callerUnplaced}
+        defaultOwnerId={defaultOwnerId}
+        defaultOwnerSource={defaultOwnerSource}
         idempotencyKey="44444444-4444-4444-8444-444444444444"
       />,
     );
+  const ownerBox = (c: HTMLElement) =>
+    c.querySelector<HTMLInputElement>('input[role="combobox"][aria-labelledby]')!;
+
+  it('shows the Settings default owner by name and role, never "Default owner", with the source as a hint', async () => {
+    const mounted = await mountUnplaced(RAM, 'settings');
     try {
-      const field = mounted.container.querySelector('input[type="hidden"][name="ownerUserId"]');
-      expect(field?.getAttribute('value')).toBe('');
-      return field?.parentElement?.querySelector('button')?.textContent?.trim();
+      const { container } = mounted;
+      const hidden = container.querySelector<HTMLInputElement>(
+        'input[type="hidden"][name="ownerUserId"]',
+      );
+      expect(hidden?.value).toBe(RAM);
+      const box = hidden!.parentElement!.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+      expect(box.value).toBe('Ram Thapa Head · Sales');
+      expect(container.textContent).toContain('Default owner from Settings.');
     } finally {
       await mounted.unmount();
     }
-  };
-  expect(await emptyOwner(true)).toBe('Default owner');
-  expect(await emptyOwner(undefined)).toBe('You');
+  });
+
+  it('says the default is the Sales head when Settings names no one', async () => {
+    const mounted = await mountUnplaced(RAM, 'sales_head');
+    try {
+      expect(mounted.container.textContent).toContain(
+        'Default owner: the Sales head, because no default is set in Settings.',
+      );
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('shows a clear empty state, not a made-up name, when nobody can be the default', async () => {
+    const mounted = await mountUnplaced(undefined, undefined);
+    try {
+      const hidden = mounted.container.querySelector<HTMLInputElement>(
+        'input[type="hidden"][name="ownerUserId"]',
+      );
+      expect(hidden?.value).toBe('');
+      const box = hidden!.parentElement!.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+      expect(box.value).toBe('');
+      expect(mounted.container.textContent).toContain(
+        'No default owner is set and you cannot own this lead, so choose who it goes to.',
+      );
+      expect(ownerBox(mounted.container)).not.toBeNull();
+    } finally {
+      await mounted.unmount();
+    }
+  });
 });
 
-it('shows a single owner read-only and still posts it', async () => {
+it('shows a single owner by name and still posts it', async () => {
   const mounted = await mountLead([{ value: ME, label: 'Asha Gurung' }], ME);
   try {
     const owner = mounted.container.querySelector('input[type="hidden"][name="ownerUserId"]');
-    expect(owner?.parentElement?.querySelector('button')?.hasAttribute('disabled')).toBe(true);
+    expect(
+      owner?.parentElement?.querySelector<HTMLInputElement>('input[role="combobox"]')?.value,
+    ).toBe('Asha Gurung');
+    expect(mounted.container.textContent).toContain('You can create leads for yourself only.');
     const data = await mounted.send();
     expect(data.getAll('ownerUserId')).toEqual([ME]);
   } finally {
