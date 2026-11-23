@@ -16,6 +16,10 @@ const sheets = {
 const MARK = '/* ---- Browser-default widgets';
 
 describe.each(Object.entries(sheets))('%s globals.css', (_app, css) => {
+  it('has the skin block marker the other checks slice on', () => {
+    expect(css.indexOf(MARK)).toBeGreaterThanOrEqual(0);
+  });
+
   it('skins scrollbars with tokens everywhere', () => {
     expect(css).toMatch(
       /\*\s*\{[^}]*scrollbar-width: thin;[^}]*scrollbar-color: var\(--border-strong\) transparent;/,
