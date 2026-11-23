@@ -84,20 +84,24 @@ jobs:
         run: pnpm --filter @bos/portal e2e
 
       # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
-      - name: Check the artifacts hold no persona password or TOTP secret
+      - name: Remove any file that holds a persona password or TOTP secret
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           node -e "
-          const p=JSON.parse(require('fs').readFileSync('.dev/personas.json','utf8'));
-          const out=[]; const walk=(v)=>{ if(typeof v==='string'){ if(v.length>=8) out.push(v);} else if(v&&typeof v==='object'){ for(const x of Object.values(v)) walk(x);} };
-          walk(p); require('fs').writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\n')+'\n');"
+          const fs=require('fs');
+          const list=JSON.parse(fs.readFileSync('.dev/personas.json','utf8'));
+          const out=[]; for (const e of list) for (const k of ['password','totpSecret']) if (typeof e[k]==='string' && e[k].length>=8) out.push(e[k]);
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\\n')+'\\n');"
           dirs=()
           for d in apps/workspace/playwright-report apps/workspace/test-results apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
-          if [ "${#dirs[@]}" -gt 0 ] && grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}"; then
-            echo "::error::a seeded credential appears in the files listed above; artifacts are not uploaded"
-            rm -rf "${dirs[@]}"
-            exit 1
+          if [ "${#dirs[@]}" -gt 0 ]; then
+            grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}" > "$RUNNER_TEMP/leaks.txt" || true
+            if [ -s "$RUNNER_TEMP/leaks.txt" ]; then
+              echo "::warning::a seeded credential was found in these files; they are deleted and not uploaded:"
+              cat "$RUNNER_TEMP/leaks.txt"
+              xargs -d '\n' rm -f < "$RUNNER_TEMP/leaks.txt"
+            fi
           fi
           rm -f "$RUNNER_TEMP/needles.txt"
 

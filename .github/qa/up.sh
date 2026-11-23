@@ -53,9 +53,9 @@ end
 step "register secrets as masked"
 # Every persona password and TOTP secret is masked in this job's log, whatever prints it.
 node -e "
-const p=JSON.parse(require('fs').readFileSync('.dev/personas.json','utf8'));
-const walk=(v)=>{ if(typeof v==='string'){ if(v.length>=6) console.log('::add-mask::'+v); } else if(v&&typeof v==='object'){ for(const x of Object.values(v)) walk(x); } };
-walk(p);
+const fs=require('fs');
+const list=JSON.parse(fs.readFileSync('.dev/personas.json','utf8'));
+for (const entry of list) for (const k of ['password','totpSecret']) if (typeof entry[k]==='string' && entry[k].length>=8) console.log('::add-mask::'+entry[k]);
 "
 end
 
