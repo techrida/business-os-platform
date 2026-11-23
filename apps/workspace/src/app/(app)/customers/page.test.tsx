@@ -133,7 +133,7 @@ describe('customers list page', () => {
     ]);
   });
 
-  // FX9: one combined column with the city and the country's name; no street line and no phone in the list.
+  // FX9: one combined column with the city and the country's name; no street line in the list.
   it("shows each organization's city and country name in a Location column", async () => {
     mocks.listCustomers.mockResolvedValue({
       items: [

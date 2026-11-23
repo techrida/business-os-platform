@@ -197,6 +197,8 @@ describe('phoneCountryFromE164', () => {
     ['+4791234567', 'NO'],
     ['+61412345678', 'AU'],
     ['+44', 'GB'],
+    ['+3906698', 'IT'],
+    ['+7701234', 'RU'],
     ['+91', 'IN'],
   ])('%s is %s', (typed, country) => {
     expect(phoneCountryFromE164(typed)).toBe(country);
