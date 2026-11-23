@@ -80,6 +80,32 @@ describe('submitPaymentAction validation', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not send a withholding code left in the box when no tax was withheld (R6D, D5)', async () => {
+    fetchMock.mockResolvedValue(json({ id: ID }, 201));
+    for (const tdsWithheld of ['', '0', '0.00']) {
+      fetchMock.mockClear();
+      const to = await redirectOf(
+        submitPaymentAction({ key: IDEM }, form({ tdsWithheld, withholdingCode: '1.2.3' })),
+      );
+      expect(to, tdsWithheld).toBe('/payments?submitted=1');
+      expect(JSON.parse(callOf(fetchMock).init.body as string)).not.toHaveProperty(
+        'withholdingCode',
+      );
+    }
+    // With tax withheld the code still goes along.
+    fetchMock.mockClear();
+    await redirectOf(
+      submitPaymentAction(
+        { key: IDEM },
+        form({ tdsWithheld: '1,000.00', withholdingCode: 'TDS-1' }),
+      ),
+    );
+    expect(JSON.parse(callOf(fetchMock).init.body as string)).toMatchObject({
+      tdsWithheld: '1000',
+      withholdingCode: 'TDS-1',
+    });
+  });
+
   it('requires the withholding code when tax was withheld, and ignores a tampered proof id', async () => {
     const tds = await submitPaymentAction({ key: IDEM }, form({ tdsWithheld: '1,000.00' }));
     expect(tds.fieldErrors?.withholdingCode).toBeTruthy();
