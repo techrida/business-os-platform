@@ -403,7 +403,7 @@ export class UsersService extends UserDirectory {
     let zitadelUserId: string | null = null;
     // Set when createHuman failed without a definite answer (a timeout or a 5xx): ZITADEL may have made the person
     // and no id came back, so the org is searched for them below, like after a 409.
-    let ambiguous: unknown = null;
+    let ambiguous: Error | null = null;
     assertWithinOperationDeadline();
     try {
       zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
@@ -413,7 +413,7 @@ export class UsersService extends UserDirectory {
       } else if (isDefiniteRefusal(error)) {
         throw error;
       } else {
-        ambiguous = error;
+        ambiguous = error instanceof Error ? error : new Error('createHuman failed');
       }
     }
     if (zitadelUserId !== null) {
@@ -427,7 +427,7 @@ export class UsersService extends UserDirectory {
     try {
       open = await this.findOpenInvite(org.zitadelOrgId, b.email);
     } catch (error) {
-      throw ambiguous ?? error;
+      throw ambiguous ?? (error instanceof Error ? error : new Error('open-invite lookup failed'));
     }
     if (!open) throw conflict;
     const row = await this.store.findByZitadelId(this.db, open.id);
