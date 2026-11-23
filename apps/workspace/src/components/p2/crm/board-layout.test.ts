@@ -36,8 +36,8 @@ it('makes the board a visible, sideways scroll container with fixed-width column
 });
 
 it('draws edge fades over the board only while columns are hidden on that side', () => {
-  expect(rule(crm, '.boardFrame::before')).toMatch(/linear-gradient/);
-  expect(rule(crm, '.boardFrame::after')).toMatch(/linear-gradient/);
+  expect(crm).toMatch(/\.boardFrame::before \{[^}]*linear-gradient\(to right/);
+  expect(crm).toMatch(/\.boardFrame::after \{[^}]*linear-gradient\(to left/);
   expect(crm).toMatch(/\.boardFrame\[data-more-left='true'\]::before,/);
   expect(crm).toMatch(/\.boardFrame\[data-more-right='true'\]::after \{\s*opacity: 1;/);
 });
