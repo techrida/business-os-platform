@@ -783,6 +783,12 @@ const LeadFieldsSchema = z.strictObject({
  * person: an email or at least one phone.
  */
 export const CreateLeadBodySchema = LeadFieldsSchema.extend({
+  /**
+   * R6O (BOS-UI-002): the existing customer the company field was picked from, and one of its contacts. Both optional:
+   * a lead is quick to create and stays free text without them. The API checks the caller may read that customer.
+   */
+  customerId: z.guid().optional(),
+  contactId: z.guid().optional(),
   currency: CurrencySchema.default('NPR'),
   phones: PartyPhonesSchema.default([]),
   followUp: LeadFollowUpSchema.optional(),
@@ -791,6 +797,10 @@ export const CreateLeadBodySchema = LeadFieldsSchema.extend({
   .refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
     path: ['followUp'],
     message: 'Send followUp or nextFollowUpAt, not both',
+  })
+  .refine((b) => b.contactId === undefined || b.customerId !== undefined, {
+    path: ['contactId'],
+    message: 'a contact needs its customer',
   })
   .refine((b) => b.email !== undefined || b.phones.length > 0, {
     path: ['email'],
@@ -818,6 +828,14 @@ export const LeadOwnerOptionSchema = z.object({
   email: z.string(),
   /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
   avatarDocumentId: z.guid().nullable().optional(),
+  /** Job title and department, shown muted after the name in every member picker (BOS-UI-001); null or absent for none. */
+  role: z.string().nullable().optional(),
+  /**
+   * Set only on `GET /v1/leads/owners?context=create`, on the one person a lead started with no owner chosen goes to,
+   * when the caller may not keep it themselves: `settings` = the entity's Default lead owner, `sales_head` = the
+   * Sales head fallback. The picker starts on this person instead of a placeholder.
+   */
+  defaultOwner: z.enum(['settings', 'sales_head']).optional(),
 });
 export type LeadOwnerOption = z.infer<typeof LeadOwnerOptionSchema>;
 

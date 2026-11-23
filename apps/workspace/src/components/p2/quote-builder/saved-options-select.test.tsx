@@ -48,6 +48,11 @@ const NAME = 'saved-scope';
 const pick = (preset: TermPreset) => choose(document.body, NAME, preset.name);
 const chosenValue = () =>
   document.querySelector<HTMLInputElement>(`input[type="hidden"][name="${NAME}"]`)?.value;
+const shownLabel = () =>
+  document
+    .querySelector(`input[type="hidden"][name="${NAME}"]`)
+    ?.parentElement?.querySelector('button')
+    ?.textContent?.trim();
 const textarea = () => document.querySelector<HTMLTextAreaElement>('textarea')!;
 const button = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent === label) ?? null;
@@ -82,7 +87,7 @@ afterEach(() => {
 });
 
 describe('SavedOptionsSelect', () => {
-  it('lists this kind by name under "Saved options" and nothing from other kinds', async () => {
+  it('lists this kind by name and nothing from other kinds', async () => {
     const view = await mountForm(<Host />);
     const trigger = document
       .querySelector(`input[type="hidden"][name="${NAME}"]`)
@@ -91,7 +96,7 @@ describe('SavedOptionsSelect', () => {
     const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
       o.textContent?.trim(),
     );
-    expect(options).toEqual(['Saved options', 'Annual support', 'Standard build']);
+    expect(options).toEqual(['Annual support', 'Standard build']);
     await view.unmount();
   });
 
@@ -99,7 +104,7 @@ describe('SavedOptionsSelect', () => {
     const view = await mountForm(<Host />);
     await pick(standard);
     expect(textarea().value).toBe('We build it.');
-    expect(chosenValue()).toBe('');
+    expect(shownLabel()).toBe('Standard build');
     expect(document.body.textContent).not.toContain('Replace the text you typed?');
 
     await type('We build it. Plus training.');
@@ -130,7 +135,7 @@ describe('SavedOptionsSelect', () => {
     await settle();
     expect(document.body.textContent).not.toContain('Replace the text you typed?');
     expect(textarea().value).toBe('We build it, but only the first phase.');
-    expect(chosenValue()).toBe('');
+    expect(shownLabel()).toBe('Custom');
 
     await pick(support);
     await settle();
@@ -187,7 +192,7 @@ describe('SavedOptionsSelect', () => {
     const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
       o.textContent?.trim(),
     );
-    expect(options).toEqual(['Saved options', 'Annual support', 'Standard build', 'Add more']);
+    expect(options).toEqual(['Annual support', 'Standard build', 'Add more']);
     await click(
       [...document.querySelectorAll('[role="option"]')].find(
         (o) => o.textContent?.trim() === 'Add more',
@@ -210,7 +215,60 @@ describe('SavedOptionsSelect', () => {
     const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
       o.textContent?.trim(),
     );
-    expect(options).toEqual(['Saved options', 'Add more']);
+    expect(options).toEqual(['Add more']);
+    await view.unmount();
+  });
+
+  it('asks for a choice when the field is empty, names the option after a fill, and says Custom once edited', async () => {
+    const view = await mountForm(<Host />);
+    expect(shownLabel()).toBe('Choose scope');
+    await pick(standard);
+    expect(shownLabel()).toBe('Standard build');
+    await type('We build it. Plus training.');
+    expect(shownLabel()).toBe('Custom');
+    // Back to the words of the option: the name returns without choosing again.
+    await type('We build it.');
+    expect(shownLabel()).toBe('Standard build');
+    await type('');
+    expect(shownLabel()).toBe('Choose scope');
+    await view.unmount();
+  });
+
+  it('names the option of a stored text, spacing and markup aside, and says Custom for other text', async () => {
+    const view = await mountForm(<Host initial="<p>We   build it.</p>" />);
+    expect(shownLabel()).toBe('Standard build');
+    await view.unmount();
+    const other = await mountForm(<Host initial="Something else" />);
+    expect(shownLabel()).toBe('Custom');
+    await other.unmount();
+  });
+
+  it('choosing the option already shown puts its text back; edits ask first', async () => {
+    const view = await mountForm(<Host />);
+    await pick(standard);
+    await type('We build it, partly.');
+    await pick(standard);
+    await settle();
+    expect(document.body.textContent).toContain('Replace the text you typed?');
+    await click(button('Replace text'));
+    await settle();
+    expect(textarea().value).toBe(standard.body);
+    expect(shownLabel()).toBe('Standard build');
+
+    // Same option again with the text untouched: it simply sets it, with no question.
+    await pick(standard);
+    await settle();
+    expect(document.body.textContent).not.toContain('Replace the text you typed?');
+    expect(textarea().value).toBe(standard.body);
+    await view.unmount();
+  });
+
+  it('choosing the shown option again resets the text to the saved wording exactly', async () => {
+    const view = await mountForm(<Host initial="<p>We   build it.</p>" />);
+    expect(shownLabel()).toBe('Standard build');
+    await pick(standard);
+    await settle();
+    expect(textarea().value).toBe(standard.body);
     await view.unmount();
   });
 });

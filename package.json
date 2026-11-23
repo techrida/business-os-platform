@@ -2,6 +2,7 @@
   "name": "business-os-platform",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Business OS platform monorepo (apps/api, apps/workspace, packages/*, tools/*).",
   "packageManager": "pnpm@11.28.11",
   "engines": {
