@@ -73,4 +73,16 @@ describe('Dev chip next to a modal dialog', () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(chipRoot().hidden).toBe(false);
   });
+
+  it('is not hidden by a popover, which is a role=dialog inside a popper wrapper', async () => {
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-radix-popper-content-wrapper', '');
+    const popover = document.createElement('div');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('data-state', 'open');
+    wrapper.append(popover);
+    document.body.append(wrapper);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chipRoot().hidden).toBe(false);
+  });
 });
