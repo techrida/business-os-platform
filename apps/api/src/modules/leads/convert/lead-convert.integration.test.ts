@@ -619,6 +619,38 @@ describe('POST /v1/leads/:id/convert', () => {
     expect(await leadRow(lead.id)).toMatchObject({ customerId, contactId: withEmail });
   });
 
+  it('converts a lead linked to a customer into that customer, with no duplicate warning (R6O)', async () => {
+    const customerId = await h.seedCustomer();
+    // Another customer the old company-name check would have flagged: the link already answers it.
+    await h.seedCustomer();
+    const lead = await qualifiedLead({ companyName: 'Acme Pvt. Ltd.', customerId });
+    expect(lead.customerId).toBe(customerId);
+    const res = await convert(lead.id, {
+      customer: { mode: 'existing', customerId },
+      contact: {
+        mode: 'create',
+        contact: { fullName: 'Sita Rai', email: `sita.${tag()}@convert.example`, country: 'NP' },
+      },
+      opportunityName: 'Linked',
+      expectedVersion: 3,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as { customerId: string }).customerId).toBe(customerId);
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'converted', customerId });
+  });
+
+  it('refuses to create a second customer for a lead that is linked to one, and writes nothing (R6O)', async () => {
+    const customerId = await h.seedCustomer();
+    const lead = await qualifiedLead({ customerId });
+    const res = await convert(
+      lead.id,
+      createCustomerBody(customerBody({ legalName: `Second ${tag()} Pvt. Ltd.` })),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toContain('linked to a customer');
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified', customerId, version: 3 });
+  });
+
   it('answers 409 duplicate_found with error.duplicates on the wire, and writes nothing', async () => {
     const original = await qualifiedLead();
     const name = `Twin${tag()} Builders Pvt. Ltd.`;

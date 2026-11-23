@@ -42,7 +42,7 @@ export default async function NewLeadPage() {
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Leads', href: '/leads' }, { label: 'Create Lead' }]} />
-      {/* F1-Q54 a: the form with a non-blocking hint when a readable lead or customer looks the same. */}
+      {/* BOS-UI-002: Company and Contact person search what the user may read and always offer Create. */}
       <NewLeadForm
         action={createLeadAction}
         sources={sources}
