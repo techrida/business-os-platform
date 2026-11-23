@@ -53,8 +53,8 @@ async function mountLead(
   opts: { matches?: LeadDuplicateMatch[]; contacts?: LeadContactOption[] } = {},
 ) {
   const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
-  const search = vi.fn(async () => opts.matches ?? MATCHES);
-  const loadContacts = vi.fn(async () => opts.contacts ?? CONTACTS);
+  const search = vi.fn(() => Promise.resolve(opts.matches ?? MATCHES));
+  const loadContacts = vi.fn(() => Promise.resolve(opts.contacts ?? CONTACTS));
   const onOpenLead = vi.fn();
   const mounted = await mountForm(
     <LeadForm
