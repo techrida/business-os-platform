@@ -63,7 +63,11 @@ export async function defaultLeadOwnerCandidates(
   const out: SettingsPerson[] = [];
   for (const candidate of await loadAssignmentParties(tx, scope)) {
     if ((await refusal(roleCache, scope, candidate)) === null) {
-      out.push({ userId: candidate.userId, displayName: shownName(candidate.displayName) });
+      out.push({
+        userId: candidate.userId,
+        displayName: shownName(candidate.displayName),
+        role: candidate.role,
+      });
     }
   }
   return out.sort(

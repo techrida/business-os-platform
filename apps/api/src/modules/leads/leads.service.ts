@@ -65,6 +65,7 @@ import { nextFollowUpSql } from '../activities/activities.types';
 import { moveOpenFollowUps, notifyFollowUpAssigned } from '../activities/follow-ups';
 import {
   actorParty,
+  type AssignmentCandidate,
   type AssignmentCheck,
   assertAssignable,
   assignableParties,
@@ -700,6 +701,13 @@ export class LeadsService {
           scope,
           this.assignmentCheck(tx, scope, context),
         );
+        // Only when the caller may not keep a new lead: the person an ownerless create goes to is marked, so the
+        // form shows them instead of a placeholder.
+        const self = actorParty(principal);
+        const fallback =
+          context === 'create' && decideAssignment(self, self, 'create').reason === 'sales_owner_required'
+            ? await this.fallbackOwner(tx, scope, people)
+            : null;
         return people
           .map((c) => ({
             userId: c.userId,
@@ -707,6 +715,8 @@ export class LeadsService {
             // Never sent: a picker has no use for an address, and the list reaches client-component props.
             email: '',
             avatarDocumentId: c.avatarDocumentId,
+            role: c.role,
+            ...(fallback?.userId === c.userId ? { defaultOwner: fallback.source } : {}),
           }))
           .sort(byName);
       },
@@ -824,15 +834,28 @@ export class LeadsService {
       return principal.userId;
     }
     if (decision.reason === 'sales_owner_required') {
-      const parties = await assignableParties(tx, principal, scope, check);
-      // F1-Q21: the entity's default lead owner when set and still someone this lead may be handed to; else the
-      // Sales head as before.
-      const configured = (await readSetting(tx, scope, 'crm.default_lead_owner')).value;
-      if (configured !== null && parties.some((p) => p.userId === configured)) return configured;
-      const owner = defaultSalesOwner(parties);
-      if (owner !== null) return owner;
+      const fallback = await this.fallbackOwner(tx, scope, await assignableParties(tx, principal, scope, check));
+      if (fallback !== null) return fallback.userId;
     }
     throw assignmentRefused('ownerUserId', decision.reason);
+  }
+
+  /**
+   * F1-Q21: who a lead started with no owner chosen goes to when its creator may not keep it: the entity's default
+   * lead owner when set and still someone this lead may be handed to, else the Sales head. One function for the
+   * create path and for the owner list that shows the person (`owners('create')`), so they cannot disagree.
+   */
+  private async fallbackOwner(
+    tx: DbTransaction,
+    scope: TxScope,
+    parties: readonly AssignmentCandidate[],
+  ): Promise<{ userId: string; source: 'settings' | 'sales_head' } | null> {
+    const configured = (await readSetting(tx, scope, 'crm.default_lead_owner')).value;
+    if (configured !== null && parties.some((p) => p.userId === configured)) {
+      return { userId: configured, source: 'settings' };
+    }
+    const head = defaultSalesOwner(parties);
+    return head === null ? null : { userId: head, source: 'sales_head' };
   }
 
   /**
