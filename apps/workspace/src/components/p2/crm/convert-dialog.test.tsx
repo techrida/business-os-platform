@@ -304,7 +304,7 @@ it('keeps a short new-contact phone blocked after switching to an existing conta
   const box = dialog().querySelector<HTMLInputElement>('input[aria-label="Phone 1 number"]');
   await fill(box, '981234567');
   await click(radioFor('Link to an existing contact'));
-  await click(dialog().querySelector('input[name="contactMode"][value="create"]'));
+  await click(radioFor('Create a contact from the lead'));
   expect(
     dialog().querySelector<HTMLInputElement>('input[aria-label="Phone 1 number"]')?.value,
   ).toBe('981234567');
