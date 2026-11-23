@@ -63,7 +63,9 @@ export function CompanyField({
       ...customers.map((m) => ({
         id: `${CUSTOMER_PREFIX}${m.id}`,
         label: m.label,
-        description: countryLabel(m.country),
+        description: [m.pan ? `PAN ${m.pan}` : null, m.number, countryLabel(m.country)]
+          .filter(Boolean)
+          .join(' · '),
         group: CUSTOMERS_GROUP,
       })),
       ...leads.map((m) => ({
@@ -84,6 +86,7 @@ export function CompanyField({
         describedBy={control['aria-describedby']}
         invalid={control['aria-invalid'] === true}
         required
+        searchIcon
         keepOrder
         serverFiltered
         defaultActive="add"
@@ -215,6 +218,7 @@ export function ContactField({
         describedBy={control['aria-describedby']}
         invalid={control['aria-invalid'] === true}
         required={required}
+        searchIcon
         keepOrder
         defaultActive="add"
         groupThreshold={Number.POSITIVE_INFINITY}

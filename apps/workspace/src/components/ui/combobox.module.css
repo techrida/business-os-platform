@@ -207,3 +207,16 @@
     display: none;
   }
 }
+
+.withIcon {
+  padding-right: 40px;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 21px;
+  right: 12px;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
