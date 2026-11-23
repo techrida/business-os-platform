@@ -283,6 +283,9 @@ export const verificationCases = appSchema.table(
     decidedAt: timestamp('decided_at', { withTimezone: true }),
     /** The decision note (the DTO's decisionNote); required to reject. */
     reason: text('reason'),
+    /** When a change of the party's identity last reset this case, and who made it (0220); both null if never. */
+    identityResetAt: timestamp('identity_reset_at', { withTimezone: true }),
+    identityResetByUserId: uuid('identity_reset_by_user_id'),
     version: integer('version').notNull().default(1),
     ...timestamps,
   },
@@ -323,6 +326,15 @@ export const verificationCases = appSchema.table(
       sql`${t.status} <> 'rejected' OR ${t.reason} IS NOT NULL`,
     ),
     check('verification_cases_version_check', sql`${t.version} >= 1`),
+    foreignKey({
+      name: 'verification_cases_identity_reset_user_fk',
+      columns: [t.tenantId, t.identityResetByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    check(
+      'verification_cases_identity_reset_check',
+      sql`(${t.identityResetAt} IS NULL) = (${t.identityResetByUserId} IS NULL)`,
+    ),
   ],
 );
 
