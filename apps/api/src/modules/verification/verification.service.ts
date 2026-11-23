@@ -647,7 +647,10 @@ export class VerificationService implements OnModuleInit {
     if (existing === undefined) return false;
     const l = await this.lock(tx, scope.tenantId, existing.id);
     const items = checklistOf(l.row);
-    const holdsDocuments = items.some((i) => i.documentId !== null);
+    // A file uploaded to the case but not yet on the checklist also counts: it was sent for the old details.
+    const holdsDocuments =
+      items.some((i) => i.documentId !== null) ||
+      (await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, l.row.id, tx)).length > 0;
     if (l.row.status !== 'submitted' && l.row.status !== 'approved' && !holdsDocuments)
       return false;
     await this.preserveLegacyDecision(tx, l.row);
@@ -1135,6 +1138,9 @@ export class VerificationService implements OnModuleInit {
         throw conflict('Only unattached files in an editable case can be removed');
       const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id, tx);
       if (!versions.some((v) => v.documentId === documentId)) throw notFound('Document');
+      if (documentsBeforeReset(versions, loaded.row.identityResetAt).has(documentId)) {
+        throw conflict('A file from before the details changed stays on the case as history');
+      }
       return this.documents.removeInTransaction(tx, scope, documentId);
     });
     await this.documents.cleanupRemoved(cleanup);

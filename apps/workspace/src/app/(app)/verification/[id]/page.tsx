@@ -449,7 +449,7 @@ export default async function VerificationCasePage({
                         {scan.text}
                       </Badge>
                     </div>
-                    {mayAttach && !vendor ? (
+                    {mayAttach && !vendor && !beforeChange.has(file.documentId) ? (
                       <RemoveLoose
                         caseId={c.id}
                         documentId={file.documentId}
