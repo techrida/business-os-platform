@@ -417,6 +417,8 @@ export const TermPresetSchema = z.strictObject({
   name: text(80),
   /** Rich text (D31): sanitised HTML from the editor, or plain text saved before it existed. */
   body: richTextSchema(10_000),
+  /** The kind's default: new records start with this text (UIP-FORM-012). At most one per kind; absent means not the default. */
+  isDefault: z.boolean().optional(),
 });
 export type TermPreset = z.infer<typeof TermPresetSchema>;
 
@@ -427,7 +429,11 @@ export const TermPresetListSchema = z
   .refine(
     (list) => new Set(list.map((p) => `${p.kind}:${p.name.toLowerCase()}`)).size === list.length,
     'preset names must be unique within a field',
-  );
+  )
+  .refine((list) => {
+    const kinds = list.filter((p) => p.isDefault === true).map((p) => p.kind);
+    return new Set(kinds).size === kinds.length;
+  }, 'only one default per field');
 export type TermPresetList = z.infer<typeof TermPresetListSchema>;
 
 /**

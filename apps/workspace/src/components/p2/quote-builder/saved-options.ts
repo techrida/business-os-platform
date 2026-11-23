@@ -8,8 +8,8 @@ import { richTextToPlain, type TermPreset, type TermPresetKind } from '@bos/cont
 /** Settings > Saved terms, where the Founder edits the sets (the "Add more" entry opens it in the same tab). */
 export const SAVED_TERMS_HREF = '/settings/terms';
 
-/** The words of a value, trimmed: what two texts are compared on, so markup alone never counts as an edit. */
-const words = (value: string): string => richTextToPlain(value).trim();
+/** The words of a value, trimmed and with runs of whitespace collapsed: what two texts are compared on, so markup or spacing alone never counts as an edit. */
+const words = (value: string): string => richTextToPlain(value).replace(/\s+/g, ' ').trim();
 
 /** The kind's presets by name that fit the field (counted on words). One that is longer than the field allows is not offered, so a fill never leaves the field invalid. */
 export function offeredPresets(
@@ -57,4 +57,61 @@ export function pickOutcome(
   return canFillSilently(value, lastFilled, offered)
     ? { action: 'fill', preset }
     : { action: 'confirm', preset };
+}
+
+export type PickerState =
+  { state: 'empty' } | { state: 'preset'; preset: TermPreset } | { state: 'custom' };
+
+/**
+ * What the picker shows (UIP-FORM-012): the name of the preset whose words the field holds, "Custom"
+ * when it holds other words, nothing (a prompt) when it is empty. Read from the text each time, so a
+ * stored quotation names its preset on open and any edit flips the label to "Custom". When two
+ * presets hold the same words the one last applied wins.
+ */
+export function pickerState(
+  value: string,
+  offered: readonly TermPreset[],
+  appliedId: string | null,
+): PickerState {
+  const current = words(value);
+  if (current === '') return { state: 'empty' };
+  const matches = offered.filter((p) => words(p.body) === current);
+  const preset = matches.find((p) => p.id === appliedId) ?? matches[0];
+  return preset ? { state: 'preset', preset } : { state: 'custom' };
+}
+
+/** The kind's default preset that fits the field, if one is set. */
+export function defaultPreset(
+  presets: readonly TermPreset[] | null | undefined,
+  kind: TermPresetKind,
+  maxLength: number,
+): TermPreset | undefined {
+  return offeredPresets(presets, kind, maxLength).find((p) => p.isDefault === true);
+}
+
+/** The builder fields that take a kind's default text, with the limit each holds (the field's own). `payment_terms` has no free-text field on a quotation. */
+const DEFAULT_TEXT_FIELDS = [
+  ['scope', 'scope', 10_000],
+  ['assumptions', 'assumptions', 10_000],
+  ['exclusions', 'exclusions', 10_000],
+  ['delivery_timeline', 'deliveryTimeline', 2_000],
+  ['terms_conditions', 'termsAndConditions', 10_000],
+] as const;
+
+/** A new quotation's starting text: each field holds the default option chosen in settings for its kind, or stays empty (UIP-FORM-012). Only empty fields are filled. */
+export function withDefaultTerms<
+  V extends {
+    scope: string;
+    assumptions: string;
+    exclusions: string;
+    deliveryTimeline: string;
+    termsAndConditions: string;
+  },
+>(values: V, presets: readonly TermPreset[] | null | undefined): V {
+  const next = { ...values };
+  for (const [kind, field, max] of DEFAULT_TEXT_FIELDS) {
+    const preset = defaultPreset(presets, kind, max);
+    if (preset && next[field].trim() === '') next[field] = preset.body;
+  }
+  return next;
 }
