@@ -227,6 +227,30 @@ describe('leads: a country, several phones, and an email or a phone (FX9)', () =
     expect('country' in parsed).toBe(false);
   });
 
+  it('D9: takes an optional address on create and edit, null clearing it on edit, never half of one', () => {
+    const base = {
+      title: 'Rooftop',
+      source: 'referral',
+      companyName: 'Himal',
+      contactName: 'Sita',
+      country: 'NP',
+      email: 'sita@himal.example',
+    };
+    const address = { line: ' 12 Lazimpat Road ', city: 'Kathmandu' };
+    expect(CreateLeadBodySchema.parse(base)).not.toHaveProperty('address');
+    expect(CreateLeadBodySchema.parse({ ...base, address }).address).toEqual({
+      line: '12 Lazimpat Road',
+      city: 'Kathmandu',
+    });
+    expect(
+      CreateLeadBodySchema.safeParse({ ...base, address: { city: 'Kathmandu' } }).success,
+    ).toBe(false);
+    expect(UpdateLeadBodySchema.parse({ expectedVersion: 1, address: null }).address).toBeNull();
+    expect(UpdateLeadBodySchema.parse({ expectedVersion: 1, title: 'x' })).not.toHaveProperty(
+      'address',
+    );
+  });
+
   it('has a lead DTO with a country and its phones', () => {
     const dto = {
       id: ID,
@@ -239,6 +263,7 @@ describe('leads: a country, several phones, and an email or a phone (FX9)', () =
       companyName: 'Himal Traders',
       contactName: 'Sita Rai',
       country: 'NP',
+      address: null,
       email: null,
       phones: [npMobile, usWork],
       customerId: null,
@@ -259,6 +284,14 @@ describe('leads: a country, several phones, and an email or a phone (FX9)', () =
       updatedAt: AT,
     };
     expect(LeadDtoSchema.parse(dto).phones).toHaveLength(2);
+    // D9: the address is the street lines and city together, or null; a DTO without the key is not a lead.
+    const address = { line: '12 Lazimpat Road', city: 'Kathmandu' };
+    expect(LeadDtoSchema.parse({ ...dto, address }).address).toEqual(address);
+    expect(LeadDtoSchema.safeParse({ ...dto, address: { line: '12 Lazimpat Road' } }).success).toBe(
+      false,
+    );
+    const { address: _omitted, ...without } = dto;
+    expect(LeadDtoSchema.safeParse(without).success).toBe(false);
     // The list invariants hold on the response too (FX9 A2).
     for (const [, phones] of brokenLists) {
       expect(LeadDtoSchema.safeParse({ ...dto, phones }).success).toBe(false);
