@@ -69,6 +69,25 @@ describe('monochromeLogo', () => {
   });
 });
 
+describe('monochromeLogo on an EXIF-rotated picture', () => {
+  it('still makes the copy (width and height swap for orientations 5 to 8)', async () => {
+    const wide = await sharp({
+      create: {
+        width: 60,
+        height: 20,
+        channels: 4,
+        background: { r: 10, g: 10, b: 10, alpha: 0.5 },
+      },
+    })
+      .withMetadata({ orientation: 6 })
+      .png()
+      .toBuffer();
+    const out = await monochromeLogo(wide, 'white');
+    const meta = await sharp(out).metadata();
+    expect([meta.width, meta.height]).toEqual([20, 60]);
+  });
+});
+
 describe('platedLogo', () => {
   it('puts the logo on an opaque white plate larger than the logo', async () => {
     const out = await platedLogo(await logo('#000000', { transparent: false }));

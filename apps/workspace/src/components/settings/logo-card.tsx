@@ -192,8 +192,12 @@ export function LogoCard({
             organisationId={organisationId}
             name={name}
             documentId={ids[slot.ownerType]}
-            disabled={slot.optional && !hasMain}
-            note={slot.optional && !hasMain ? 'Upload the main logo first.' : null}
+            disabled={slot.optional && !hasMain && ids[slot.ownerType] === null}
+            note={
+              slot.optional && !hasMain && ids[slot.ownerType] === null
+                ? 'Upload the main logo first.'
+                : null
+            }
             onChange={() => router.refresh()}
           />
         ))}

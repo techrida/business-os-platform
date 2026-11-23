@@ -3,12 +3,17 @@
 import { rgbLuminance, type LogoStats } from '@bos/contracts';
 import sharp from 'sharp';
 
+/** Refuse images that declare more pixels than this (4096 x 4096): a small file can declare a huge canvas. */
+const MAX_INPUT_PIXELS = 16_777_216;
+const open = (bytes: Buffer) =>
+  sharp(bytes, { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' });
+
 /** The logo is measured at no more than this many pixels on a side: the mean does not need more. */
 const MEASURE_SIDE_PX = 96;
 /** A pixel with less alpha than this (of 255) counts as transparent. */
 const TRANSPARENT_BELOW = 250;
-/** The share of transparent pixels from which a one-colour copy keeps the logo's shape. */
-const TRANSPARENT_SHARE = 0.02;
+/** The share of transparent pixels from which a one-colour copy keeps the logo's shape (a rounded badge has few). */
+const TRANSPARENT_SHARE = 0.1;
 /** Space around a logo on its plate, as a share of the longer side. */
 const PLATE_PADDING = 0.12;
 
@@ -29,7 +34,7 @@ export class LogoImageUnreadableError extends Error {
 export async function measureLogo(bytes: Buffer): Promise<LogoStats> {
   let data: Buffer;
   try {
-    ({ data } = await sharp(bytes)
+    ({ data } = await open(bytes)
       .rotate()
       .resize(MEASURE_SIDE_PX, MEASURE_SIDE_PX, { fit: 'inside', withoutEnlargement: true })
       .ensureAlpha()
@@ -58,9 +63,14 @@ export async function measureLogo(bytes: Buffer): Promise<LogoStats> {
 /** A copy of the logo in one colour with its own alpha: white for a dark background, black for a light one. */
 export async function monochromeLogo(bytes: Buffer, colour: 'white' | 'black'): Promise<Buffer> {
   try {
-    const base = sharp(bytes).rotate().ensureAlpha();
-    const { width, height } = await base.metadata();
-    const alpha = await base.clone().extractChannel(3).png().toBuffer();
+    // Rotate first and read the size of the rotated picture: EXIF orientations 5 to 8 swap width and height.
+    const upright = await open(bytes)
+      .rotate()
+      .ensureAlpha()
+      .png()
+      .toBuffer({ resolveWithObject: true });
+    const { width, height } = upright.info;
+    const alpha = await sharp(upright.data).extractChannel(3).png().toBuffer();
     const fill = colour === 'white' ? 255 : 0;
     return await sharp({
       create: { width, height, channels: 3, background: { r: fill, g: fill, b: fill } },
@@ -76,7 +86,7 @@ export async function monochromeLogo(bytes: Buffer, colour: 'white' | 'black'): 
 /** The logo on a white rounded plate with some space around it: the last resort for an opaque logo that fails. */
 export async function platedLogo(bytes: Buffer): Promise<Buffer> {
   try {
-    const logo = await sharp(bytes).rotate().png().toBuffer({ resolveWithObject: true });
+    const logo = await open(bytes).rotate().png().toBuffer({ resolveWithObject: true });
     const pad = Math.round(Math.max(logo.info.width, logo.info.height) * PLATE_PADDING);
     const width = logo.info.width + pad * 2;
     const height = logo.info.height + pad * 2;

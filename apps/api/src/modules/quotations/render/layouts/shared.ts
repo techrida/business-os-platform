@@ -35,6 +35,8 @@ export interface RenderContext {
   dateFormat: CustomerDateFormat;
   showBs: boolean;
   logo: string | null;
+  /** True when the logo was chosen for the colour it sits on (snapshot.logoForBackground); else a plate may be needed. */
+  logoChosen: boolean;
 }
 
 export interface LayoutOutput {

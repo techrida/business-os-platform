@@ -13,12 +13,13 @@ import { sampleQuotationView } from './sample-view';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 
-function html(layout: DocumentLayout, primaryColour: string): string {
+function html(layout: DocumentLayout, primaryColour: string, chosen = true): string {
   return renderQuotationHtml(sampleQuotationView(), {
     snapshot: {
       style: { layout, primaryColour },
       profile: { ...EMPTY_SNAPSHOT_COMPANY_PROFILE, logoDataUrl: PNG },
       numberSystems: { NPR: 'south_asian' } as never,
+      ...(chosen ? { logoForBackground: logoBackgroundHex({ layout, primaryColour }) } : {}),
       capturedAt: '2026-11-23T00:00:00.000Z',
     },
   });
@@ -37,6 +38,10 @@ describe('the background a quotation layout draws behind the logo', () => {
 
   it('banded: the logo sits on the band itself, not on a white plate', () => {
     expect(html('banded', '#1d4ed8')).not.toMatch(/\.brand--logo \{[^}]*background/);
+  });
+
+  it('banded: a snapshot with no recorded choice (legacy logo, older snapshot) keeps the white plate', () => {
+    expect(html('banded', '#1d4ed8', false)).toMatch(/\.brand--logo \{[^}]*background: #ffffff/);
   });
 
   it('tinted: the band is the tint the logo is chosen against', () => {
