@@ -165,6 +165,17 @@ describe('recordPaymentAction', () => {
     }
   });
 
+  it('leaves a withholding code out of the body when the tax was cleared, so the code cannot fail the post (I-N1)', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    for (const tds of ['', '0', '0.00']) {
+      mocks.apiFetch.mockClear();
+      const out = await run(form({ tdsWithheld: tds, withholdingCode: 'TDS-1.5' }));
+      expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+      expect(sentBody(0)).not.toHaveProperty('withholdingCode');
+      expect(sentBody(0)).toHaveProperty('tdsWithheld', '0');
+    }
+  });
+
   it('sends one body for a blank, a 0 and a 0.00 tax withheld, so a retry under one key matches', async () => {
     mocks.apiFetch.mockImplementation(() => answer(201, payment()));
     const bodies: unknown[] = [];

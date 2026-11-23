@@ -135,8 +135,10 @@ export async function recordPaymentAction(
     ),
   ];
   const bankReference = text(form, 'bankReference').trim();
-  const withholdingCode = text(form, 'withholdingCode').trim();
   const tds = normalizeAmount(text(form, 'tdsWithheld'));
+  // A code left behind after the tax was cleared is not sent: the review hides that row, so the person
+  // could not see why the post failed. `[1-9]` is "some non-zero digit", a shape test on the text.
+  const withholdingCode = /[1-9]/.test(tds) ? text(form, 'withholdingCode').trim() : '';
   const candidate = {
     customerId,
     currency: text(form, 'currency'),
