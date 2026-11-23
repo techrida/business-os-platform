@@ -103,6 +103,7 @@ test('the inbox list fits the viewport on a phone and a tablet', async ({ browse
   const title = `Inbox width e2e ${new Date().toISOString()}`;
   const opened: Signed[] = [];
   let submitted = false;
+  let failed = true;
   let reason = '';
   let founder: Signed | undefined;
 
@@ -159,14 +160,21 @@ test('the inbox list fits the viewport on a phone and a tablet', async ({ browse
         await expect.poll(fits).toBe(true);
       });
     }
+    failed = false;
   } finally {
     try {
       if (submitted) {
-        await test.step('the Founder rejects the memo so nothing is left pending', async () => {
-          const signed = founder ?? (await signInAs(browser, appBase, 'founder'));
-          if (founder === undefined) opened.push(signed);
-          await rejectMemo(signed.page);
-        });
+        // A cleanup failure is reported on its own and never replaces the failure that got us here.
+        await test
+          .step('the Founder rejects the memo so nothing is left pending', async () => {
+            const signed = founder ?? (await signInAs(browser, appBase, 'founder'));
+            if (founder === undefined) opened.push(signed);
+            await rejectMemo(signed.page);
+          })
+          .catch((error: unknown) => {
+            if (failed) console.error('inbox width spec: cleanup also failed:', error);
+            else throw error;
+          });
       }
     } finally {
       await Promise.all(opened.map((signed) => signed.context.close()));
