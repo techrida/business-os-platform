@@ -6,6 +6,9 @@
 //   quotation's owner, the same rule as editing it), and the quotation is read through scoped(), so another
 //   entity's quotation is a 404.
 //
+// A cancelled revision gives the version it replaced back (R6D): an Approved or Sent version that a revise made
+// Superseded returns to that status and becomes current again, for a caller who may revise. The Lost cascade does not.
+//
 // Which versions: the current one, while it is Draft, Returned or Submitted (canCancelQuotation). A Submitted
 // version's open approval request is cancelled first, with the same reason, so it leaves every inbox. An Approved
 // or Sent version is not cancelled here: it has been, or may be, shown to the customer.
@@ -64,6 +67,7 @@ import { toQuotationVersionDto } from './mapping';
 export const CANCEL_CLOCK = Symbol('CANCEL_CLOCK');
 
 const CANCEL_ACTION: Permission = 'quotation.draft';
+const REVISE_ACTION: Permission = 'quotation.revise';
 const AUDIT_ENTITY = 'quotations';
 /** Approval request statuses that are still open, so a cancel must cancel them (ApprovalsService.cancel). */
 const OPEN_REQUEST = ['pending', 'blocked'];
@@ -404,10 +408,18 @@ export class CancelService {
           eq(quotationStatusHistory.toStatus, 'superseded'),
         ),
       )
-      .orderBy(desc(quotationStatusHistory.at))
+      .orderBy(desc(quotationStatusHistory.at), desc(quotationStatusHistory.id))
       .limit(1);
     const previous = superseding?.fromStatus;
     if (previous !== 'approved' && previous !== 'sent') return;
+    // Putting an offer back in front of the customer is the undo of a revise, so it takes the same right: someone
+    // who may only edit drafts cancels the revision as before (the quotation ends) and reopens nothing.
+    try {
+      this.authz.assert(REVISE_ACTION, draftRefOf(quotation));
+    } catch (error) {
+      if (error instanceof ForbiddenException) return;
+      throw error;
+    }
 
     const restored = await tx
       .update(quotationVersions)
