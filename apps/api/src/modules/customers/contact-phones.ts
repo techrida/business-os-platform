@@ -2,7 +2,12 @@
 // numbers are written as a whole set inside the transaction that creates or changes the contact (the rows carry no
 // version of their own), and read back primary first, then in their saved order. Lead conversion writes the new
 // contact's numbers through replaceContactPhones too, so every path is held to the same rules.
-import { type PartyPhone, type PartyPhoneInput, PartyPhonesSchema } from '@bos/contracts';
+import {
+  type PartyPhone,
+  type PartyPhoneInput,
+  PartyPhoneSchema,
+  PartyPhonesSchema,
+} from '@bos/contracts';
 import { customerContactPhones, customerContacts } from '@bos/db';
 import { BadRequestException } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
@@ -132,7 +137,10 @@ export async function loadPrimaryPhones(
       ),
     );
   for (const { customerId, country, ...phone } of rows) {
-    byCustomer.set(customerId, { ...phone, country: country as PartyPhone['country'] });
+    // The list is parsed as strictly as a write; one stored number that no longer passes (a libphonenumber upgrade)
+    // is left out of its row rather than failing every page that reads the customers list.
+    const checked = PartyPhoneSchema.safeParse({ ...phone, country });
+    if (checked.success) byCustomer.set(customerId, checked.data);
   }
   return byCustomer;
 }
