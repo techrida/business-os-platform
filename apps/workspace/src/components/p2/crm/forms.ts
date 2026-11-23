@@ -157,6 +157,8 @@ export function parseStageMove(
 // ---------------------------------------------------------------------------------------------
 
 const LEAD_MESSAGES: Record<string, string> = {
+  'address.line': 'Enter the street address (up to 500 characters), or clear the city too.',
+  'address.city': 'Enter the city (up to 100 characters), or clear the address too.',
   title: 'Enter a title, up to 200 characters.',
   source: 'Choose where the lead came from.',
   companyName: 'Enter the company name, up to 200 characters.',
@@ -183,10 +185,26 @@ const LEAD_MESSAGES: Record<string, string> = {
 
 /** `['followUp', 'dueAt']` belongs to the `followUpAt` input; the other follow-up keys add a prefix. */
 function leadKey(path: PropertyKey[]): string {
+  if (path[0] === 'address') return `address.${String(path[1] ?? 'line')}`;
   if (path[0] !== 'followUp') return lastKey(path);
   const key = String(path[1] ?? 'dueAt');
   if (key === 'dueAt') return 'followUpAt';
   return `followUp${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+}
+
+/**
+ * The lead's optional address as the form posted it (`address.line`, `address.city`): none when both are blank, and
+ * half of one is passed on for the contract to refuse on the field it names.
+ */
+function leadAddress(form: FormData): Record<string, string> | undefined {
+  const line = field(form, 'address.line');
+  const city = field(form, 'address.city');
+  if (line === undefined && city === undefined) return undefined;
+  return Object.fromEntries(
+    Object.entries({ line, city }).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
 }
 
 /**
@@ -253,7 +271,9 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
     ownerUserId: field(form, 'ownerUserId'),
     companyName: field(form, 'companyName'),
     contactName: field(form, 'contactName'),
-    country: field(form, 'country'),
+    // The address block posts the country as `address.country`; older forms post `country`.
+    country: field(form, 'address.country') ?? field(form, 'country'),
+    address: leadAddress(form),
     email,
     phones,
     requirement: field(form, 'requirement'),
@@ -283,6 +303,26 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
     fieldErrors['expectedValue'] = NO_SPACES;
   }
   return { ok: false, fieldErrors };
+}
+
+/**
+ * The lead page's address editor: only the street lines and city, with the version the page showed. Both blank
+ * clears the address (`null`); half of one is refused on the field that is missing.
+ */
+export function parseLeadAddress(form: FormData): Parsed<UpdateLeadBody> {
+  const line = field(form, 'address.line');
+  const city = field(form, 'address.city');
+  const expectedVersion = numberField(form, 'expectedVersion') ?? Number.NaN;
+  const address = leadAddress(form) ?? null;
+  const r = UpdateLeadBodySchema.safeParse({ address, expectedVersion });
+  if (r.success && r.data.address !== undefined) {
+    return { ok: true, data: { address: r.data.address, expectedVersion: r.data.expectedVersion } };
+  }
+  const issues = r.success ? [] : r.error.issues;
+  return {
+    ok: false,
+    fieldErrors: collect(issues, leadKey, { ...LEAD_MESSAGES, expectedVersion: RELOAD }, RELOAD),
+  };
 }
 
 /**
