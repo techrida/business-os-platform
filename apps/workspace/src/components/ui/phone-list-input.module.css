@@ -14,7 +14,8 @@
 .rows {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  /* Each row carries its own reserved message line, which supplies most of the space between rows. */
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
