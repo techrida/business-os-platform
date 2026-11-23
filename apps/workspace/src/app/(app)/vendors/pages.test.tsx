@@ -9,6 +9,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
+import type { PortalForm } from './_components/panel-forms';
+
+type PortalFormProps = Parameters<typeof PortalForm>[0];
+
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
@@ -49,6 +53,21 @@ const api = vi.hoisted(() => ({
   getVendorReviewReadiness: vi.fn(),
 }));
 vi.mock('@/lib/api-vendors', () => api);
+// The real portal grant form, with what the page handed it recorded: the picker's options are only in the markup
+// while it is open (its own behaviour is covered in panel-forms.portal.test.tsx).
+const portal = vi.hoisted(() => ({
+  formProps: vi.fn<(props: PortalFormProps) => void>(),
+}));
+vi.mock('./_components/panel-forms', async (original) => {
+  const actual = await original<typeof import('./_components/panel-forms')>();
+  return {
+    ...actual,
+    PortalForm: (props: PortalFormProps) => {
+      portal.formProps(props);
+      return actual.PortalForm(props);
+    },
+  };
+});
 const kyb = vi.hoisted(() => ({ listVerificationCases: vi.fn() }));
 vi.mock('@/components/p2/customers/api', () => kyb);
 
@@ -562,10 +581,18 @@ describe('vendor detail', () => {
     api.getVendor.mockResolvedValue(vendor({ status: 'pending_kyc' }));
     const out = await detail();
     expect(out).toContain('Grant portal access');
-    // The contact is picked in a search box (a combobox posting `contactId`), not a plain select; the options (and
-    // "No Mail" without an email) are covered in panel-forms.portal.test.tsx.
-    expect(out).toContain('placeholder="Search by name or email"');
+    // The contact is picked in a search box (a combobox posting `contactId`), not a plain select. Its options are only
+    // in the markup while it is open, so assert what the page handed the form: each contact with its email, and
+    // "No Mail" as a contact that cannot be invited.
     expect(out).toContain('name="contactId"');
+    expect(portal.formProps).toHaveBeenCalled();
+    const props = portal.formProps.mock.calls.at(-1)![0];
+    expect(props.vendorId).toBe(ID);
+    expect(props.vendorCountry).toBe('NP');
+    expect(props.contacts).toEqual([
+      { id: ORG, label: 'Sita Sharma', email: 'sita@example.com', hasEmail: true },
+      { id: ACCOUNT, label: 'No Mail', email: null, hasEmail: false },
+    ]);
     // The contact's primary number, in the print format; the other number stays off the table.
     expect(out).toContain('href="tel:+14155552671"');
     expect(out).toContain(formatPartyPhoneForPrint('+14155552671'));
