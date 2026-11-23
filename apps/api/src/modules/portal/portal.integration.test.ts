@@ -493,6 +493,32 @@ describe('portal reads on a real database', () => {
     expect((await refusal(portal.get(otherParty.versionId))).status).toBe(404);
   });
 
+  it('says no longer open (409) on a mailed v1 link after a revise and a Lost cancel of the newer version (R6D)', async () => {
+    const w = await seedWorld();
+    const v1 = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const v2Id = await reviseToDraft(w, w.entityA, v1);
+    await withTx(
+      db,
+      { tenantId: w.tenantId, organizationId: w.entityA },
+      seedActor(),
+      async (tx) => {
+        await tx.execute(sql`
+          UPDATE app.quotation_versions
+             SET status = 'cancelled', cancelled_at = now(), cancel_reason = 'Opportunity marked lost: Price'
+           WHERE id = ${v2Id}::uuid`);
+        await tx.execute(sql`
+          UPDATE app.quotations SET current_version_id = ${v2Id}::uuid WHERE id = ${v1.quotationId}::uuid`);
+      },
+    );
+    const portal = serviceFor(customerOf(w, w.entityA, w.partyP));
+    expect(await refusal(portal.get(v1.versionId))).toEqual({
+      status: 409,
+      body: { code: 'quotation_closed', message: 'This quotation is no longer open' },
+    });
+    // The never-sent newer version stays "not found".
+    expect((await refusal(portal.get(v2Id))).status).toBe(404);
+  });
+
   it('lets the same party acting in the other entity see only that entity', async () => {
     const w = await seedWorld();
     await seedQuotation(w, w.entityA, w.partyP, 'sent');
@@ -605,6 +631,37 @@ describe('portal accept and reject on a real database', () => {
     expect(
       await failure(respond.reject(sent.versionId, `again-${randomUUID()}`, { comment: 'No' })),
     ).toEqual({ status: 409, code: 'quotation_not_sent' });
+  });
+
+  it('answers a stale accept or reject on a sent version cancelled by a Lost deal with 409 quotation_closed, a never-sent one with 404 (R6D)', async () => {
+    const w = await seedWorld();
+    const sentThenLost = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const neverSent = await seedQuotation(w, w.entityA, w.partyP, 'draft');
+    await withTx(
+      db,
+      { tenantId: w.tenantId, organizationId: w.entityA },
+      seedActor(),
+      async (tx) => {
+        for (const s of [sentThenLost, neverSent]) {
+          await tx.execute(sql`
+            UPDATE app.quotation_versions
+               SET status = 'cancelled', cancelled_at = now(), cancel_reason = 'Opportunity marked lost: Price'
+             WHERE id = ${s.versionId}::uuid`);
+        }
+      },
+    );
+    const respond = respondFor(await portalCustomer(w));
+    expect(
+      await failure(respond.accept(sentThenLost.versionId, `stale-${randomUUID()}`, SIGNED)),
+    ).toEqual({ status: 409, code: 'quotation_closed' });
+    expect(
+      await failure(
+        respond.reject(sentThenLost.versionId, `stale-${randomUUID()}`, { comment: 'No' }),
+      ),
+    ).toEqual({ status: 409, code: 'quotation_closed' });
+    expect(
+      (await failure(respond.accept(neverSent.versionId, `stale-${randomUUID()}`, SIGNED))).status,
+    ).toBe(404);
   });
 
   it('accepts under a contract policy instead of dead-ending, and leaves the evidence for staff (F1-Q28)', async () => {
