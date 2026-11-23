@@ -170,6 +170,24 @@ describe('the customer picker', () => {
     }
   });
 
+  it('lists more than 20 customers flat, with no Unassigned header', async () => {
+    const many: CustomerOption[] = Array.from({ length: 25 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      name: `Customer ${String.fromCharCode(65 + i)}`,
+      number: `CUS-${String(i + 1).padStart(4, '0')}`,
+      panVatNo: null,
+      defaultCurrency: 'NPR',
+    }));
+    const mounted = await mount({ customers: many });
+    try {
+      await click(customerBox(mounted.container));
+      expect(options()).toHaveLength(25);
+      expect(document.body.textContent).not.toContain('Unassigned');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   it('does not ask the server when the whole list is already here', async () => {
     const search = vi.fn((_text: string, _signal: AbortSignal) =>
       Promise.resolve<CustomerOption[]>([]),

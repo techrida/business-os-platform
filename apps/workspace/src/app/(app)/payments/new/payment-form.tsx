@@ -627,6 +627,8 @@ export function PaymentForm({
                     required
                     searchIcon
                     options={customerOptions}
+                    // Customers have no group: however long the list, no "Unassigned" header.
+                    groupThreshold={Number.POSITIVE_INFINITY}
                     value={customerId}
                     onChange={chooseCustomer}
                     onInputChange={setCustomerText}
