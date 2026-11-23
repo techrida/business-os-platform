@@ -29,6 +29,7 @@ import {
   createPortalUser,
   createStaffUser,
   createTenantWithEntity,
+  userEntities,
   users,
 } from '@bos/db';
 import {
@@ -281,14 +282,37 @@ const stored = async () =>
   (await request(baseUrl).get(`/v1/admin/settings/${KEY}`)).body as unknown;
 
 describe('GET /v1/admin/settings/crm.default_lead_owner/people', () => {
-  it('lists only the people a new lead may fall back to, by id and name alone', async () => {
+  it('lists only the people a new lead may fall back to, by id, name and role alone (BOS-UI-001)', async () => {
     caller = await principalOf(founder);
     const res = await people();
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     // Not the Founder or Marketing (an intake lead goes to Sales), not a Sales user without a department, not
     // Management (no lead write), not the settings-only role, the inactive user, a portal user or another tenant.
-    expect(res.body).toEqual([{ userId: salesInDept.userId, displayName: 'Ram Thapa' }]);
+    expect(res.body).toEqual([{ userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales' }]);
     expect(JSON.stringify(res.body)).not.toContain(portalUserId);
+  });
+
+  it('marks the Sales head, the person an unset setting stands for, so the card names them (BOS-UI-001)', async () => {
+    const setLevel = (level: 'head' | 'staff') =>
+      withTx(db, scope, systemActor('test'), (tx) =>
+        tx
+          .update(userEntities)
+          .set({ level })
+          .where(eq(userEntities.userId, salesInDept.userId)),
+      );
+    caller = await principalOf(founder);
+    await setLevel('head');
+    try {
+      const res = await people();
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body).toEqual([
+        { userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales', salesHead: true },
+      ]);
+    } finally {
+      await setLevel('staff');
+    }
+    // No head: nobody is marked, so the card has no one to name.
+    expect(JSON.stringify((await people()).body)).not.toContain('salesHead');
   });
 
   it('answers 403 to a caller who may not edit the setting, lead access or not', async () => {
@@ -308,7 +332,7 @@ describe('GET /v1/admin/settings/crm.default_lead_owner/people', () => {
     caller = await principalOf(foreignFounder, foreignScope);
     const res = await people();
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ userId: foreignSales.userId, displayName: 'Foreign Sales' }]);
+    expect(res.body).toEqual([{ userId: foreignSales.userId, displayName: 'Foreign Sales', role: 'Sales' }]);
 
     // Nor may it save one of this tenant's people as its default.
     const refused = await save(salesInDept.userId);
@@ -390,7 +414,7 @@ describe('the Lead owner card for a role with admin.settings.write and no lead a
 
     const res = await people();
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual([{ userId: salesInDept.userId, displayName: 'Ram Thapa' }]);
+    expect(res.body).toEqual([{ userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales' }]);
     expect((await request(baseUrl).get(`/v1/admin/settings/${KEY}`)).status).toBe(200);
     try {
       expect((await save(salesInDept.userId)).status).toBe(200);
