@@ -60,15 +60,17 @@
   color: var(--text-secondary);
 }
 
-.hint {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
+/* The box is exactly the field control height (42px, 44px on touch), like the label select beside it (UIP-FORM-010):
+   the vertical padding of the shared control look would make it taller than its neighbours. */
+.root .box {
+  height: 42px;
+  min-height: 42px;
+  padding-block: 0;
 }
 
 @media (pointer: coarse) {
-  .box {
+  .root .box {
+    height: 44px;
     min-height: 44px;
   }
 

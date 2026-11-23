@@ -218,6 +218,35 @@ describe('PhoneListInput, deleting over the formatting', () => {
   });
 });
 
+describe('PhoneListInput, no helper text under the box (UIP-FORM-008, UIP-FORM-010)', () => {
+  it('shows no counter or format description at any point, only the placeholder', async () => {
+    const list = await mount();
+    const texts = () => list.container.textContent ?? '';
+    expect(texts()).not.toMatch(/of 10|digits, starting|Mobile:/);
+    await typeKeys(list.number(1), '98123');
+    expect(texts()).not.toMatch(/of 10|digits, starting|Mobile:/);
+    await typeKeys(list.number(1), '45678');
+    expect(texts()).not.toMatch(/of 10|digits, starting|Mobile:|\(mobile\)/);
+  });
+
+  it('reserves one message line per row, empty until there is an error, and the error goes into that line', async () => {
+    const list = await mount();
+    const line = () => list.container.querySelector<HTMLElement>('li[data-row] p[id$="-error"]');
+    expect(line()).not.toBeNull();
+    expect(line()!.textContent).toBe('');
+    expect(list.number(1).getAttribute('aria-describedby') ?? '').not.toContain('-error');
+    const before = line();
+    await typeKeys(list.number(1), '98123');
+    await act(() => Promise.resolve(list.number(1).blur()));
+    // The same element now holds the error: nothing was added, so nothing moves.
+    expect(line()).toBe(before);
+    expect(line()!.textContent).toContain('A mobile number has 10 digits; this has 5.');
+    expect(list.number(1).getAttribute('aria-describedby')).toContain(line()!.id);
+    await typeKeys(list.number(1), '67890');
+    expect(line()!.textContent).toBe('');
+  });
+});
+
 describe('PhoneListInput, the flag menu', () => {
   const options = () => [...document.querySelectorAll('[role="option"]')];
 
