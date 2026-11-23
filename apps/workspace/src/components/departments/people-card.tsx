@@ -247,6 +247,7 @@ export function PeopleCard({
             onChange={(values) => updateFilters(query, readLevels(values))}
             allLabel="All levels"
             pluralLabel="levels"
+            className={styles.toolbarFilter ?? ''}
           />
         </div>
 
