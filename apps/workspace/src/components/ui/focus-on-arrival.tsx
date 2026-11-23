@@ -12,11 +12,21 @@ export function FocusOnArrival() {
   useEffect(() => {
     const active = document.activeElement;
     if (active !== null && active !== document.body) return;
-    const heading = document.querySelector<HTMLElement>('main h1');
-    if (heading === null) return;
-    // A heading is not focusable by default; -1 lets a script focus it without adding a tab stop.
-    heading.tabIndex = -1;
-    heading.focus({ preventScroll: true });
+    focusPageHeading();
   }, []);
   return null;
+}
+
+/**
+ * Focuses the page's heading, for a dialog action that changed the page under the control that opened
+ * it (Verify, Reject and Reverse take their own buttons away). The heading stays, so keyboard focus
+ * does not fall to `<body>`. Returns whether a heading took focus.
+ */
+export function focusPageHeading(): boolean {
+  const heading = document.querySelector<HTMLElement>('main h1');
+  if (heading === null) return false;
+  // A heading is not focusable by default; -1 lets a script focus it without adding a tab stop.
+  heading.tabIndex = -1;
+  heading.focus({ preventScroll: true });
+  return true;
 }
