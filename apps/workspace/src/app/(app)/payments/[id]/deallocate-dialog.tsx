@@ -32,6 +32,7 @@ export function DeallocateDialog({
       initial={{ key: idempotencyKey }}
       action={deallocateAction}
       reloadHref={reloadHref}
+      focusHeadingOnDone
     >
       {(state) => (
         <>

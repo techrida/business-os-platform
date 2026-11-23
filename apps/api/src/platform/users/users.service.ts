@@ -21,9 +21,11 @@ import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, withTx } from '../db/tx';
 import { type InvitedUser, type InviteInput, type ResolvedUser, UserMirror } from './user-mirror';
 import {
+  assertFounderLeaseHeld,
   assertWithinOperationDeadline,
   IDENTITY_REVIEW_REQUIRED,
   IDENTITY_REVIEW_RESOLVED,
+  isDefiniteRefusal,
   withFounderRemovalLease,
 } from './identity-reconcile';
 import { type IdpOrgRow, type ListedUsers, UsersStore } from './users.store';
@@ -228,10 +230,11 @@ export class UsersService extends UserDirectory {
         scope,
         actor,
         async (tx) => {
-          if (assignsAccess) {
-            await lockAccessRevision(tx, scope.tenantId);
-            if (assertAccess) await assertAccess(tx);
-          }
+          // The lease must still be held (a stalled invite that was taken over writes nothing). Taken in the order every
+          // access write takes: the access lock, then the lease row.
+          await lockAccessRevision(tx, scope.tenantId);
+          await assertFounderLeaseHeld(tx);
+          if (assignsAccess && assertAccess) await assertAccess(tx);
           const entityId =
             placement !== null ? await this.assertPlacement(tx, scope, placement) : null;
           if (!prepared.created) {
@@ -263,6 +266,23 @@ export class UsersService extends UserDirectory {
    * flag and records the audit row. The caller invalidates authz after this resolves.
    */
   async resolveIdentityReview(
+    scope: TxScope,
+    actor: Actor,
+    userId: string,
+    assertAccess?: (tx: DbTransaction) => Promise<void>,
+  ): Promise<void> {
+    // Under the tenant's identity lease, like every other identity change: a resolve never reads ZITADEL while a status
+    // action or role set is half done, and never writes over one.
+    return withFounderRemovalLease(
+      this.store,
+      scope.tenantId,
+      () => this.resolveIdentityReviewOnce(scope, actor, userId, assertAccess),
+      undefined,
+      this.mirror.settleOutstandingRemoval(scope, actor),
+    );
+  }
+
+  private async resolveIdentityReviewOnce(
     scope: TxScope,
     actor: Actor,
     userId: string,
@@ -303,6 +323,7 @@ export class UsersService extends UserDirectory {
       actor,
       async (tx) => {
         await lockAccessRevision(tx, scope.tenantId);
+        await assertFounderLeaseHeld(tx);
         if (assertAccess) await assertAccess(tx);
         const before = await this.mirror.commitResolve(
           tx,
@@ -402,19 +423,34 @@ export class UsersService extends UserDirectory {
     b: InviteInput,
   ): Promise<{ zitadelUserId: string; created: boolean }> {
     let zitadelUserId: string | null = null;
+    // Set when createHuman failed without a definite answer (a timeout or a 5xx): ZITADEL may have made the person
+    // and no id came back, so the org is searched for them below, like after a 409.
+    let ambiguous: Error | null = null;
+    assertWithinOperationDeadline();
     try {
-      assertWithinOperationDeadline();
       zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
     } catch (error) {
-      if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
+      if (error instanceof ZitadelHttpError && error.status === 409) {
+        // Walks the org below for the open invite.
+      } else if (isDefiniteRefusal(error)) {
+        throw error;
+      } else {
+        ambiguous = error instanceof Error ? error : new Error('createHuman failed');
+      }
     }
     if (zitadelUserId !== null) {
       await this.finishInviteSteps(scope, actor, org, b, zitadelUserId);
       return { zitadelUserId, created: true };
     }
 
-    const conflict = new ConflictException('A user with this email already exists');
-    const open = await this.findOpenInvite(org.zitadelOrgId, b.email);
+    // The original error when createHuman gave no answer and the search finds nothing (or cannot run).
+    const conflict = ambiguous ?? new ConflictException('A user with this email already exists');
+    let open: ZitadelUser | null;
+    try {
+      open = await this.findOpenInvite(org.zitadelOrgId, b.email);
+    } catch (error) {
+      throw ambiguous ?? (error instanceof Error ? error : new Error('open-invite lookup failed'));
+    }
     if (!open) throw conflict;
     const row = await this.store.findByZitadelId(this.db, open.id);
     if (row && row.status !== 'invited') throw conflict;

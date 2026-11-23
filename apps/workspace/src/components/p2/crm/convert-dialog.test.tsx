@@ -511,3 +511,57 @@ it('creates a new customer and contact through the real action', async () => {
     },
   });
 });
+
+async function mountWithoutTyping(lead: Partial<ConvertLead>) {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  mounted = await mountForm(
+    <ConvertDialog
+      lead={{
+        id: LEAD,
+        version: 1,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'New Supplies',
+        contactName: 'Mina',
+        email: 'mina@newsupplies.example',
+        country: 'NP',
+        phones: [],
+        ...lead,
+      }}
+      action={convertLeadAction}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+}
+
+it("D9: prefills the new customer's Address and City from the lead's address, and sends them unchanged", async () => {
+  await mountWithoutTyping({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } });
+  expect(dialog().querySelector<HTMLTextAreaElement>('[name="address.line"]')?.value).toBe(
+    '12 Lazimpat Road',
+  );
+  expect(dialog().querySelector<HTMLInputElement>('[name="address.city"]')?.value).toBe(
+    'Kathmandu',
+  );
+  await submit(dialog());
+  expect(api.convertLead).toHaveBeenCalledTimes(1);
+  expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({
+    customer: {
+      mode: 'create',
+      customer: { country: 'NP', address: { line: '12 Lazimpat Road', city: 'Kathmandu' } },
+    },
+  });
+});
+
+it('D9: the prefilled address stays editable, and a lead without one starts empty', async () => {
+  await mountWithoutTyping({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } });
+  await fillAddress('Ward 4, Lakeside', 'Pokhara');
+  await submit(dialog());
+  expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({
+    customer: { customer: { address: { line: 'Ward 4, Lakeside', city: 'Pokhara' } } },
+  });
+  await mounted.unmount();
+  vi.clearAllMocks();
+  await mountWithoutTyping({ address: null });
+  expect(dialog().querySelector<HTMLTextAreaElement>('[name="address.line"]')?.value).toBe('');
+  expect(dialog().querySelector<HTMLInputElement>('[name="address.city"]')?.value).toBe('');
+});
