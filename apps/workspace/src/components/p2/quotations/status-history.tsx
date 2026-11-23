@@ -27,7 +27,16 @@ export function historyTitle(
   from: QuotationStatus | null,
   to: QuotationStatus,
   rejectionSource: RejectionSource | null = null,
+  reason: string | null = null,
 ): string {
+  // A cancelled revision gave this version back (R6D): not a second approval or send. The cancel writes the
+  // reason as "Revision N cancelled: ...", which names N.
+  if (from === 'superseded' && (to === 'approved' || to === 'sent')) {
+    const n = /^Revision (\d+) cancelled/.exec(reason ?? '')?.[1];
+    return n === undefined
+      ? 'Restored after a revision was cancelled'
+      : `Restored after revision ${n} was cancelled`;
+  }
   if (from === null)
     return to === 'draft' ? 'Draft created' : `Created as ${quotationStatusMeta(to).label}`;
   if (to === 'submitted')
@@ -73,6 +82,7 @@ export function historyRows(
         entry.fromStatus,
         entry.toStatus,
         rejectedBy.get(entry.versionId) ?? null,
+        entry.reason ?? null,
       ),
       actor:
         entry.actorId === null

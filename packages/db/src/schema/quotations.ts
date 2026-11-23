@@ -54,7 +54,9 @@ export const QUOTATION_STATUSES = [
 ] as const;
 /**
  * The statuses of one_live_version: at most one version per quotation is in one of these. Exactly the contracts'
- * QUOTATION_REVISION_RULES.liveStatuses; every other status is terminal.
+ * QUOTATION_REVISION_RULES.liveStatuses; every other status is terminal, except that cancelling an unsent revision
+ * (R6D, CancelService.restoreReplaced) moves the Superseded version it replaced back to Approved or Sent once the
+ * draft has left this set. (This note lives here, not in 0016_quotations.sql: released migration files never change.)
  */
 export const QUOTATION_LIVE_STATUSES = [
   'draft',

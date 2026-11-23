@@ -29,3 +29,10 @@ regexes = [
   # assigned to `KEY`, which the generic-api-key rule reads as a credential. Committed in 2beaa749.
   '''7c9e6679-7425-40de-944b-e07fc1f90ae7''',
 ]
+
+[[allowlists]]
+description = "Migration file name and its sha256 in packages/db/migrations-pinned.json (a content hash, not a secret)"
+regexTarget = "line"
+regexes = [
+  '''^\s*"\d{4}_[a-z0-9_]+\.sql": "[0-9a-f]{64}",?$''',
+]
