@@ -107,3 +107,38 @@ export async function platedLogo(bytes: Buffer): Promise<Buffer> {
     throw new LogoImageUnreadableError();
   }
 }
+
+/** The largest spread (standard deviation of luminance, 0..1) of a logo's visible pixels that still counts as one colour. */
+const SINGLE_COLOUR_SPREAD = 0.12;
+
+/**
+ * Whether the visible pixels are close to one colour, so painting them all white or black keeps the logo legible. A
+ * navy badge with a white glyph is not: its one-colour copy is a blob, so it must be plated instead.
+ */
+export async function isNearlySingleColour(bytes: Buffer): Promise<boolean> {
+  try {
+    const { data } = await open(bytes)
+      .rotate()
+      .resize(MEASURE_SIDE_PX, MEASURE_SIDE_PX, { fit: 'inside', withoutEnlargement: true })
+      .ensureAlpha()
+      .toColourspace('srgb')
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let weight = 0;
+    let sum = 0;
+    let sumSquares = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3]!;
+      if (alpha < TRANSPARENT_BELOW) continue;
+      const l = rgbLuminance(data[i]!, data[i + 1]!, data[i + 2]!);
+      weight += 1;
+      sum += l;
+      sumSquares += l * l;
+    }
+    if (weight === 0) return true;
+    const mean = sum / weight;
+    return Math.sqrt(Math.max(0, sumSquares / weight - mean * mean)) <= SINGLE_COLOUR_SPREAD;
+  } catch {
+    throw new LogoImageUnreadableError();
+  }
+}

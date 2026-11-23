@@ -52,7 +52,7 @@ import {
   type StorageAdapter,
 } from '../../platform/documents/storage.adapter';
 import type { DocumentLogoResolver, LogoBackground } from '../quotations/render/issuer';
-import { measureLogo, monochromeLogo, platedLogo } from './logo-analysis';
+import { isNearlySingleColour, measureLogo, monochromeLogo, platedLogo } from './logo-analysis';
 
 const ENTITY_LOGO = 'entity_logo';
 const ON_DARK = 'entity_logo_on_dark';
@@ -306,6 +306,12 @@ export class DocumentLogoResolverFactory {
         case 'forLight':
           return this.toDataUrl(onLight!.loaded.mime, onLight!.loaded.bytes, onLight!.id);
         case 'mono':
+          // A logo of several colours would become a solid blob: plate it on a dark background, keep it on a light one.
+          if (!(await isNearlySingleColour(primary.bytes))) {
+            return choice.colour === 'white'
+              ? (this.toDataUrl('image/png', await platedLogo(primary.bytes), documentId) ?? asIs())
+              : asIs();
+          }
           return (
             this.toDataUrl(
               'image/png',

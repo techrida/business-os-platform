@@ -193,6 +193,33 @@ describe('logo for a background', () => {
     expect(out.equals(darkBytes)).toBe(true);
   });
 
+  it('plates a multi-colour transparent logo on blue instead of painting it a white blob', async () => {
+    const glyph = await sharp({
+      create: { width: 10, height: 10, channels: 3, background: '#ffffff' },
+    })
+      .png()
+      .toBuffer();
+    const navy = await sharp({
+      create: { width: 30, height: 30, channels: 3, background: '#0b1f4d' },
+    })
+      .png()
+      .toBuffer();
+    const badge = await sharp({
+      create: { width: 40, height: 40, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .composite([
+        { input: navy, left: 5, top: 5 },
+        { input: glyph, left: 15, top: 15 },
+      ])
+      .png()
+      .toBuffer();
+    const resolve = setup([{ id: PRIMARY, ownerType: 'entity_logo', bytes: badge }]);
+    const out = decode(await resolve(PRIMARY, request(BLUE)));
+    const meta = await sharp(out).metadata();
+    expect(meta.width).toBeGreaterThan(40);
+    expect((await measureLogo(out)).luminance).toBeGreaterThan(0.5);
+  });
+
   it('keeps a mid-tone transparent logo on white as uploaded', async () => {
     const orange = await mark('#e8590c');
     const resolve = setup([{ id: PRIMARY, ownerType: 'entity_logo', bytes: orange }]);
