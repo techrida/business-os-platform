@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { isQuotationClosed } from '@/components/portal/quotation-closed';
 import { ApiError } from '@/lib/api';
 import { getSession, type Session } from '@/lib/session';
 import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
@@ -52,6 +53,10 @@ function toInline(disposition: string | null): string {
 
 /** What a customer reads when their PDF failed to render or was refused by the scan. */
 export const DELAYED_MESSAGE = 'This PDF is delayed. Our team has been told.';
+
+/** What a person reads when the quotation behind the document was closed by the company. */
+export const QUOTATION_CLOSED_MESSAGE =
+  'This quotation is no longer open. Contact the company if you have a question.';
 
 /** What a person reads when the short-lived download link ran out before the file was fetched. */
 export const LINK_EXPIRED_MESSAGE =
@@ -128,6 +133,8 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
       response.headers.set('retry-after', '1');
       return response;
     }
+    // The company closed the quotation (a Lost deal): not a wait, so no "try again" (R6D).
+    if (status === 409 && isQuotationClosed(err)) return plain(QUOTATION_CLOSED_MESSAGE, 410);
     if (status === 409 || status === 410) {
       return plain(
         'This PDF is not available to download yet. Please try again in a few minutes.',
