@@ -6,6 +6,7 @@ import { Icon } from '@/components/ui/icon';
 import { toast } from '@/components/ui/toast';
 
 import { sendPasswordResetAction } from './actions';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export function PasswordReset({
   userId,
@@ -19,14 +20,11 @@ export function PasswordReset({
   return (
     <ConfirmDialog
       trigger={
-        <Button
-          variant="ghost"
-          size="small"
-          aria-label={`Send password reset email to ${label}`}
-          title="Send password reset email"
-        >
-          <Icon name="mail" size={20} />
-        </Button>
+        <Tooltip content="Send password reset email">
+          <Button variant="ghost" size="small" aria-label={`Send password reset email to ${label}`}>
+            <Icon name="mail" size={20} />
+          </Button>
+        </Tooltip>
       }
       title="Send a password reset email?"
       description={`A link to choose a new password will be sent to ${email}.`}

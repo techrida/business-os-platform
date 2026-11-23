@@ -9,6 +9,7 @@ import type { PdfSource } from './memo-pdf-client';
 import { MemoPaper } from './memo-paper';
 import styles from './memo-template.module.css';
 import { useMemoPdfActions } from './use-memo-pdf-actions';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * Whether the block is short enough to stay in view under the app header. A paper taller than the screen is not
@@ -84,25 +85,27 @@ export function MemoPreview({
     >
       {showActions ? (
         <div className={styles.previewBar} role="toolbar" aria-label={`${noun} actions`}>
-          <button
-            type="button"
-            className={styles.iconAction}
-            aria-label={`Download ${noun} as PDF`}
-            title={`Download ${noun} as PDF`}
-            disabled={busy}
-            onClick={() => void download()}
-          >
-            <DownloadIcon size={18} />
-          </button>
-          <button
-            type="button"
-            className={styles.iconAction}
-            aria-label={`Print ${noun}`}
-            title={`Print ${noun}`}
-            onClick={() => void print()}
-          >
-            <PrintIcon size={18} />
-          </button>
+          <Tooltip content={`Download ${noun} as PDF`}>
+            <button
+              type="button"
+              className={styles.iconAction}
+              aria-label={`Download ${noun} as PDF`}
+              disabled={busy}
+              onClick={() => void download()}
+            >
+              <DownloadIcon size={18} />
+            </button>
+          </Tooltip>
+          <Tooltip content={`Print ${noun}`}>
+            <button
+              type="button"
+              className={styles.iconAction}
+              aria-label={`Print ${noun}`}
+              onClick={() => void print()}
+            >
+              <PrintIcon size={18} />
+            </button>
+          </Tooltip>
         </div>
       ) : (
         <h2 className={styles.previewHeading}>Live preview</h2>

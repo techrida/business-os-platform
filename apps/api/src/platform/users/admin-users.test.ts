@@ -1822,6 +1822,22 @@ describe('POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F
     },
   );
 
+  it('lists flagged people only for the company-wide account-administration grant', async () => {
+    addUser(STAFF);
+    addUser(SECOND_FOUNDER);
+    store.users.find((u) => u.id === STAFF)!.identityReviewRequired = true;
+    // The audit read needs a real database; the zitadel-outside-tx test covers the reason it returns.
+    vi.spyOn(audit, 'list').mockResolvedValue([]);
+    const no = await asAdmin(['admin.users.read'], () => controller.identityReview()).catch(
+      (e: unknown) => e,
+    );
+    expect(no).toBeInstanceOf(ForbiddenException);
+    const yes = await asAdmin(['admin.users.read', 'admin.roles.write'], () =>
+      controller.identityReview(),
+    );
+    expect(yes.items.map((i) => i.id)).toEqual([STAFF]);
+  });
+
   it('reports canChangeStatus in the summary only for a company-wide grant', async () => {
     const yes = await asAdmin(['admin.users.read', 'admin.roles.write'], () =>
       controller.summary(),

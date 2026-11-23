@@ -55,6 +55,7 @@ export function ReleaseDelivery({
       initial={{ key: idempotencyKey }}
       action={releaseDeliveryAction}
       reloadHref={reloadHref}
+      focusHeadingOnDone
     >
       {(state) => (
         <>
