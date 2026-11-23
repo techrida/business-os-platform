@@ -21,7 +21,7 @@ import {
 } from '@bos/db';
 import type { VendorStatus } from '@bos/contracts';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, isNotNull, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import type { Principal, ScopableTable } from '../../platform/authz/principal';
@@ -161,6 +161,8 @@ export class DrizzleVendorPortalStore implements VendorPortalStore {
           eq(verificationCases.tenantId, p.tenantId),
           eq(verificationCases.partyId, p.partyId),
           eq(verificationCases.partyKind, 'vendor'),
+          // Only while the documents are still to be sent again: a submitted or decided case drops the note.
+          inArray(verificationCases.status, ['draft', 'rejected']),
         ),
       )
       .limit(1);
