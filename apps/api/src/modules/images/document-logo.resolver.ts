@@ -19,12 +19,26 @@
 // - a throw when the storage read fails, a missing clean file included: the issuer turns it into
 //   DocumentLogoUnavailableError and the render retries, instead of freezing a document without its logo.
 //
+// With a LogoBackground (R6AC) the resolver also takes the optional logos for dark and for light backgrounds and answers
+// the one that stays readable on that background: the primary when it reaches 3:1 contrast (WCAG 1.4.11), else the
+// variant made for the background, else a white or black copy of a transparent primary, else the primary on a white
+// plate (chooseLogo in @bos/contracts). The numbers come from `logo_image_stats` when the upload recorded them, else
+// the bytes are measured here. A variant that is unusable (unknown, foreign, refused) is skipped; one still awaiting
+// its scan is DocumentLogoPendingError, like the primary, so a document is never frozen without a logo that is about
+// to arrive.
+//
 // DocumentLogoModule provides the factory with its own disk adapter on FILES_ROOT (CoreConfig), so the API and the
 // worker can both import it: DocumentsModule (API only) does not export its storage adapter, and the worker has no
 // AppConfig. The adapter is stateless, so a second instance on the same root is harmless.
-import { IMAGE_MIME, LogoDataUrlSchema } from '@bos/contracts';
-import { documents, documentVersions } from '@bos/db';
-import { Inject, Injectable, Logger, Module } from '@nestjs/common';
+import {
+  chooseLogo,
+  IMAGE_MIME,
+  LogoDataUrlSchema,
+  relativeLuminance,
+  type LogoStats,
+} from '@bos/contracts';
+import { documents, documentVersions, logoImageStats } from '@bos/db';
+import { Inject, Injectable, Logger, Module, Optional } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 
 import { CoreConfig } from '../../platform/config/config';
@@ -36,9 +50,12 @@ import {
   STORAGE_ADAPTER,
   type StorageAdapter,
 } from '../../platform/documents/storage.adapter';
-import type { DocumentLogoResolver } from '../quotations/render/issuer';
+import type { DocumentLogoResolver, LogoBackground } from '../quotations/render/issuer';
+import { measureLogo, monochromeLogo, platedLogo } from './logo-analysis';
 
 const ENTITY_LOGO = 'entity_logo';
+const ON_DARK = 'entity_logo_on_dark';
+const ON_LIGHT = 'entity_logo_on_light';
 /** The longest logo data URL a snapshot accepts (LogoDataUrlSchema). */
 export const MAX_LOGO_DATA_URL_CHARS = 720_000;
 const DATA_URL_PREFIX_CHARS = 'data:image/jpeg;base64,'.length;
@@ -152,6 +169,35 @@ const MAX_LOGO_BYTES = Math.floor((MAX_LOGO_DATA_URL_CHARS - DATA_URL_PREFIX_CHA
 
 export type LogoStorage = Pick<StorageAdapter, 'openClean'>;
 
+/** The stored measurements of a logo document in the scope's tenant and entity; null when none were recorded. */
+export type LogoStatsLookup = (scope: TxScope, documentId: string) => Promise<LogoStats | null>;
+
+/** Injection token of the LogoStatsLookup; the factory measures the bytes itself when it is not provided. */
+export const LOGO_STATS_LOOKUP = Symbol('LOGO_STATS_LOOKUP');
+
+/** The lookup on the real table. A plain read. */
+export function drizzleLogoStatsLookup(db: Db): LogoStatsLookup {
+  return async (scope, documentId) => {
+    const [row] = await db
+      .select({ luminance: logoImageStats.luminance, hasTransparency: logoImageStats.hasTransparency })
+      .from(logoImageStats)
+      .where(
+        and(
+          eq(logoImageStats.tenantId, scope.tenantId),
+          eq(logoImageStats.organizationId, scope.organizationId),
+          eq(logoImageStats.documentId, documentId),
+        ),
+      );
+    return row ?? null;
+  };
+}
+
+/** A logo's usable bytes and what is known about them. */
+interface LoadedLogo {
+  bytes: Buffer;
+  mime: string;
+}
+
 /** Injection token of the LogoDocumentLookup the factory reads through. */
 export const LOGO_DOCUMENT_LOOKUP = Symbol('LOGO_DOCUMENT_LOOKUP');
 
@@ -162,21 +208,123 @@ export class DocumentLogoResolverFactory {
   constructor(
     @Inject(LOGO_DOCUMENT_LOOKUP) private readonly lookup: LogoDocumentLookup,
     @Inject(STORAGE_ADAPTER) private readonly storage: LogoStorage,
+    @Optional() @Inject(LOGO_STATS_LOOKUP) private readonly statsLookup?: LogoStatsLookup,
   ) {}
 
   /** The resolver for one tenant and entity: the scope the snapshot is built for. */
   forScope(scope: TxScope): DocumentLogoResolver {
-    return (documentId) => this.resolve(scope, documentId);
+    return (documentId, background) =>
+      background === undefined
+        ? this.resolve(scope, documentId)
+        : this.resolveForBackground(scope, documentId, background);
   }
 
   private async resolve(scope: TxScope, documentId: string): Promise<string | null> {
+    const loaded = await this.load(scope, documentId, ENTITY_LOGO);
+    if (loaded === null) return null;
+    return this.toDataUrl(loaded.mime, loaded.bytes, documentId);
+  }
+
+  private toDataUrl(mime: string, bytes: Buffer, documentId: string): string | null {
+    const dataUrl = LogoDataUrlSchema.safeParse(`data:${mime};base64,${bytes.toString('base64')}`);
+    if (!dataUrl.success) {
+      this.logger.warn(
+        `document logo is not a valid data URL: document=${documentId} kind=invalid`,
+      );
+      return null;
+    }
+    return dataUrl.data;
+  }
+
+  /** What is known about the bytes: the recorded numbers, else measured now. Null when they cannot be measured. */
+  private async statsOf(
+    scope: TxScope,
+    documentId: string,
+    loaded: LoadedLogo,
+  ): Promise<LogoStats | null> {
+    const stored = (await this.statsLookup?.(scope, documentId)) ?? null;
+    if (stored !== null) return stored;
+    try {
+      return await measureLogo(loaded.bytes);
+    } catch {
+      this.logger.warn(`document logo could not be measured: document=${documentId}`);
+      return null;
+    }
+  }
+
+  /**
+   * The primary logo or the variant, or a recoloured copy, for the background it will print on. A logo that cannot be
+   * measured is used as it is (the choice then has nothing to go on).
+   */
+  private async resolveForBackground(
+    scope: TxScope,
+    documentId: string,
+    request: LogoBackground,
+  ): Promise<string | null> {
+    const primary = await this.load(scope, documentId, ENTITY_LOGO);
+    if (primary === null) return null;
+    const asIs = () => this.toDataUrl(primary.mime, primary.bytes, documentId);
+    const backgroundLuminance = relativeLuminance(request.colour);
+    const primaryStats = await this.statsOf(scope, documentId, primary);
+    if (primaryStats === null) return asIs();
+
+    const variant = async (id: string | null | undefined, ownerType: string) => {
+      if (id === null || id === undefined) return null;
+      const loaded = await this.load(scope, id, ownerType);
+      if (loaded === null) return null;
+      const stats = await this.statsOf(scope, id, loaded);
+      return stats === null ? null : { loaded, stats, id };
+    };
+    const [onDark, onLight] = await Promise.all([
+      variant(request.onDarkDocumentId, ON_DARK),
+      variant(request.onLightDocumentId, ON_LIGHT),
+    ]);
+
+    const choice = chooseLogo(
+      { primary: primaryStats, forDark: onDark?.stats ?? null, forLight: onLight?.stats ?? null },
+      backgroundLuminance,
+    );
+    try {
+      switch (choice.use) {
+        case 'primary':
+          return asIs();
+        case 'forDark':
+          return this.toDataUrl(onDark!.loaded.mime, onDark!.loaded.bytes, onDark!.id);
+        case 'forLight':
+          return this.toDataUrl(onLight!.loaded.mime, onLight!.loaded.bytes, onLight!.id);
+        case 'mono':
+          return (
+            this.toDataUrl(
+              'image/png',
+              await monochromeLogo(primary.bytes, choice.colour),
+              documentId,
+            ) ?? asIs()
+          );
+        case 'plate':
+          return (
+            this.toDataUrl('image/png', await platedLogo(primary.bytes), documentId) ?? asIs()
+          );
+      }
+    } catch {
+      // The recolour failed (bytes sharp cannot decode): the logo as uploaded beats no logo.
+      this.logger.warn(`document logo could not be recoloured: document=${documentId}`);
+      return asIs();
+    }
+  }
+
+  /** The newest clean version's bytes and mime, under every rule of `resolve`; null when there is no usable logo. */
+  private async load(
+    scope: TxScope,
+    documentId: string,
+    ownerType: string,
+  ): Promise<LoadedLogo | null> {
     const row = await this.lookup(scope, documentId);
     // The query already scopes; the same rules again here, so a query change cannot widen what is frozen.
     if (
       row === undefined ||
       row.tenantId !== scope.tenantId ||
       row.organizationId !== scope.organizationId ||
-      row.ownerType !== ENTITY_LOGO
+      row.ownerType !== ownerType
     ) {
       return null;
     }
@@ -226,16 +374,7 @@ export class DocumentLogoResolverFactory {
       this.logger.warn(`document logo over the snapshot cap: document=${documentId} kind=oversize`);
       return null;
     }
-    const dataUrl = LogoDataUrlSchema.safeParse(
-      `data:${clean.detectedMime};base64,${bytes.toString('base64')}`,
-    );
-    if (!dataUrl.success) {
-      this.logger.warn(
-        `document logo is not a valid data URL: document=${documentId} kind=invalid`,
-      );
-      return null;
-    }
-    return dataUrl.data;
+    return { bytes, mime: clean.detectedMime };
   }
 
   /** The clean file's bytes, or null once they pass the cap (the size column is not trusted). */
@@ -269,6 +408,7 @@ export class DocumentLogoResolverFactory {
       useFactory: (config: CoreConfig) => new DiskStorageAdapter(config.FILES_ROOT),
     },
     { provide: LOGO_DOCUMENT_LOOKUP, inject: [DB], useFactory: drizzleLogoDocumentLookup },
+    { provide: LOGO_STATS_LOOKUP, inject: [DB], useFactory: drizzleLogoStatsLookup },
     DocumentLogoResolverFactory,
   ],
   exports: [DocumentLogoResolverFactory],

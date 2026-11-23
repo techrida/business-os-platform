@@ -5,7 +5,10 @@
 // admin sees a clear reason, instead of a schema error that carries data.
 import {
   CompanyProfileSchema,
+  DEFAULT_DOCUMENT_STYLE,
+  DocumentStyleSchema,
   DocumentStyleSnapshotSchema,
+  logoBackgroundHex,
   SETTINGS,
   snapshotProfileFrom,
   type CompanyProfile,
@@ -66,7 +69,21 @@ export class DocumentStyleInvalidError extends Error {
  * document has no usable logo bytes. A throw means the lookup itself failed. The caller binds the tenant scope
  * (a closure over the same scope the snapshot is built for).
  */
-export type DocumentLogoResolver = (documentId: string) => Promise<string | null>;
+export type DocumentLogoResolver = (
+  documentId: string,
+  background?: LogoBackground,
+) => Promise<string | null>;
+
+/**
+ * The background a logo will print on, and the company's optional logos for dark and for light backgrounds. With it
+ * the resolver answers the logo that stays readable there (see document-logo.resolver.ts); without it, the primary.
+ */
+export interface LogoBackground {
+  /** The `#rrggbb` colour of the area the logo sits on. */
+  colour: string;
+  onDarkDocumentId: string | null;
+  onLightDocumentId: string | null;
+}
 
 /** Resolves nothing: until the documents-backed resolver is wired, a snapshot uses the legacy logo, if any. */
 export const NO_DOCUMENT_LOGO_RESOLVER: DocumentLogoResolver = () => Promise.resolve(null);
@@ -89,12 +106,17 @@ export class DocumentLogoUnavailableError extends Error {
 async function resolveSnapshotLogo(
   profile: CompanyProfile,
   resolveLogo: DocumentLogoResolver,
+  backgroundColour: string,
 ): Promise<string | null> {
   const legacy = profile.legacyLogoDataUrl ?? null;
   if (profile.logoDocumentId === null) return legacy;
   let resolved: string | null;
   try {
-    resolved = await resolveLogo(profile.logoDocumentId);
+    resolved = await resolveLogo(profile.logoDocumentId, {
+      colour: backgroundColour,
+      onDarkDocumentId: profile.logoOnDarkDocumentId,
+      onLightDocumentId: profile.logoOnLightDocumentId,
+    });
   } catch {
     throw new DocumentLogoUnavailableError();
   }
@@ -125,7 +147,14 @@ export async function buildDocumentStyleSnapshot(
   const pan = SETTINGS['entity.pan_vat_no'].safeParse(entityPan);
   const rawProfile = CompanyProfileSchema.safeParse(profile);
   if (!rawProfile.success) throw new DocumentStyleInvalidError();
-  const logo = await resolveSnapshotLogo(rawProfile.data, resolveLogo);
+  // The logo is chosen for the colour the style's layout prints it on, then frozen as bytes. A style that does not
+  // validate is refused below, with the whole snapshot; until then the default layout's colour stands in.
+  const parsedStyle = DocumentStyleSchema.safeParse(style);
+  const logo = await resolveSnapshotLogo(
+    rawProfile.data,
+    resolveLogo,
+    logoBackgroundHex(parsedStyle.success ? parsedStyle.data : DEFAULT_DOCUMENT_STYLE),
+  );
   const parsed = DocumentStyleSnapshotSchema.safeParse({
     style,
     profile: snapshotProfileFrom(

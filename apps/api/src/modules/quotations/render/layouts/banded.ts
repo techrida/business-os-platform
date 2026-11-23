@@ -1,6 +1,5 @@
 // Banded: a solid brand-colour band across the top (title, issuer, logo), the client beside the details below.
 import {
-  NEUTRALS as N,
   brandMark,
   customerParty,
   detailRows,
@@ -24,7 +23,7 @@ export const banded: LayoutRenderer = (ctx) => {
   .band-from h2, .band-from .addr { color: ${p.onPrimary}; opacity: 0.86; }
   .band-from .legal { font-size: 10pt; }
   .band .brand { flex: none; }
-  .band .brand--logo { background: ${N.paper}; padding: 2.5mm 3.5mm; border-radius: 1.5mm; }
+  /* The logo sits on the band itself: the snapshot froze the one that reads on it (chooseLogo), plated if none did. */
   .band .wordmark { color: ${p.onPrimary}; font-size: 13pt; max-width: 50mm; text-align: right; }
   .intro { display: flex; justify-content: space-between; gap: 12mm; margin-top: 9mm; }
   .intro .party-wrap { min-width: 0; flex: 1 1 0; max-width: 90mm; }

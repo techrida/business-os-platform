@@ -1,6 +1,7 @@
 // Which image is current (U12, D33): serving an image to staff, and moving an owner's pointer to a new image.
 // Images are documents (image-owner.policies.ts); the "current" one is a pointer on the owner:
-//   entity_logo   -> setting `entity.profile`.logoDocumentId (versioned through SettingsService, so history is kept)
+//   entity_logo   -> setting `entity.profile`.logoDocumentId (versioned through SettingsService, so history is kept);
+//   entity_logo_on_dark / entity_logo_on_light -> the same setting's logoOnDarkDocumentId / logoOnLightDocumentId
 //   user_avatar   -> app.users.avatar_document_id
 //   customer_logo -> app.customers.logo_document_id
 //   vendor_logo   -> app.vendors.logo_document_id
@@ -16,14 +17,24 @@ import type { Readable } from 'node:stream';
 
 import {
   CreateDocumentBodySchema,
+  ENTITY_LOGO_FIELD,
   IMAGE_MAX_BYTES,
   IMAGE_MIME,
+  isEntityLogoOwnerType,
   isImageOwnerType,
   SetImageBodySchema,
   type CompanyProfile,
+  type EntityLogoOwnerType,
   type ImageOwnerType,
 } from '@bos/contracts';
-import { customers, documents, documentVersions, users, vendors } from '@bos/db';
+import {
+  customers,
+  documents,
+  documentVersions,
+  logoImageStats,
+  users,
+  vendors,
+} from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -45,9 +56,10 @@ import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { DocumentsService, type ImageHandle } from '../../platform/documents/documents.service';
 import { isTenantWideImageOwner } from '../../platform/documents/image-scope';
 import { SettingsService } from '../../platform/settings/settings.service';
+import { measureLogo } from './logo-analysis';
 
-/** The pointer owners that are rows (the entity logo is a setting). */
-export type RowImageOwnerType = Exclude<ImageOwnerType, 'entity_logo'>;
+/** The pointer owners that are rows (the entity logo, in all three slots, is a setting). */
+export type RowImageOwnerType = Exclude<ImageOwnerType, EntityLogoOwnerType>;
 
 /** A live document of the tenant, as the pointer write needs it. */
 export interface ImageDocumentRow {
@@ -102,6 +114,12 @@ export interface ImageUploadRequest {
   fileNameHeader: string | undefined;
   stream: Readable;
 }
+
+const LOGO_VARIANT = {
+  entity_logo: 'primary',
+  entity_logo_on_dark: 'on_dark',
+  entity_logo_on_light: 'on_light',
+} as const satisfies Record<EntityLogoOwnerType, 'primary' | 'on_dark' | 'on_light'>;
 
 const IMAGE_MIMES: ReadonlySet<string> = new Set(IMAGE_MIME);
 const TOO_LARGE = `The image is larger than ${IMAGE_MAX_BYTES} bytes`;
@@ -425,6 +443,9 @@ export class ImagesService {
       { filename, declaredMime, bytes },
       actorOnly,
     );
+    if (isEntityLogoOwnerType(ownerType)) {
+      await this.recordLogoStats(who, ownerType, documentId, bytes);
+    }
     try {
       await this.set(who, ownerType, ownerId, { documentId });
     } catch (error) {
@@ -441,6 +462,40 @@ export class ImagesService {
       throw error;
     }
     return { documentId };
+  }
+
+  /**
+   * Measures an uploaded company logo (alpha-weighted luminance, transparency) and keeps the numbers, so a render
+   * need not decode it again. Best effort: bytes sharp cannot read are logged and left unmeasured, because the render
+   * measures a logo that has no row itself, and the upload must not fail on a cache.
+   */
+  private async recordLogoStats(
+    who: ImageCaller,
+    ownerType: EntityLogoOwnerType,
+    documentId: string,
+    bytes: Buffer,
+  ): Promise<void> {
+    try {
+      const stats = await measureLogo(bytes);
+      const { scope } = who;
+      await withTx(this.db, scope, who.actor, async (tx) => {
+        await tx
+          .insert(logoImageStats)
+          .values({
+            tenantId: scope.tenantId,
+            organizationId: scope.organizationId,
+            documentId,
+            variant: LOGO_VARIANT[ownerType],
+            luminance: stats.luminance,
+            hasTransparency: stats.hasTransparency,
+          })
+          .onConflictDoNothing();
+      });
+    } catch (error) {
+      this.logger.warn(
+        `logo ${documentId}: stats not recorded: ${error instanceof Error ? error.name : 'error'}`,
+      );
+    }
   }
 
   /**
@@ -486,12 +541,16 @@ export class ImagesService {
     ownerType: ImageOwnerType,
     ownerId: string,
   ) {
-    if (ownerType === 'entity_logo') {
+    if (isEntityLogoOwnerType(ownerType)) {
       // Locks the setting key: a concurrent profile save waits, then appends after this one.
       const { value } = await this.settings.getLocked(tx, 'entity.profile');
       return {
-        documentId: value.logoDocumentId,
-        hasLegacy: value.legacyLogoDataUrl !== undefined && value.legacyLogoDataUrl !== null,
+        documentId: value[ENTITY_LOGO_FIELD[ownerType]],
+        // Only the primary slot replaces the pre-documents logo.
+        hasLegacy:
+          ownerType === 'entity_logo' &&
+          value.legacyLogoDataUrl !== undefined &&
+          value.legacyLogoDataUrl !== null,
         profile: value,
       };
     }
@@ -508,12 +567,13 @@ export class ImagesService {
     documentId: string | null,
     profile: CompanyProfile | undefined,
   ): Promise<void> {
-    if (ownerType === 'entity_logo') {
-      // Every other profile field is kept; the pre-documents data-URL logo is replaced (or removed) for good.
+    if (isEntityLogoOwnerType(ownerType)) {
+      // Every other profile field is kept (the other two logo slots too); the pre-documents data-URL logo is
+      // replaced (or removed) for good when the primary moves.
       await this.settings.set(tx, 'entity.profile', {
         ...profile,
-        logoDocumentId: documentId,
-        legacyLogoDataUrl: null,
+        [ENTITY_LOGO_FIELD[ownerType]]: documentId,
+        ...(ownerType === 'entity_logo' ? { legacyLogoDataUrl: null } : {}),
       });
       return;
     }
