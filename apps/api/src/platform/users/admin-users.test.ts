@@ -2186,6 +2186,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
       active: 2,
       invited: 1,
       deactivated: 1,
+      flagged: 0,
       departments: [{ id: departmentId, name: 'Sales' }],
     });
     expect(await sqlStore.summary(second.scope)).toMatchObject({ total: 4 });

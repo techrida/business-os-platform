@@ -332,6 +332,7 @@ export class FakeUsersStore extends UsersStore {
       active: users.filter(({ status }) => status === 'active').length,
       invited: users.filter(({ status }) => status === 'invited').length,
       deactivated: users.filter(({ status }) => status === 'inactive').length,
+      flagged: users.filter(({ identityReviewRequired }) => identityReviewRequired === true).length,
       departments: [],
     });
   }

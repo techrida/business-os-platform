@@ -2369,6 +2369,44 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     expect(await users.listFlagged(f.scope)).toEqual([]);
   }, 60_000);
 
+  it('reads the flag reason tenant-wide: a flag raised in another entity still shows its reason, counted in the summary', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    const { users } = services(zitadel);
+    await timedOutDeactivate(f, zitadel);
+    // The caller sits in a second entity of the tenant; the flag's audit row belongs to the first.
+    const otherEntity = randomUUID();
+    const other = { tenantId: f.scope.tenantId, organizationId: otherEntity };
+    await withTx(db, other, systemActor('test'), async (tx) => {
+      await tx.insert(organizations).values({
+        id: otherEntity,
+        tenantId: f.scope.tenantId,
+        organizationId: otherEntity,
+        code: 'T2',
+        name: 'Second entity',
+        legalName: 'Second entity Pvt. Ltd.',
+        isDefault: false,
+      });
+    });
+
+    const [flagged] = await users.listFlagged(other);
+    expect(flagged!.id).toBe(f.userId);
+    expect(flagged!.reason).toMatch(/^users\.deactivate:/);
+    expect((await store.summary(other)).flagged).toBe(1);
+  }, 60_000);
+
+  it('a failed reason read leaves the flagged list intact with no reason', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'active');
+    const { users } = services(zitadel);
+    await timedOutDeactivate(f, zitadel);
+    vi.spyOn(audit, 'list').mockRejectedValueOnce(new Error('audit unavailable'));
+
+    const items = await users.listFlagged(f.scope);
+
+    expect(items.map((i) => [i.id, i.reason])).toEqual([[f.userId, null]]);
+  }, 60_000);
+
   it('an admin resolves a flagged person: ZITADEL is read again, the flag clears, the row follows ZITADEL, audited; 409 when not flagged', async () => {
     const f = await fixture('active');
     const zitadel = zitadelFor(f, 'active');
