@@ -39,6 +39,17 @@ html {
   text-size-adjust: 100%;
 }
 
+/* One scroll lock per page. A modal dialog (Radix) locks scroll by setting `overflow: hidden` on
+   <body>, which the browser hands to the viewport only while <html> is `overflow: visible`. A
+   React Aria popover (Select, date picker) then sets `overflow: hidden` on <html> as well, so
+   <body> becomes its own clip box: the sticky sidebar loses the viewport as its scroll container
+   and jumps to the top of the page. While the dialog holds the lock the popover's second one is
+   redundant, so <html> stays visible and the viewport keeps following <body>. */
+html:has(body[data-scroll-locked]) {
+  overflow: visible !important;
+  scrollbar-gutter: auto !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;

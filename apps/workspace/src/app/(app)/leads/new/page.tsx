@@ -26,14 +26,19 @@ export default async function NewLeadPage() {
     getMe(session),
   ]);
   const enabledCurrencies = await enabledRead;
-  const owners =
-    ownerList.status === 'fulfilled'
-      ? ownerList.value.map((o) => ({ value: o.userId, label: o.displayName || o.email }))
-      : [];
+  const listed = ownerList.status === 'fulfilled' ? ownerList.value : [];
+  const owners = listed.map((o) => ({
+    value: o.userId,
+    label: o.displayName || o.email,
+    role: o.role ?? null,
+  }));
   const meId = me.status === 'fulfilled' ? me.value.userId : undefined;
-  const defaultOwnerId = owners.some((o) => o.value === meId) ? meId : undefined;
-  // Known, and not someone the lead may go to: the API gives it to the default lead owner instead.
-  const callerUnplaced = meId !== undefined && defaultOwnerId === undefined && owners.length > 0;
+  // The owner box starts on a real person: the caller when the lead may be theirs, else the one the API marks as
+  // where an ownerless lead goes (Default lead owner from Settings, or the Sales head). Never a placeholder.
+  const callerId = owners.some((o) => o.value === meId) ? meId : undefined;
+  const marked = listed.find((o) => o.defaultOwner !== undefined);
+  const defaultOwnerId = callerId ?? marked?.userId;
+  const defaultOwnerSource = callerId === undefined ? marked?.defaultOwner : undefined;
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Leads', href: '/leads' }, { label: 'Create Lead' }]} />
@@ -44,7 +49,8 @@ export default async function NewLeadPage() {
         owners={owners}
         enabledCurrencies={enabledCurrencies}
         defaultOwnerId={defaultOwnerId}
-        callerUnplaced={callerUnplaced}
+        defaultOwnerSource={defaultOwnerSource}
+        callerUnplaced={meId !== undefined && callerId === undefined && owners.length > 0}
         idempotencyKey={randomUUID()}
       />
     </Page>
