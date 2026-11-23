@@ -6,11 +6,14 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   customType,
   foreignKey,
   index,
   integer,
+  primaryKey,
+  real,
   type PgTableExtraConfigValue,
   text,
   timestamp,
@@ -181,5 +184,40 @@ export const documentRenderFailures = appSchema.table(
       sql`(${t.exhaustedAt} IS NULL) <> (${t.nextAttemptAt} IS NULL)`,
     ),
     index('document_render_failures_due_idx').on(t.ownerType, t.nextAttemptAt),
+  ],
+);
+
+/** The slot a logo image fills; mirrors the entity logo owner types (entity_logo, entity_logo_on_dark, entity_logo_on_light). */
+export const LOGO_IMAGE_VARIANTS = ['primary', 'on_dark', 'on_light'] as const;
+
+/**
+ * What a company logo image measures (migration 0218, R6AC): alpha-weighted mean relative luminance and whether it has
+ * transparent pixels. Measured at upload; a cache, since a render that finds no row measures the bytes itself.
+ */
+export const logoImageStats = appSchema.table(
+  'logo_image_stats',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    organizationId: uuid('organization_id').notNull(),
+    documentId: uuid('document_id').notNull(),
+    variant: text('variant', { enum: LOGO_IMAGE_VARIANTS }).notNull(),
+    luminance: real('luminance').notNull(),
+    hasTransparency: boolean('has_transparency').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t): PgTableExtraConfigValue[] => [
+    primaryKey({ name: 'logo_image_stats_pk', columns: [t.tenantId, t.organizationId, t.documentId] }),
+    foreignKey({
+      name: 'logo_image_stats_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'logo_image_stats_document_fk',
+      columns: [t.tenantId, t.organizationId, t.documentId],
+      foreignColumns: [documents.tenantId, documents.organizationId, documents.id],
+    }),
+    check('logo_image_stats_variant_check', sql`${t.variant} IN ('primary', 'on_dark', 'on_light')`),
+    check('logo_image_stats_luminance_check', sql`${t.luminance} >= 0 AND ${t.luminance} <= 1`),
   ],
 );

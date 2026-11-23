@@ -37,6 +37,7 @@
     "prom-client": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
+    "sharp": "0.35.5",
     "zod": "catalog:"
   },
   "devDependencies": {
