@@ -211,3 +211,53 @@ describe('saving a new quotation moves to its editor once (TR-Q8)', () => {
     expect(mocks.push).not.toHaveBeenCalled();
   });
 });
+
+describe('leaving with unsaved edits asks in the design-system dialog, not the browser (UIP-BUILD-002)', () => {
+  async function dirtyBuilderWithLink() {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await mountBuilder({ currency: 'NPR', enabled: ['NPR', 'USD'] });
+    await click(currencyTrigger());
+    await click(
+      Array.from(document.querySelectorAll('[role="option"]')).find((o) =>
+        o.textContent?.includes('USD'),
+      ) ?? null,
+    );
+    const link = document.createElement('a');
+    link.href = '/leads';
+    link.textContent = 'Leads';
+    document.body.append(link);
+    return { confirmSpy, link };
+  }
+  const dialogButton = (label: string) =>
+    Array.from(document.querySelectorAll('[role="dialog"] button')).find(
+      (b) => b.textContent?.trim() === label,
+    ) ?? null;
+
+  it('holds a link click, shows the dialog, and goes only after Leave', async () => {
+    const { confirmSpy, link } = await dirtyBuilderWithLink();
+    await click(link);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      'Leave without saving?',
+    );
+    expect(mocks.push).not.toHaveBeenCalled();
+
+    await click(dialogButton('Keep editing'));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.push).not.toHaveBeenCalled();
+
+    await click(link);
+    await click(dialogButton('Leave'));
+    expect(mocks.push).toHaveBeenCalledWith('/leads');
+    confirmSpy.mockRestore();
+  });
+
+  it('does not ask when nothing was edited', async () => {
+    await mountBuilder({ currency: 'NPR', enabled: ['NPR', 'USD'] });
+    const link = document.createElement('a');
+    link.href = '/leads';
+    document.body.append(link);
+    await click(link);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+});

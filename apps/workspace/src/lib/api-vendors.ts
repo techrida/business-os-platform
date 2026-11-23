@@ -89,7 +89,8 @@ export interface UpdateVendorFields {
   /** D10: the kind and country change together (a foreign vendor is outside Nepal) until the vendor is approved. */
   kind?: VendorKind | undefined;
   country?: CountryCode | undefined;
-  pan?: string | undefined;
+  /** `null` clears the tax id of a foreign vendor. */
+  pan?: string | null | undefined;
   /** Replaces the street lines and city; `null` clears them. */
   address?: AddressLines | null | undefined;
   vatRegistered?: boolean | undefined;

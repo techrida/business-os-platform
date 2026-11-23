@@ -14,7 +14,7 @@ export const QUEUED_SUBMIT_TIMEOUT_MS = 20_000;
 
 /**
  * The page header's Submit button. The page decides what is still missing (`missing`, short pill labels);
- * `HeaderAction` shows them as red pills and explains them when a blocked button is tapped. The API's own
+ * `HeaderAction` lists them in a popover when the blocked button is activated (no pills beside the button, UIP-FORM-011). The API's own
  * refusal arrives as a toast, because the action has no field to
  * blame. Confirming submits the form with the memo id.
  *

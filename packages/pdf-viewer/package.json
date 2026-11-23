@@ -2,6 +2,7 @@
   "name": "@bos/pdf-viewer",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "pdf.js page renderer (canvas, bytes in) shared by the workspace and portal apps.",
   "type": "module",
   "main": "./src/index.ts",

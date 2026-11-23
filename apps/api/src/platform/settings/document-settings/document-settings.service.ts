@@ -20,6 +20,8 @@ import {
   TermPresetListSchema,
   TermPresetSchema,
   snapshotProfileFrom,
+  logoBackgroundHex,
+  type CompanyProfile,
 } from '@bos/contracts';
 import {
   BadRequestException,
@@ -55,9 +57,24 @@ export const TERM_PRESET_READERS: readonly Permission[] = [
 export const TERM_PRESET_WRITERS: readonly Permission[] = FINANCE_SETTINGS_EDITORS;
 
 const CreateBody = TermPresetSchema.omit({ id: true });
-const PatchBody = TermPresetSchema.pick({ name: true, body: true })
+const PatchBody = TermPresetSchema.pick({ name: true, body: true, isDefault: true })
   .partial()
-  .refine((b) => b.name !== undefined || b.body !== undefined, 'send name, body or both');
+  .refine(
+    (b) => b.name !== undefined || b.body !== undefined || b.isDefault !== undefined,
+    'send name, body, isDefault or any of them',
+  );
+
+/** Makes `target` the kind's only default (or clears it). Other kinds are untouched. */
+function withDefault(list: readonly TermPreset[], target: TermPreset): TermPreset[] {
+  return list.map((p) => {
+    if (p.id === target.id) return target;
+    if (target.isDefault === true && p.kind === target.kind && p.isDefault === true) {
+      const { isDefault: _cleared, ...rest } = p;
+      return rest;
+    }
+    return p;
+  });
+}
 const ListQuery = z.object({ kind: TermPresetKindSchema.optional() });
 
 export interface DisplaySettings {
@@ -166,11 +183,17 @@ export class DocumentSettingsService {
       this.settings.get(scope, 'format.number_systems'),
       this.settings.get(scope, 'format.date'),
     ]);
-    const logo = await this.previewLogo(scope, profile.logoDocumentId, profile.legacyLogoDataUrl);
+    // Chosen for the previewed layout and colour, not the saved ones, as a real render would be.
+    const style = { layout: body.layout, primaryColour: body.primaryColour };
+    const logo = await this.previewLogo(scope, profile, logoBackgroundHex(style));
     const html = renderQuotationHtml(sampleQuotationView(), {
       snapshot: {
         style: { layout: body.layout, primaryColour: body.primaryColour },
         profile: snapshotProfileFrom(profile, logo),
+        // A logo of the uploaded document was chosen for this layout's colour: no plate behind it.
+        ...(logo !== null && logo !== (profile.legacyLogoDataUrl ?? null)
+          ? { logoForBackground: logoBackgroundHex(style) }
+          : {}),
         numberSystems,
         dateFormat,
         capturedAt: new Date().toISOString(),
@@ -185,14 +208,21 @@ export class DocumentSettingsService {
    */
   private async previewLogo(
     scope: TxScope,
-    logoDocumentId: string | null | undefined,
-    legacyLogoDataUrl: string | null | undefined,
+    profile: CompanyProfile,
+    backgroundColour: string,
   ): Promise<string | null> {
-    const legacy = legacyLogoDataUrl ?? null;
+    const { logoDocumentId } = profile;
+    const legacy = profile.legacyLogoDataUrl ?? null;
     // The stored JSON is read as saved: a profile saved before logoDocumentId existed has no such field.
     if (typeof logoDocumentId !== 'string') return legacy;
     try {
-      return (await this.logos.forScope(scope)(logoDocumentId)) ?? legacy;
+      return (
+        (await this.logos.forScope(scope)(logoDocumentId, {
+          colour: backgroundColour,
+          onDarkDocumentId: profile.logoOnDarkDocumentId ?? null,
+          onLightDocumentId: profile.logoOnLightDocumentId ?? null,
+        })) ?? legacy
+      );
     } catch (error) {
       // Fixed words only, like the resolver's own log lines.
       const kind = error instanceof Error ? error.name : 'error';
@@ -218,9 +248,10 @@ export class DocumentSettingsService {
     this.assertAnyOf(TERM_PRESET_WRITERS);
     const body = parse(CreateBody, rawBody, 'term preset');
     const created: TermPreset = { id: randomUUID(), ...body };
+    if (created.isDefault !== true) delete created.isDefault;
     await this.modify((list) => {
       assertNameFree(list, created);
-      return [...list, created];
+      return withDefault([...list, created], created);
     });
     return created;
   }
@@ -238,11 +269,19 @@ export class DocumentSettingsService {
         name: patch.name ?? current.name,
         body: patch.body ?? current.body,
       };
+      if (patch.isDefault === true) next.isDefault = true;
+      else if (patch.isDefault === false) delete next.isDefault;
       result = next;
       // Nothing changed: no new version, so the history only records real edits.
-      if (next.name === current.name && next.body === current.body) return null;
+      if (
+        next.name === current.name &&
+        next.body === current.body &&
+        (next.isDefault ?? false) === (current.isDefault ?? false)
+      ) {
+        return null;
+      }
       assertNameFree(list, next, id);
-      return list.map((p) => (p.id === id ? next : p));
+      return withDefault(list, next);
     });
     return result as TermPreset;
   }

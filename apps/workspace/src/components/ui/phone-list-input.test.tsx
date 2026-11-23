@@ -6,6 +6,8 @@ import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { click, mountForm, paste, typeKeys } from '@/test/form-interactions';
+
+import { countryFlag } from './country-data';
 import { PhoneListInput, type PhoneListInputProps, type PhoneRowProblem } from './phone-list-input';
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | null = null;
@@ -42,8 +44,12 @@ async function mount(props: PhoneListInputProps = {}) {
     container,
     seen,
     number: (n: number) => q<HTMLInputElement>(`input[aria-label="Phone ${n} number"]`)!,
-    country: (n: number) => q<HTMLInputElement>(`input[aria-label="Phone ${n} country"]`)!,
-    primary: (n: number) => q<HTMLInputElement>(`input[aria-label="Phone ${n} primary"]`)!,
+    /** The flag button of a row. */
+    country: (n: number) => q<HTMLButtonElement>(`button[aria-label="Phone ${n} country"]`)!,
+    /** The flag a row shows. */
+    flag: (n: number) =>
+      q<HTMLButtonElement>(`button[aria-label="Phone ${n} country"]`)!.textContent,
+    primary: (n: number) => q<HTMLButtonElement>(`button[aria-label="Phone ${n} primary"]`)!,
     button: (label: string) => q<HTMLButtonElement>(`button[aria-label="${label}"]`),
     add: () => q<HTMLButtonElement>('button[data-action="add"]')!,
     rows: () => container.querySelectorAll('li[data-row]').length,
@@ -52,9 +58,10 @@ async function mount(props: PhoneListInputProps = {}) {
   };
 }
 
-async function pickCountry(box: HTMLInputElement, search: string) {
-  await act(() => Promise.resolve(box.focus()));
-  await act(() => Promise.resolve(box.select()));
+async function pickCountry(button: HTMLButtonElement, search: string) {
+  await click(button);
+  const label = button.getAttribute('aria-label')!;
+  const box = document.querySelector<HTMLInputElement>(`input[aria-label="${label} search"]`)!;
   await typeKeys(box, search);
   await act(() =>
     Promise.resolve(
@@ -63,15 +70,246 @@ async function pickCountry(box: HTMLInputElement, search: string) {
   );
 }
 
+const FLAG = {
+  NP: countryFlag('NP'),
+  US: countryFlag('US'),
+  IN: countryFlag('IN'),
+  GB: countryFlag('GB'),
+  CA: countryFlag('CA'),
+};
+
+describe('PhoneListInput, one box: the code is shown once, in the number', () => {
+  it('shows the flag with no dial-code text, and an example number as the placeholder', async () => {
+    const list = await mount();
+    expect(list.flag(1)).toBe(FLAG.NP);
+    expect(list.container.textContent).not.toContain('+977 +977');
+    expect(list.number(1).placeholder).toBe('+977 9812345678');
+    expect(list.number(1).value).toBe('');
+    // One box: the country button and the number sit in one field, and only one field takes text.
+    expect(list.container.querySelectorAll('input[type="tel"]')).toHaveLength(1);
+    expect(list.container.querySelector('input[aria-label="Phone 1 country"]')).toBeNull();
+  });
+
+  it.each([
+    ['NP', '+977 9812345678'],
+    ['IN', '+91 81234 56789'],
+    ['US', '+1 201 555 0123'],
+  ] as const)('the placeholder of %s is %s', async (country, example) => {
+    const list = await mount({ defaultCountry: country });
+    expect(list.number(1).placeholder).toBe(example);
+  });
+
+  it('shows the typed number with its code once, as 9812345678 typed with no plus', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '9812345678');
+    expect(list.number(1).value).toBe('+977 9812345678');
+    expect(list.number(1).value.match(/\+977/g)).toHaveLength(1);
+    expect(list.posted('0.number')).toBe('+9779812345678');
+    expect(list.last()).toEqual([
+      { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
+    ]);
+  });
+
+  it('keeps the placeholder country in step when a country is picked', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'india');
+    expect(list.flag(1)).toBe(FLAG.IN);
+    expect(list.number(1).placeholder).toBe('+91 81234 56789');
+  });
+});
+
+describe('PhoneListInput, digits typed one at a time with no plus', () => {
+  it.each([
+    ['US', '4805551234', '+1 480 555 1234'],
+    ['US', '7575551234', '+1 757 555 1234'],
+    ['US', '2125551234', '+1 212 555 1234'],
+    ['US', '9195551234', '+1 919 555 1234'],
+    ['GB', '2079460958', '+44 20 7946 0958'],
+    ['IN', '2226781234', '+91 22 2678 1234'],
+  ] as const)(
+    'keeps a real %s number %s in its country the whole way',
+    async (country, typed, shown) => {
+      const list = await mount({ defaultCountry: country });
+      await typeKeys(list.number(1), typed);
+      expect(list.posted('0.country')).toBe(country);
+      expect(list.number(1).value).toBe(shown);
+    },
+  );
+
+  it('refuses one digit past a complete number, so a typo cannot make it a foreign number', async () => {
+    const list = await mount({ defaultCountry: 'US' });
+    await typeKeys(list.number(1), '41555526719');
+    expect(list.number(1).value).toBe('+1 415 555 2671');
+    expect(list.posted('0.country')).toBe('US');
+    expect(list.container.textContent).toContain('one digit more than a valid number');
+    await mounted!.unmount();
+
+    const nepal = await mount();
+    await typeKeys(nepal.number(1), '98123456789');
+    expect(nepal.number(1).value).toBe('+977 9812345678');
+    expect(nepal.posted('0.country')).toBe('NP');
+  });
+
+  it('keeps typing the own code in front of a number: 91 98765 43210 in India, 977… in a picked Nepal', async () => {
+    const india = await mount({ defaultCountry: 'IN' });
+    await typeKeys(india.number(1), '919876543210');
+    expect(india.posted('0.number')).toBe('+919876543210');
+    expect(india.number(1).value).toBe('+91 98765 43210');
+    await mounted!.unmount();
+
+    const nepal = await mount();
+    await pickCountry(nepal.country(1), 'nepal');
+    await typeKeys(nepal.number(1), '9779812345678');
+    expect(nepal.posted('0.number')).toBe('+9779812345678');
+    expect(nepal.number(1).value).toBe('+977 9812345678');
+  });
+
+  it('does not switch the country the user picked, however the digits start', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'united states');
+    await typeKeys(list.number(1), '977');
+    expect(list.posted('0.country')).toBe('US');
+    expect(list.number(1).value).toBe('+1 977');
+  });
+
+  it('drops the trunk 0 of a pasted national number', async () => {
+    const list = await mount();
+    await paste(list.number(1), '01 4123456');
+    expect(list.posted('0.number')).toBe('+97714123456');
+    expect(list.number(1).value).toBe('+977 1-4123456');
+    await mounted!.unmount();
+    const uk = await mount({ defaultCountry: 'GB' });
+    await paste(uk.number(1), '020 7946 0958');
+    expect(uk.posted('0.number')).toBe('+442079460958');
+  });
+
+  it('keeps the plus when 00 is typed, and backspace over a space removes the digit before it', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '00');
+    expect(list.number(1).value).toBe('+');
+    await typeKeys(list.number(1), '{Backspace}');
+    await typeKeys(list.number(1), '+14155552671');
+    expect(list.number(1).value).toBe('+1 415 555 2671');
+    // The caret sits after the space before 5552671; Backspace there removes the space, so it takes the 5 before it.
+    list.number(1).setSelectionRange(8, 8);
+    await typeKeys(list.number(1), '{Backspace}');
+    expect(list.number(1).value).toBe('+1 415 552 671');
+  });
+});
+
+describe('PhoneListInput, deleting over the formatting', () => {
+  it('Delete over a space removes the digit after it, and Backspace over the space after the code removes nothing', async () => {
+    const list = await mount({
+      defaultValue: [{ country: 'GB', e164: '+442079460958', isPrimary: true }],
+    });
+    expect(list.number(1).value).toBe('+44 20 7946 0958');
+    list.number(1).setSelectionRange(6, 6);
+    await typeKeys(list.number(1), '{Delete}');
+    expect(list.number(1).value).toBe('+44 20 9460 958');
+    await mounted!.unmount();
+
+    const us = await mount({
+      defaultValue: [{ country: 'US', e164: '+14155552671', isPrimary: true }],
+    });
+    us.number(1).setSelectionRange(3, 3);
+    await typeKeys(us.number(1), '{Backspace}');
+    expect(us.number(1).value).toBe('+1 415 555 2671');
+    expect(us.posted('0.country')).toBe('US');
+  });
+});
+
+describe('PhoneListInput, no helper text under the box (UIP-FORM-008, UIP-FORM-010)', () => {
+  it('shows no counter or format description at any point, only the placeholder', async () => {
+    const list = await mount();
+    const texts = () => list.container.textContent ?? '';
+    expect(texts()).not.toMatch(/of 10|digits, starting|Mobile:/);
+    await typeKeys(list.number(1), '98123');
+    expect(texts()).not.toMatch(/of 10|digits, starting|Mobile:/);
+    await typeKeys(list.number(1), '45678');
+    expect(texts()).not.toMatch(/of 10|digits, starting|Mobile:|\(mobile\)/);
+  });
+
+  it('reserves one message line per row, empty until there is an error, and the error goes into that line', async () => {
+    const list = await mount();
+    const line = () => list.container.querySelector<HTMLElement>('li[data-row] p[id$="-error"]');
+    expect(line()).not.toBeNull();
+    expect(line()!.textContent).toBe('');
+    expect(list.number(1).getAttribute('aria-describedby') ?? '').not.toContain('-error');
+    const before = line();
+    await typeKeys(list.number(1), '98123');
+    await act(() => Promise.resolve(list.number(1).blur()));
+    // The same element now holds the error: nothing was added, so nothing moves.
+    expect(line()).toBe(before);
+    expect(line()!.textContent).toContain('A mobile number has 10 digits; this has 5.');
+    expect(list.number(1).getAttribute('aria-describedby')).toContain(line()!.id);
+    await typeKeys(list.number(1), '67890');
+    expect(line()!.textContent).toBe('');
+  });
+});
+
+describe('PhoneListInput, the flag menu', () => {
+  const options = () => [...document.querySelectorAll('[role="option"]')];
+
+  it('opens a searchable list with Nepal first, finds a country by name or calling code, and Escape closes it', async () => {
+    const list = await mount();
+    const button = list.country(1);
+    expect(button.getAttribute('role')).toBe('combobox');
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    await click(button);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(options()[0]?.textContent).toContain('Nepal');
+    expect(options()[0]?.textContent).toContain('+977');
+    const search = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Phone 1 country search"]',
+    )!;
+    expect(document.activeElement).toBe(search);
+    await typeKeys(search, '+91');
+    expect(options()[0]?.textContent).toContain('India');
+    await act(() =>
+      Promise.resolve(
+        search.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        ),
+      ),
+    );
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(button);
+    // Nothing was picked: the row is still Nepal.
+    expect(list.flag(1)).toBe(FLAG.NP);
+  });
+
+  it('names the flag button for screen readers by the row and the country, not the dial code text', async () => {
+    const list = await mount();
+    const button = list.country(1);
+    expect(button.getAttribute('aria-label')).toBe('Phone 1 country');
+    expect(button.textContent).toBe(FLAG.NP);
+    const described = document.getElementById(
+      button.getAttribute('aria-describedby')!,
+    )?.textContent;
+    expect(described).toContain('Nepal');
+  });
+
+  it('puts the cursor in the number box after a country is picked, so the number can be typed at once', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'india');
+    expect(document.activeElement).toBe(list.number(1));
+    await typeKeys(list.number(1), '9876543210');
+    expect(list.posted('0.number')).toBe('+919876543210');
+    expect(list.number(1).value).toBe('+91 98765 43210');
+  });
+});
+
 describe('PhoneListInput, country from a typed code', () => {
   it('switches a Nepal row to the United States when +1 is typed, and posts +14155552671', async () => {
     const list = await mount();
-    expect(list.country(1).value).toBe('+977');
+    expect(list.flag(1)).toBe(FLAG.NP);
     await typeKeys(list.number(1), '+');
     expect(document.activeElement).toBe(list.number(1));
+    expect(list.number(1).value).toBe('+');
     await typeKeys(list.number(1), '1 4155552671');
     expect(list.posted('0.country')).toBe('US');
-    expect(list.country(1).value).toBe('+1');
+    expect(list.flag(1)).toBe(FLAG.US);
+    expect(list.number(1).value).toBe('+1 415 555 2671');
     expect(list.posted('0.number')).toBe('+14155552671');
     expect(list.last()).toEqual([
       { country: 'US', e164: '+14155552671', label: null, isPrimary: true },
@@ -89,45 +327,93 @@ describe('PhoneListInput, country from a typed code', () => {
     ]);
   });
 
-  it('opens a pasted international number in its own country box', async () => {
+  it('switches to Nepal when 977… is typed under the United States, with no plus', async () => {
+    const list = await mount({ defaultCountry: 'US' });
+    expect(list.flag(1)).toBe(FLAG.US);
+    await typeKeys(list.number(1), '9779812345678');
+    expect(list.posted('0.country')).toBe('NP');
+    expect(list.flag(1)).toBe(FLAG.NP);
+    expect(list.number(1).value).toBe('+977 9812345678');
+    expect(list.last()).toEqual([
+      { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
+    ]);
+  });
+
+  it('keeps 415… as a US number: 41 is Switzerland, but 415 is a possible US start', async () => {
+    const list = await mount({ defaultCountry: 'US' });
+    await typeKeys(list.number(1), '4155552671');
+    expect(list.posted('0.country')).toBe('US');
+    expect(list.number(1).value).toBe('+1 415 555 2671');
+    expect(list.posted('0.number')).toBe('+14155552671');
+  });
+
+  it('reads a pasted international number, with or without a plus, in its own country', async () => {
     const list = await mount();
     await paste(list.number(1), '+1 (415) 555-2671');
     expect(list.posted('0.country')).toBe('US');
-    expect(list.number(1).value).toBe('4155552671');
+    expect(list.number(1).value).toBe('+1 415 555 2671');
     expect(list.posted('0.number')).toBe('+14155552671');
     expect(document.activeElement).toBe(list.number(1));
+    await mounted!.unmount();
+
+    const india = await mount();
+    await paste(india.number(1), '+91 98765 43210');
+    expect(india.posted('0.country')).toBe('IN');
+    expect(india.posted('0.number')).toBe('+919876543210');
+    await mounted!.unmount();
+
+    const bare = await mount({ defaultCountry: 'US' });
+    await paste(bare.number(1), '91 98765 43210');
+    expect(bare.posted('0.country')).toBe('IN');
+    expect(bare.posted('0.number')).toBe('+919876543210');
   });
 
-  it('leaves the full-number box when the same country is picked again', async () => {
+  it('gives a typed +44 number the United Kingdom, not Guernsey (R6A)', async () => {
     const list = await mount();
     await typeKeys(list.number(1), '+');
-    await pickCountry(list.country(1), 'nepal');
-    // Back in Nepal's own box: the digits are the national number, not a calling code.
-    await typeKeys(list.number(1), '9812345678');
-    expect(list.posted('0.country')).toBe('NP');
-    expect(list.posted('0.number')).toBe('+9779812345678');
+    await typeKeys(list.number(1), '447911123456');
+    expect(list.posted('0.country')).toBe('GB');
+    expect(list.last()).toEqual([
+      { country: 'GB', e164: '+447911123456', label: null, isPrimary: true },
+    ]);
   });
 
-  it('keeps the typed number when the same country is picked again from the full-number box', async () => {
+  it('keeps a country the user picked when a pasted number only shares its calling code (R6A)', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'canada');
+    expect(list.posted('0.country')).toBe('CA');
+    await paste(list.number(1), '+1 204 555 1234');
+    expect(list.posted('0.country')).toBe('CA');
+    expect(list.posted('0.number')).toBe('+12045551234');
+  });
+
+  it('keeps a picked country while the digits are still a possible national start', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'united states');
+    await typeKeys(list.number(1), '415');
+    expect(list.posted('0.country')).toBe('US');
+  });
+
+  it('keeps the typed number when the same country is picked again', async () => {
     const list = await mount();
     await typeKeys(list.number(1), '+');
     await typeKeys(list.number(1), '9779812345678');
     expect(list.posted('0.country')).toBe('NP');
     await pickCountry(list.country(1), 'nepal');
-    expect(list.number(1).value).toBe('9812345678');
+    expect(list.number(1).value).toBe('+977 9812345678');
     expect(list.posted('0.number')).toBe('+9779812345678');
     expect(list.last()).toEqual([
       { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
     ]);
   });
 
-  it('holds no value when only the calling code was typed and the same country is picked again', async () => {
+  it('holds only a calling code as an incomplete number, reported and not saved', async () => {
     const list = await mount();
     await typeKeys(list.number(1), '+');
     await typeKeys(list.number(1), '977');
-    await pickCountry(list.country(1), 'nepal');
-    expect(list.number(1).value).toBe('');
-    expect(list.posted('0.number')).toBe('');
+    expect(list.number(1).value).toBe('+977');
+    expect(list.seen.problems.at(-1)).toHaveLength(1);
+    expect(list.seen.phones).toEqual([]);
   });
 });
 
@@ -135,10 +421,11 @@ describe('PhoneListInput, rows', () => {
   it('keeps FX8 Nepal rules in a Nepal row', async () => {
     const list = await mount();
     await typeKeys(list.number(1), '0');
-    expect(list.number(1).value).toBe('');
-    await typeKeys(list.number(1), '98123456789');
-    expect(list.number(1).value).toBe('9812345678');
+    expect(list.seen.problems.at(-1)?.[0]?.message).toContain('Leave out the leading 0');
+    await typeKeys(list.number(1), '{Backspace}9812345678');
+    expect(list.number(1).value).toBe('+977 9812345678');
     expect(list.posted('0.number')).toBe('+9779812345678');
+    expect(list.seen.problems.at(-1)).toEqual([]);
   });
 
   it('checks another country with libphonenumber and reports the row until it is valid', async () => {
@@ -146,6 +433,7 @@ describe('PhoneListInput, rows', () => {
     await pickCountry(list.country(1), 'united kingdom');
     expect(list.posted('0.country')).toBe('GB');
     await typeKeys(list.number(1), '07911');
+    expect(list.number(1).value).toBe('+44 07911');
     expect(list.seen.problems.at(-1)).toHaveLength(1);
     expect(list.seen.problems.at(-1)?.[0]?.index).toBe(0);
     expect(list.seen.problems.at(-1)?.[0]?.message).toContain('United Kingdom');
@@ -160,9 +448,9 @@ describe('PhoneListInput, rows', () => {
     expect(list.seen.problems.at(-1)).toEqual([
       expect.objectContaining({ message: 'Leave out the leading 0. +44 is already there.' }),
     ]);
-    list.number(1).setSelectionRange(0, 11);
+    list.number(1).setSelectionRange(0, list.number(1).value.length);
     await typeKeys(list.number(1), '{Backspace}');
-    await typeKeys(list.number(1), '7911123456');
+    await typeKeys(list.number(1), '+447911123456');
     expect(list.posted('0.number')).toBe('+447911123456');
     expect(list.seen.problems.at(-1)).toEqual([]);
     expect(list.last()).toEqual([
@@ -174,7 +462,7 @@ describe('PhoneListInput, rows', () => {
     const list = await mount();
     await typeKeys(list.number(1), '98123');
     await pickCountry(list.country(1), 'india');
-    expect(list.number(1).value).toBe('98123');
+    expect(list.number(1).value).toBe('+91 98123');
     expect(list.posted('0.number')).toBe('+9198123');
   });
 
@@ -184,8 +472,8 @@ describe('PhoneListInput, rows', () => {
       { country: 'US', e164: '+14155552671', label: 'work', isPrimary: true },
     ];
     const list = await mount({ defaultValue: given });
-    expect(list.number(1).value).toBe('9812345678');
-    expect(list.number(2).value).toBe('4155552671');
+    expect(list.number(1).value).toBe('+977 9812345678');
+    expect(list.number(2).value).toBe('+1 415 555 2671');
     const posted = [0, 1].map((i) => ({
       country: list.posted(`${i}.country`),
       e164: list.posted(`${i}.number`),
@@ -201,6 +489,7 @@ describe('PhoneListInput, rows', () => {
     await click(typed.add());
     expect(document.activeElement).toBe(typed.number(2));
     await pickCountry(typed.country(2), '+1');
+    expect(typed.flag(2)).toBe(FLAG.US);
     await typeKeys(typed.number(2), '4155552671');
     const out = typed.last()!;
     expect(out).toEqual([
@@ -238,10 +527,10 @@ describe('PhoneListInput, rows', () => {
         { country: 'US', e164: '+14155552671', isPrimary: false },
       ],
     });
-    expect(list.primary(1).checked).toBe(true);
+    expect(list.primary(1).getAttribute('aria-checked')).toBe('true');
     await click(list.primary(2));
-    expect(list.primary(1).checked).toBe(false);
-    expect(list.primary(2).checked).toBe(true);
+    expect(list.primary(1).getAttribute('aria-checked')).toBe('false');
+    expect(list.primary(2).getAttribute('aria-checked')).toBe('true');
     expect(list.posted('1.isPrimary')).toBe('true');
     expect(list.last()!.filter((phone) => phone.isPrimary)).toEqual([
       expect.objectContaining({ e164: '+14155552671' }),
@@ -258,7 +547,7 @@ describe('PhoneListInput, rows', () => {
     });
     await click(list.button('Remove phone 2'));
     expect(list.rows()).toBe(1);
-    expect(list.primary(1).checked).toBe(true);
+    expect(list.primary(1).getAttribute('aria-checked')).toBe('true');
     expect(list.last()).toEqual([
       { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
     ]);
@@ -424,7 +713,7 @@ async function mountParty(start: CountryCode = 'NP') {
     number: (n: number) =>
       container.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} number"]`)!,
     country: (n: number) =>
-      container.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} country"]`)!,
+      container.querySelector<HTMLButtonElement>(`button[aria-label="Phone ${n} country"]`)!,
     posted: (field: string) =>
       container.querySelector<HTMLInputElement>(`input[name="phones.${field}"]`)?.value,
     add: () => click(container.querySelector('button[data-action="add"]')),
@@ -436,8 +725,8 @@ describe('PhoneListInput follows a changed party country', () => {
     const list = await mountParty('NP');
     await list.add();
     await list.party('US');
-    expect(list.country(1).value).toBe('+1');
-    expect(list.country(2).value).toBe('+1');
+    expect(list.country(1).textContent).toBe(FLAG.US);
+    expect(list.country(2).textContent).toBe(FLAG.US);
     expect(list.posted('0.country')).toBe('US');
     expect(list.posted('1.country')).toBe('US');
   });

@@ -91,6 +91,15 @@ describe('PromiseDialog', () => {
     );
   });
 
+  it('marks the note Optional beside its label, not inside it (UIP-FORM-008)', async () => {
+    const dialog = await open();
+    const note = dialog.querySelector<HTMLTextAreaElement>('textarea[name="note"]')!;
+    const label = dialog.querySelector(`label[for="${note.id}"]`)!;
+    expect(label.textContent).toBe('Note');
+    expect(label.parentElement?.textContent).toBe('NoteOptional');
+    expect(dialog.textContent).not.toContain('(optional)');
+  });
+
   it('offers no day before today in the calendar', async () => {
     // The 15th of the current month: days 1 to 14 are before it, and the calendar opens on this month.
     const today = `${todayInKathmandu().slice(0, 8)}15`;

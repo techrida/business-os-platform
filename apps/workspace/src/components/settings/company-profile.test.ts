@@ -41,16 +41,16 @@ describe('logo', () => {
       logoDocumentId: DOC_ID,
       legacyLogoDataUrl: PNG,
     });
-    expect(logo).toEqual({ documentId: DOC_ID, legacyDataUrl: null });
+    expect(logo).toMatchObject({ documentId: DOC_ID, legacyDataUrl: null });
     expect(logoSource(logo)).toBe(`/api/images/${DOC_ID}`);
   });
 
   it('shows a logo saved before uploads while it has not been moved, and nothing when there is none', () => {
     const legacy = companyLogo({ ...EMPTY_COMPANY_PROFILE, legacyLogoDataUrl: PNG });
-    expect(legacy).toEqual({ documentId: null, legacyDataUrl: PNG });
+    expect(legacy).toMatchObject({ documentId: null, legacyDataUrl: PNG });
     expect(logoSource(legacy)).toBe(PNG);
     const none = companyLogo(EMPTY_COMPANY_PROFILE);
-    expect(none).toEqual({ documentId: null, legacyDataUrl: null });
+    expect(none).toMatchObject({ documentId: null, legacyDataUrl: null });
     expect(logoSource(none)).toBeNull();
   });
 
@@ -386,5 +386,28 @@ describe('undo icons (D32)', () => {
     };
     expect(isCardEmpty('contact', onlyLogo)).toBe(true);
     expect(isCardEmpty('signatory', onlyLogo)).toBe(true);
+  });
+});
+
+describe('logoSource (the letterhead preview sheet is white)', () => {
+  const MAIN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const LIGHT = 'ffffffff-0000-4111-8222-333333333333';
+  const base = {
+    documentId: MAIN,
+    legacyDataUrl: null,
+    onDarkDocumentId: null,
+    onLightDocumentId: null,
+  };
+
+  it('draws the main logo when there is no logo for light backgrounds', () => {
+    expect(logoSource(base)).toBe(`/api/images/${MAIN}`);
+  });
+
+  it('draws the logo for light backgrounds when there is one', () => {
+    expect(logoSource({ ...base, onLightDocumentId: LIGHT })).toBe(`/api/images/${LIGHT}`);
+  });
+
+  it('draws nothing for variants alone: without a main logo no logo prints', () => {
+    expect(logoSource({ ...base, documentId: null, onLightDocumentId: LIGHT })).toBeNull();
   });
 });

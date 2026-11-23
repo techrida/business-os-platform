@@ -164,7 +164,7 @@ export function CreateGroupForm() {
             />
           )}
         </Field>
-        <Field label="Key" hint="Lowercase letters, digits, _ . - ; used by workflow steps.">
+        <Field label="Key">
           {(control) => (
             <Input
               {...control}
@@ -172,6 +172,7 @@ export function CreateGroupForm() {
               required
               autoComplete="off"
               pattern="[a-z][a-z0-9_.\-]{0,63}"
+              placeholder="finance-approvers"
               defaultValue={kept.key ?? ''}
             />
           )}
@@ -187,6 +188,18 @@ export function CreateGroupForm() {
   );
 }
 
+/**
+ * Counts the successes of a form action. A person picker keyed on it starts empty again after each one, as the
+ * form reset React runs after an action cannot clear the picker's own state.
+ */
+function useSuccessCount(state: { status: string }): number {
+  const [seen, setSeen] = useState({ state, count: 0 });
+  if (seen.state !== state) {
+    setSeen({ state, count: seen.count + (state.status === 'ok' ? 1 : 0) });
+  }
+  return seen.count;
+}
+
 export function AddMemberForm({
   groupId,
   groupName,
@@ -197,11 +210,13 @@ export function AddMemberForm({
   users: readonly UserOption[] | null;
 }) {
   const [state, formAction, pending] = useActionState(addMemberAction, IDLE);
+  const saved = useSuccessCount(state);
   return (
     <form action={formAction} className={styles.form}>
       <input type="hidden" name="groupId" value={groupId} />
       <div className={styles.addRow}>
         <UserField
+          key={saved}
           name="userId"
           label={
             <>
@@ -227,6 +242,7 @@ export function DelegationForm({
   documentTypes: readonly string[];
 }) {
   const [state, formAction, pending] = useActionState(createDelegationAction, IDLE);
+  const saved = useSuccessCount(state);
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
   // Controlled, so the form reset React runs after every action keeps the times a refusal sent back.
   const [startsAt, setStartsAt] = useState('');
@@ -235,12 +251,14 @@ export function DelegationForm({
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
         <UserField
+          key={`from-${saved}`}
           name="fromUserId"
           label="Handing over (from)"
           users={users}
           defaultValue={kept.fromUserId ?? ''}
         />
         <UserField
+          key={`to-${saved}`}
           name="toUserId"
           label="Taking over (to)"
           users={users}
@@ -270,7 +288,7 @@ export function DelegationForm({
             />
           )}
         </Field>
-        <Field label="Document type (optional)">
+        <Field label="Document type" optional>
           {(control) => (
             <SuggestInput
               {...control}

@@ -136,7 +136,7 @@ describe('the By role review flow', () => {
     );
     await click(undo);
     expect(reviewed()).toBeNull();
-    expect((controlFor('Issue an invoice') as HTMLInputElement).checked).toBe(false);
+    expect(controlFor('Issue an invoice')?.getAttribute('aria-checked')).toBe('false');
     expect(buttonNamed('Review changes')?.hasAttribute('disabled')).toBe(true);
   });
 
@@ -157,7 +157,7 @@ describe('the By role review flow', () => {
     expect(document.body.textContent).toContain(
       'Access was changed by someone else. Reload to see the latest.',
     );
-    expect((controlFor('Issue an invoice') as HTMLInputElement).checked).toBe(true);
+    expect(controlFor('Issue an invoice')?.getAttribute('aria-checked')).toBe('true');
     await click(buttonNamed('Reload'));
     expect(router.refresh).toHaveBeenCalled();
   });

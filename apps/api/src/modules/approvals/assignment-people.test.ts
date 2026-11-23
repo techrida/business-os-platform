@@ -60,12 +60,15 @@ for (const [Controller, permission] of [
 }
 
 it('binds the authenticated tenant and entity in the real generated SQL and returns only picker fields', async () => {
-  const query = vi.fn().mockResolvedValue({ rows: [[after, 'Mina', 'mina@example.test']] });
+  const query = vi
+    .fn()
+    // The people, then (none has a department) no department lookup: the role line is null.
+    .mockResolvedValue({ rows: [[after, 'Mina', 'mina@example.test', null, null]] });
   const db = drizzle({ client: { query } as never });
   const caller = { current: () => ({ scope }) } as ApprovalsCaller;
   const admin = new ApprovalsAdminService(db, { record: vi.fn() }, caller, () => new Date());
   expect(await admin.listAssignmentPeople({ limit: 1, after })).toEqual({
-    items: [{ id: after, displayName: 'Mina', email: 'mina@example.test' }],
+    items: [{ id: after, displayName: 'Mina', email: 'mina@example.test', role: null }],
     nextAfter: after,
   });
   const [config, params] = query.mock.calls[0]! as unknown as [{ text: string }, unknown[]];

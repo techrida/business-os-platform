@@ -33,6 +33,8 @@ export interface AuditListQuery {
   limit: number;
   /** `asc` (the default) pages forward from `afterId`; `desc` returns the newest `limit` events, newest first. */
   order?: 'asc' | 'desc' | undefined;
+  /** Read the whole tenant, not only the caller's entity (the audit rows of other entities are then included). */
+  tenantWide?: boolean | undefined;
 }
 
 /** audit.read_events returns at most this many rows per call. */
@@ -145,7 +147,7 @@ export class AuditService {
       const result: { rows: { id: string }[] } = await this.db.execute<{ id: string }>(sql`
         SELECT id
           FROM audit.read_events(
-            ${scope.tenantId}::uuid, ${scope.organizationId}::uuid,
+            ${scope.tenantId}::uuid, ${q.tenantWide ? null : scope.organizationId}::uuid,
             ${q.entityType ?? null}::text, ${q.entityId ?? null}::text,
             ${q.from?.toISOString() ?? null}::timestamptz, ${q.to?.toISOString() ?? null}::timestamptz,
             ${cursor}::bigint, ${READ_EVENTS_MAX}::integer)`);
@@ -180,7 +182,7 @@ export class AuditService {
              before::text AS before_text, after::text AS after_text, meta::text AS meta_text,
              host(ip) AS ip, user_agent, correlation_id, prev_hash, hash
         FROM audit.read_events(
-          ${scope.tenantId}::uuid, ${scope.organizationId}::uuid,
+          ${scope.tenantId}::uuid, ${q.tenantWide ? null : scope.organizationId}::uuid,
           ${q.entityType ?? null}::text, ${q.entityId ?? null}::text,
           ${q.from?.toISOString() ?? null}::timestamptz, ${q.to?.toISOString() ?? null}::timestamptz,
           ${q.afterId ?? null}::bigint, ${q.limit}::integer)`);

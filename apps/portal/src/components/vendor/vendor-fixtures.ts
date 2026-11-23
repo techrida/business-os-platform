@@ -16,6 +16,7 @@ export function sampleOnboarding(
   return {
     status: 'pending_kyc',
     capability: 'onboarding_only',
+    detailsChanged: null,
     documents: [
       { docType: 'pan_certificate', state: 'accepted', validUntil: null },
       { docType: 'vat_certificate', state: 'submitted', validUntil: null },

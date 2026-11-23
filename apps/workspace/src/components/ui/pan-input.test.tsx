@@ -32,6 +32,34 @@ async function blur(element: HTMLElement) {
 }
 
 describe('PanInput', () => {
+  it("a box that is not the Field's own control keeps its own message layout (phone-list rows)", async () => {
+    const pan = await mount(
+      <Field label="Phones" hint="Pick each country.">
+        {() => <PanInput id="row-1" aria-label="Row 1" name="pan" />}
+      </Field>,
+    );
+    await typeKeys(pan.box, '12');
+    await typeKeys(pan.box, 'A');
+    // It refused the letter, but it is not the control the Field named, so it neither takes the Field's line nor
+    // hides the Field's hint.
+    expect(pan.container.querySelector('[data-field-override]')).toBeNull();
+    expect(pan.container.textContent).toContain('Pick each country.');
+  });
+
+  it("in a Field, a refusal takes the field's one message line instead of adding a second (UIP-FORM-010)", async () => {
+    const pan = await mount(
+      <Field label="PAN" hint="Printed on the certificate.">
+        {(control) => <PanInput {...control} name="pan" />}
+      </Field>,
+    );
+    expect(pan.container.querySelector('[data-field-override]')).toBeNull();
+    await typeKeys(pan.box, '12');
+    await typeKeys(pan.box, 'A');
+    expect(pan.container.querySelector('[data-field-override]')).not.toBeNull();
+    // The status line is out of flow, so it adds no height under the box.
+    expect(pan.container.querySelector('[data-field-override]')?.className).toMatch(/metaInField/);
+  });
+
   it('refuses a letter and says so in the status line', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
     await typeKeys(pan.box, '123');
@@ -49,16 +77,16 @@ describe('PanInput', () => {
     expect(pan.status()).toBe('A PAN is exactly 9 digits.');
   });
 
-  it('shows a live count and clears the refusal on the next good key', async () => {
+  it('shows no counter and clears the refusal on the next good key', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
-    expect(pan.count()).toBe('0 of 9');
+    expect(pan.count()).toBeUndefined();
     await typeKeys(pan.box, '1234567');
-    expect(pan.count()).toBe('7 of 9');
+    expect(pan.count()).toBeUndefined();
     await typeKeys(pan.box, 'x');
     expect(pan.status()).not.toBe('');
     await typeKeys(pan.box, '8');
     expect(pan.status()).toBe('');
-    expect(pan.count()).toBe('8 of 9');
+    expect(pan.count()).toBeUndefined();
   });
 
   it('is a numeric-keypad text box, not a number input', async () => {
@@ -161,10 +189,9 @@ describe('PanInput', () => {
     await submit(pan.container);
   });
 
-  it('describes the box with its count, and the status line is a live region', async () => {
+  it('has no counter, and the status line is a live region', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
-    const countId = pan.container.querySelector('[id$="-count"]')!.id;
-    expect(pan.box.getAttribute('aria-describedby')).toContain(countId);
+    expect(pan.container.querySelector('[id$="-count"]')).toBeNull();
     expect(pan.container.querySelector('[role="status"]')).not.toBeNull();
   });
 

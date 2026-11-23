@@ -445,3 +445,63 @@ it('the lead board hint says moving to Contacted asks for a logged contact; the 
     await opportunity.unmount();
   }
 });
+
+it('scrolls the board sideways while a card is dragged to its right edge, and stops on drop', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
+  vi.stubGlobal('cancelAnimationFrame', () => undefined);
+  const action = vi.fn((): Promise<MoveState> => Promise.resolve({}));
+  const mounted = await mountForm(<Board columns={before} action={action} noun="lead" />);
+  try {
+    const region = mounted.container.querySelector<HTMLElement>('[role="region"]');
+    const card = mounted.container.querySelector('li');
+    if (!region || !card) throw new Error('Missing board');
+    region.getBoundingClientRect = () => ({ left: 0, right: 800 }) as DOMRect;
+    const frame = async () => {
+      const next = frames.shift();
+      await act(() => Promise.resolve(next?.(0)));
+    };
+
+    await act(() => {
+      card.dispatchEvent(
+        Object.assign(new Event('dragstart', { bubbles: true }), {
+          dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        }),
+      );
+      return Promise.resolve();
+    });
+    expect(region.dataset.dragging).toBe('true');
+
+    // Middle of the board: no scroll.
+    await act(() => {
+      region.dispatchEvent(
+        Object.assign(new Event('dragover', { bubbles: true }), { clientX: 400 }),
+      );
+      return Promise.resolve();
+    });
+    await frame();
+    expect(region.scrollLeft).toBe(0);
+
+    // At the right edge: it moves, frame after frame.
+    await act(() => {
+      region.dispatchEvent(
+        Object.assign(new Event('dragover', { bubbles: true }), { clientX: 795 }),
+      );
+      return Promise.resolve();
+    });
+    await frame();
+    const once = region.scrollLeft;
+    await frame();
+    expect(once).toBeGreaterThan(0);
+    expect(region.scrollLeft).toBeGreaterThan(once);
+
+    // Drag ends: no more frames are scheduled and snapping returns.
+    await act(() => {
+      card.dispatchEvent(new Event('dragend', { bubbles: true }));
+      return Promise.resolve();
+    });
+    expect(region.dataset.dragging).toBeUndefined();
+  } finally {
+    await mounted.unmount();
+  }
+});

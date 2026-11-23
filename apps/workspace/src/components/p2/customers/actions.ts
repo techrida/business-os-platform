@@ -177,7 +177,10 @@ export async function updateCustomerAction(
     return { key, errors: {}, error: failure.message };
   }
 
-  const parsed = parseUpdateCustomer(customerValues(form), { ...original, version: seen });
+  const values = customerValues(form);
+  // A verified customer's country is a disabled control, which a browser leaves out of the post: it is the stored one.
+  if (!form.has('address.country')) values.country = original.country;
+  const parsed = parseUpdateCustomer(values, { ...original, version: seen });
   if (!parsed.ok) {
     return 'nothingChanged' in parsed
       ? { key, errors: {}, error: 'Nothing has changed, so there is nothing to save.' }
@@ -232,8 +235,9 @@ export async function addContactAction(
   });
   if (!parsed.ok) return { key, errors: parsed.errors, ...same };
 
+  let created: Awaited<ReturnType<typeof createContact>>;
   try {
-    await createContact(session, customerId, parsed.data, key);
+    created = await createContact(session, customerId, parsed.data, key);
   } catch (err) {
     const failure = failureOf(err);
     const code = apiCodeOf(err);
@@ -261,6 +265,7 @@ export async function addContactAction(
     key: randomUUID(),
     errors: {},
     saved: `${parsed.data.fullName} was added.`,
+    contactId: created.id,
     savedCount: prev.savedCount + 1,
   };
 }

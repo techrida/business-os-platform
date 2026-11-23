@@ -23,6 +23,7 @@ import {
 } from './number-format';
 import styles from './number-system-card.module.css';
 import { ResetToDefaultButton } from './reset-to-default';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 // The rows do not depend on anything the page loads, so they are built once.
 const ROWS = numberSystemRows();
@@ -117,17 +118,16 @@ export function NumberSystemCard({
                     action={resetRow(row.currency)}
                   />
                 </div>
-                <div role="radiogroup" aria-labelledby={labelId} className={styles.options}>
+                <RadioGroup
+                  name={numberSystemFieldName(row.currency)}
+                  value={selected}
+                  onValueChange={(next) => choose(row.currency, next as NumberSystemSetting)}
+                  aria-labelledby={labelId}
+                  className={styles.options}
+                >
                   {row.options.map((option) => (
                     <label key={option.value} className={styles.option}>
-                      <input
-                        type="radio"
-                        name={numberSystemFieldName(row.currency)}
-                        value={option.value}
-                        checked={selected === option.value}
-                        onChange={() => choose(row.currency, option.value)}
-                        className={styles.radio}
-                      />
+                      <Radio value={option.value} className={styles.radio} />
                       <span className={styles.body}>
                         <span className={styles.name}>
                           {option.name}
@@ -137,7 +137,7 @@ export function NumberSystemCard({
                       </span>
                     </label>
                   ))}
-                </div>
+                </RadioGroup>
                 <p className={styles.words} aria-live="polite">
                   <span className={styles.wordsLabel}>In words</span> {words}
                 </p>

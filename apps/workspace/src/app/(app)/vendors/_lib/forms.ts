@@ -267,14 +267,13 @@ export function parseUpdateVendor(
 
   if (!locked && (v.pan !== (original.pan ?? '') || identityChanged)) {
     if (kindAfter === 'foreign') {
-      if (v.pan === '' && original.pan !== null) {
-        errors.pan = 'A saved tax ID cannot be removed. Enter the vendor’s tax ID.';
-      } else if (v.pan !== '' && !TAX_ID.test(v.pan)) errors.pan = TAX_ID_RULE;
+      if (v.pan !== '' && !TAX_ID.test(v.pan)) errors.pan = TAX_ID_RULE;
     } else if (v.pan === '') {
       errors.pan = 'A PAN is required unless the vendor is foreign.';
     } else if (!PAN.test(v.pan)) errors.pan = PAN_RULE;
-    if (errors.pan === undefined && v.pan !== (original.pan ?? '') && v.pan !== '')
-      data.pan = v.pan;
+    // A foreign vendor may clear its tax id (null); a Nepal vendor never reaches here with an empty PAN.
+    if (errors.pan === undefined && v.pan !== (original.pan ?? ''))
+      data.pan = v.pan === '' ? null : v.pan;
   }
   if (identityChanged && errors.kind === undefined && errors.country === undefined) {
     data.kind = kindAfter;

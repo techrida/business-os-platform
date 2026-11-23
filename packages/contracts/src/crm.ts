@@ -9,6 +9,7 @@ import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
 import {
   nepalPhoneProblem,
+  PartyPhoneSchema,
   PartyPhonesSchema,
   phoneCountryFromE164,
   phoneProblem,
@@ -163,6 +164,11 @@ export const CustomerDtoSchema = z.object({
    * on the staff list (`GET /v1/customers`); absent elsewhere and for portal callers.
    */
   ownerName: z.string().nullable().optional(),
+  /**
+   * R6A (D8): the primary number of the customer's primary contact, null when it has none. Sent on the staff list
+   * (`GET /v1/customers`); absent elsewhere and for portal callers.
+   */
+  primaryPhone: PartyPhoneSchema.nullable().optional(),
   defaultCurrency: CurrencySchema.nullable(),
   country: CountryCodeSchema,
   address: AddressLinesSchema,
@@ -783,6 +789,12 @@ const LeadFieldsSchema = z.strictObject({
  * person: an email or at least one phone.
  */
 export const CreateLeadBodySchema = LeadFieldsSchema.extend({
+  /**
+   * R6O (BOS-UI-002): the existing customer the company field was picked from, and one of its contacts. Both optional:
+   * a lead is quick to create and stays free text without them. The API checks the caller may read that customer.
+   */
+  customerId: z.guid().optional(),
+  contactId: z.guid().optional(),
   currency: CurrencySchema.default('NPR'),
   phones: PartyPhonesSchema.default([]),
   followUp: LeadFollowUpSchema.optional(),
@@ -791,6 +803,10 @@ export const CreateLeadBodySchema = LeadFieldsSchema.extend({
   .refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
     path: ['followUp'],
     message: 'Send followUp or nextFollowUpAt, not both',
+  })
+  .refine((b) => b.contactId === undefined || b.customerId !== undefined, {
+    path: ['contactId'],
+    message: 'a contact needs its customer',
   })
   .refine((b) => b.email !== undefined || b.phones.length > 0, {
     path: ['email'],
@@ -804,6 +820,13 @@ export type CreateLeadBody = z.infer<typeof CreateLeadBodySchema>;
  * is refused by the API against the stored lead: this body alone cannot see what it keeps.
  */
 export const UpdateLeadBodySchema = LeadFieldsSchema.partial().extend({
+  /**
+   * R6T: `null` unlinks the lead from the customer picked in its company field (the contact goes with it); `null` on
+   * `contactId` alone unlinks just the contact. An edit never links: only `null` is accepted, so it cannot be used to
+   * probe for customers. Leaving a link alone is leaving the field out.
+   */
+  customerId: z.null().optional(),
+  contactId: z.null().optional(),
   expectedVersion: z.number().int().min(1),
 });
 export type UpdateLeadBody = z.infer<typeof UpdateLeadBodySchema>;
@@ -818,6 +841,14 @@ export const LeadOwnerOptionSchema = z.object({
   email: z.string(),
   /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
   avatarDocumentId: z.guid().nullable().optional(),
+  /** Job title and department, shown muted after the name in every member picker (BOS-UI-001); null or absent for none. */
+  role: z.string().nullable().optional(),
+  /**
+   * Set only on `GET /v1/leads/owners?context=create`, on the one person a lead started with no owner chosen goes to,
+   * when the caller may not keep it themselves: `settings` = the entity's Default lead owner, `sales_head` = the
+   * Sales head fallback. The picker starts on this person instead of a placeholder.
+   */
+  defaultOwner: z.enum(['settings', 'sales_head']).optional(),
 });
 export type LeadOwnerOption = z.infer<typeof LeadOwnerOptionSchema>;
 
@@ -1255,6 +1286,16 @@ export const VerificationCaseDtoSchema = z.object({
   partyNumber: z.string().nullable().optional(),
   reviewerNames: z.array(z.string()).optional(),
   looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
+  /**
+   * Sent with a single case (GET /:id). Set once a change of the party's identity (legal name, PAN, kind or country)
+   * reset the case: when, and who made the change. The reset note reads "Details changed on <date> by <name>".
+   */
+  identityReset: z
+    .object({ at: isoDateTime, by: z.guid(), byName: z.string().nullable() })
+    .nullable()
+    .optional(),
+  /** The case's documents first uploaded before that reset: history only, they cannot go on the checklist again. */
+  beforeChangeDocumentIds: z.array(z.guid()).optional(),
   reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),
   approvalBlockedReason: z.string().nullable().optional(),
   reviewBlockedReason: z.string().nullable().optional(),

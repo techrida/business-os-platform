@@ -220,6 +220,49 @@ it('shows "delayed" on a 424 (failed or refused PDF), with no Retry, no code and
   }
 });
 
+it('shows the closed message on a 410 for a closed quotation, with no Retry (R6D)', async () => {
+  // What signed-file-route.ts answers when the company closed the quotation.
+  fetchMock.mockImplementationOnce(() =>
+    Promise.resolve(
+      new Response(
+        'This quotation is no longer open. Contact the company if you have a question.',
+        {
+          status: 410,
+          headers: { 'content-type': 'text/plain; charset=utf-8', 'x-document-state': 'closed' },
+        },
+      ),
+    ),
+  );
+  await mount(<ViewDocument {...PROPS} />);
+  await open();
+  const text = dialog().textContent ?? '';
+  expect(text).toContain('This quotation is no longer open.');
+  expect(text).not.toContain('Could not load');
+  expect(text).not.toContain('expired');
+  expect(byText('Retry')).toBeUndefined();
+  await settle();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('says the link expired on a 410 for a download link that ran out, and Retry asks for a fresh one (R6D)', async () => {
+  fetchMock.mockImplementationOnce(() =>
+    Promise.resolve(
+      new Response('This download link has expired.', {
+        status: 410,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'x-document-state': 'expired' },
+      }),
+    ),
+  );
+  await mount(<ViewDocument {...PROPS} />);
+  await open();
+  expect(dialog().textContent).toContain('The link to this document ran out.');
+  expect(dialog().textContent).not.toContain('no longer open');
+  await act(() => Promise.resolve(byText('Retry')?.click()));
+  await settle();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(dialog().querySelector('[data-testid="pdf-pages"]')).not.toBeNull();
+});
+
 it('shows an error with Retry on a 500 and on a network failure', async () => {
   fetchMock.mockImplementationOnce(() => Promise.resolve(new Response('', { status: 500 })));
   await mount(<ViewDocument {...PROPS} />);

@@ -25,6 +25,7 @@ import { bankAccountOptions } from '@/lib/company-account-options';
 import { money } from '@/lib/kernel-format';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
+import { PickExisting } from '../../procurement/pick-existing';
 import styles from '../payables.module.css';
 import {
   cancelPaymentRequestAction,
@@ -106,6 +107,14 @@ export function PaymentRequestEntry({
     (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
   );
   const vendorOrders = orders.filter((o) => o.vendorId === header.vendorPartyId);
+  const vendorOptions = vendors.map(([id, name]) => ({ id, label: name }));
+  // An order shows its number and status, and the vendor it is for.
+  const chosenVendorName = vendors.find(([id]) => id === header.vendorPartyId)?.[1];
+  const orderOptions = vendorOrders.map((o) => ({
+    id: o.id,
+    label: o.label,
+    ...(chosenVendorName === undefined ? {} : { description: chosenVendorName }),
+  }));
   const bankOptions =
     header.currency === ''
       ? []
@@ -274,11 +283,16 @@ export function PaymentRequestEntry({
             <div className={styles.lineFields}>
               <Field label="Vendor" error={errors['vendorPartyId']}>
                 {(control) => (
-                  <Select
+                  <PickExisting
+                    control={control}
                     name="vendorPartyId"
+                    options={vendorOptions}
                     value={header.vendorPartyId}
-                    onChange={(e) => {
-                      const vendorPartyId = e.target.value;
+                    required
+                    placeholder="Search a vendor"
+                    emptyText="No vendor has an approved bill to pay."
+                    noMatchText="No vendor matches."
+                    onChange={(vendorPartyId) => {
                       const currency = currenciesOf(vendorPartyId)[0] ?? '';
                       setHeader((current) => ({
                         ...current,
@@ -289,15 +303,7 @@ export function PaymentRequestEntry({
                       }));
                       setRows([{ openItemId: '', amount: '' }]);
                     }}
-                    {...control}
-                  >
-                    <option value="">Choose a vendor</option>
-                    {vendors.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                 )}
               </Field>
               <Field
@@ -333,28 +339,26 @@ export function PaymentRequestEntry({
                   </>
                 )}
               </Field>
-              <Field label="Purchase order (optional)" error={errors['purchaseOrderId']}>
+              <Field label="Purchase order" optional error={errors['purchaseOrderId']}>
                 {(control) => (
-                  <Select
+                  <PickExisting
+                    control={control}
                     name="purchaseOrderId"
+                    options={orderOptions}
                     value={header.purchaseOrderId}
-                    onChange={(e) =>
-                      setHeader((current) => ({ ...current, purchaseOrderId: e.target.value }))
-                    }
                     disabled={header.vendorPartyId === '' || vendorOrders.length === 0}
-                    {...control}
-                  >
-                    <option value="">
-                      {header.vendorPartyId !== '' && vendorOrders.length === 0
+                    placeholder={
+                      header.vendorPartyId !== '' && vendorOrders.length === 0
                         ? 'This vendor has no purchase orders'
-                        : 'No purchase order'}
-                    </option>
-                    {vendorOrders.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
+                        : 'Search by order number'
+                    }
+                    emptyText="Choose a vendor first."
+
+                    noMatchText="No purchase order matches."
+                    onChange={(purchaseOrderId) =>
+                      setHeader((current) => ({ ...current, purchaseOrderId }))
+                    }
+                  />
                 )}
               </Field>
               <Field label="Currency" error={errors['currency']}>

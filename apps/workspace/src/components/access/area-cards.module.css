@@ -175,15 +175,7 @@ a.count {
   cursor: pointer;
 }
 
-.check input {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 0;
-}
-
-.check input:disabled,
-.check:has(input:disabled) {
+.check:has([data-disabled], [aria-disabled='true']) {
   cursor: not-allowed;
 }
 

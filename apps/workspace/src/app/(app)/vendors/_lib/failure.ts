@@ -108,7 +108,7 @@ function conflict(
     case 'vendor_identity_locked':
       return {
         message:
-          'The legal name, PAN, kind and country of an approved vendor change through a new KYB review, not an edit.',
+          'The legal name, PAN, kind and country of an approved or suspended vendor cannot be edited.',
         reload: false,
       };
     case 'vendor_not_editable':

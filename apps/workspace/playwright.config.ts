@@ -112,6 +112,17 @@ export default defineConfig({
       use: { ...common, baseURL: devBaseURL },
     },
     {
+      // The shell's real CSS and components in a hermetic page; needs no stack.
+      name: 'ui',
+      testMatch: ['ui-harness/*.spec.ts'],
+      // Classic scrollbars, as on Windows and most Linux desktops: overlay scrollbars hide the
+      // width compensation that scroll locks have to get right.
+      use: {
+        ...common,
+        launchOptions: { ...common.launchOptions, ignoreDefaultArgs: ['--hide-scrollbars'] },
+      },
+    },
+    {
       name: 'prod',
       testMatch: ['prod-no-switcher.spec.ts', 'lcp.spec.ts'],
       use: { ...common, baseURL: prodBaseURL },

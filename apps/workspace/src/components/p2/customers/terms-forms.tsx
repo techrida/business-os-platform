@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Select } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { MoneyInput } from '@/components/ui/number-input';
 import { toast } from '@/components/ui/toast';
 
@@ -16,12 +17,15 @@ import {
   type TermsEditState,
 } from './terms-form';
 import styles from './commercial-terms.module.css';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 type TermsAction = (prev: TermsEditState, form: FormData) => Promise<TermsEditState>;
 
 export interface PersonOption {
   userId: string;
   displayName: string;
+  /** Job title and department, muted after the name (BOS-UI-001). */
+  role?: string | null | undefined;
 }
 
 export interface TermOption {
@@ -135,15 +139,6 @@ function OwnerSelect({
   savedCount: number;
 }) {
   const [value, setValue] = useDraft(current.userId ?? '', savedCount);
-  // The stored owner stays selectable when the list no longer holds them (disabled or invited), so the field
-  // never silently shows someone else.
-  const options = people.map((p) => ({ value: p.userId, label: p.displayName }));
-  if (current.userId !== null && !options.some((o) => o.value === current.userId)) {
-    options.unshift({
-      value: current.userId,
-      label: `${current.name ?? 'Current owner'} (cannot be chosen again)`,
-    });
-  }
   return (
     <Field
       label="Account owner"
@@ -151,20 +146,24 @@ function OwnerSelect({
       error={error}
     >
       {(c) => (
-        <Select
+        <MemberPicker
+          labelledBy={c['aria-labelledby']}
+          describedBy={c['aria-describedby']}
+          invalid={c['aria-invalid'] === true}
           name="ownerUserId"
+          people={people.map((p) => ({ id: p.userId, name: p.displayName, role: p.role ?? null }))}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={setValue}
+          // The stored owner stays in the box when the list no longer holds them (disabled or invited), so the
+          // field never silently shows someone else; they cannot be chosen again.
+          current={
+            current.userId !== null
+              ? { id: current.userId, name: current.name ?? 'Current owner' }
+              : undefined
+          }
+          placeholder="Search by name"
           required
-          {...c}
-        >
-          <option value="">Choose a person</option>
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        />
       )}
     </Field>
   );
@@ -293,33 +292,28 @@ function LimitFields({
   const noLimit = (mode as CreditLimitMode) === 'none';
   return (
     <>
-      <fieldset className={styles.choices}>
-        <legend className={styles.legend}>Limit</legend>
-        <label className={styles.choice}>
-          <input
-            type="radio"
-            name="limitMode"
-            value="limit"
-            checked={!noLimit}
-            onChange={() => setMode('limit')}
-          />
-          Set a limit
-        </label>
-        <label className={styles.choice}>
-          <input
-            type="radio"
-            name="limitMode"
-            value="none"
-            checked={noLimit}
-            onChange={() => setMode('none')}
-          />
-          No limit (orders are never held for credit)
-        </label>
-      </fieldset>
+      <RadioGroup
+        asChild
+        name="limitMode"
+        value={noLimit ? 'none' : 'limit'}
+        onValueChange={(next) => setMode(next)}
+      >
+        <fieldset className={styles.choices}>
+          <legend className={styles.legend}>Limit</legend>
+          <label className={styles.choice}>
+            <Radio value="limit" />
+            Set a limit
+          </label>
+          <label className={styles.choice}>
+            <Radio value="none" />
+            No limit (orders are never held for credit)
+          </label>
+        </fieldset>
+      </RadioGroup>
       {noLimit ? null : (
         <Field
           label="Credit limit (NPR)"
-          hint="Up to two decimals, for example 1,00,000.00. 0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
+          hint="0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
           error={error}
         >
           {(c) => (
@@ -327,7 +321,7 @@ function LimitFields({
               name="creditLimit"
               currency="NPR"
               showWords
-              placeholder="0.00"
+              placeholder="1,00,000.00"
               value={amount}
               onValueChange={setAmount}
               {...c}

@@ -11,6 +11,7 @@ import {
   type ClipboardEvent,
 } from 'react';
 
+import { useInFieldScope } from './field-scope';
 import { useFormReset } from './use-form-reset';
 import styles from './digit-box.module.css';
 
@@ -45,8 +46,8 @@ export interface DigitRules {
   tooLong(digits: string): string;
   /** What is wrong with the digits as a finished value, or null. Empty is the caller's `required`. */
   problem(digits: string): string | null;
-  /** The live count under the box: "7 of 9". */
-  count(digits: string): string;
+  /** An optional live count under the box ("5 of 10"). Fixed-length ids such as a PAN leave it out (UIP-FORM-008). */
+  count?(digits: string): string;
 }
 
 export interface DigitBoxProps {
@@ -365,7 +366,7 @@ export function DigitBox({
   }, []);
 
   const digits = foreign(text) ? '' : text;
-  const countText = foreign(text) ? '' : rules.count(digits);
+  const countText = foreign(text) || !rules.count ? '' : rules.count(digits);
   const status = notice.text || error || '';
   const invalid = callerInvalid === true || callerInvalid === 'true' || error !== null;
   // Order: the caller's hint, the prefix and count, then errors (the caller's, then ours).
@@ -382,6 +383,7 @@ export function DigitBox({
       .filter(Boolean)
       .join(' ') || undefined;
   const posted = postedOf(text);
+  const inField = useInFieldScope(id);
 
   return (
     <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
@@ -426,7 +428,12 @@ export function DigitBox({
       {name ? (
         <input type="hidden" name={name} value={posted} disabled={disabled === true} />
       ) : null}
-      <div className={styles.meta}>
+      <div
+        className={[styles.meta, inField ? styles.metaInField : undefined]
+          .filter(Boolean)
+          .join(' ')}
+        {...(inField && (status || countText) ? { 'data-field-override': '' } : {})}
+      >
         <div
           id={statusId}
           role="status"

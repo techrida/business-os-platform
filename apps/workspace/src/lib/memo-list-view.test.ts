@@ -9,9 +9,7 @@ describe('memoRowNote', () => {
     );
   });
   it('leaves out what the directory does not have, and never prints "null"', () => {
-    expect(memoRowNote({ departmentName: null, ownerName: 'सुशील श्रेष्ठ' })).toBe(
-      'by सुशील श्रेष्ठ',
-    );
+    expect(memoRowNote({ departmentName: null, ownerName: 'सुशील श्रेष्ठ' })).toBe('by सुशील श्रेष्ठ');
     expect(memoRowNote({ departmentName: 'Finance', ownerName: null })).toBe('Finance');
     expect(memoRowNote({ departmentName: null, ownerName: null })).toBe('');
     expect(memoRowNote({ departmentName: '  ', ownerName: ' ' })).toBe('');

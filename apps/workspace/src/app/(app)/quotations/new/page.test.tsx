@@ -9,6 +9,10 @@ import NewQuotationPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
+// The page asks what the user may do (to offer Create contact); every grant is on here.
+vi.mock('@/lib/live-permissions', () => ({
+  getPermissionCheck: () => Promise.resolve(() => true),
+}));
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
@@ -30,9 +34,10 @@ vi.mock('@/components/p2/quote-builder/api', () => ({
 }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
 vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
-vi.mock('@/components/p2/quote-builder/lookups', () => ({
-  loadLookups: vi.fn(() => Promise.resolve({ contacts: [], taxCodes: [], paymentTerms: [] })),
+const lookups = vi.hoisted(() => ({
+  loadLookups: vi.fn(),
 }));
+vi.mock('@/components/p2/quote-builder/lookups', () => ({ loadLookups: lookups.loadLookups }));
 vi.mock('@/components/p2/quote-builder/quote-builder', () => ({
   QuoteBuilder: (props: { notice?: ReactNode }) => {
     mocks.builderProps(props);
@@ -72,6 +77,9 @@ beforeEach(() => {
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.builderProps.mockReset();
+  lookups.loadLookups
+    .mockReset()
+    .mockResolvedValue({ contacts: [], taxCodes: [], paymentTerms: [] });
   mocks.call.mockReset().mockResolvedValue({ enabledCurrencies: ['NPR', 'INR', 'USD'] });
   mocks.redirect.mockClear();
 });
@@ -145,5 +153,43 @@ describe('new quotation currencies (D44: only what the company switched on)', ()
     await render();
     expect(builder().enabledCurrencies).toEqual(['NPR', 'USD']);
     expect(builder().initial.currency).toBe('INR');
+  });
+});
+
+describe('new quotation default terms (UIP-FORM-012)', () => {
+  const terms = {
+    id: '00000000-0000-4000-8000-000000000001',
+    kind: 'terms_conditions',
+    name: 'Standard terms',
+    body: '<p>Net 30.</p>',
+    isDefault: true,
+  };
+  const initial = () =>
+    (mocks.builderProps.mock.calls[0]?.[0] as { initial: Record<string, string> }).initial;
+
+  it('starts each terms field with the default saved option of its kind, and leaves the rest empty', async () => {
+    lookups.loadLookups.mockResolvedValue({
+      contacts: [],
+      taxCodes: [],
+      paymentTerms: [],
+      termPresets: [
+        terms,
+        { ...terms, id: terms.id.replace(/1$/, '2'), name: 'Other', isDefault: undefined },
+      ],
+    });
+    await render();
+    expect(initial().termsAndConditions).toBe('<p>Net 30.</p>');
+    expect(initial().scope).toBe('');
+  });
+
+  it('leaves the fields empty when no default is set', async () => {
+    lookups.loadLookups.mockResolvedValue({
+      contacts: [],
+      taxCodes: [],
+      paymentTerms: [],
+      termPresets: [{ ...terms, isDefault: undefined }],
+    });
+    await render();
+    expect(initial().termsAndConditions).toBe('');
   });
 });

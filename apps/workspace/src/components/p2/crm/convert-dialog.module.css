@@ -1,0 +1,94 @@
+/* The convert wizard (R6T): step indicator, the right-hand "Optional" mark, the in-field search icon, the PAN match. */
+
+.steps {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+}
+
+.step::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-default);
+}
+
+.step:last-child {
+  flex: 0 0 auto;
+}
+
+.step:last-child::after {
+  content: none;
+}
+
+.stepNumber {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: 50%;
+  font-variant-numeric: tabular-nums;
+}
+
+.step[data-state='current'] {
+  color: var(--text-primary);
+}
+
+.step[data-state='current'] .stepNumber {
+  border-color: var(--action-primary);
+  background: var(--action-primary);
+  color: var(--text-on-action, #fff);
+}
+
+.step[data-state='done'] .stepNumber {
+  border-color: var(--action-primary);
+  color: var(--action-primary);
+}
+
+.stepLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matchText {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.matchQuiet {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.panels > [hidden] {
+  display: none;
+}
+
+.panels > * {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.hintLine {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}

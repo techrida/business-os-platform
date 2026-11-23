@@ -246,6 +246,17 @@ export class ReviseService {
       .from(quotationLines)
       .where(and(eq(quotationLines.tenantId, scope.tenantId), eq(quotationLines.versionId, old.id)))
       .orderBy(asc(quotationLines.lineNo));
+    // Not `old + 1`: a cancelled revision gives its version back (R6D restore), and its number stays taken.
+    const [highest] = await tx
+      .select({ revisionNo: sql<number>`max(${quotationVersions.revisionNo})::int` })
+      .from(quotationVersions)
+      .where(
+        and(
+          eq(quotationVersions.tenantId, scope.tenantId),
+          eq(quotationVersions.quotationId, quotation.id),
+        ),
+      );
+    const nextRevisionNo = (highest?.revisionNo ?? old.revisionNo) + 1;
     const issueDate = kathmanduDay(now);
     const validUntil = revisedValidUntil(old.validUntil, issueDate, validityDays);
     const priced = await this.pricing.priceVersion(
@@ -258,7 +269,7 @@ export class ReviseService {
       .values({
         ...owned,
         quotationId: quotation.id,
-        revisionNo: old.revisionNo + 1,
+        revisionNo: nextRevisionNo,
         status: 'draft',
         contactId: old.contactId,
         templateId: old.templateId,
@@ -334,7 +345,7 @@ export class ReviseService {
       before: { versionId: old.id, revisionNo: old.revisionNo, status: old.status },
       after: {
         versionId: newId,
-        revisionNo: old.revisionNo + 1,
+        revisionNo: nextRevisionNo,
         status: 'draft',
         oldStatus: supersedes ? 'superseded' : old.status,
         reason,
