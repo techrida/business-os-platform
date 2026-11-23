@@ -133,6 +133,19 @@ describe('handleSignedFile', () => {
     expect((await run('download')).status).toBe(401);
   });
 
+  it('tells the customer a closed quotation is no longer open, not that the PDF will be ready soon (R6D)', async () => {
+    for (const mode of ['download', 'preview'] as const) {
+      getLink.mockRejectedValueOnce(
+        new ApiError(409, 'x', { error: { code: 'quotation_closed' } }),
+      );
+      const res = await run(mode);
+      expect(res.status).toBe(410);
+      const text = await res.text();
+      expect(text).toContain('no longer open');
+      expect(text).not.toContain('try again');
+    }
+  });
+
   it('answers a customer 424 (failed or refused PDF) as 424 with the delayed sentence, in both modes', async () => {
     for (const mode of ['download', 'preview'] as const) {
       getLink.mockRejectedValueOnce(new ApiError(424, 'x', { code: 'document_render_failed' }));

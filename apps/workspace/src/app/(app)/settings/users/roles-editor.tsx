@@ -10,6 +10,7 @@ import { IDLE, type ActionState } from '../action-state';
 import { FormStatus } from '../ui';
 import { setRolesAction } from './actions';
 import { RoleCheckboxes } from './role-checkboxes';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export function RolesEditor({
   userId,
@@ -39,14 +40,11 @@ export function RolesEditor({
         }
       }}
       trigger={
-        <Button
-          variant="ghost"
-          size="small"
-          aria-label={`Edit roles for ${label}`}
-          title={`Edit roles for ${label}`}
-        >
-          <Icon name="shield-check" size={20} />
-        </Button>
+        <Tooltip content={`Edit roles for ${label}`}>
+          <Button variant="ghost" size="small" aria-label={`Edit roles for ${label}`}>
+            <Icon name="shield-check" size={20} />
+          </Button>
+        </Tooltip>
       }
       footer={
         <>
