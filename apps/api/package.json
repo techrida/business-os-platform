@@ -2,6 +2,7 @@
   "name": "@bos/api",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Business OS API (NestJS) and BullMQ worker: one image, two entry points.",
   "main": "dist/main.js",
   "scripts": {
