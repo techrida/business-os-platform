@@ -22,7 +22,7 @@ export interface AddressFieldsProps {
   /** Per-field errors, shown under each field and linked to it. */
   errors?: { line?: ReactNode; city?: ReactNode; country?: ReactNode } | undefined;
   /**
-   * Whether Address and City must be filled. When false they are labelled "(optional)", the app's convention.
+   * Whether Address and City must be filled. When false they carry the Field `optional` marker.
    * Country is always required.
    */
   required?: boolean | undefined;
@@ -55,13 +55,13 @@ export function AddressFields({
   disabled,
   className,
 }: AddressFieldsProps) {
-  const optional = required ? '' : ' (optional)';
   const set = (patch: Partial<AddressValue>) => onChange({ ...value, ...patch });
   return (
     <div className={[styles.root, className].filter(Boolean).join(' ')}>
       <div className={styles.grid}>
         <Field
-          label={`${labels?.line ?? 'Address'}${optional}`}
+          label={labels?.line ?? 'Address'}
+          optional={!required}
           hint={hints?.line}
           error={errors?.line}
           className={styles.line ?? ''}
@@ -81,7 +81,8 @@ export function AddressFields({
           )}
         </Field>
         <Field
-          label={`${labels?.city ?? 'City'}${optional}`}
+          label={labels?.city ?? 'City'}
+          optional={!required}
           hint={hints?.city}
           error={errors?.city}
         >

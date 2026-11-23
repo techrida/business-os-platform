@@ -149,12 +149,9 @@ export function VendorForm({
 
   const pan = foreign ? (
     <Field
-      label="Tax ID (optional)"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved.'
-          : 'The vendor’s own tax or VAT number: 5 to 20 letters, digits or hyphens.'
-      }
+      label="Tax ID"
+      optional
+      hint={lockIdentity ? 'Locked while the vendor is approved.' : undefined}
       error={err.pan}
     >
       {(control) => (
@@ -163,6 +160,7 @@ export function VendorForm({
           value={values.pan}
           onChange={set('pan')}
           maxLength={20}
+          placeholder="GB123456789"
           autoCapitalize="characters"
           spellCheck={false}
           readOnly={lockIdentity}
@@ -173,11 +171,7 @@ export function VendorForm({
   ) : (
     <Field
       label="PAN"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved.'
-          : 'Nine digits. Every vendor except a foreign one needs it.'
-      }
+      hint={lockIdentity ? 'Locked while the vendor is approved.' : undefined}
       error={err.pan}
     >
       {(control) => (
@@ -185,6 +179,7 @@ export function VendorForm({
           name="pan"
           value={values.pan}
           onValueChange={(pan) => set('pan')({ target: { value: pan } })}
+          placeholder="123456789"
           readOnly={lockIdentity}
           required
           edited={panEdited}
@@ -218,7 +213,7 @@ export function VendorForm({
   // Edit: the country is fixed, so Address and City are built here with the names AddressFields posts.
   const editAddress = (
     <div className={styles.grid}>
-      <Field label="Address (optional)" error={err.addressLine} className={WIDE}>
+      <Field label="Address" optional error={err.addressLine} className={WIDE}>
         {(control) => (
           <Textarea
             {...control}
@@ -231,7 +226,7 @@ export function VendorForm({
           />
         )}
       </Field>
-      <Field label="City (optional)" error={err.addressCity}>
+      <Field label="City" optional error={err.addressCity}>
         {(control) => (
           <Input
             {...control}
@@ -332,11 +327,7 @@ export function VendorForm({
           <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
             <div className={styles.grid}>
               {legalName}
-              <Field
-                label="Trade name"
-                hint="Optional. The name the vendor is known by."
-                error={err.tradeName}
-              >
+              <Field label="Trade name" optional error={err.tradeName}>
                 {(control) => (
                   <Input
                     name="tradeName"
