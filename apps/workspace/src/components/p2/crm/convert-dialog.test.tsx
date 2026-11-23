@@ -826,3 +826,30 @@ it('a contact match takes the user back to the Contact step', async () => {
   });
   expect(stepOf()).toBe('Contact');
 });
+
+it('a half-typed phone left behind on the Contact step takes Next back to it instead of doing nothing', async () => {
+  await mountNewCustomer();
+  await submit(dialog());
+  expect(stepOf()).toBe('Contact');
+  await fill(dialog().querySelector('input[aria-label="Phone 1 number"]'), '981234567');
+  await click(
+    [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Back') ?? null,
+  );
+  expect(stepOf()).toBe('Organisation');
+  await submit(dialog());
+  await flush();
+  expect(stepOf()).toBe('Contact');
+  expect(dialog().textContent).toContain('A mobile number has 10 digits; this has 9.');
+});
+
+it('typing over the chosen organisation and leaving the box shows the chosen one again, the one that will be posted', async () => {
+  await mountNewCustomer({ customerId: CUSTOMER, companyName: 'Himal Supplies Pvt. Ltd.' });
+  await typeKeys(box('Organisation'), 'Zzz');
+  await flush();
+  await act(() => Promise.resolve(box('Organisation').blur()));
+  await act(() => Promise.resolve(document.body.click()));
+  expect(box('Organisation').value).toContain('Himal Supplies Pvt. Ltd.');
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
+    CUSTOMER,
+  );
+});

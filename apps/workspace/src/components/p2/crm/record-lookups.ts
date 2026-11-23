@@ -50,7 +50,7 @@ export async function searchConversionCustomers(
         : null,
     ]);
     return {
-      customers: (byText?.items ?? []).map(toOption),
+      customers: (byText?.items ?? []).filter((c) => c.mergedIntoId == null).map(toOption),
       panMatches: (byPan?.items ?? [])
         .filter(
           (c) => c.mergedIntoId === null && c.panVatNo !== null && panKey(c.panVatNo) === wantedPan,

@@ -17,8 +17,9 @@ it('searches through the authenticated API and returns only business fields', as
   vi.mocked(listCustomers).mockResolvedValue({
     items: [
       { id, legalName: 'Acme', number: 'CUS-01', panVatNo: '601234567', ownerUserId: 'private' },
+      { id: 'merged', legalName: 'Acme old', number: 'CUS-02', panVatNo: null, mergedIntoId: id },
     ],
-    total: 1,
+    total: 2,
   } as never);
   expect(await searchConversionCustomers(' Acme ')).toEqual({
     customers: [{ id, name: 'Acme', number: 'CUS-01', pan: '601234567' }],
