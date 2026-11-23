@@ -270,12 +270,61 @@
 }
 
 .rowActions {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  /* One fixed track per action slot, so every row's actions line up: picture, roles, check access, password reset,
+     lock/unlock, keep locked, deactivate/reactivate. */
+  grid-template-columns: 40px 40px 108px 40px 76px 108px 104px;
+  justify-content: end;
   gap: 4px;
 }
 
-.rowActions button {
+.slot {
+  display: flex;
+  min-width: 0;
+  justify-content: center;
+}
+
+.rowActions button,
+.rowActions a {
   min-width: 40px;
   min-height: 40px;
+}
+
+/* A muted action keeps its slot; its reason is a tooltip on hover and on keyboard focus (the product's data-tooltip
+   pattern, as in the memo row actions), anchored to the right edge so the last column never widens the table. */
+.muted {
+  position: relative;
+}
+
+.muted::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  inset-block-end: calc(100% + 4px);
+  inset-inline-end: 0;
+  z-index: 2;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 120ms ease-out,
+    visibility 120ms;
+}
+
+.muted:hover::after,
+.muted:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .muted::after {
+    transition: none;
+  }
 }

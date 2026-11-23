@@ -1,0 +1,230 @@
+import type { AdminUser } from '@bos/contracts';
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { expect, it, vi } from 'vitest';
+
+import { Muted, OWN_ACCOUNT, ROW_SLOTS, RowActions, type RowCapabilities } from './row-actions';
+
+vi.mock('server-only', () => ({}));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
+const ME = '00000000-0000-4000-9000-0000000000a1';
+const IDP = '00000000-0000-4000-8000-000000000001';
+
+const ALL: RowCapabilities = {
+  canCheckAccess: true,
+  canSendPasswordReset: true,
+  canChangeStatus: true,
+  meId: ME,
+};
+
+function user(over: Partial<AdminUser> & { id: string }): AdminUser {
+  return {
+    idpOrgId: IDP,
+    email: 'asha@example.test',
+    displayName: 'Asha',
+    status: 'active',
+    roles: [],
+    department: null,
+    createdAt: '2026-11-19T00:00:00.000Z',
+    lastActiveAt: null,
+    ...over,
+  };
+}
+
+function render(u: AdminUser, can: RowCapabilities = ALL): string {
+  const name = u.displayName ?? 'Unnamed user';
+  return renderToStaticMarkup(
+    <RowActions user={u} name={name} label={`${name} · ${u.email ?? ''}`} can={can} />,
+  );
+}
+
+/** The markup of one slot: from its data-slot to the next slot (or the end of the row). */
+function slot(html: string, id: string): string {
+  const parts = html.split('data-slot="');
+  return (parts.find((p) => p.startsWith(`${id}"`)) ?? '').slice(0, 2000);
+}
+
+const ids = (html: string) => [...html.matchAll(/data-slot="([a-z]+)"/g)].map((m) => m[1]);
+
+it('an active person with an email shows every action live, each in its own slot', () => {
+  const html = render(user({ id: '00000000-0000-4000-9000-0000000000a2' }));
+  expect(ids(html)).toEqual([...ROW_SLOTS]);
+  expect(html).toContain('aria-label="Change Asha picture"');
+  expect(html).toContain('aria-label="Edit roles for Asha · asha@example.test"');
+  expect(html).toContain('aria-label="Check access for Asha · asha@example.test"');
+  expect(html).toContain('aria-label="Send password reset email to Asha · asha@example.test"');
+  expect(html).toContain('aria-label="Lock Asha · asha@example.test"');
+  expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
+  // Keep locked applies only after failed sign-ins: muted here, with its reason.
+  expect(slot(html, 'keep')).toContain(
+    'data-tooltip="Only for a user locked after failed sign-ins"',
+  );
+  expect(html.match(/aria-disabled="true"/g)).toHaveLength(1);
+});
+
+const MUTED: {
+  name: string;
+  row: Partial<AdminUser>;
+  can?: Partial<RowCapabilities>;
+  slot: string;
+  reason: string;
+  label: string;
+}[] = [
+  {
+    name: 'no email address',
+    row: { email: null },
+    slot: 'reset',
+    reason: 'No email address set for this user',
+    label: 'Send password reset email to',
+  },
+  {
+    name: 'an invited person cannot reset a password',
+    row: { status: 'invited' },
+    slot: 'reset',
+    reason: 'This user hasn’t accepted their invitation yet',
+    label: 'Send password reset email to',
+  },
+  {
+    name: 'a deactivated person cannot reset a password',
+    row: { status: 'inactive' },
+    slot: 'reset',
+    reason: 'Can’t send a password reset to a deactivated user',
+    label: 'Send password reset email to',
+  },
+  {
+    name: 'a deactivated person cannot be locked',
+    row: { status: 'inactive' },
+    slot: 'lock',
+    reason: 'Can’t lock a deactivated user',
+    label: 'Lock',
+  },
+  {
+    name: 'an invited person cannot be locked',
+    row: { status: 'invited' },
+    slot: 'lock',
+    reason: 'Can’t lock a user who hasn’t accepted their invitation yet',
+    label: 'Lock',
+  },
+  {
+    name: 'an invited person cannot be deactivated',
+    row: { status: 'invited' },
+    slot: 'toggle',
+    reason: 'Can’t deactivate a user who hasn’t accepted their invitation yet',
+    label: 'Deactivate',
+  },
+  {
+    name: 'an admin lock never ends, so there is nothing to keep',
+    row: { lockReason: 'admin' },
+    slot: 'keep',
+    reason: 'This lock never ends by itself, so there is nothing to keep',
+    label: 'Keep locked',
+  },
+  {
+    name: 'your own row: lock',
+    row: { id: ME },
+    slot: 'lock',
+    reason: OWN_ACCOUNT,
+    label: 'Lock',
+  },
+  {
+    name: 'your own row: keep locked',
+    row: { id: ME },
+    slot: 'keep',
+    reason: OWN_ACCOUNT,
+    label: 'Keep locked',
+  },
+  {
+    name: 'your own row: deactivate',
+    row: { id: ME },
+    slot: 'toggle',
+    reason: OWN_ACCOUNT,
+    label: 'Deactivate',
+  },
+];
+
+it.each(MUTED)('muted: $name', ({ row, can, slot: id, reason, label }) => {
+  const html = render(user({ id: '00000000-0000-4000-9000-0000000000a9', ...row }), {
+    ...ALL,
+    ...can,
+  });
+  // Same slots as a fully live row: nothing moved.
+  expect(ids(html)).toEqual([...ROW_SLOTS]);
+  const cell = slot(html, id);
+  expect(cell).toContain('aria-disabled="true"');
+  expect(cell).toContain(`data-tooltip="${reason}"`);
+  expect(cell).toContain(`aria-label="${label} `);
+  expect(cell).toContain('(unavailable)');
+  // The reason is also the accessible description, so a screen reader hears it on focus.
+  const describedBy = cell.match(/aria-describedby="([^"]+)"/)?.[1];
+  expect(describedBy).toBeTruthy();
+  expect(cell).toContain(`<span id="${describedBy}" class="sr-only">${reason}</span>`);
+  // A real button that is not natively disabled (so it takes focus and hover) and is not a link or submit.
+  expect(cell).toMatch(/<button type="button"/);
+  expect(cell).not.toContain(' disabled');
+});
+
+it('a muted action carries no handler, so clicking it fires nothing', () => {
+  const element = Muted({ id: 'lock', name: 'Lock Asha', reason: 'Because', children: 'Lock' });
+  const found: ReactElement<Record<string, unknown>>[] = [];
+  const walk = (node: ReactNode) => {
+    if (Array.isArray(node)) node.forEach(walk);
+    else if (isValidElement<Record<string, unknown>>(node)) {
+      found.push(node);
+      walk(node.props.children as ReactNode);
+    }
+  };
+  walk(element);
+  const button = found.find((e) => e.props['aria-disabled'] === 'true');
+  expect(button).toBeDefined();
+  expect(Object.keys(button!.props).filter((key) => /^on[A-Z]/.test(key))).toEqual([]);
+  expect(button!.props.href).toBeUndefined();
+  expect(button!.props.form).toBeUndefined();
+});
+
+it('a locked person keeps Unlock in the lock slot and Keep locked live only after failed sign-ins', () => {
+  const timed = render(
+    user({ id: '00000000-0000-4000-9000-0000000000a3', lockReason: 'failed_sign_ins' }),
+  );
+  expect(slot(timed, 'lock')).toContain('aria-label="Unlock Asha');
+  expect(slot(timed, 'keep')).toContain('aria-label="Keep locked Asha');
+  expect(timed).not.toContain('aria-disabled="true"');
+  const admin = render(user({ id: '00000000-0000-4000-9000-0000000000a4', lockReason: 'admin' }));
+  expect(slot(admin, 'lock')).toContain('aria-label="Unlock Asha');
+});
+
+it('a deactivated person keeps Deactivate and Reactivate in the same slot', () => {
+  const active = render(user({ id: '00000000-0000-4000-9000-0000000000a5' }));
+  const inactive = render(user({ id: '00000000-0000-4000-9000-0000000000a6', status: 'inactive' }));
+  expect(slot(active, 'toggle')).toContain('aria-label="Deactivate Asha');
+  expect(slot(inactive, 'toggle')).toContain('aria-label="Reactivate Asha');
+});
+
+it('a role without a permission sees no muted hint for it, but its slot stays reserved', () => {
+  const none = render(user({ id: '00000000-0000-4000-9000-0000000000a7' }), {
+    canCheckAccess: false,
+    canSendPasswordReset: false,
+    canChangeStatus: false,
+    meId: ME,
+  });
+  expect(ids(none)).toEqual([...ROW_SLOTS]);
+  for (const id of ['access', 'reset', 'lock', 'keep', 'toggle']) {
+    expect(
+      slot(none, id).split(`data-slot="${ROW_SLOTS[ROW_SLOTS.indexOf(id as never) + 1]}"`)[0],
+    ).toMatch(new RegExp(`^${id}"[^>]*></span>`));
+  }
+  expect(none).not.toContain('data-tooltip');
+  expect(none).not.toContain('aria-disabled');
+});
+
+it('every row of a mixed page has the same slots in the same order', () => {
+  const rows = [
+    user({ id: ME }),
+    user({ id: '00000000-0000-4000-9000-0000000000b1', email: null, status: 'inactive' }),
+    user({ id: '00000000-0000-4000-9000-0000000000b2', status: 'invited' }),
+    user({ id: '00000000-0000-4000-9000-0000000000b3', lockReason: 'failed_sign_ins' }),
+  ].map((u) => ids(render(u)));
+  for (const row of rows) expect(row).toEqual([...ROW_SLOTS]);
+});
