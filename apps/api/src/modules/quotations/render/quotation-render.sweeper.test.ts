@@ -665,7 +665,10 @@ describe('QuotationRenderSweeper', () => {
           tenantId: c.tenantId,
           organizationId: c.organizationId,
         });
-        expect(resolveLogo).toHaveBeenCalledWith(LOGO_DOC);
+        expect(resolveLogo).toHaveBeenCalledWith(
+          LOGO_DOC,
+          expect.objectContaining({ onDarkDocumentId: null, onLightDocumentId: null }),
+        );
         expect(styles.get(c.versionId)).toMatchObject({ profile: { logoDataUrl: LOGO_A } });
         expect(htmlToPdf.mock.calls[0]?.[0]).toContain(LOGO_A);
       });

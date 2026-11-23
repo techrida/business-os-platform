@@ -34,6 +34,7 @@ import {
   moveLeadStageAction,
   rescheduleFollowUpAction,
   scheduleFollowUpAction,
+  unlinkLeadCustomerAction,
   updateLeadOwnerAction,
 } from './actions';
 
@@ -513,5 +514,27 @@ describe('moveLeadStageAction with contactActivity', () => {
     );
     expect(invalid.fieldErrors?.['contactBody']).toMatch(/call, email or meeting/i);
     expect(api.changeLeadStage).not.toHaveBeenCalled();
+  });
+});
+
+describe('unlinkLeadCustomerAction (R6T)', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('sends only customerId null and the page version, and answers the new version', async () => {
+    api.updateLead.mockResolvedValue({ version: 4 });
+    expect(await unlinkLeadCustomerAction(LEAD, 3)).toEqual({ ok: true, version: 4 });
+    expect(api.updateLead).toHaveBeenCalledWith(expect.anything(), LEAD, {
+      customerId: null,
+      expectedVersion: 3,
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${LEAD}`);
+  });
+  it('words a stale version as a reload and never calls the API for a bad id or version', async () => {
+    api.updateLead.mockRejectedValue(new ApiError(409, 'conflict'));
+    const stale = await unlinkLeadCustomerAction(LEAD, 3);
+    expect(stale).toMatchObject({ ok: false, reload: true });
+    api.updateLead.mockClear();
+    expect(await unlinkLeadCustomerAction('nope', 3)).toMatchObject({ ok: false });
+    expect(await unlinkLeadCustomerAction(LEAD, 0)).toMatchObject({ ok: false });
+    expect(api.updateLead).not.toHaveBeenCalled();
   });
 });

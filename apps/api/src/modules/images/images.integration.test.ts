@@ -52,6 +52,7 @@ import {
   bindPrincipal,
   runWithRequestStore,
 } from '../../platform/tenancy/request-context';
+import { drizzleLogoStatsLookup } from './document-logo.resolver';
 import { drizzleImageOwnerLoaders, imageOwnerPolicies } from './image-owner.policies';
 import { ImagesController } from './images.controller';
 import { drizzleImagePointers, ImagesService } from './images.service';
@@ -603,6 +604,102 @@ describe('PUT /v1/images/entity_logo/:entityId', () => {
     expect(await statusOf(putAs(staff(a), 'entity_logo', entityA2, { documentId: null }))).toBe(
       404,
     );
+  });
+});
+
+describe('company logo variants (R6AC)', () => {
+  const statsRows = async (documentId: string) =>
+    (
+      await pool.query<{
+        tenant_id: string;
+        organization_id: string;
+        variant: string;
+        luminance: number;
+        has_transparency: boolean;
+      }>(
+        'SELECT tenant_id, organization_id, variant, luminance, has_transparency FROM app.logo_image_stats WHERE document_id = $1',
+        [documentId],
+      )
+    ).rows;
+
+  it.each([
+    ['entity_logo', 'logoDocumentId', 'primary'],
+    ['entity_logo_on_dark', 'logoOnDarkDocumentId', 'on_dark'],
+    ['entity_logo_on_light', 'logoOnLightDocumentId', 'on_light'],
+  ] as const)(
+    'POST %s points %s at the upload, keeps the other slots, and records what the image measures',
+    async (ownerType, field, variant) => {
+      const founder = staff(a);
+      const { documentId } = await postAs(founder, ownerType, a.organizationId, pngHeaders());
+      const profile = (await settings.getCurrent(a, 'entity.profile')).value;
+      expect(profile[field]).toBe(documentId);
+      const rows = await statsRows(documentId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        tenant_id: a.tenantId,
+        organization_id: a.organizationId,
+        variant,
+      });
+      expect(typeof rows[0]!.has_transparency).toBe('boolean');
+      expect(rows[0]!.luminance).toBeGreaterThanOrEqual(0);
+      expect(rows[0]!.luminance).toBeLessThanOrEqual(1);
+    },
+  );
+
+  it('keeps all three slots after each is set', async () => {
+    const founder = staff(a);
+    const main = (await postAs(founder, 'entity_logo', a.organizationId, pngHeaders())).documentId;
+    const dark = (await postAs(founder, 'entity_logo_on_dark', a.organizationId, pngHeaders()))
+      .documentId;
+    const light = (await postAs(founder, 'entity_logo_on_light', a.organizationId, pngHeaders()))
+      .documentId;
+    expect((await settings.getCurrent(a, 'entity.profile')).value).toMatchObject({
+      logoDocumentId: main,
+      logoOnDarkDocumentId: dark,
+      logoOnLightDocumentId: light,
+    });
+  });
+
+  it('is 403 to a sales user for a variant, like the main logo', async () => {
+    expect(
+      await statusOf(
+        postAs(staff(a, 'sales'), 'entity_logo_on_dark', a.organizationId, pngHeaders()),
+      ),
+    ).toBe(403);
+  });
+
+  it('is 404 for a variant of another entity id, and a variant document cannot be set as another slot', async () => {
+    expect(await statusOf(postAs(staff(a), 'entity_logo_on_dark', entityA2, pngHeaders()))).toBe(
+      404,
+    );
+    const dark = await uploadClean(staff(a), 'entity_logo_on_dark', a.organizationId);
+    expect(
+      await statusOf(
+        putAs(staff(a), 'entity_logo_on_light', a.organizationId, { documentId: dark }),
+      ),
+    ).toBe(404);
+  });
+
+  it("another tenant's lookup finds no stats for the logo (tenant isolation)", async () => {
+    const founder = staff(a);
+    const { documentId } = await postAs(founder, 'entity_logo', a.organizationId, pngHeaders());
+    const lookup = drizzleLogoStatsLookup(db);
+    await expect(lookup(a, documentId)).resolves.not.toBeNull();
+    await expect(lookup(b, documentId)).resolves.toBeNull();
+    await expect(
+      lookup({ tenantId: a.tenantId, organizationId: entityA2 }, documentId),
+    ).resolves.toBeNull();
+  });
+
+  it('refuses a stats row whose document belongs to another tenant (composite foreign key)', async () => {
+    const { documentId } = await postAs(staff(a), 'entity_logo', a.organizationId, pngHeaders());
+    await expect(
+      pool.query(
+        `INSERT INTO app.logo_image_stats (tenant_id, organization_id, document_id, variant, luminance, has_transparency)
+         VALUES ($1, $2, $3, 'primary', 0.5, false)`,
+        [b.tenantId, b.organizationId, documentId],
+      ),
+    ).rejects.toThrow();
   });
 });
 

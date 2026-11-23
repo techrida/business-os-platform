@@ -31,6 +31,7 @@ import {
   ConflictException,
   ForbiddenException,
   HttpException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
@@ -51,6 +52,7 @@ import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PricingService } from '../pricing/pricing.service';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
+import { CancelService } from './cancel.service';
 import { DraftingService } from './drafting.service';
 import {
   GOLDEN_INTERNAL_COST,
@@ -84,6 +86,7 @@ let scopeA: TxScope;
 let drafting: DraftingService;
 let approvals: ApprovalsService;
 let service: ReviseService;
+let cancelService: CancelService;
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
@@ -166,6 +169,14 @@ beforeAll(async () => {
     onDecided: () => Promise.resolve(),
     onCancelled,
   });
+  cancelService = new CancelService(
+    db,
+    approvals,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+    () => NOW,
+  );
   service = new ReviseService(
     db,
     pricing,
@@ -699,5 +710,183 @@ describe('ReviseService.revise on a Lost deal', () => {
     });
     expect(await statusOf(revise)).toBe(409);
     expect((await parentRow(q.id)).currentVersionId).toBe(q.currentVersionId);
+  });
+});
+
+// ------------------------------------------------------------------------------ cancel a revision (R6D restore)
+
+/** One statement as the database admin with triggers off, for states the app role cannot reach on purpose. */
+async function asAdminWithoutTriggers(statement: string, params: unknown[]): Promise<void> {
+  const adminPool = new Pool({ connectionString: testDb.adminUrl, max: 1 });
+  try {
+    const client = await adminPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL session_replication_role = replica');
+      await client.query(statement, params);
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+  } finally {
+    await adminPool.end();
+  }
+}
+
+describe('cancelling an unsent revision gives the replaced version back', () => {
+  const reviseFrom = async (target: 'approved' | 'sent') => {
+    const q = await createQuotation();
+    const expectedVersion = await advance(q.currentVersionId, target);
+    const v2 = await service.revise(
+      q.id,
+      { reason: REASON, expectedVersion },
+      `revise-${randomUUID()}`,
+    );
+    return { q, v1Id: q.currentVersionId, v2 };
+  };
+  const cancelRevision = async (q: QuotationDto, v2: { id: string }) =>
+    cancelService.cancel(
+      q.id,
+      {
+        reason: 'The change is not needed',
+        expectedVersion: (await versionRow(v2.id)).version,
+        versionId: v2.id,
+      },
+      `cancel-${randomUUID()}`,
+    );
+
+  it.each(['sent', 'approved'] as const)(
+    'restores a %s version as the live, current version, with a history row and an audit event',
+    async (target) => {
+      const { q, v1Id, v2 } = await reviseFrom(target);
+      expect(await versionRow(v1Id)).toMatchObject({ status: 'superseded' });
+
+      await cancelRevision(q, v2);
+
+      expect(await versionRow(v2.id)).toMatchObject({ status: 'cancelled' });
+      expect(await versionRow(v1Id)).toMatchObject({
+        status: target,
+        supersededByVersionId: null,
+      });
+      expect((await parentRow(q.id)).currentVersionId).toBe(v1Id);
+      const history = await db
+        .select()
+        .from(quotationStatusHistory)
+        .where(eq(quotationStatusHistory.versionId, v1Id));
+      expect(history).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ fromStatus: 'superseded', toStatus: target }),
+        ]),
+      );
+      const { rows: audits } = await ownerPool.query(
+        `SELECT 1 FROM audit.audit_events WHERE action = 'quotation.restored' AND entity_id = $1`,
+        [q.id],
+      );
+      expect(audits).toHaveLength(1);
+    },
+  );
+
+  it('lets the restored version be revised again: the cancelled revision keeps its number', async () => {
+    const { q, v1Id, v2 } = await reviseFrom('sent');
+    await cancelRevision(q, v2);
+    const again = await service.revise(
+      q.id,
+      { reason: REASON, expectedVersion: (await versionRow(v1Id)).version },
+      `revise-${randomUUID()}`,
+    );
+    expect(again).toMatchObject({ revisionNo: 3, status: 'draft' });
+    expect(await versionRow(v1Id)).toMatchObject({
+      status: 'superseded',
+      supersededByVersionId: again.id,
+    });
+  });
+
+  it('keeps the valid-until date, so a restored version that is past it expires in the normal sweep', async () => {
+    const { q, v1Id, v2 } = await reviseFrom('sent');
+    const before = (await versionRow(v1Id)).validUntil;
+    await cancelRevision(q, v2);
+    expect((await versionRow(v1Id)).validUntil).toBe(before);
+  });
+
+  it('does not restore for a caller who may draft but not revise: the revision ends as before', async () => {
+    const { q, v1Id, v2 } = await reviseFrom('sent');
+    current.grants = new Map([['quotation.draft', 'own']]);
+    await cancelRevision(q, v2);
+    expect(await versionRow(v2.id)).toMatchObject({ status: 'cancelled' });
+    expect(await versionRow(v1Id)).toMatchObject({ status: 'superseded' });
+  });
+
+  it.each(['lost', 'won'] as const)(
+    'restores nothing when the deal is %s: the revision ends as before',
+    async (stage) => {
+      const { q, v1Id, v2 } = await reviseFrom('sent');
+      const { rows: before } = await ownerPool.query<{ stage: string }>(
+        `SELECT o.stage FROM app.opportunities o JOIN app.quotations qq ON qq.opportunity_id = o.id WHERE qq.id = $1`,
+        [q.id],
+      );
+      const stageBefore = before[0]!.stage;
+      // The stage guard only allows the real transitions; the admin sets the stage the way Mark Lost leaves it.
+      await asAdminWithoutTriggers(
+        `UPDATE app.opportunities
+            SET stage = $2::text,
+                stage_reason = CASE WHEN $2::text = 'lost' THEN 'Price' END,
+                stage_note = CASE WHEN $2::text = 'lost' THEN 'Went elsewhere' END,
+                won_quotation_version_id = CASE WHEN $2::text = 'won' THEN $3::uuid END,
+                version = version + 1
+          WHERE id = (SELECT opportunity_id FROM app.quotations WHERE id = $1)`,
+        [q.id, stage, v1Id],
+      );
+      try {
+        await cancelRevision(q, v2);
+        expect(await versionRow(v2.id)).toMatchObject({ status: 'cancelled' });
+        expect(await versionRow(v1Id)).toMatchObject({ status: 'superseded' });
+        expect((await parentRow(q.id)).currentVersionId).toBe(v2.id);
+      } finally {
+        // The fixture's deal is shared by every test in the file: put it back where it was.
+        await asAdminWithoutTriggers(
+          `UPDATE app.opportunities
+              SET stage = $2::text, stage_reason = NULL, stage_note = NULL,
+                  won_quotation_version_id = NULL, version = version + 1
+            WHERE id = (SELECT opportunity_id FROM app.quotations WHERE id = $1)`,
+          [q.id, stageBefore],
+        );
+      }
+    },
+  );
+
+  it('restores nothing and logs a warning when the "-> superseded" history row is missing', async () => {
+    const { q, v1Id, v2 } = await reviseFrom('sent');
+    // History is append-only for everyone; the admin drops the row to stand in for data that never had it.
+    await asAdminWithoutTriggers(
+      `DELETE FROM app.quotation_status_history WHERE version_id = $1 AND to_status = 'superseded'`,
+      [v1Id],
+    );
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      await cancelRevision(q, v2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not restored'));
+    } finally {
+      warn.mockRestore();
+    }
+    expect(await versionRow(v2.id)).toMatchObject({ status: 'cancelled' });
+    expect(await versionRow(v1Id)).toMatchObject({ status: 'superseded' });
+  });
+
+  it('does not restore anything when Mark Lost cancels the revision: the deal is over', async () => {
+    const { q, v1Id } = await reviseFrom('sent');
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      const [row] = await tx
+        .select({ opportunityId: quotations.opportunityId })
+        .from(quotations)
+        .where(eq(quotations.id, q.id));
+      await cancelService.cancelOnLost(
+        tx,
+        scopeA,
+        { kind: 'user', id: f.ownerUserId, correlationId: 'lost' },
+        row!.opportunityId,
+        'Price',
+      );
+    });
+    expect(await versionRow(v1Id)).toMatchObject({ status: 'superseded' });
   });
 });

@@ -34,12 +34,14 @@ export type CustomerActingEntity = z.infer<typeof CustomerActingEntitySchema>;
 /**
  * GET /v1/customers/owners answers CustomerOwnerOption[]: the people a customer's account owner may be changed to,
  * for whoever holds `customers.owner.write` (Management changes owners without any people directory). Active staff
- * users of the tenant only, by name. Only what a picker shows: no address, roles or department; strict, so a field
+ * users of the tenant only, by name. Only what a picker shows: no address or role grants (a job title and department line only); strict, so a field
  * added on the server fails the parse instead of leaking.
  */
 export const CustomerOwnerOptionSchema = z.strictObject({
   userId: z.guid(),
   displayName: z.string(),
+  /** Job title and department, shown muted after the name in the member picker (BOS-UI-001). */
+  role: z.string().nullable().optional(),
 });
 export type CustomerOwnerOption = z.infer<typeof CustomerOwnerOptionSchema>;
 

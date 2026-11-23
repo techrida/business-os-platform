@@ -1,0 +1,33 @@
+# Fails a pull request that adds a dependency with a known high-severity advisory or a licence that
+# cannot ship inside an AGPL-3.0-only project. Needs the dependency graph (on for public repositories).
+name: dependency-review
+
+on:
+  pull_request:
+    branches: [main, p4-main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: depreview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # Not combinable with an allow list. These cannot be combined into a work distributed under
+          # AGPL-3.0-only: GPL-2.0-only (no "or later"), source-available and non-commercial terms.
+          deny-licenses: GPL-2.0-only, LGPL-2.0-only, SSPL-1.0, BUSL-1.1, Elastic-2.0, CC-BY-NC-4.0, CC-BY-NC-SA-4.0, CC-BY-ND-4.0

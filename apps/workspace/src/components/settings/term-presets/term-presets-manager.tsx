@@ -3,7 +3,7 @@
 import type { TermPreset, TermPresetKind } from '@bos/contracts';
 import { useState } from 'react';
 
-import { removePresetAction } from '@/app/(app)/settings/terms/actions';
+import { removePresetAction, setDefaultPresetAction } from '@/app/(app)/settings/terms/actions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
@@ -28,13 +28,29 @@ type Editing = { kind: TermPresetKind; preset?: TermPreset };
 
 /**
  * The Saved terms screen: one tab per kind, each a list of term sets (name, an "App default" label
- * for the ones the app ships, a one-line preview) with edit and remove, and an "Add term set"
- * button. Add and edit open one dialog; remove asks first (UIP-FEED-002). The list comes from the
+ * for the ones the app ships, a "Default" label on the kind's default, a one-line preview) with
+ * "Make default" / "Clear default", edit and remove, and an "Add term set" button. The default is what
+ * a new quotation starts with (UIP-FORM-012). Add and edit open one dialog; remove asks first (UIP-FEED-002). The list comes from the
  * server page, and every action revalidates it.
  */
 export function TermPresetsManager({ presets }: { presets: readonly TermPreset[] }) {
   const [editing, setEditing] = useState<Editing | null>(null);
   const [removing, setRemoving] = useState<TermPreset | null>(null);
+  const [changingDefault, setChangingDefault] = useState<string | null>(null);
+
+  async function chooseDefault(preset: TermPreset) {
+    if (changingDefault !== null) return;
+    setChangingDefault(preset.id);
+    try {
+      const result = await setDefaultPresetAction(preset.id, preset.isDefault !== true);
+      if (result.status === 'ok') toast.success(result.message);
+      else toast.error(result.message);
+    } catch {
+      toast.error('The platform did not answer. Check your connection and try again.');
+    } finally {
+      setChangingDefault(null);
+    }
+  }
 
   return (
     <>
@@ -77,10 +93,26 @@ export function TermPresetsManager({ presets }: { presets: readonly TermPreset[]
                         <div className={styles.nameLine}>
                           <p className={styles.name}>{preset.name}</p>
                           {isAppDefaultSet(preset.id) ? <Badge>App default</Badge> : null}
+                          {preset.isDefault === true ? <Badge tone="info">Default</Badge> : null}
                         </div>
                         <p className={styles.preview}>{previewLine(preset.body)}</p>
                       </div>
                       <div className={styles.rowActions}>
+                        {kind !== 'payment_terms' ? (
+                          <Button
+                            size="small"
+                            variant="secondary"
+                            disabled={changingDefault !== null}
+                            aria-label={
+                              preset.isDefault === true
+                                ? `Clear default ${termKindLabel(kind)}`
+                                : `Make ${preset.name} the default ${termKindLabel(kind)}`
+                            }
+                            onClick={() => void chooseDefault(preset)}
+                          >
+                            {preset.isDefault === true ? 'Clear default' : 'Make default'}
+                          </Button>
+                        ) : null}
                         <Tooltip content="Edit">
                           <button
                             type="button"

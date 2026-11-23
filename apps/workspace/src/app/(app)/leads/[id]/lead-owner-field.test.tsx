@@ -4,7 +4,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
-import { choose, click, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -165,4 +165,16 @@ it('words an assignment-rule refusal from its code, next to the control (F1-Q51)
   expect(container.textContent).toContain('The new owner cannot be someone more senior than you.');
   expect(container.textContent).not.toContain('ownerUserId');
   expect(mocks.error).toHaveBeenCalledWith('The new owner cannot be someone more senior than you.');
+});
+
+it('shows the owner choice as name and role, and filters by what is typed (BOS-UI-001)', async () => {
+  const { container } = await mount(OWNER, [
+    { ...owners[0]!, role: 'Head · Sales' },
+    { ...owners[1]!, role: 'Accountant' },
+  ]);
+  const box = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+  expect(box.value).toBe('Sita Rai Head · Sales');
+  await fill(box, 'acc');
+  const rows = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+  expect(rows).toEqual(['Ram ThapaAccountant']);
 });

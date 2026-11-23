@@ -827,6 +827,27 @@
       "when": 1783000000163,
       "tag": "0195_entity_settings_address_phones",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1783000000164,
+      "tag": "0199_lead_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1783000000165,
+      "tag": "0196_party_phone_main_country",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1783000000166,
+      "tag": "0218_logo_image_stats",
+      "breakpoints": true
     }
   ]
 }

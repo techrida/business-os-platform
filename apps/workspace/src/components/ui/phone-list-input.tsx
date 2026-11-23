@@ -196,6 +196,21 @@ function internationalRules(fallback: CountryCode): DigitRules {
   };
 }
 
+/**
+ * The country of a row after a number is typed or pasted: the detected one, except that a country the user picked on
+ * purpose stays when the detected one only shares its calling code (a picked Canada stays Canada for `+1 204…`).
+ */
+function countryAfterTyping(row: PhoneRowState, detected: CountryCode | null): CountryCode {
+  if (detected === null) return row.country;
+  if (
+    row.countryPicked &&
+    countryCallingCode(row.country) !== null &&
+    countryCallingCode(row.country) === countryCallingCode(detected)
+  )
+    return row.country;
+  return detected;
+}
+
 function rulesOf(row: PhoneRowState): { rules: DigitRules; prefix: string } {
   if (row.mode === 'international') return { rules: internationalRules(row.country), prefix: '+' };
   if (row.country === 'NP') return { rules: NEPAL_RULES, prefix: NEPAL_PREFIX };
@@ -393,7 +408,7 @@ export function PhoneListInput({
       if (current.mode !== 'international') return { e164: posted };
       // The country follows the typed calling code: `+1 4…` is the United States, `+977 98…` Nepal.
       const detected = posted === '' ? null : phoneCountryFromE164(posted);
-      return { e164: posted, country: detected ?? current.country };
+      return { e164: posted, country: countryAfterTyping(current, detected) };
     });
   }
 
@@ -406,7 +421,7 @@ export function PhoneListInput({
     pendingFocus.current = { key: row.key, target: 'number' };
     update(row.key, (current) => ({
       mode: national ? 'national' : 'international',
-      country: detected ?? current.country,
+      country: countryAfterTyping(current, detected),
       e164,
       seed: e164,
       edited: true,

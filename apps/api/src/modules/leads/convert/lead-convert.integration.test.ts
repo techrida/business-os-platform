@@ -37,6 +37,7 @@ import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { ActivitiesService } from '../../activities/activities.service';
 import { ListActivitiesQuerySchema } from '../../activities/activities.types';
+import { ListCustomersQuerySchema } from '../../customers/customers.types';
 import { CustomersService } from '../../customers/customers.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { LeadsController } from '../leads.controller';
@@ -55,6 +56,7 @@ let app: INestApplication;
 let baseUrl: string;
 let opportunitiesService: OpportunitiesService;
 let activitiesService: ActivitiesService;
+let customersService: CustomersService;
 
 beforeAll(async () => {
   h = await startHarness({ Pool, drizzle });
@@ -72,7 +74,7 @@ beforeAll(async () => {
     h.roleCache,
     h.notify,
   );
-  const customersService = new CustomersService(h.db, numbering, authz, h.caller, audit);
+  customersService = new CustomersService(h.db, numbering, authz, h.caller, audit);
   const convertService = new LeadConvertService(
     h.db,
     authz,
@@ -619,6 +621,38 @@ describe('POST /v1/leads/:id/convert', () => {
     expect(await leadRow(lead.id)).toMatchObject({ customerId, contactId: withEmail });
   });
 
+  it('converts a lead linked to a customer into that customer, with no duplicate warning (R6O)', async () => {
+    const customerId = await h.seedCustomer();
+    // Another customer the old company-name check would have flagged: the link already answers it.
+    await h.seedCustomer();
+    const lead = await qualifiedLead({ companyName: 'Acme Pvt. Ltd.', customerId });
+    expect(lead.customerId).toBe(customerId);
+    const res = await convert(lead.id, {
+      customer: { mode: 'existing', customerId },
+      contact: {
+        mode: 'create',
+        contact: { fullName: 'Sita Rai', email: `sita.${tag()}@convert.example`, country: 'NP' },
+      },
+      opportunityName: 'Linked',
+      expectedVersion: 3,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as { customerId: string }).customerId).toBe(customerId);
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'converted', customerId });
+  });
+
+  it('refuses to create a second customer for a lead that is linked to one, and writes nothing (R6O)', async () => {
+    const customerId = await h.seedCustomer();
+    const lead = await qualifiedLead({ customerId });
+    const res = await convert(
+      lead.id,
+      createCustomerBody(customerBody({ legalName: `Second ${tag()} Pvt. Ltd.` })),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toContain('linked to a customer');
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified', customerId, version: 3 });
+  });
+
   it('answers 409 duplicate_found with error.duplicates on the wire, and writes nothing', async () => {
     const original = await qualifiedLead();
     const name = `Twin${tag()} Builders Pvt. Ltd.`;
@@ -740,6 +774,37 @@ describe('POST /v1/leads/:id/convert', () => {
       expect(errorOf(res.body).code).toBe('duplicate_pan_vat');
     }
     expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified', version: 3 });
+  });
+
+  it("the wizard's PAN lookup finds the customer with that PAN, and converting into it links it and creates none (R6T)", async () => {
+    // What the convert wizard asks while a PAN is typed: the customer list searched by the number, read as the signed-in
+    // user. A hit is then chosen ("Use this customer") and the conversion links it instead of creating a duplicate.
+    const pan = panOf();
+    const original = await qualifiedLead();
+    const first = await convert(original.id, createCustomerBody(customerBody({ panVatNo: pan })));
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const existingId = (first.body as { customerId: string }).customerId;
+    const before = await h.db.select({ id: customers.id }).from(customers);
+
+    const found = await customersService.list(
+      ListCustomersQuerySchema.parse({ q: pan, limit: 20 }),
+    );
+    const same = found.items.filter((c) => c.panVatNo === pan && c.mergedIntoId === null);
+    expect(same.map((c) => c.id)).toEqual([existingId]);
+
+    const lead = await qualifiedLead();
+    const res = await convert(lead.id, {
+      customer: { mode: 'existing', customerId: same[0]!.id },
+      contact: newContact(),
+      opportunityName: 'Deal for the customer with this PAN',
+      expectedVersion: 3,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as { customerId: string }).customerId).toBe(existingId);
+    expect(await h.db.select({ id: customers.id }).from(customers)).toHaveLength(before.length);
+    const withPan = await h.db.select().from(customers).where(eq(customers.panVatNo, pan));
+    expect(withPan).toHaveLength(1);
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'converted' });
   });
 
   it('refuses a second convert with 409, whether the version is fresh or stale', async () => {

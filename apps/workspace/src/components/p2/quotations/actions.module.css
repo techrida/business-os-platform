@@ -1,21 +1,6 @@
 /* Fields and feedback for quotation actions. */
 
 /* A trigger with the sentence that explains why it is off, kept together when the row wraps. */
-.group {
-  display: grid;
-  gap: 4px;
-  max-width: 44ch;
-  justify-items: start;
-}
-
-.reason {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
-}
-
 .form {
   display: grid;
   gap: 16px;
