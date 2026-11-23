@@ -1,7 +1,13 @@
 import type { TermPreset } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { canFillSilently, offeredPresets, pickOutcome } from './saved-options';
+import {
+  canFillSilently,
+  defaultPreset,
+  offeredPresets,
+  pickOutcome,
+  pickerState,
+} from './saved-options';
 
 const make = (n: number, kind: TermPreset['kind'], name: string, body: string): TermPreset => ({
   id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
@@ -107,5 +113,31 @@ describe('pickOutcome', () => {
 
   it('does not offer an option of another kind', () => {
     expect(pickOutcome(other.id, offered, '', null)).toEqual({ action: 'ignore' });
+  });
+});
+
+describe('pickerState', () => {
+  const scope = [a, b];
+  it('is empty for blank text, the preset for its words (markup and spacing aside), else custom', () => {
+    expect(pickerState('', scope, null)).toEqual({ state: 'empty' });
+    expect(pickerState('<p> </p>', scope, null)).toEqual({ state: 'empty' });
+    expect(pickerState('<p>We   build\nit.</p>', scope, null)).toEqual({ state: 'preset', preset: a });
+    expect(pickerState('We build it. More.', scope, a.id)).toEqual({ state: 'custom' });
+  });
+  it('prefers the last applied one when two presets hold the same words', () => {
+    const twin = make(9, 'scope', 'Twin', a.body);
+    expect(pickerState(a.body, [a, twin], twin.id)).toEqual({ state: 'preset', preset: twin });
+    expect(pickerState(a.body, [a, twin], null)).toEqual({ state: 'preset', preset: a });
+  });
+});
+
+describe('defaultPreset', () => {
+  it('is the kind default that fits the field, and nothing when none is set', () => {
+    const d = { ...b, isDefault: true };
+    expect(defaultPreset([a, d, other], 'scope', 10_000)).toEqual(d);
+    expect(defaultPreset([a, b], 'scope', 10_000)).toBeUndefined();
+    expect(defaultPreset([{ ...other, isDefault: true }], 'scope', 10_000)).toBeUndefined();
+    expect(defaultPreset([{ ...b, isDefault: true }], 'scope', 5)).toBeUndefined();
+    expect(defaultPreset(null, 'scope', 10_000)).toBeUndefined();
   });
 });
