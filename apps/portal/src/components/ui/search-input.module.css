@@ -43,3 +43,31 @@
 .input:disabled {
   cursor: not-allowed;
 }
+
+/* The clear button sits at the end of the field, 28px square so it stays a real touch target
+   without growing the 36px field. Room is kept for it only while it shows. */
+.clear {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 4px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.clear:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.input:has(~ .clear) {
+  padding-inline-end: 36px;
+}
