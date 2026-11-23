@@ -66,9 +66,12 @@ jobs:
       - name: Playwright (workspace, dev project)
         env:
           BOS_E2E_RECORD: '1'
+          # The compiled devtools build carries the dev switcher and the dev shell, like `next dev`; the login is the Business OS image.
+          BOS_E2E_NEXT_DEV: '1'
+          BOS_E2E_BRANDED_LOGIN: '1'
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
-          SPEC_FILTER: ${{ inputs.spec_filter || 'personas.spec' }}
+          SPEC_FILTER: ${{ inputs.spec_filter }}
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           cd apps/workspace
