@@ -5,6 +5,7 @@ import { accountLabel } from './account-label';
 import styles from './header.module.css';
 import { ShellNavSearch } from './shell-nav';
 import { MenuButton } from './shell-state';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** Workspace banner with navigation search and the current account. */
 export function Header({ roles }: { roles: readonly string[] }) {
@@ -13,9 +14,9 @@ export function Header({ roles }: { roles: readonly string[] }) {
     <header className={styles.header}>
       <div className={styles.lead}>
         <MenuButton />
-        <p className={styles.roles} title={rolesText}>
-          {rolesText}
-        </p>
+        <Tooltip content={rolesText}>
+          <p className={styles.roles}>{rolesText}</p>
+        </Tooltip>
       </div>
       <div className={styles.tools}>
         <ShellNavSearch className={styles.search} />

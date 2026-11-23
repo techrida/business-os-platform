@@ -2,6 +2,7 @@
 
 import resetStyles from '@/components/settings/reset-to-default.module.css';
 import { Icon } from '@/components/ui/icon';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * The D32 undo icon for one access value. Unlike the Settings reset, it never saves by itself:
@@ -10,14 +11,10 @@ import { Icon } from '@/components/ui/icon';
  */
 export function UndoButton({ name, onClick }: { name: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      className={resetStyles.button}
-      aria-label={name}
-      title={name}
-      onClick={onClick}
-    >
-      <Icon name="undo-2" size={16} />
-    </button>
+    <Tooltip content={name}>
+      <button type="button" className={resetStyles.button} aria-label={name} onClick={onClick}>
+        <Icon name="undo-2" size={16} />
+      </button>
+    </Tooltip>
   );
 }

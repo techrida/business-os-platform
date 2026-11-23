@@ -113,12 +113,13 @@ describe('PromiseCard', () => {
   it("shows Record promise off with the API's reason, and no dialog, when the invoice is not open", () => {
     const html = render(list([], { record: false, reason: 'invoice_not_open' }));
     expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Record promise<\/button>/);
-    expect(textOf(html)).toContain('Nothing is owed on this invoice');
+    // The reason lives in the Tooltip (UIP-FORM-011), not as text under the button.
+    expect(textOf(html)).not.toContain('Nothing is owed on this invoice');
     expect(html).not.toContain('name="promisedDate"');
   });
 
-  it('gives the permission reason plainly', () => {
+  it('keeps the permission reason out of the page text (it is the Tooltip)', () => {
     const text = textOf(render(list([], { record: false, reason: 'no_permission' })));
-    expect(text).toContain('Your roles do not include recording promises to pay.');
+    expect(text).not.toContain('Your roles do not include recording promises to pay.');
   });
 });

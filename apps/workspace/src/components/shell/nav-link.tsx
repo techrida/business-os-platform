@@ -8,6 +8,7 @@ import { ownsPath, type NavIconName } from '@/lib/nav';
 
 import styles from './sidebar.module.css';
 import { useShell } from './shell-state';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * A built sidebar item. It is a client component only to know the current path (for the
@@ -29,19 +30,20 @@ export function NavLink({
   const active = ownsPath(href, pathname);
 
   return (
-    <Link
-      href={href}
-      className={`${styles.item} ${styles.link}${active ? ` ${styles.active}` : ''}`}
-      aria-current={active ? 'page' : undefined}
-      title={label}
-      onClick={() => {
-        setNavQuery('');
-        closeDrawer();
-      }}
-    >
-      <Icon name={icon} className={styles.icon} />
-      <span className={styles.label}>{label}</span>
-      {count !== undefined && count > 0 ? <span className={styles.count}>{count}</span> : null}
-    </Link>
+    <Tooltip content={label}>
+      <Link
+        href={href}
+        className={`${styles.item} ${styles.link}${active ? ` ${styles.active}` : ''}`}
+        aria-current={active ? 'page' : undefined}
+        onClick={() => {
+          setNavQuery('');
+          closeDrawer();
+        }}
+      >
+        <Icon name={icon} className={styles.icon} />
+        <span className={styles.label}>{label}</span>
+        {count !== undefined && count > 0 ? <span className={styles.count}>{count}</span> : null}
+      </Link>
+    </Tooltip>
   );
 }
