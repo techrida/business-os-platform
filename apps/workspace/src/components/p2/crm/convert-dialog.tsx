@@ -267,14 +267,14 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
             ) : null}
           </Panel>
 
-          <RadioGroup
-            asChild
-            name="customerMode"
-            value={customerExisting ? 'existing' : 'create'}
-            onValueChange={(next) => patch({ customerMode: next })}
-          >
-            <fieldset className={styles.conversionSection}>
-              <legend className={styles.legend}>Organization</legend>
+          <fieldset className={styles.conversionSection}>
+            <legend className={styles.legend}>Organization</legend>
+            <RadioGroup
+              neutral
+              name="customerMode"
+              value={customerExisting ? 'existing' : 'create'}
+              onValueChange={(next) => patch({ customerMode: next })}
+            >
               <label className={styles.choice}>
                 <Radio value="create" />
                 Create a new organization
@@ -283,136 +283,136 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 <Radio value="existing" />
                 Link to an existing organization
               </label>
+            </RadioGroup>
 
-              {customerExisting ? (
-                <>
-                  <div className={styles.customerSearch}>
-                    <Field
-                      label="Find an organization"
-                      hint="Search by name, customer number or PAN/VAT."
-                    >
-                      {(c) => (
-                        <Input
-                          {...c}
-                          value={query}
-                          onChange={(e) => setQuery(e.target.value)}
-                          maxLength={100}
-                        />
-                      )}
-                    </Field>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={searching}
-                      onClick={() => {
-                        void searchCustomers();
-                      }}
-                    >
-                      {searching ? 'Searching' : 'Search'}
-                    </Button>
-                  </div>
-                  {lookupError ? <p role="status">{lookupError}</p> : null}
-                  <Field label="Organization" error={err['customerId']}>
+            {customerExisting ? (
+              <>
+                <div className={styles.customerSearch}>
+                  <Field
+                    label="Find an organization"
+                    hint="Search by name, customer number or PAN/VAT."
+                  >
                     {(c) => (
-                      <Select
+                      <Input
                         {...c}
-                        name="customerId"
-                        value={customerId}
-                        onChange={(e) => patch({ customerId: e.target.value, contactId: '' })}
-                      >
-                        <option value="">Choose a customer</option>
-                        {customerId && !customers.some((c) => c.id === customerId) ? (
-                          <option value={customerId}>
-                            {dupes.find((d) => d.kind === 'customer' && d.id === customerId)
-                              ?.label ?? 'Selected customer'}
-                          </option>
-                        ) : null}
-                        {customers.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.label}
-                          </option>
-                        ))}
-                      </Select>
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        maxLength={100}
+                      />
                     )}
                   </Field>
-                </>
-              ) : (
-                <div className={styles.convertFields}>
-                  <div className={styles.formGrid}>
-                    <Field label="Legal name" error={err['legalName']}>
-                      {(c) => (
-                        <Input
-                          name="legalName"
-                          value={values['legalName']}
-                          onChange={set('legalName')}
-                          required
-                          maxLength={200}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={searching}
+                    onClick={() => {
+                      void searchCustomers();
+                    }}
+                  >
+                    {searching ? 'Searching' : 'Search'}
+                  </Button>
+                </div>
+                {lookupError ? <p role="status">{lookupError}</p> : null}
+                <Field label="Organization" error={err['customerId']}>
+                  {(c) => (
+                    <Select
+                      {...c}
+                      name="customerId"
+                      value={customerId}
+                      onChange={(e) => patch({ customerId: e.target.value, contactId: '' })}
+                    >
+                      <option value="">Choose a customer</option>
+                      {customerId && !customers.some((c) => c.id === customerId) ? (
+                        <option value={customerId}>
+                          {dupes.find((d) => d.kind === 'customer' && d.id === customerId)?.label ??
+                            'Selected customer'}
+                        </option>
+                      ) : null}
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+              </>
+            ) : (
+              <div className={styles.convertFields}>
+                <div className={styles.formGrid}>
+                  <Field label="Legal name" error={err['legalName']}>
+                    {(c) => (
+                      <Input
+                        name="legalName"
+                        value={values['legalName']}
+                        onChange={set('legalName')}
+                        required
+                        maxLength={200}
+                        {...c}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label="PAN or VAT number"
+                    hint={nepalCustomer ? 'Optional. Nine digits.' : 'Optional.'}
+                    error={err['panVatNo']}
+                  >
+                    {(c) =>
+                      nepalCustomer ? (
+                        <PanInput
+                          name="panVatNo"
+                          value={values['panVatNo']}
+                          onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
+                          edited={panEdited}
+                          onEditedChange={setPanEdited}
                           {...c}
                         />
-                      )}
-                    </Field>
-                    <Field
-                      label="PAN or VAT number"
-                      hint={nepalCustomer ? 'Optional. Nine digits.' : 'Optional.'}
-                      error={err['panVatNo']}
-                    >
-                      {(c) =>
-                        nepalCustomer ? (
-                          <PanInput
-                            name="panVatNo"
-                            value={values['panVatNo']}
-                            onValueChange={(pan) => set('panVatNo')({ target: { value: pan } })}
-                            edited={panEdited}
-                            onEditedChange={setPanEdited}
-                            {...c}
-                          />
-                        ) : (
-                          <Input
-                            name="panVatNo"
-                            value={values['panVatNo']}
-                            onChange={(e) => {
-                              // The same value becomes the PAN if the country turns NP.
-                              setPanEdited(true);
-                              set('panVatNo')(e);
-                            }}
-                            autoComplete="off"
-                            {...c}
-                          />
-                        )
-                      }
-                    </Field>
-                  </div>
-                  {/* The customer's one country: it sits with the address and decides the PAN rules. */}
-                  <AddressFields
-                    name="address"
-                    required
-                    value={{
-                      line: values['line'] ?? '',
-                      city: values['city'] ?? '',
-                      country: customerCountry,
-                    }}
-                    onChange={(next) =>
-                      patch({ line: next.line, city: next.city, country: next.country })
+                      ) : (
+                        <Input
+                          name="panVatNo"
+                          value={values['panVatNo']}
+                          onChange={(e) => {
+                            // The same value becomes the PAN if the country turns NP.
+                            setPanEdited(true);
+                            set('panVatNo')(e);
+                          }}
+                          autoComplete="off"
+                          {...c}
+                        />
+                      )
                     }
-                    errors={{
-                      line: err['address.line'],
-                      city: err['address.city'],
-                      country: err['address.country'],
-                    }}
-                  />
+                  </Field>
                 </div>
-              )}
-            </fieldset>
-          </RadioGroup>
+                {/* The customer's one country: it sits with the address and decides the PAN rules. */}
+                <AddressFields
+                  name="address"
+                  required
+                  value={{
+                    line: values['line'] ?? '',
+                    city: values['city'] ?? '',
+                    country: customerCountry,
+                  }}
+                  onChange={(next) =>
+                    patch({ line: next.line, city: next.city, country: next.country })
+                  }
+                  errors={{
+                    line: err['address.line'],
+                    city: err['address.city'],
+                    country: err['address.country'],
+                  }}
+                />
+              </div>
+            )}
+          </fieldset>
 
-          <RadioGroup
-            asChild
-            name="contactMode"
-            value={contactMode ?? 'create'}
-            onValueChange={(next) => patch({ contactMode: next })}
-          >
-            <fieldset className={styles.conversionSection}>
-              <legend className={styles.legend}>Contact</legend>
+          <fieldset className={styles.conversionSection}>
+            <legend className={styles.legend}>Contact</legend>
+            <RadioGroup
+              neutral
+              name="contactMode"
+              value={contactMode ?? 'create'}
+              onValueChange={(next) => patch({ contactMode: next })}
+            >
               <label className={styles.choice}>
                 <Radio value="create" />
                 Create a contact from the lead
@@ -421,121 +421,121 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 <Radio value="existing" />
                 Link to an existing contact
               </label>
+            </RadioGroup>
 
-              {/* Kept mounted while an existing contact is chosen, so the typed numbers and their checks
+            {/* Kept mounted while an existing contact is chosen, so the typed numbers and their checks
                 come back with it; disabled, nothing in it posts or stops the submit. */}
-              <div hidden={contactMode !== 'create'}>
-                <fieldset className={styles.convertFields} disabled={contactMode !== 'create'}>
-                  <div className={styles.formGrid}>
-                    <Field label="Contact name" error={err['contactName']}>
-                      {(c) => (
-                        <Input
-                          name="contactName"
-                          value={values['contactName']}
-                          onChange={set('contactName')}
-                          required
-                          maxLength={200}
-                          {...c}
-                        />
-                      )}
-                    </Field>
-                    <Field
-                      label="Email"
-                      hint="Required: quotations are sent to it."
-                      error={err['contactEmail']}
-                    >
-                      {(c) => (
-                        <Input
-                          name="contactEmail"
-                          type="email"
-                          value={values['contactEmail']}
-                          onChange={set('contactEmail')}
-                          autoComplete="off"
-                          spellCheck={false}
-                          maxLength={254}
-                          required
-                          {...c}
-                        />
-                      )}
-                    </Field>
-                    <Field label="Contact country" error={err['contactCountry']}>
-                      {(c) => (
-                        <CountrySelect
-                          id={c.id}
-                          aria-labelledby={c['aria-labelledby']}
-                          aria-describedby={c['aria-describedby']}
-                          aria-invalid={c['aria-invalid']}
-                          name="contactCountry"
-                          required
-                          value={contactCountry}
-                          onChange={(country) => patch({ contactCountry: country })}
-                        />
-                      )}
-                    </Field>
-                  </div>
-                  <Field
-                    label="Phone"
-                    hint="Optional. Pick each number's country, or type + and its code."
-                  >
+            <div hidden={contactMode !== 'create'}>
+              <fieldset className={styles.convertFields} disabled={contactMode !== 'create'}>
+                <div className={styles.formGrid}>
+                  <Field label="Contact name" error={err['contactName']}>
                     {(c) => (
-                      <PhoneListInput
-                        key={`${lead.id}-${lead.version}`}
-                        name="contactPhones"
-                        aria-labelledby={c['aria-labelledby']}
-                        aria-describedby={c['aria-describedby']}
-                        defaultValue={phones}
-                        defaultCountry={contactCountry}
-                        onChange={setPhones}
-                        rowErrors={Array.from(
-                          { length: MAX_PARTY_PHONES },
-                          (_, row) => err[`contactPhones.${row}`],
-                        )}
-                        error={err['contactPhones']}
-                        disabled={contactMode !== 'create'}
+                      <Input
+                        name="contactName"
+                        value={values['contactName']}
+                        onChange={set('contactName')}
+                        required
+                        maxLength={200}
+                        {...c}
                       />
                     )}
                   </Field>
-                </fieldset>
-              </div>
-              {contactMode === 'existing' ? (
+                  <Field
+                    label="Email"
+                    hint="Required: quotations are sent to it."
+                    error={err['contactEmail']}
+                  >
+                    {(c) => (
+                      <Input
+                        name="contactEmail"
+                        type="email"
+                        value={values['contactEmail']}
+                        onChange={set('contactEmail')}
+                        autoComplete="off"
+                        spellCheck={false}
+                        maxLength={254}
+                        required
+                        {...c}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Contact country" error={err['contactCountry']}>
+                    {(c) => (
+                      <CountrySelect
+                        id={c.id}
+                        aria-labelledby={c['aria-labelledby']}
+                        aria-describedby={c['aria-describedby']}
+                        aria-invalid={c['aria-invalid']}
+                        name="contactCountry"
+                        required
+                        value={contactCountry}
+                        onChange={(country) => patch({ contactCountry: country })}
+                      />
+                    )}
+                  </Field>
+                </div>
                 <Field
-                  label="Contact"
-                  hint={
-                    contacts?.customerId === customerId
-                      ? contacts.error || undefined
-                      : 'Choose a customer to load contacts.'
-                  }
-                  error={err['contactId']}
+                  label="Phone"
+                  hint="Optional. Pick each number's country, or type + and its code."
                 >
                   {(c) => (
-                    <Select
-                      {...c}
-                      name="contactId"
-                      value={values['contactId'] ?? ''}
-                      onChange={set('contactId')}
-                    >
-                      <option value="">Choose a contact</option>
-                      {values['contactId'] &&
-                      !(
-                        contacts?.customerId === customerId &&
-                        contacts.options.some((c) => c.id === values['contactId'])
-                      ) ? (
-                        <option value={values['contactId']}>
-                          {dupes.find((d) => d.kind === 'contact' && d.id === values['contactId'])
-                            ?.label ?? 'Selected contact'}
-                        </option>
-                      ) : null}
-                      {(contacts?.customerId === customerId ? contacts.options : []).map((c) => (
-                        <option key={c.id} value={c.id} disabled={c.disabled}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </Select>
+                    <PhoneListInput
+                      key={`${lead.id}-${lead.version}`}
+                      name="contactPhones"
+                      aria-labelledby={c['aria-labelledby']}
+                      aria-describedby={c['aria-describedby']}
+                      defaultValue={phones}
+                      defaultCountry={contactCountry}
+                      onChange={setPhones}
+                      rowErrors={Array.from(
+                        { length: MAX_PARTY_PHONES },
+                        (_, row) => err[`contactPhones.${row}`],
+                      )}
+                      error={err['contactPhones']}
+                      disabled={contactMode !== 'create'}
+                    />
                   )}
                 </Field>
-              ) : null}
-            </fieldset>
-          </RadioGroup>
+              </fieldset>
+            </div>
+            {contactMode === 'existing' ? (
+              <Field
+                label="Contact"
+                hint={
+                  contacts?.customerId === customerId
+                    ? contacts.error || undefined
+                    : 'Choose a customer to load contacts.'
+                }
+                error={err['contactId']}
+              >
+                {(c) => (
+                  <Select
+                    {...c}
+                    name="contactId"
+                    value={values['contactId'] ?? ''}
+                    onChange={set('contactId')}
+                  >
+                    <option value="">Choose a contact</option>
+                    {values['contactId'] &&
+                    !(
+                      contacts?.customerId === customerId &&
+                      contacts.options.some((c) => c.id === values['contactId'])
+                    ) ? (
+                      <option value={values['contactId']}>
+                        {dupes.find((d) => d.kind === 'contact' && d.id === values['contactId'])
+                          ?.label ?? 'Selected contact'}
+                      </option>
+                    ) : null}
+                    {(contacts?.customerId === customerId ? contacts.options : []).map((c) => (
+                      <option key={c.id} value={c.id} disabled={c.disabled}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            ) : null}
+          </fieldset>
 
           <Panel title="Opportunity details" headingLevel={3} className={styles.dialogPanel}>
             <Field label="Opportunity name" error={err['opportunityName']}>
