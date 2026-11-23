@@ -3,7 +3,7 @@
 import { CURRENCIES, type CompanyBankAccount, type Currency } from '@bos/contracts';
 import { amountInWords } from '@bos/locale';
 import Link from 'next/link';
-import { useActionState, useId, useRef, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import {
   ActionDialog,
@@ -132,9 +132,18 @@ export function PaymentRequestEntry({
   const opener = useRef<HTMLButtonElement>(null);
   // Set only by Confirm: every other submit, the opener and Enter in a field included, opens the review instead.
   const confirmed = useRef(false);
+  // True from Confirm until the review has handed focus back: only a close by Confirm may leave focus on a
+  // refusal; Back and Escape always return to the opener, even with an older refusal on screen.
+  const closingToSend = useRef(false);
+  // The review's close handler can be an older render's, so it reads the newest result from here.
+  const latest = useRef(state);
+  useEffect(() => {
+    latest.current = state;
+  }, [state]);
   const [review, setReview] = useState<PaymentRequestReview | null>(null);
   const send = () => {
     confirmed.current = true;
+    closingToSend.current = true;
     formRef.current?.requestSubmit();
   };
   const reviewOf = (form: HTMLFormElement) =>
@@ -178,6 +187,7 @@ export function PaymentRequestEntry({
               open={review !== null}
               onOpenChange={(open) => {
                 if (!open) setReview(null);
+                if (open) closingToSend.current = false;
               }}
               // No Radix trigger (the opener is the form's submit button), so focus goes back to
               // the opener here. Confirm closes the review and sends the form, so the server's refusal
@@ -185,8 +195,13 @@ export function PaymentRequestEntry({
               // the opener must not take it back.
               onCloseAutoFocus={(event) => {
                 event.preventDefault();
-                if (state.error || Object.keys(errors).length > 0) {
-                  focusProblem(state, wrap.current, summary.current);
+                const sent = closingToSend.current;
+                closingToSend.current = false;
+                if (
+                  sent &&
+                  (latest.current.error || Object.keys(latest.current.errors ?? {}).length > 0)
+                ) {
+                  focusProblem(latest.current, wrap.current, summary.current);
                   return;
                 }
                 opener.current?.focus();

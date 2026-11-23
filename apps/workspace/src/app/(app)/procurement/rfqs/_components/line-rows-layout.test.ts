@@ -10,7 +10,7 @@ const css = readFileSync(
 
 /** The floor of each `minmax(<floor>, …)` column in a template, in rem (a `minmax(0, …)` column counts as 0). */
 const floors = (template: string): number[] =>
-  [...template.matchAll(/minmax\((\d+(?:\.\d+)?)(?:rem)?,/g)].map((m) => Number(m[1]));
+  [...template.matchAll(/minmax\(\s*(\d+(?:\.\d+)?)(?:rem)?\s*,/g)].map((m) => Number(m[1]));
 
 // jsdom has no layout. The quotation and receipt line rows had `minmax(0, …)` columns from a 760px card,
 // so Quantity measured 30px at 1280 and 50px at 1440 (a number box keeps about 7rem of unit, steppers
