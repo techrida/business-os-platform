@@ -190,7 +190,7 @@ export async function openFromInbox(
   }).toPass({ timeout: 30_000 });
   await expect(row).toContainText(reason);
 
-  await row.getByRole('link', { name: title }).click();
+  await row.getByRole('link', { name: title, exact: true }).click();
   await page.waitForURL(/\/inbox\/[0-9a-f-]{36}$/, { timeout: 30_000 });
   const requestId = new URL(page.url()).pathname.split('/').pop() ?? '';
   // The reason shows in the inbox row above; the decision card no longer repeats it.

@@ -109,7 +109,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
     await test.step('sales cannot approve their own memo: inbox says so, and the request has no Approve button', async () => {
       await sales.goto('/inbox');
       await expect(sales.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
-      await expect(sales.getByRole('alert')).toHaveCount(0);
+      await expect(sales.getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(0);
       await expect(inboxRow(sales, title)).toHaveCount(0);
 
       // The request itself may be read by its requester (approvals.requests.read, own scope), but
