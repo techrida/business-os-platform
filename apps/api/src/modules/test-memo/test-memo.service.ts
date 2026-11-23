@@ -40,6 +40,7 @@ import {
   type Permission,
   type RoutePlan,
   WorkflowSpecSchema,
+  logoBackgroundHex,
 } from '@bos/contracts';
 import {
   approvalRequests,
@@ -364,7 +365,17 @@ export async function buildMemoLetterhead(
       logoDataUrl = legacy;
     } else {
       try {
-        logoDataUrl = (await resolveLogo(documentId)) ?? legacy;
+        // The memo band is the tinted palette of the style's colour, whatever layout the quotations use.
+        const memoBand = logoBackgroundHex({
+          layout: 'tinted',
+          primaryColour: style.success ? style.data.primaryColour : DEFAULT_BRAND_COLOUR,
+        });
+        logoDataUrl =
+          (await resolveLogo(documentId, {
+            colour: memoBand,
+            onDarkDocumentId: profile.data.logoOnDarkDocumentId,
+            onLightDocumentId: profile.data.logoOnLightDocumentId,
+          })) ?? legacy;
       } catch {
         // No data from the failure is carried: the resolver already logged its kind.
         if (mode === 'freeze') throw new DocumentLogoUnavailableError();

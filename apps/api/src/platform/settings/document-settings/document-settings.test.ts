@@ -824,7 +824,10 @@ describe('POST admin/settings/documents/preview', () => {
       expect(html).toContain(UPLOADED);
       expect(html).not.toContain(LEGACY);
       expect(logos.forScope).toHaveBeenCalledWith(scope);
-      expect(logos.resolve).toHaveBeenCalledWith(LOGO_DOC);
+      expect(logos.resolve).toHaveBeenCalledWith(
+        LOGO_DOC,
+        expect.objectContaining({ onDarkDocumentId: null, onLightDocumentId: null }),
+      );
     });
 
     it('falls back to the legacy logo when the document gives none', async () => {

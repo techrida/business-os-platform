@@ -20,6 +20,8 @@ import {
   TermPresetListSchema,
   TermPresetSchema,
   snapshotProfileFrom,
+  logoBackgroundHex,
+  type CompanyProfile,
 } from '@bos/contracts';
 import {
   BadRequestException,
@@ -181,11 +183,17 @@ export class DocumentSettingsService {
       this.settings.get(scope, 'format.number_systems'),
       this.settings.get(scope, 'format.date'),
     ]);
-    const logo = await this.previewLogo(scope, profile.logoDocumentId, profile.legacyLogoDataUrl);
+    // Chosen for the previewed layout and colour, not the saved ones, as a real render would be.
+    const style = { layout: body.layout, primaryColour: body.primaryColour };
+    const logo = await this.previewLogo(scope, profile, logoBackgroundHex(style));
     const html = renderQuotationHtml(sampleQuotationView(), {
       snapshot: {
         style: { layout: body.layout, primaryColour: body.primaryColour },
         profile: snapshotProfileFrom(profile, logo),
+        // A logo of the uploaded document was chosen for this layout's colour: no plate behind it.
+        ...(logo !== null && logo !== (profile.legacyLogoDataUrl ?? null)
+          ? { logoForBackground: logoBackgroundHex(style) }
+          : {}),
         numberSystems,
         dateFormat,
         capturedAt: new Date().toISOString(),
@@ -200,14 +208,21 @@ export class DocumentSettingsService {
    */
   private async previewLogo(
     scope: TxScope,
-    logoDocumentId: string | null | undefined,
-    legacyLogoDataUrl: string | null | undefined,
+    profile: CompanyProfile,
+    backgroundColour: string,
   ): Promise<string | null> {
-    const legacy = legacyLogoDataUrl ?? null;
+    const { logoDocumentId } = profile;
+    const legacy = profile.legacyLogoDataUrl ?? null;
     // The stored JSON is read as saved: a profile saved before logoDocumentId existed has no such field.
     if (typeof logoDocumentId !== 'string') return legacy;
     try {
-      return (await this.logos.forScope(scope)(logoDocumentId)) ?? legacy;
+      return (
+        (await this.logos.forScope(scope)(logoDocumentId, {
+          colour: backgroundColour,
+          onDarkDocumentId: profile.logoOnDarkDocumentId ?? null,
+          onLightDocumentId: profile.logoOnLightDocumentId ?? null,
+        })) ?? legacy
+      );
     } catch (error) {
       // Fixed words only, like the resolver's own log lines.
       const kind = error instanceof Error ? error.name : 'error';
