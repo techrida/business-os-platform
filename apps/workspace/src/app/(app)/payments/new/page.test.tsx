@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
   getInvoice: vi.fn(),
   apiFetch: vi.fn(),
   getMe: vi.fn(),
-  formProps: vi.fn<(props: { customers: { name: string }[]; customersCutOff?: boolean }) => void>(),
+  formProps: vi.fn<(props: { customers: readonly { name: string }[]; customersCutOff?: boolean | undefined }) => void>(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/customers/api', () => ({
