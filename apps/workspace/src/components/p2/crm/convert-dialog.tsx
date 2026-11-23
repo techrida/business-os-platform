@@ -138,7 +138,19 @@ export function ConvertDialog({
   const version = Math.max(lead.version, unlinked?.version ?? 0);
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
-  const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
+  const patch = (p: Record<string, string>) => {
+    setValues((v) => ({ ...v, ...p }));
+    // A new choice answers the dead end that was shown for the old one.
+    if ('customerId' in p || 'contactId' in p) {
+      setLocal((l) =>
+        l
+          ? Object.fromEntries(
+              Object.entries(l).filter(([k]) => k !== 'customerId' && k !== 'contactId'),
+            )
+          : l,
+      );
+    }
+  };
   // The customer's country decides the PAN rules.
   const customerCountry = (values['country'] ?? lead.country) as CountryCode;
   // The PAN edit flag lives here, above the box that remounts on a country switch, so a short value
@@ -327,7 +339,12 @@ export function ConvertDialog({
               Back
             </Button>
           ) : null}
-          <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={pending || unlinking.pending}
+            aria-busy={pending || undefined}
+          >
             {step < LAST_STEP ? 'Next' : pending ? 'Converting' : 'Convert'}
           </Button>
         </>

@@ -267,15 +267,18 @@ describe('PATCH /v1/leads/:id unlinks the customer (R6T)', () => {
     });
   });
 
-  it('works for a caller who can no longer read the customer, and says nothing about it', async () => {
-    h.as('salesB', 'sales');
+  it('works for a caller who cannot read the customer, and says nothing about it', async () => {
+    // Linked by a caller who reads every customer, unlinked by the same user holding a role that reads only its own.
     const created = LeadDtoSchema.parse(
       (await post({ customerId: seeded.colleagueCustomer })).body,
     );
-    h.as('salesB', 'sales');
+    h.as('salesA', 'marketing');
+    // The same role cannot link that customer (see the 404 test above), so it truly cannot read it.
+    expect((await post({ customerId: seeded.colleagueCustomer })).status).toBe(404);
     const res = await patch(created.id, { customerId: null, expectedVersion: created.version });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(LeadDtoSchema.parse(res.body).customerId).toBeNull();
+    expect(res.text).not.toContain('Colleague');
   });
 
   it('refuses to link through an edit (only null is accepted), a stale version and nothing to change', async () => {
