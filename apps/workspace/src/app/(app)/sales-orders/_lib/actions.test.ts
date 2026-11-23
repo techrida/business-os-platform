@@ -1,7 +1,12 @@
 import { CreditHoldDtoSchema, OpportunityDtoSchema } from '@bos/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { confirmDraftAction, confirmOrderAction, draftInvoiceAction, markBillableAction } from './actions';
+import {
+  confirmDraftAction,
+  confirmOrderAction,
+  draftInvoiceAction,
+  markBillableAction,
+} from './actions';
 import { IDS, invoiceDetail, salesOrderDetail, scheduleLine } from './fixtures';
 import type { ActionState } from './state';
 

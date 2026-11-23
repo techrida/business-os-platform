@@ -276,6 +276,7 @@ export function ImageUpload({
     }
     stopWatch();
     setScanningId(null);
+    setProblem(null);
     toast.success('Picture removed');
     onChangeRef.current(null);
     return true;
