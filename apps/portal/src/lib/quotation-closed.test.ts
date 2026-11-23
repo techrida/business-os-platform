@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
 import { isQuotationClosed } from './quotation-closed';
+
+vi.mock('server-only', () => ({}));
 
 describe('isQuotationClosed', () => {
   it('is true only for the 409 quotation_closed answer', () => {
