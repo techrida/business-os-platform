@@ -11,7 +11,7 @@ vi.mock('@/lib/bff', async (original) => ({
   ...(await original<typeof import('@/lib/bff')>()),
   routeSession: mocks.routeSession,
 }));
-vi.mock('@/lib/live-permissions', () => ({ getPermissionCheck: async () => mocks.can }));
+vi.mock('@/lib/live-permissions', () => ({ getPermissionCheck: () => Promise.resolve(mocks.can) }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
 
 const { GET } = await import('./route');

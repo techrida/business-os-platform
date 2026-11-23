@@ -2,7 +2,16 @@
 
 import type { CountryCode, PartyPhoneInput, VendorStatus } from '@bos/contracts';
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useActionState,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -94,10 +103,9 @@ export function ContactForm({
     addContactAction,
     panelStart<ContactField>(idempotencyKey),
   );
-  const addedRef = useRef(onAdded);
-  addedRef.current = onAdded;
+  const notifyAdded = useEffectEvent(() => onAdded?.());
   useEffect(() => {
-    if (state.savedCount > 0) addedRef.current?.();
+    if (state.savedCount > 0) notifyAdded();
   }, [state.savedCount]);
   return (
     <form action={formAction} noValidate className={styles.panelForm}>
