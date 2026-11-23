@@ -1,4 +1,11 @@
-import { DOCUMENT_SETTING_DEFAULTS, EMPTY_SNAPSHOT_COMPANY_PROFILE } from '@bos/contracts';
+import {
+  DEFAULT_BRAND_COLOUR,
+  DEFAULT_DOCUMENT_STYLE,
+  deriveBrandPalette,
+  DOCUMENT_SETTING_DEFAULTS,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
+  logoBackgroundHex,
+} from '@bos/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -176,10 +183,42 @@ describe('buildDocumentStyleSnapshot', () => {
       const { settings } = profileWith({ logoDocumentId: DOC_ID, legacyLogoDataUrl: LEGACY });
       const resolveLogo = vi.fn(() => Promise.resolve(RESOLVED));
       const snapshot = await buildDocumentStyleSnapshot(settings, scope, at, resolveLogo);
-      expect(resolveLogo).toHaveBeenCalledWith(DOC_ID);
+      // The default layout is banded: the logo is chosen for its band (the primary colour), with the variants named.
+      expect(resolveLogo).toHaveBeenCalledWith(DOC_ID, {
+        colour: logoBackgroundHex(DEFAULT_DOCUMENT_STYLE),
+        onDarkDocumentId: null,
+        onLightDocumentId: null,
+      });
       expect(snapshot.profile.logoDataUrl).toBe(RESOLVED);
       expect(snapshot.profile).not.toHaveProperty('logoDocumentId');
       expect(snapshot.profile).not.toHaveProperty('legacyLogoDataUrl');
+    });
+
+    it.each([
+      ['banded', DEFAULT_BRAND_COLOUR, deriveBrandPalette(DEFAULT_BRAND_COLOUR).primary],
+      ['tinted', DEFAULT_BRAND_COLOUR, deriveBrandPalette(DEFAULT_BRAND_COLOUR).tint],
+      ['ledger', DEFAULT_BRAND_COLOUR, '#ffffff'],
+      ['duo-cards', DEFAULT_BRAND_COLOUR, '#ffffff'],
+      ['side-labels', DEFAULT_BRAND_COLOUR, '#ffffff'],
+    ])('asks for the logo for the %s layout\'s own header colour, and passes both variants', async (layout, primaryColour, colour) => {
+      const ON_DARK = '11111111-1111-4111-8111-111111111111';
+      const ON_LIGHT = '22222222-2222-4222-8222-222222222222';
+      const { settings } = settingsOf({
+        'document.style': { layout, primaryColour },
+        'entity.profile': {
+          ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+          logoDocumentId: DOC_ID,
+          logoOnDarkDocumentId: ON_DARK,
+          logoOnLightDocumentId: ON_LIGHT,
+        },
+      });
+      const resolveLogo = vi.fn(() => Promise.resolve(RESOLVED));
+      await buildDocumentStyleSnapshot(settings, scope, at, resolveLogo);
+      expect(resolveLogo).toHaveBeenCalledWith(DOC_ID, {
+        colour,
+        onDarkDocumentId: ON_DARK,
+        onLightDocumentId: ON_LIGHT,
+      });
     });
 
     it('falls back to the legacy logo when the resolver finds nothing', async () => {

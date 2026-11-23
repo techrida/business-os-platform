@@ -352,6 +352,56 @@ describe('set: entity_logo', () => {
   });
 });
 
+describe('set: the logo for dark and for light backgrounds', () => {
+  it.each([
+    ['entity_logo_on_dark', 'logoOnDarkDocumentId'],
+    ['entity_logo_on_light', 'logoOnLightDocumentId'],
+  ] as const)(
+    '%s moves only %s, keeping the main logo and the other slot, and removes its own old image',
+    async (ownerType, field) => {
+      const main = addDoc('entity_logo', ORG);
+      const other = addDoc('entity_logo_on_light', ORG);
+      const old = addDoc(ownerType, ORG);
+      const next = addDoc(ownerType, ORG);
+      profile.value = {
+        ...profile.value,
+        logoDocumentId: main,
+        logoOnLightDocumentId: other,
+        [field]: old,
+        legacyLogoDataUrl: 'data:image/png;base64,AAAA',
+      };
+      await service.set(staff, ownerType, ORG, { documentId: next });
+      const written = settings.set.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(written[field]).toBe(next);
+      expect(written['logoDocumentId']).toBe(main);
+      if (ownerType === 'entity_logo_on_dark') expect(written['logoOnLightDocumentId']).toBe(other);
+      // The pre-documents logo belongs to the main slot: a variant upload leaves it.
+      expect(written['legacyLogoDataUrl']).toBe('data:image/png;base64,AAAA');
+      expect(documents.removeInTransaction).toHaveBeenCalledWith(tx, scope, old);
+      expect(audit.record.mock.calls[0]?.[1]).toMatchObject({ action: 'image.set', entityType: ownerType });
+    },
+  );
+
+  it('refuses a document of another slot as the new variant image (404)', async () => {
+    const mainDoc = addDoc('entity_logo', ORG);
+    await expect(
+      statusOf(service.set(staff, 'entity_logo_on_dark', ORG, { documentId: mainDoc })),
+    ).resolves.toBe(404);
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
+  it('removing the main logo leaves the variants stored (nothing prints without a main logo)', async () => {
+    const main = addDoc('entity_logo', ORG);
+    const dark = addDoc('entity_logo_on_dark', ORG);
+    profile.value = { ...profile.value, logoDocumentId: main, logoOnDarkDocumentId: dark };
+    await service.set(staff, 'entity_logo', ORG, { documentId: null });
+    expect(settings.set.mock.calls[0]?.[2]).toMatchObject({
+      logoDocumentId: null,
+      logoOnDarkDocumentId: dark,
+    });
+  });
+});
+
 describe('set: lock order (owner, then the new document, then the previous one)', () => {
   // A concurrent replacement holds the owner lock and then locks its previous document, which may be this request's
   // new one: taking a document lock before the owner lock would deadlock against it.
