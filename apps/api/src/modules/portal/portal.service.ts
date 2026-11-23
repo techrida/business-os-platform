@@ -58,27 +58,40 @@ import {
 } from './portal.store';
 import { assertVendorCaller } from './vendor-portal.caller';
 
-/** The same rule as the mapper: a visible status, and a rejection only when the customer made it. */
-export function isPortalVisible(v: Pick<PortalVersionHead, 'status' | 'rejectionSource'>): boolean {
-  return (
-    isCustomerVisibleStatus(v.status) &&
-    !(v.status === 'rejected' && v.rejectionSource !== 'customer')
-  );
+/**
+ * The same rule as the mapper: a visible status, a rejection only when the customer made it, and a version that was
+ * replaced or expired only if it was ever sent (an Approved version that is revised or runs out was never shown to
+ * the customer, and must stay invisible, R6D).
+ */
+export function isPortalVisible(
+  v: Pick<PortalVersionHead, 'status' | 'rejectionSource' | 'sentAt'>,
+): boolean {
+  if (!isCustomerVisibleStatus(v.status)) return false;
+  if (v.status === 'rejected' && v.rejectionSource !== 'customer') return false;
+  if ((v.status === 'superseded' || v.status === 'expired') && v.sentAt === null) return false;
+  return true;
 }
 
 /**
  * A sent version the company has since closed: it was cancelled itself (a Lost deal), or it was replaced by a revision
- * that was then cancelled. The mailed link then says "no longer open" instead of "not found" (R6D, EF2 Q2/Q3).
+ * that was then cancelled. Its mailed link, its row in the list and its PDF all say "no longer open" (R6D).
  */
-function isClosedToCustomer(source: {
-  version: { status: PortalVersionHead['status'] };
+function isClosedToCustomer(v: {
+  status: PortalVersionHead['status'];
+  sentAt: Date | null;
   quotationCancelled: boolean;
 }): boolean {
   return (
-    source.version.status === 'cancelled' ||
-    (source.version.status === 'superseded' && source.quotationCancelled)
+    v.sentAt !== null &&
+    (v.status === 'cancelled' || (v.status === 'superseded' && v.quotationCancelled))
   );
 }
+
+const quotationClosed = () =>
+  new ConflictException({
+    code: 'quotation_closed',
+    message: 'This quotation is no longer open',
+  });
 
 const notFound = () => new NotFoundException('Quotation not found');
 /** The PDF of a visible version is still being prepared (rendered soon, or its file awaits the scan). */
@@ -187,7 +200,7 @@ export class PortalService {
     assertCustomerCaller(p);
     const newest = new Map<string, PortalVersionHead>();
     for (const head of await this.store.listVersions(p)) {
-      if (!isPortalVisible(head)) continue;
+      if (!isPortalVisible(head) || isClosedToCustomer(head)) continue;
       const seen = newest.get(head.quotationId);
       if (seen === undefined || head.revisionNo > seen.revisionNo)
         newest.set(head.quotationId, head);
@@ -215,14 +228,13 @@ export class PortalService {
     assertCustomerCaller(p);
     const source = await this.store.loadView(p, versionId);
     // Decide visibility before any further read, so a hidden version costs no document or settings lookup.
-    if (source !== undefined && source.sentAt !== null && isClosedToCustomer(source)) {
+    if (source !== undefined && isClosedToCustomer({ ...source.version, ...source })) {
       // The customer was sent this version (the mail link names it), so its existence is no secret: say it is closed.
-      throw new ConflictException({
-        code: 'quotation_closed',
-        message: 'This quotation is no longer open',
-      });
+      throw quotationClosed();
     }
-    if (source === undefined || !isPortalVisible(source.version)) throw notFound();
+    if (source === undefined || !isPortalVisible({ ...source.version, sentAt: source.sentAt })) {
+      throw notFound();
+    }
     const scope = scopeOf(p);
 
     let issuer;
@@ -322,6 +334,7 @@ export class PortalService {
     assertCustomerCaller(p);
     const head = await this.store.loadDocumentHead(p, versionId);
     // Visibility first: a foreign or hidden version is the same plain 404 whatever its PDF is doing.
+    if (head !== undefined && isClosedToCustomer(head)) throw quotationClosed();
     if (head === undefined || !isPortalVisible(head)) throw notFound();
     const scope: TxScope = { tenantId: head.tenantId, organizationId: head.organizationId };
     const state = await this.pdfState(scope, { id: versionId, ...head });

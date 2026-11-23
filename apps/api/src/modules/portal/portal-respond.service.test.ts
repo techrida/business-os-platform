@@ -87,6 +87,8 @@ function headOf(over: Partial<PortalVersionHead> = {}): PortalVersionHead {
     validUntil: '2026-11-23',
     currency: 'NPR',
     total: '1130.00',
+    sentAt: new Date('2026-11-08T10:00:00Z'),
+    quotationCancelled: false,
     ...over,
   };
 }
