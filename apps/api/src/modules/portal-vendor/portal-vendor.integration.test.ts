@@ -528,10 +528,8 @@ describe('vendor portal capability by vendor status (done check 13)', () => {
     );
     asVendor(changed);
     const view = await service.onboarding();
-    expect(view.detailsChanged).toEqual({
-      at: '2026-11-23T04:00:00.000Z',
-      by: expect.any(String),
-    });
+    expect(view.detailsChanged?.at).toBe('2026-11-23T04:00:00.000Z');
+    expect(typeof view.detailsChanged?.by).toBe('string');
     expect(view.detailsChanged?.by).not.toBe('');
     asVendor(other);
     expect((await service.onboarding()).detailsChanged).toBeNull();

@@ -31,6 +31,12 @@ const ALTER_TEXT = readFileSync(
   'utf8',
 );
 
+/** 0220 adds the identity-reset stamp (two columns, a pair check and a user FK) to verification_cases. */
+const RESET_TEXT = readFileSync(
+  new URL('../migrations/0220_verification_identity_reset.sql', import.meta.url),
+  'utf8',
+);
+
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
 interface Shape {
@@ -200,6 +206,7 @@ const DRIZZLE: Record<string, PgTable> = {
 describe('0015_crm and src/schema/crm.ts', () => {
   const parsed = parseSql(SQL_TEXT);
   applyAlters(parsed, ALTER_TEXT);
+  applyAlters(parsed, RESET_TEXT);
   const reviewSql = readFileSync(
     new URL('../migrations/0040_verification_document_review.sql', import.meta.url),
     'utf8',
