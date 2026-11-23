@@ -135,7 +135,7 @@ function hintOf(row: PhoneRowState): string | undefined {
   if (row.country !== 'NP' || (row.e164 !== '' && !row.e164.startsWith(NEPAL_PREFIX))) {
     return undefined;
   }
-  return NEPAL_RULES.count(row.e164.slice(NEPAL_PREFIX.length));
+  return NEPAL_RULES.count?.(row.e164.slice(NEPAL_PREFIX.length));
 }
 
 function makeBlankRow(key: string, country: CountryCode, isPrimary: boolean): PhoneRowState {

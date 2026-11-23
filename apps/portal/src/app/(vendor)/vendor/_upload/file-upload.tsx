@@ -23,6 +23,7 @@ interface Uploaded {
 export function FileUpload({
   endpoint,
   label,
+  optional,
   hint,
   error,
   onDocument,
@@ -31,6 +32,8 @@ export function FileUpload({
   /** The portal route that receives the raw file, for example `/vendor/bills/new/file`. */
   endpoint: string;
   label: string;
+  /** A file that may be left out: the Field shows the muted Optional beside the label. */
+  optional?: boolean | undefined;
   hint: string;
   error?: string | undefined;
   onDocument: (documentId: string | null) => void;
@@ -92,7 +95,7 @@ export function FileUpload({
 
   return (
     <div className={styles.upload}>
-      <Field label={label} hint={hint} error={error}>
+      <Field label={label} optional={optional === true} hint={hint} error={error}>
         {(control) => (
           <Input
             ref={pickerRef}

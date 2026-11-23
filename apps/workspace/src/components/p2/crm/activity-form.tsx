@@ -98,7 +98,7 @@ export function ActivityForm({
         )}
       </Field>
 
-      <Field label="Details" hint="Optional." error={err['body']}>
+      <Field label="Details" optional error={err['body']}>
         {(c) => (
           <Textarea
             name="body"

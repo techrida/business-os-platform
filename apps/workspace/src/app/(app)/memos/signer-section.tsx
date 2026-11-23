@@ -29,10 +29,13 @@ const NO_APPROVERS =
 /** One signer block: the same small label above the same picker layout for Prepared, Recommended and Approved. */
 function SignerGroup({
   label,
+  optional = false,
   hint,
   children,
 }: {
   label: string;
+  /** A muted "Optional" at the right end of the label row, as on a Field (UIP-FORM-008). */
+  optional?: boolean;
   hint?: ReactNode;
   children: ReactNode;
 }) {
@@ -45,9 +48,12 @@ function SignerGroup({
       aria-describedby={hint ? hintId : undefined}
       className={styles.signerGroup}
     >
-      <span id={labelId} className={styles.signerLabel}>
-        {label}
-      </span>
+      <div className={styles.signerLabelRow}>
+        <span id={labelId} className={styles.signerLabel}>
+          {label}
+        </span>
+        {optional ? <span className={styles.signerOptional}>Optional</span> : null}
+      </div>
       {hint ? (
         <span id={hintId} className={styles.signerHint}>
           {hint}
@@ -133,10 +139,11 @@ export function SignerSection({
 
       <SignerGroup
         label="Recommended by"
+        optional
         hint={
           noApprovers
             ? NO_APPROVERS
-            : 'Optional. Only people who can decide approvals are listed. Choose them in approval-route order; empty rows are ignored.'
+            : 'Only people who can decide approvals are listed. Choose them in approval-route order; empty rows are ignored.'
         }
       >
         {recommenders.map((id, i) => (

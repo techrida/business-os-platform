@@ -14,7 +14,6 @@ import { PhoneListInput } from '@/components/ui/phone-list-input';
 import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 import type { ConvertLead } from './convert-dialog';
-import { OptionalLabel } from './convert-parts';
 import type { ContactLookup, StepContext } from './convert-types';
 import { loadConversionContacts } from './record-lookups';
 
@@ -165,7 +164,7 @@ export function ContactStep({
               )}
             </Field>
           </div>
-          <Field label={<OptionalLabel>Phone</OptionalLabel>}>
+          <Field label="Phone" optional>
             {(c) => (
               <PhoneListInput
                 key={`${lead.id}-${lead.version}`}

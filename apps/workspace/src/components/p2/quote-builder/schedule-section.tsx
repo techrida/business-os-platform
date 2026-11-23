@@ -219,7 +219,7 @@ export function ScheduleSection({
                     ) : null}
                   </div>
                 ) : (
-                  <Field label="Due when" hint="Optional" error={error('dueDescription')}>
+                  <Field label="Due when" optional error={error('dueDescription')}>
                     {(control) => (
                       <DatePicker
                         {...control}

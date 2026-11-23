@@ -335,7 +335,11 @@ it('asks for a quotation before it offers an upload, and has no ids to type', as
 
   await choose(document.body, 'quotationVersionId', QUOTE_A.label);
   expect(fileInput()).not.toBeNull();
-  expect(confirmDialog().textContent).toContain('Evidence document (optional)');
+  expect(confirmDialog().textContent).toContain('Evidence document');
+  // UIP-FORM-008: "Optional" sits beside the label, not in it or in the hint.
+  expect(confirmDialog().textContent).toContain('Optional');
+  expect(confirmDialog().textContent).not.toContain('(optional)');
+  expect(confirmDialog().textContent).not.toContain('Optional. A file');
   expect(confirmDialog().textContent).not.toContain('Choose a quotation first');
   expect(confirmDialog().querySelector('textarea')).toBeNull();
   await mounted.unmount();

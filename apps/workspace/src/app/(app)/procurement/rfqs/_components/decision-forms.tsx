@@ -267,6 +267,7 @@ export function RecommendForm({
         </Field>
         <Field
           label="If fewer quotations than required"
+          optional
           hint="Needed only when this RFQ has fewer quotations than the company’s minimum. Say why you are recommending anyway. Otherwise leave it empty."
           error={err.fewerThanThreeReason}
           className={WIDE}

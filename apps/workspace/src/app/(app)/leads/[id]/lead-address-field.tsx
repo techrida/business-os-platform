@@ -125,7 +125,8 @@ function AddressEditor({ leadId, version, address }: LeadAddressFieldProps) {
       <input type="hidden" name="expectedVersion" value={version} />
       <Stack gap="small">
         <Field
-          label="Address (optional)"
+          label="Address"
+          optional
           hint="Street lines. Leave Address and City both empty to remove the address."
           error={errors['address.line'] ?? errors['form']}
         >
@@ -142,7 +143,7 @@ function AddressEditor({ leadId, version, address }: LeadAddressFieldProps) {
             />
           )}
         </Field>
-        <Field label="City (optional)" error={errors['address.city']}>
+        <Field label="City" optional error={errors['address.city']}>
           {(c) => (
             <Input
               {...c}
