@@ -295,6 +295,19 @@ describe('updateCustomerAction', () => {
     expect(res.reload).toBeUndefined();
   });
 
+  it('saves a verified customer whose disabled country control posts nothing (R6AE)', async () => {
+    api.getCustomer.mockResolvedValue(original);
+    api.updateCustomer.mockResolvedValue({ ...original, industry: 'Retail' });
+    const f = editForm();
+    f.delete('address.country');
+    f.set('legalName', 'Old name');
+    f.set('industry', 'Retail');
+    await expect(updateCustomerAction({ key: IDEM, errors: {} }, f)).rejects.toThrow(
+      `redirect /customers/${ID}?saved=1`,
+    );
+    expect(api.updateCustomer).toHaveBeenCalled();
+  });
+
   it('keeps the reload wording for a plain version conflict', async () => {
     api.getCustomer.mockResolvedValue(original);
     api.updateCustomer.mockRejectedValue(apiError(409, 'conflict'));

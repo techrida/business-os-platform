@@ -377,6 +377,7 @@ describe('ErrorBodyFilter', () => {
     'kyc_expired',
     'vendor_not_editable',
     'vendor_identity_locked',
+    'customer_identity_locked',
     'account_exists',
     'no_verified_bank_account',
     'callback_evidence_not_clean',

@@ -1286,6 +1286,16 @@ export const VerificationCaseDtoSchema = z.object({
   partyNumber: z.string().nullable().optional(),
   reviewerNames: z.array(z.string()).optional(),
   looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
+  /**
+   * Sent with a single case (GET /:id). Set once a change of the party's identity (legal name, PAN, kind or country)
+   * reset the case: when, and who made the change. The reset note reads "Details changed on <date> by <name>".
+   */
+  identityReset: z
+    .object({ at: isoDateTime, by: z.guid(), byName: z.string().nullable() })
+    .nullable()
+    .optional(),
+  /** The case's documents first uploaded before that reset: history only, they cannot go on the checklist again. */
+  beforeChangeDocumentIds: z.array(z.guid()).optional(),
   reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),
   approvalBlockedReason: z.string().nullable().optional(),
   reviewBlockedReason: z.string().nullable().optional(),

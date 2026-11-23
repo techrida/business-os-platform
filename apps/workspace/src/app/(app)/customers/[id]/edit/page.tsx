@@ -120,6 +120,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         reloadHref={here}
         description={customer.number}
         enabledCurrencies={enabledCurrencies}
+        lockIdentity={customer.verification?.approved === true}
       />
     </Page>
   );
