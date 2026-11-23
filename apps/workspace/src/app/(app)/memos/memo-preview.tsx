@@ -90,8 +90,10 @@ export function MemoPreview({
               type="button"
               className={styles.iconAction}
               aria-label={`Download ${noun} as PDF`}
-              disabled={busy}
-              onClick={() => void download()}
+              aria-disabled={busy || undefined}
+              onClick={() => {
+                if (!busy) void download();
+              }}
             >
               <DownloadIcon size={18} />
             </button>
