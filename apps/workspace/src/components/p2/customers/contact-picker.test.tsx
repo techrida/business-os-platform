@@ -130,3 +130,31 @@ it('puts "Optional" beside the label and no hint under the box', async () => {
   expect(label.parentElement!.textContent).toBe('ContactOptional');
   expect(mounted.container.textContent).not.toContain('Optional.');
 });
+
+it('lists more than 20 contacts as one flat list, with no "Unassigned" header', async () => {
+  // Fails on the old picker: past 20 options the Combobox grouped them and put every ungrouped one under "Unassigned".
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+    name: `Contact ${String(i).padStart(2, '0')}`,
+  }));
+  function Many() {
+    const [value, setValue] = useState('');
+    return (
+      <Field label="Contact" optional>
+        {(control) => (
+          <ContactPicker
+            control={control}
+            name="contactId"
+            options={many}
+            value={value}
+            onChange={setValue}
+          />
+        )}
+      </Field>
+    );
+  }
+  mounted = await mountForm(<Many />);
+  await click(box(mounted.container));
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(25);
+  expect(document.body.textContent).not.toContain('Unassigned');
+});

@@ -111,6 +111,19 @@ describe('the organization picker', () => {
     // Their usual currency (INR) is switched off here, so it is not preselected: the select would blank.
     expect(form().get('currency')).toBe('NPR');
   });
+
+  it('lists more than 20 customers as one flat list, with no "Unassigned" header', async () => {
+    // Fails on the old picker: past 20 options the Combobox grouped them under "Unassigned".
+    const many: CustomerOption[] = Array.from({ length: 25 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      label: `Customer ${String(i).padStart(2, '0')}`,
+      currency: 'NPR' as const,
+    }));
+    const { box } = await mount(vi.fn(), many);
+    await click(box('Organization legal name'));
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(25);
+    expect(document.body.textContent).not.toContain('Unassigned');
+  });
 });
 
 // UIP-FORM-008: Optional sits beside the label; the hint keeps only what the label cannot say.
