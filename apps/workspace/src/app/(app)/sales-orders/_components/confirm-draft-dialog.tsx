@@ -10,7 +10,7 @@ import type { ActionState } from '../_lib/state';
 import { CreditHoldHelp } from './credit-hold-help';
 
 const EVIDENCE_HINT =
-  "Optional. A file you hold for this order, such as the customer purchase order. It is kept with the order. What the company's evidence policy needs comes from the customer's accepted evidence.";
+  "A file you hold for this order, such as the customer purchase order. It is kept with the order. What the company's evidence policy needs comes from the customer's accepted evidence.";
 
 export interface ConfirmDraftDialogProps {
   /** The accepted quotation version the draft was made from. */
@@ -59,7 +59,8 @@ export function ConfirmDraftDialog({
             kind="quotation-version"
             ownerId={quotationVersionId}
             name="evidenceDocumentIds"
-            label="Evidence document (optional)"
+            label="Evidence document"
+            optional
             hint={EVIDENCE_HINT}
             error={state.errors?.evidence}
             onBlockingChange={setBlocked}

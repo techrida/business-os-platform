@@ -115,7 +115,7 @@ export function PromiseDialog({
               />
             )}
           </Field>
-          <Field label="Note (optional)" error={state.errors?.note}>
+          <Field label="Note" optional error={state.errors?.note}>
             {(control) => (
               <Textarea
                 name="note"
