@@ -151,7 +151,7 @@ it('saves only after a dry run succeeds and every confirm box is ticked', async 
   expect(body).toContain('No one will see less.');
   expect(button('Save changes').disabled).toBe(true);
 
-  const box = document.querySelector<HTMLInputElement>('[role="dialog"] input[type="checkbox"]');
+  const box = document.querySelector<HTMLInputElement>('[role="dialog"] button[role="checkbox"]');
   await click(box);
   expect(button('Save changes').disabled).toBe(false);
 
@@ -177,7 +177,7 @@ it('cannot save while a blocked warning applies, even with every confirm box tic
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
     'Founders always have full access.',
   );
-  await click(document.querySelector('[role="dialog"] input[type="checkbox"]'));
+  await click(document.querySelector('[role="dialog"] button[role="checkbox"]'));
   expect(button('Save changes').disabled).toBe(true);
   await click(button('Save changes'));
   expect(runSave).not.toHaveBeenCalled();

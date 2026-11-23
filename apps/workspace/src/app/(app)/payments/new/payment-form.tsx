@@ -42,6 +42,7 @@ import { recordPaymentAction } from './actions';
 import type { RecordPaymentState } from './form-state';
 import styles from './payment-form.module.css';
 import { MAX_PROOFS, PROOF_ACCEPT, proofProblem } from './proof-rules';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /** One customer the person can choose. Names and numbers only: the form shows no balances. */
 export interface CustomerOption {
@@ -512,9 +513,8 @@ export function PaymentForm({
             </ul>
             <label className={styles.check}>
               {/* Keyed by the list, so a new set of matches always starts unticked. */}
-              <input
+              <Checkbox
                 key={referenceMatches.map((m) => m.id).join(',')}
-                type="checkbox"
                 name="referenceConfirmed"
                 value={referenceMatches.map((m) => m.id).join(',')}
               />

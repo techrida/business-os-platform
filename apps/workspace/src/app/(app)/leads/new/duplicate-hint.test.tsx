@@ -236,7 +236,7 @@ it('looks up the new primary when another number is marked primary', async () =>
     await m.lookUp();
     // The second number is not the primary one yet: only the first was looked up.
     expect(m.phonesAsked()).toEqual(['+9779812345678']);
-    await click(m.container.querySelector('input[aria-label="Phone 2 primary"]'));
+    await click(m.container.querySelector('button[aria-label="Phone 2 primary"]'));
     await m.lookUp();
     expect(m.phonesAsked()).toEqual(['+9779812345678', '+14155552671']);
   } finally {

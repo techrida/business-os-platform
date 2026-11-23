@@ -160,7 +160,7 @@ it("offers the existing customer's contacts, a contact without an email disabled
     matchedOn: 'name',
   });
   expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(radioFor('Link to an existing contact'));
   const field = dialog().querySelector<HTMLInputElement>('input[name="contactId"]');
   await click(field?.parentElement?.querySelector('button') ?? null);
   const options = Array.from(document.querySelectorAll('[role="option"]'));
@@ -214,7 +214,7 @@ it('searches a different legal name and links the selected customer without dupl
     />,
   );
   await click(mounted.container.querySelector('button'));
-  await click(dialog().querySelector('input[name="customerMode"][value="existing"]'));
+  await click(radioFor('Link to an existing organization'));
   await fill(dialog().querySelector('input[maxlength="100"]'), 'Mountain');
   await click(
     [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Search') ?? null,
@@ -228,7 +228,7 @@ it('searches a different legal name and links the selected customer without dupl
     CUSTOMER,
   );
   expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(radioFor('Link to an existing contact'));
   await choose(dialog(), 'contactId', 'Mina');
   expect(dialog().querySelector<HTMLInputElement>('input[name="contactId"]')?.value).toBe(CONTACT);
   await submit(dialog());
@@ -285,6 +285,12 @@ async function mountNewCustomer(lead: Partial<ConvertLead> = {}) {
 }
 
 /** The visible text box of a digit input, found from its posted hidden input. */
+/** The design-system radio inside the label with this text (the two groups share the value "existing"). */
+function radioFor(text: string): HTMLElement | null {
+  const label = [...dialog().querySelectorAll('label')].find((l) => l.textContent?.trim() === text);
+  return label?.querySelector<HTMLElement>('button[role="radio"]') ?? null;
+}
+
 function digitBox(name: string): HTMLInputElement | null {
   return (
     dialog()
@@ -297,7 +303,7 @@ it('keeps a short new-contact phone blocked after switching to an existing conta
   await mountNewCustomer();
   const box = dialog().querySelector<HTMLInputElement>('input[aria-label="Phone 1 number"]');
   await fill(box, '981234567');
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(radioFor('Link to an existing contact'));
   await click(dialog().querySelector('input[name="contactMode"][value="create"]'));
   expect(
     dialog().querySelector<HTMLInputElement>('input[aria-label="Phone 1 number"]')?.value,

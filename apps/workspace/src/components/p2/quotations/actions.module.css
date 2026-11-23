@@ -67,14 +67,6 @@
   min-height: 36px;
 }
 
-.choice input {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  accent-color: var(--button-primary-bg);
-}
-
 .wrap {
   overflow-wrap: anywhere;
 }

@@ -220,9 +220,7 @@
 }
 
 .checkbox {
-  width: 20px;
-  height: 20px;
-  margin: 12px;
+  margin: 14px; /* a 16px box in a 44px target */
 }
 
 /* Phone: each member row becomes a card; the header row is read by screen readers only. */

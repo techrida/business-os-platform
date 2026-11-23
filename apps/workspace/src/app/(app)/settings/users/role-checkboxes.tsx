@@ -1,7 +1,7 @@
 import { ROLE_KEYS } from '@bos/contracts';
-import type { ChangeEvent } from 'react';
 
 import styles from './users.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /** "customer_user" -> "Customer user". Display only: the checkbox value stays the role key. */
 export function roleLabel(role: string): string {
@@ -34,17 +34,14 @@ export function RoleCheckboxes({
       <div className={styles.checkGrid}>
         {ROLE_KEYS.map((role) => (
           <label key={role} className={styles.checkLabel} htmlFor={`${idPrefix}-${role}`}>
-            <input
+            <Checkbox
               id={`${idPrefix}-${role}`}
-              className={styles.checkbox}
-              type="checkbox"
               name="roles"
               value={role}
               {...(onToggle
                 ? {
                     checked: checked.includes(role),
-                    onChange: (event: ChangeEvent<HTMLInputElement>) =>
-                      onToggle(role, event.target.checked),
+                    onCheckedChange: (next: boolean) => onToggle(role, next),
                   }
                 : { defaultChecked: checked.includes(role) })}
             />
