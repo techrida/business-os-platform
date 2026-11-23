@@ -28,7 +28,12 @@ function minHeight(file: string, selector: string, coarse: boolean): string | un
       ? text
       : text.slice(0, start) + text.slice(end);
   for (const m of scope.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (!(m[1] ?? '').split(',').some((s) => s.trim().endsWith(selector) || s.trim().endsWith(`${selector}:not(.textarea)`))) continue;
+    if (
+      !(m[1] ?? '')
+        .split(',')
+        .some((s) => s.trim().endsWith(selector) || s.trim().endsWith(`${selector}:not(.textarea)`))
+    )
+      continue;
     const found = /min-height:\s*([^;]+);/.exec(m[2] ?? '');
     if (found) return found[1]?.trim();
   }
@@ -48,5 +53,26 @@ describe('control heights (UIP-FORM-010)', () => {
 
   it.each(CONTROLS)('%s %s is 44px on touch', (file, selector) => {
     expect(minHeight(file, selector, true)).toBe('44px');
+  });
+});
+
+describe('image upload hint (R6AC)', () => {
+  it('never hides the size hint at a narrow width; only the drag half goes', () => {
+    const text = css('image-upload.module.css');
+    for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const hidden = /display:\s*none/.test(m[2] ?? '');
+      if (hidden) expect(m[1]).not.toMatch(/\.dropHint\b/);
+    }
+    expect(text).toMatch(/\.dropHow\s*\{[^}]*display:\s*none/);
+  });
+});
+
+describe('field help button (R6C5)', () => {
+  it('is never hidden at any width', () => {
+    const text = css('field.module.css');
+    for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (/\.help\b/.test(m[1] ?? ''))
+        expect(m[2]).not.toMatch(/display:\s*none|visibility:\s*hidden/);
+    }
   });
 });

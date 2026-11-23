@@ -170,6 +170,15 @@
   line-height: var(--line-height-body);
 }
 
+.problem {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--status-error);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
 .dropHint {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
@@ -198,7 +207,8 @@
     background: var(--surface-default);
   }
 
-  .dropHint {
+  /* The limits stay at every width (R6AC): only the "Drop a file here" half goes, since a phone has no drag. */
+  .dropHow {
     display: none;
   }
 }
