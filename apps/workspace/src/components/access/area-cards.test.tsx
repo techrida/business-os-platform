@@ -352,9 +352,7 @@ it('shows view-only cards with every control disabled and no foot buttons', asyn
   await render(false);
   await click(byLabel('View Leads'));
   const leads = card('Leads');
-  const controls = [
-    ...leads.querySelectorAll<HTMLButtonElement>('li button'),
-  ];
+  const controls = [...leads.querySelectorAll<HTMLButtonElement>('li button')];
   expect(controls.length).toBeGreaterThan(0);
   for (const control of controls) expect(control.disabled).toBe(true);
   expect(leads.textContent).not.toContain('Review changes');

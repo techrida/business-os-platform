@@ -216,58 +216,59 @@ export function DocumentStyleForm({
       actions={actions}
     >
       <form action={formAction} className={shell.form} noValidate>
-        <RadioGroup
-          asChild
-          name="layout"
-          value={layout}
-          onValueChange={(next) => setLayout(next as typeof layout)}
-        >
-          <fieldset className={styles.group}>
-            <legend className={styles.legend}>Layout</legend>
-            <ul className={styles.layouts} aria-busy={refreshing}>
-              {DOCUMENT_LAYOUTS.map((value) => {
-                const { name, hint } = DOCUMENT_LAYOUT_LABELS[value];
-                const selected = layout === value;
-                return (
-                  <li key={value} className={styles.card} data-selected={selected}>
-                    <label className={styles.pick}>
-                      <span className={styles.thumbWrap}>
-                        <LayoutThumbnail layout={value} html={previews[value]} decorative />
-                        {selected ? (
-                          <span className={styles.badge} aria-hidden="true">
-                            <CheckMark size={12} />
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className={styles.meta}>
-                        <span className={styles.nameRow}>
-                          <Radio value={value} />
-                          <span className={styles.name}>{name}</span>
+        <fieldset className={styles.group}>
+          <legend className={styles.legend}>Layout</legend>
+          <ul className={styles.layouts} aria-busy={refreshing}>
+            {DOCUMENT_LAYOUTS.map((value) => {
+              const { name, hint } = DOCUMENT_LAYOUT_LABELS[value];
+              const selected = layout === value;
+              return (
+                <li key={value} className={styles.card} data-selected={selected}>
+                  <label className={styles.pick}>
+                    <span className={styles.thumbWrap}>
+                      <LayoutThumbnail layout={value} html={previews[value]} decorative />
+                      {selected ? (
+                        <span className={styles.badge} aria-hidden="true">
+                          <CheckMark size={12} />
                         </span>
-                        <span className={styles.hint}>{hint}</span>
+                      ) : null}
+                    </span>
+                    <span className={styles.meta}>
+                      <span className={styles.nameRow}>
+                        {/* One group per card: the expand button sits between the cards' radios. */}
+                        <RadioGroup
+                          neutral
+                          name="layout"
+                          value={selected ? value : ''}
+                          onValueChange={() => setLayout(value)}
+                        >
+                          <Radio value={value} />
+                        </RadioGroup>
+                        <span className={styles.name}>{name}</span>
                       </span>
-                    </label>
-                    <button
-                      type="button"
-                      className={styles.expand}
-                      aria-label={`Preview ${name} at full size`}
-                      onClick={() => setExpanded(value)}
-                    >
-                      <ExpandMark />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <p className={styles.status} role="status">
-              {refreshing
-                ? 'Updating previews…'
-                : refreshFailed
-                  ? 'The previews could not be refreshed, so they show the previous colour. Save still keeps the colour you chose.'
-                  : ''}
-            </p>
-          </fieldset>
-        </RadioGroup>
+                      <span className={styles.hint}>{hint}</span>
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className={styles.expand}
+                    aria-label={`Preview ${name} at full size`}
+                    onClick={() => setExpanded(value)}
+                  >
+                    <ExpandMark />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className={styles.status} role="status">
+            {refreshing
+              ? 'Updating previews…'
+              : refreshFailed
+                ? 'The previews could not be refreshed, so they show the previous colour. Save still keeps the colour you chose.'
+                : ''}
+          </p>
+        </fieldset>
 
         <fieldset className={styles.group}>
           <legend className={styles.legend}>Primary colour</legend>
