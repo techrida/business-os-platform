@@ -23,6 +23,7 @@ import {
   QuotationSummaryQuerySchema,
   QuotationSummarySchema,
   QuotationListItemSchema,
+  trimPercent,
   QuotationTaxSummaryItemSchema,
   QuotationVersionContentSchema,
   QuotationVersionDtoSchema,
@@ -1124,5 +1125,22 @@ describe('AcceptanceDtoSchema', () => {
 
   it('needs acceptedByName to be present (null, not missing) so the column is always read', () => {
     expect(AcceptanceDtoSchema.safeParse(dto).success).toBe(false);
+  });
+});
+
+describe('trimPercent', () => {
+  it('drops insignificant fractional zeros and a bare point', () => {
+    expect(trimPercent('60.0000')).toBe('60');
+    expect(trimPercent('33.3300')).toBe('33.33');
+    expect(trimPercent('100')).toBe('100');
+    expect(trimPercent('0.0000')).toBe('0');
+    expect(trimPercent('12.5')).toBe('12.5');
+  });
+
+  it('stays linear on a long run of zeros', () => {
+    const input = `1.${'0'.repeat(200_000)}1`;
+    const start = performance.now();
+    expect(trimPercent(input)).toBe(input);
+    expect(performance.now() - start).toBeLessThan(100);
   });
 });

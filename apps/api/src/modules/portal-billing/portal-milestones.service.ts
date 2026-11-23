@@ -14,6 +14,7 @@ import {
   type PortalMilestone,
   type PortalMilestoneStatus,
   type PortalSalesOrder,
+  trimPercent,
 } from '@bos/contracts';
 import { billingScheduleLines, invoices, organizations, salesOrders, scoped } from '@bos/db';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
@@ -86,11 +87,6 @@ export function toPortalSalesOrder(
         };
       }),
   });
-}
-
-/** numeric(7,4) reads back as "60.0000"; the contract takes at most four decimals, and the page shows "60". */
-function trimPercent(value: string): string {
-  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 }
 
 @Injectable()

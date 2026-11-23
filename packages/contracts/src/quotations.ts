@@ -53,7 +53,10 @@ export function paymentPercentUnits(percent: string): number {
 /** Trim the insignificant fractional zeros without rounding a decimal string. */
 export function trimPercent(percent: string): string {
   if (!percent.includes('.')) return percent;
-  const trimmed = percent.replace(/0+$/, '').replace(/\.$/, '');
+  let end = percent.length;
+  while (end > 0 && percent[end - 1] === '0') end -= 1;
+  if (end > 0 && percent[end - 1] === '.') end -= 1;
+  const trimmed = percent.slice(0, end);
   return trimmed === '' || trimmed === '-' ? '0' : trimmed;
 }
 
