@@ -76,8 +76,10 @@ describe('RichTextEditor', () => {
       'false',
       'false',
     ]);
-    expect(buttons()[0]?.getAttribute('title')).toBe('Bold (Ctrl+B)');
-    expect(buttons()[1]?.getAttribute('title')).toBe('Italic (Ctrl+I)');
+    // The shortcut hint is the design-system Tooltip (shown on focus), not a native title.
+    expect(buttons().some((b) => b.hasAttribute('title'))).toBe(false);
+    await act(() => Promise.resolve(buttons()[0]?.focus()));
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Bold (Ctrl+B)');
     expect(buttons().every((b) => b.type === 'button')).toBe(true);
     // One tab stop for the toolbar.
     expect(buttons().filter((b) => b.tabIndex === 0)).toHaveLength(1);
