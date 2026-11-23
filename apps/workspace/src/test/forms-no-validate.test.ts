@@ -54,7 +54,7 @@ export function formTags(code: string): { tag: string; line: number }[] {
   return found;
 }
 
-const hasNoValidate = (tag: string) => /\snoValidate(?=[\s/>=])/.test(tag);
+const hasNoValidate = (tag: string) => /\snoValidate(?=[\s/>])/.test(tag);
 
 describe('every <form> carries noValidate', () => {
   it('has no form without it in the workspace or the portal', () => {

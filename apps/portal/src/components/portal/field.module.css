@@ -97,3 +97,8 @@
   padding-block: 10px;
   resize: vertical;
 }
+
+/* A control that prints its own message (the number input) takes the line; the field's text steps aside. */
+.field:has([data-field-override]) > [data-message] {
+  visibility: hidden;
+}

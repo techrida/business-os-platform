@@ -79,3 +79,13 @@ it('keeps a Field label to one clipped line so a long one cannot push its box do
   expect(rule('\\.label')).toContain('white-space: nowrap');
   expect(rule('\\.label')).toContain('text-overflow: ellipsis');
 });
+
+it("hides the Field's own text while a control prints its message in the line", () => {
+  const css = readFileSync(
+    resolve(process.cwd(), 'src/components/portal/field.module.css'),
+    'utf8',
+  );
+  expect(css).toContain(
+    '.field:has([data-field-override]) > [data-message] {\n  visibility: hidden;',
+  );
+});
