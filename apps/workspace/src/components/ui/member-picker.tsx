@@ -26,6 +26,8 @@ export interface MemberOption {
   role?: string | null | undefined;
   /** The heading this person sits under when the list is long (their department). */
   group?: string | null | undefined;
+  /** Words that find this person but are not shown (an email address, for an administrator's search). */
+  searchText?: string | undefined;
   /** Shown but not selectable (already chosen elsewhere). */
   disabled?: boolean | undefined;
   disabledReason?: string | undefined;
@@ -47,6 +49,7 @@ export function memberComboboxOptions(people: readonly MemberOption[]): Combobox
       label: p.name,
       description: role === '' ? undefined : role,
       group: p.group,
+      searchText: p.searchText,
       disabled: p.disabled,
       disabledReason: p.disabledReason,
     };
