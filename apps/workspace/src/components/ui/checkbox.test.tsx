@@ -57,8 +57,8 @@ it('toggles with a click on its label and on Space, and reports the boolean', as
   expect(box.getAttribute('aria-checked')).toBe('false');
   await click(container.querySelector('label'));
   expect(box.getAttribute('aria-checked')).toBe('true');
-  await act(async () => box.focus());
-  await act(async () => box.click());
+  await act(() => Promise.resolve(box.focus()));
+  await act(() => Promise.resolve(box.click()));
   expect(seen).toEqual([true, false]);
   // The label gives it its accessible name.
   expect(box.closest('label')?.textContent).toBe('Remember me');
@@ -154,7 +154,7 @@ it('radios select one at a time, by click and by arrow keys, and submit the chos
   await click(radios[1]!);
   expect(onValue).toHaveBeenLastCalledWith('b');
   expect(new FormData(form).get('mode')).toBe('b');
-  await act(async () => radios[1]!.focus());
+  await act(() => Promise.resolve(radios[1]!.focus()));
   await key(radios[1]!, 'ArrowUp');
   expect(document.activeElement).toBe(radios[0]);
   expect(radios[0]!.getAttribute('aria-checked')).toBe('true');
@@ -190,7 +190,7 @@ it('a controlled checkbox keeps its state when the form resets (React resets a f
   const box = container.querySelector<HTMLElement>('[role="checkbox"]')!;
   await click(box);
   expect(box.getAttribute('aria-checked')).toBe('true');
-  await act(async () => container.querySelector('form')!.reset());
+  await act(() => Promise.resolve(container.querySelector('form')!.reset()));
   expect(box.getAttribute('aria-checked')).toBe('true');
 });
 
@@ -203,7 +203,7 @@ it('an uncontrolled checkbox returns to its default on reset, like a native one'
   const box = container.querySelector<HTMLElement>('[role="checkbox"]')!;
   await click(box);
   expect(box.getAttribute('aria-checked')).toBe('false');
-  await act(async () => container.querySelector('form')!.reset());
+  await act(() => Promise.resolve(container.querySelector('form')!.reset()));
   expect(box.getAttribute('aria-checked')).toBe('true');
 });
 
@@ -223,7 +223,7 @@ it('a controlled radio group keeps its choice when the form resets', async () =>
   const radios = [...container.querySelectorAll<HTMLElement>('[role="radio"]')];
   await click(radios[1]!);
   expect(radios[1]!.getAttribute('aria-checked')).toBe('true');
-  await act(async () => container.querySelector('form')!.reset());
+  await act(() => Promise.resolve(container.querySelector('form')!.reset()));
   expect(radios[1]!.getAttribute('aria-checked')).toBe('true');
   expect(radios[0]!.getAttribute('aria-checked')).toBe('false');
 });
