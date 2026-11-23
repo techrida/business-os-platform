@@ -192,6 +192,27 @@ describe('submitPaymentAction submit', () => {
   });
 });
 
+describe('submitPaymentAction withheld tax text (R6Q4)', () => {
+  it('sends grouped tax as digits, and refuses text it cannot read instead of dropping it to zero', async () => {
+    fetchMock.mockResolvedValue(json({ id: ID }, 201));
+    for (const tdsWithheld of ['1,000.00', '12,50,000.00', '1,000']) {
+      fetchMock.mockClear();
+      const to = await redirectOf(
+        submitPaymentAction({ key: IDEM }, form({ tdsWithheld, withholdingCode: 'TDS-1' })),
+      );
+      expect(to, tdsWithheld).toBe('/payments?submitted=1');
+      const sent = JSON.parse(callOf(fetchMock).init.body as string) as { tdsWithheld: string };
+      expect(Number(sent.tdsWithheld), tdsWithheld).toBeGreaterThan(0);
+    }
+    for (const tdsWithheld of ['1,5', '10,50', 'abc']) {
+      fetchMock.mockClear();
+      const state = await submitPaymentAction({ key: IDEM }, form({ tdsWithheld }));
+      expect(state.fieldErrors?.tdsWithheld, tdsWithheld).toBeTruthy();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe('submitPaymentAction amount with a space', () => {
   it('says to remove the space for `10 50`, not the generic message', async () => {
     const state = await submitPaymentAction(
