@@ -171,9 +171,7 @@ describe('the organization picker on a cut-off customer list', () => {
     // One letter is matched against the loaded list only: it cannot rule a customer out.
     await fill(input, 'z');
     expect(search).not.toHaveBeenCalled();
-    expect(document.body.textContent).toContain(
-      'Not in the first 1 customers. Find it on the Customers list.',
-    );
+    expect(document.body.textContent).toContain('Keep typing to search all customers.');
     expect(document.body.textContent).not.toContain('Add the customer first');
     // Once the server has answered for the text, nothing found is a real answer.
     await fill(input, 'zzz');
