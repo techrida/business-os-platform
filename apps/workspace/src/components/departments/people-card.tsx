@@ -52,6 +52,7 @@ import {
   type StagedPerson,
 } from './people-model';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export const PEOPLE_STALE_MESSAGE = 'Access was changed by someone else. Reload to see the latest.';
 
@@ -300,13 +301,12 @@ export function PeopleCard({
                   <tr key={person.userId} className={leaving ? styles.leaving : undefined}>
                     {editable && (
                       <td className={styles.cellSelect}>
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           className={styles.checkbox}
                           aria-label={`Select ${person.name}`}
                           checked={selected.has(person.userId)}
                           disabled={leaving}
-                          onChange={(event) => toggle(person.userId, event.currentTarget.checked)}
+                          onCheckedChange={(nextChecked) => toggle(person.userId, nextChecked)}
                         />
                       </td>
                     )}

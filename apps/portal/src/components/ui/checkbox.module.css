@@ -1,0 +1,118 @@
+/* Checkbox and radio (Figma tokens --checkbox-* and --radio-*). The control is a button, so the browser
+   draws nothing of its own. The 24px hit area is the 16px box plus a transparent ring. */
+.box,
+.radio {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: var(--border-width-thin) solid var(--checkbox-border);
+  background: var(--checkbox-bg);
+  color: var(--checkbox-checked-icon);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.box {
+  border-radius: var(--radius-sm);
+}
+
+.radio {
+  border-radius: 50%;
+  border-color: var(--radio-border);
+  background: var(--radio-bg);
+}
+
+/* Enlarges the pointer target without moving the box. */
+.box::after,
+.radio::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
+.box:hover:not([data-disabled]):not([aria-disabled='true']):not(:disabled) {
+  background: var(--checkbox-hover-bg);
+}
+
+.radio:hover:not([data-disabled]):not([aria-disabled='true']):not(:disabled) {
+  background: var(--radio-hover-bg);
+}
+
+.box[data-state='checked'],
+.box[data-state='indeterminate'] {
+  border-color: var(--checkbox-checked-bg);
+  background: var(--checkbox-checked-bg);
+}
+
+.radio[data-state='checked'] {
+  border-color: var(--radio-selected-border);
+}
+
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--radio-selected-dot);
+}
+
+.box:focus-visible {
+  outline: 2px solid var(--checkbox-focus-border);
+  outline-offset: 2px;
+}
+
+.radio:focus-visible {
+  outline: 2px solid var(--radio-focus-border);
+  outline-offset: 2px;
+}
+
+.box[data-disabled],
+.box:disabled,
+.box[aria-disabled='true'] {
+  cursor: not-allowed;
+  border-color: var(--checkbox-disabled-border);
+  background: var(--checkbox-disabled-bg);
+  color: var(--text-disabled);
+}
+
+.radio[data-disabled],
+.radio:disabled,
+.radio[aria-disabled='true'] {
+  cursor: not-allowed;
+  border-color: var(--radio-disabled-border);
+  background: var(--radio-disabled-bg);
+}
+
+.box[aria-invalid='true'] {
+  border-color: var(--input-error-border);
+}
+
+@media (forced-colors: active) {
+  .box[data-state='checked'],
+  .box[data-state='indeterminate'] {
+    forced-color-adjust: none;
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+  .dot {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}
+
+/* A wrapper that adds no box of its own (RadioGroup `neutral`). */
+.neutral {
+  display: contents;
+}

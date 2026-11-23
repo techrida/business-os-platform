@@ -50,6 +50,7 @@ import {
 import { HandOversEditor, type DepartmentOption } from './hand-overs-editor';
 import { LockIcon } from './lock-icon';
 import { UndoButton } from './undo-button';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export interface AreaCardProps {
   catalogue: AccessCatalogueResponse;
@@ -292,13 +293,12 @@ function LevelLine(
     <div className={styles.levelLine}>
       <div className={styles.levelRow}>
         <label className={styles.check}>
-          <input
-            type="checkbox"
+          <Checkbox
             checked={checked}
             disabled={disabled}
             aria-invalid={refusal ? true : undefined}
             aria-describedby={describedBy([refusal && errorId])}
-            onChange={(event) => onCheck(event.currentTarget.checked)}
+            onCheckedChange={(nextChecked) => onCheck(nextChecked)}
           />
           <span>{text}</span>
         </label>

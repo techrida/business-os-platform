@@ -25,6 +25,7 @@ import {
 import type { RfqFormState } from '../_lib/state';
 import type { VendorOption } from './rfq-form';
 import rows from './line-rows.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const WIDE = styles.wide ?? '';
 
@@ -356,11 +357,11 @@ export function QuoteForm({
                   <div className={rows.fields}>
                     <div className={rows.item}>
                       <label className={rows.include}>
-                        <input
-                          type="checkbox"
+                        <Checkbox
+                          className={rows.includeBox}
                           name={`lines.${i}.include`}
                           checked={line.include}
-                          onChange={(e) => setLine(i, { include: e.target.checked })}
+                          onCheckedChange={(nextChecked) => setLine(i, { include: nextChecked })}
                         />
                         <span className={rows.item}>
                           <span className="sr-only">Quote line {pl.lineNo}: </span>

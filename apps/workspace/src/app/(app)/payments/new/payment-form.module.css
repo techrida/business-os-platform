@@ -143,8 +143,3 @@
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
 }
-
-.check input {
-  width: 16px;
-  height: 16px;
-}

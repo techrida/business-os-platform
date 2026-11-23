@@ -53,7 +53,7 @@ async function mount(
 }
 
 const box = (root: HTMLElement) =>
-  root.querySelector<HTMLInputElement>('input[type="checkbox"][name="isPrimary"]')!;
+  root.querySelector<HTMLButtonElement>('button[role="checkbox"]')!;
 
 const phoneBox = (root: ParentNode, n: number, part: 'number' | 'country' = 'number') =>
   root.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} ${part}"]`);
@@ -108,7 +108,7 @@ describe('the main-contact box (demo feedback: a second primary answered 409)', 
     expect(box(root).disabled).toBe(false);
     expect(box(root).hasAttribute('aria-describedby')).toBe(false);
     await click(box(root));
-    expect(box(root).checked).toBe(true);
+    expect(box(root).getAttribute('aria-checked')).toBe('true');
   });
 
   it('shows a lost race as an error toast, not an inline alert', async () => {
@@ -271,6 +271,7 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
     'ResizeObserver',
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -294,7 +295,7 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
   const email = dialog?.querySelector<HTMLInputElement>('[name="email"]') ?? null;
   const footerSubmit = dialog?.querySelector('footer button[type="submit"]') ?? null;
   expect(email?.required).toBe(true);
-  expect(dialog?.querySelector<HTMLInputElement>('[name="isPrimary"]')?.disabled).toBe(true);
+  expect(dialog?.querySelector<HTMLButtonElement>('button[role="checkbox"]')?.disabled).toBe(true);
 
   await fill(fullName, 'Sita Rai');
   await typeInternational(dialog!, 1, '1 4155552671');
