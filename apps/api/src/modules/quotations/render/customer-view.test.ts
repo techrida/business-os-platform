@@ -231,6 +231,22 @@ describe('toCustomerQuotationView', () => {
     }
   });
 
+  it('hides a replaced or expired version that was never sent, the rule the portal list applies (R6D)', () => {
+    for (const status of ['superseded', 'expired'] as const) {
+      const base = input();
+      const version = { ...base.version, status };
+      expect(() => toCustomerQuotationView({ ...base, version, sentAt: null }), status).toThrow(
+        QuotationNotCustomerVisibleError,
+      );
+      // Sent, or a caller that does not say: shown as before.
+      expect(toCustomerQuotationView({ ...base, version, sentAt: new Date() }).status).toBe(status);
+      expect(toCustomerQuotationView({ ...base, version }).status).toBe(status);
+    }
+    // A never-sent status the rule does not name is unaffected.
+    const base = input();
+    expect(toCustomerQuotationView({ ...base, sentAt: null }).status).toBe('sent');
+  });
+
   it('refuses an approved version for the portal, also when the purpose is named', () => {
     const base = input();
     const approved = { ...base, version: { ...base.version, status: 'approved' as const } };

@@ -814,6 +814,7 @@ export class SqlUsersStore extends UsersStore {
             (count(*) FILTER (WHERE u.status = 'active'))::int AS active,
             (count(*) FILTER (WHERE u.status = 'invited'))::int AS invited,
             (count(*) FILTER (WHERE u.status = 'inactive'))::int AS deactivated,
+            (count(*) FILTER (WHERE u.identity_review_required))::int AS flagged,
             coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id, 'name', d.name)
                         ORDER BY lower(d.name), d.id)
               FROM app.departments d WHERE d.tenant_id = ${scope.tenantId}

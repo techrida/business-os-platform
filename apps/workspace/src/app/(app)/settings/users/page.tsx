@@ -17,7 +17,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listFlaggedUsers, listUsers, summarizeUsers } from '@/lib/api-admin';
+import { listUsers, summarizeUsers } from '@/lib/api-admin';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -100,11 +100,9 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   // F1-Q5: account actions need the company-wide grant (the summary says so); never on the caller's own row, and
   // only when the caller's own row is known, since the API refuses it anyway.
   const canChangeStatus = summary.ok && summary.data.canChangeStatus === true && Boolean(me?.id);
-  // FU8: the link to the flagged people shows only to a caller who can resolve them, with how many wait.
-  const flagged = canChangeStatus
-    ? await section('view flagged users', () => listFlaggedUsers(session))
-    : null;
-  const flaggedCount = flagged?.ok ? flagged.data.items.length : 0;
+  // FU8: the link to the flagged people shows to a caller who can resolve them, with how many wait. The count comes
+  // from the summary, so the link never depends on a second call that could fail.
+  const flaggedCount = summary.ok ? (summary.data.flagged ?? 0) : 0;
   const items = users.ok ? users.data.items : [];
   const next = users.ok ? users.data.nextPage : null;
   const departments = summary.ok ? summary.data.departments : [];
@@ -129,7 +127,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
     total === null
       ? []
       : pageNumbers(page, Math.ceil(total / limit)).map((n) => ({ page: n, href: href(n) }));
-  const review = canChangeStatus && flagged?.ok && (
+  const review = canChangeStatus && (
     <LinkButton href="/settings/users/flagged" variant="secondary" size="large">
       Flagged users{flaggedCount > 0 ? ` (${flaggedCount})` : ''}
     </LinkButton>

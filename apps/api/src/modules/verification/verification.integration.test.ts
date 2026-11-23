@@ -1852,6 +1852,58 @@ describe('R6AE: a customer identity edit locks after approval and resets the rev
     expect(del.status, JSON.stringify(del.body)).toBe(409);
   });
 
+  it('drops the reset note once the case is submitted again', async () => {
+    const partyId = await newCustomer();
+    const filled = await fillRequired(await openCase(partyId));
+    await customersService().update(partyId, await customerVersion(partyId), {
+      legalName: 'Note Ltd',
+    });
+    const reset = await getCase(filled.id);
+    expect(reset.identityReset).not.toBeNull();
+    const again = await fillRequired(reset);
+    expect((await getCase(again.id)).identityReset).not.toBeNull();
+    expect((await submitCase(again.id)).status).toBe(200);
+    const submitted = await getCase(again.id);
+    expect(submitted.status).toBe('submitted');
+    expect(submitted.identityReset ?? null).toBeNull();
+  });
+
+  // withTx takes the tenant's audit-chain lock first, so an approval and an edit never interleave: whichever commits
+  // first wins and the edit then reads the approved case. The FOR UPDATE on the case is a second guard.
+  it('answers 409 when an approval commits while an identity edit is in flight', async () => {
+    const partyId = await newCustomer();
+    const filled = await fillRequired(await openCase(partyId));
+    await submitCase(filled.id);
+    const version = await customerVersion(partyId);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const hasLock = new Promise<void>((r) => (locked = r));
+    const approving = withTx(db, scope, systemActor('test-approve'), async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.verification_cases
+               SET status = 'approved', reviewer_user_id = ${U.pmo}, decided_at = now()
+             WHERE id = ${filled.id}`,
+      );
+      locked();
+      await gate;
+    });
+    await hasLock;
+    const edit = customersService()
+      .update(partyId, version, { legalName: 'Race Ltd' })
+      .then(
+        () => undefined,
+        (e: unknown) => e as ConflictException,
+      );
+    await new Promise((r) => setTimeout(r, 500));
+    release();
+    await approving;
+    const err = await edit;
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err!.getResponse() as { code: string }).code).toBe('customer_identity_locked');
+    expect(await customerVersion(partyId)).toBe(version);
+  });
+
   it('shows the reset only to the tenant that owns the case', async () => {
     const partyId = await newCustomer();
     const filled = await fillRequired(await openCase(partyId));

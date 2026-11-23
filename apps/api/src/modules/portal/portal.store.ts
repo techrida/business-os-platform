@@ -293,13 +293,13 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         documentStyle: quotationVersions.documentStyle,
         renderAttempts: quotationVersions.renderAttempts,
         sentAt: quotationVersions.sentAt,
+        quotationCancelled: quotationCancelledSql,
         contactId: quotationVersions.contactId,
         paymentTermId: quotationVersions.paymentTermId,
         tenantId: quotationVersions.tenantId,
         organizationId: quotationVersions.organizationId,
         number: quotations.number,
         customerPartyId: quotations.customerPartyId,
-        currentVersionId: quotations.currentVersionId,
       })
       .from(quotationVersions)
       .innerJoin(quotations, versionOfQuotation)
@@ -307,22 +307,6 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       .limit(1);
     if (head === undefined || head.customerPartyId === null) return undefined;
     const { tenantId, organizationId, customerPartyId } = head;
-
-    // Only an older version needs this: the newest version's own status already says it.
-    let quotationCancelled = false;
-    if (head.currentVersionId !== null && head.currentVersionId !== versionId) {
-      const [current] = await this.db
-        .select({ status: quotationVersions.status })
-        .from(quotationVersions)
-        .where(
-          and(
-            eq(quotationVersions.tenantId, tenantId),
-            eq(quotationVersions.id, head.currentVersionId),
-          ),
-        )
-        .limit(1);
-      quotationCancelled = current?.status === 'cancelled';
-    }
 
     const [customer] = await this.db
       .select({
@@ -410,7 +394,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       documentStyle: head.documentStyle,
       renderAttempts: head.renderAttempts,
       sentAt: head.sentAt,
-      quotationCancelled,
+      quotationCancelled: head.quotationCancelled,
     };
   }
 }

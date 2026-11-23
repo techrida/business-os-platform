@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     groups:
@@ -9,6 +10,7 @@ updates:
         update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
+    target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 3
     groups:
@@ -21,6 +23,7 @@ updates:
       - /apps/workspace
       - /infra/login
       - /infra/postgres
+    target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 3
     groups:

@@ -38,8 +38,6 @@ export interface PhoneFieldProps {
   /** The country already shown was picked again. */
   onReselect?: ((country: CountryCode) => void) | undefined;
   onBlur?: (() => void) | undefined;
-  /** The text under the field while it has focus ("Mobile: 10 digits, starting with 9"). */
-  hint?: string | undefined;
   /** Posted by hidden inputs: `<numberName>` the E.164 number, `<countryName>` the ISO code. */
   numberName?: string | undefined;
   countryName?: string | undefined;
@@ -71,7 +69,6 @@ export function PhoneField({
   onCountry,
   onReselect,
   onBlur,
-  hint,
   numberName,
   countryName,
   'aria-label': ariaLabel,
@@ -81,7 +78,6 @@ export function PhoneField({
   countryLabel,
 }: PhoneFieldProps) {
   const base = useId();
-  const hintId = `${base}-hint`;
   const noticeId = `${base}-notice`;
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -91,7 +87,6 @@ export function PhoneField({
   // each further digit is judged as a bare national start again: `9`, `97`, `977` under the United States ends as
   // Nepal's code, not as +1 977.
   const [bare, setBare] = useState(false);
-  const [focused, setFocused] = useState(false);
   const [notice, setNotice] = useState({ text: '', seq: 0 });
   const caret = useRef<number | null>(null);
 
@@ -218,9 +213,7 @@ export function PhoneField({
 
   const dial = countryCallingCode(country);
   const placeholder = examplePhone(country);
-  const describedIds = [hintId && focused && hint ? hintId : undefined, noticeId, describedBy]
-    .filter(Boolean)
-    .join(' ');
+  const describedIds = [noticeId, describedBy].filter(Boolean).join(' ');
 
   return (
     <div className={styles.root}>
@@ -255,11 +248,7 @@ export function PhoneField({
           data-dial={dial ?? undefined}
           onChange={onChange}
           onPaste={onPaste}
-          onFocus={() => setFocused(true)}
-          onBlur={() => {
-            setFocused(false);
-            onBlur?.();
-          }}
+          onBlur={() => onBlur?.()}
         />
       </div>
       {numberName ? (
@@ -268,11 +257,6 @@ export function PhoneField({
       <p id={noticeId} className="sr-only" role="status" key={notice.seq}>
         {notice.text}
       </p>
-      {focused && hint ? (
-        <p id={hintId} className={styles.hint}>
-          {hint}
-        </p>
-      ) : null}
     </div>
   );
 }

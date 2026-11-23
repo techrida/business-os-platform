@@ -1,14 +1,6 @@
 import styles from '@/components/portal/page.module.css';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ApiError } from '@/lib/api';
-
-/** True for the API's answer to the link of a sent quotation that was cancelled (409 `quotation_closed`). */
-export function isQuotationClosed(err: unknown): boolean {
-  if (!(err instanceof ApiError) || err.status !== 409) return false;
-  const body = err.body as { error?: { code?: unknown } } | null | undefined;
-  return body?.error?.code === 'quotation_closed';
-}
 
 /** What a customer sees on the link of a quotation the company cancelled: a plain notice, not "not found". */
 export function QuotationClosed() {

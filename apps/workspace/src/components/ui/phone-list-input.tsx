@@ -130,14 +130,6 @@ function rowProblem(row: PhoneRowState): string | null {
   return problemOf(row.country, row.e164);
 }
 
-/** The text under a Nepal field while it has focus: FX8's count line ("Mobile: 10 digits, starting with 9"). */
-function hintOf(row: PhoneRowState): string | undefined {
-  if (row.country !== 'NP' || (row.e164 !== '' && !row.e164.startsWith(NEPAL_PREFIX))) {
-    return undefined;
-  }
-  return NEPAL_RULES.count?.(row.e164.slice(NEPAL_PREFIX.length));
-}
-
 function makeBlankRow(key: string, country: CountryCode, isPrimary: boolean): PhoneRowState {
   return {
     key,
@@ -547,14 +539,12 @@ export function PhoneListInput({
                   {...(name ? { countryName: `${name}.${index}.country` } : {})}
                   {...(shownError ? { 'aria-describedby': rowErrorId } : {})}
                   invalid={shownError !== undefined && shownError !== null}
-                  hint={hintOf(row)}
                   disabled={disabled === true}
                 />
-                {shownError ? (
-                  <p id={rowErrorId} className={styles.rowError}>
-                    {shownError}
-                  </p>
-                ) : null}
+                {/* The row's one reserved message line (UIP-FORM-010): empty unless there is an error, so nothing moves. */}
+                <p id={rowErrorId} className={styles.rowError}>
+                  {shownError}
+                </p>
               </div>
               <div className={styles.extras}>
                 {showLabels ? (
