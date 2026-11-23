@@ -126,12 +126,15 @@ describe('PhoneListInput, digits typed one at a time with no plus', () => {
     ['US', '9195551234', '+1 919 555 1234'],
     ['GB', '2079460958', '+44 20 7946 0958'],
     ['IN', '2226781234', '+91 22 2678 1234'],
-  ] as const)('keeps a real %s number %s in its country the whole way', async (country, typed, shown) => {
-    const list = await mount({ defaultCountry: country });
-    await typeKeys(list.number(1), typed);
-    expect(list.posted('0.country')).toBe(country);
-    expect(list.number(1).value).toBe(shown);
-  });
+  ] as const)(
+    'keeps a real %s number %s in its country the whole way',
+    async (country, typed, shown) => {
+      const list = await mount({ defaultCountry: country });
+      await typeKeys(list.number(1), typed);
+      expect(list.posted('0.country')).toBe(country);
+      expect(list.number(1).value).toBe(shown);
+    },
+  );
 
   it('refuses one digit past a complete number, so a typo cannot make it a foreign number', async () => {
     const list = await mount({ defaultCountry: 'US' });
