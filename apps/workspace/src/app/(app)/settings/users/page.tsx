@@ -34,12 +34,9 @@ import { requireSection } from '../guard';
 import { section } from '../section';
 import { SectionError } from '../ui';
 import { UsersFilters } from './filters';
-import { PasswordReset } from './password-reset';
 import { PageSize } from './page-size';
-import { PictureEditor } from './picture-editor';
 import { roleLabel } from './role-checkboxes';
-import { RolesEditor } from './roles-editor';
-import { StatusAction, type StatusActionKind } from './status-actions';
+import { RowActions } from './row-actions';
 import styles from './users.module.css';
 
 export const metadata: Metadata = { title: 'Users · Business OS' };
@@ -62,19 +59,6 @@ const STATUS_LABELS: Record<AdminUser['status'], string> = {
   invited: 'Invited',
   inactive: 'Deactivated',
 };
-
-/**
- * The account actions a row offers (F1-Q5, F1-Q4): an active person can be locked or deactivated; a locked person
- * unlocked (ZITADEL holds them LOCKED, so reactivate would not fit) or deactivated, and one locked after failed
- * sign-ins also kept locked for good; a deactivated person reactivated; an open invite nothing.
- */
-function statusActions(user: AdminUser): StatusActionKind[] {
-  if (user.lockReason === 'failed_sign_ins') return ['unlock', 'keepLocked', 'deactivate'];
-  if (user.lockReason) return ['unlock', 'deactivate'];
-  if (user.status === 'active') return ['lock', 'deactivate'];
-  if (user.status === 'inactive') return ['reactivate'];
-  return [];
-}
 
 /** Up to five page numbers around the current one. */
 function pageNumbers(current: number, count: number): number[] {
@@ -341,42 +325,17 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                           )}
                         </Td>
                         <Td align="end">
-                          <div className={styles.rowActions}>
-                            <PictureEditor
-                              userId={user.id}
-                              name={name}
-                              label={label}
-                              imageDocumentId={picture}
-                            />
-                            <RolesEditor userId={user.id} label={label} roles={user.roles} />
-                            {canCheckAccess && (
-                              <LinkButton
-                                href={`/settings/access/check?person=${encodeURIComponent(user.id)}`}
-                                variant="ghost"
-                                size="small"
-                                aria-label={`Check access for ${label}`}
-                              >
-                                Check access
-                              </LinkButton>
-                            )}
-                            {summary.ok &&
-                              summary.data.canSendPasswordReset &&
-                              user.email &&
-                              user.status === 'active' && (
-                                <PasswordReset userId={user.id} label={label} email={user.email} />
-                              )}
-                            {canChangeStatus &&
-                              user.id !== me?.id &&
-                              statusActions(user).map((action) => (
-                                <StatusAction
-                                  key={action}
-                                  userId={user.id}
-                                  name={name}
-                                  label={label}
-                                  action={action}
-                                />
-                              ))}
-                          </div>
+                          <RowActions
+                            user={user}
+                            name={name}
+                            label={label}
+                            can={{
+                              canCheckAccess,
+                              canSendPasswordReset: summary.ok && summary.data.canSendPasswordReset,
+                              canChangeStatus,
+                              meId: me?.id ?? null,
+                            }}
+                          />
                         </Td>
                       </tr>
                     );
