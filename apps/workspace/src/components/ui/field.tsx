@@ -1,5 +1,6 @@
 import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
 
+import { FieldHelp, FieldLabel } from './field-label';
 import { FieldScope } from './field-scope';
 import styles from './field.module.css';
 
@@ -28,6 +29,7 @@ export function Field({
   label,
   optional,
   hint,
+  help,
   error,
   children,
   className,
@@ -39,6 +41,11 @@ export function Field({
    */
   optional?: boolean;
   hint?: ReactNode;
+  /**
+   * An instruction that must stay reachable when an error takes the message line (UIP-FORM-010): an info button after
+   * the label whose tooltip holds it. Use it when the hint says how to fill the field, not for a plain description.
+   */
+  help?: ReactNode;
   error?: ReactNode;
   children: (control: FieldControlProps) => ReactNode;
   className?: string;
@@ -56,9 +63,12 @@ export function Field({
   return (
     <div className={cls}>
       <div className={styles.labelRow}>
-        <label id={labelId} htmlFor={base} className={styles.label}>
+        <FieldLabel id={labelId} htmlFor={base}>
           {label}
-        </label>
+        </FieldLabel>
+        {help ? (
+          <FieldHelp label={typeof label === 'string' ? label : undefined}>{help}</FieldHelp>
+        ) : null}
         {optional ? (
           <span id={optionalId} className={styles.optional}>
             Optional

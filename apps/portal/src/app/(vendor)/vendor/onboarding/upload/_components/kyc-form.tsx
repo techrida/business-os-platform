@@ -59,7 +59,7 @@ export function KycForm({
   const busy = pending || uploading;
 
   return (
-    <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
+    <form noValidate action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
       {documentId ? <input type="hidden" name="documentId" value={documentId} /> : null}
 

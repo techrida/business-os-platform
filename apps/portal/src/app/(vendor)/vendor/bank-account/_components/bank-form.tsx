@@ -68,7 +68,7 @@ export function BankForm({
   const { received } = state;
 
   return (
-    <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
+    <form noValidate action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
 
       {received ? (

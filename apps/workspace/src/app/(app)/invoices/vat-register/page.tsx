@@ -44,6 +44,9 @@ export default async function SalesVatRegisterPage({
   const from = typeof params.from === 'string' ? params.from : '';
   const to = typeof params.to === 'string' ? params.to : '';
   const period = SalesVatPeriodSchema.safeParse({ from, to });
+  const submitted = params.from !== undefined || params.to !== undefined;
+  const fromError = submitted && from === '' ? 'Choose the start date.' : undefined;
+  const toError = submitted && to === '' ? 'Choose the end date.' : undefined;
   const header = (
     <PageHeader
       title="Sales VAT register"
@@ -72,18 +75,18 @@ export default async function SalesVatRegisterPage({
   return (
     <Page>
       {header}
-      <form method="get" action="/invoices/vat-register" className={styles.filter}>
-        <Field label="From (AD)">
+      <form noValidate method="get" action="/invoices/vat-register" className={styles.filter}>
+        <Field label="From (AD)" error={fromError}>
           {(control) => <DatePicker name="from" defaultValue={from} required {...control} />}
         </Field>
-        <Field label="To (AD)">
+        <Field label="To (AD)" error={toError}>
           {(control) => <DatePicker name="to" defaultValue={to} required {...control} />}
         </Field>
         <Button type="submit" variant="secondary">
           Show register
         </Button>
       </form>
-      {!period.success && (from !== '' || to !== '') ? (
+      {!period.success && submitted ? (
         <Alert tone="warning" role="alert">
           Choose valid start and end dates, with the end on or after the start.
         </Alert>
@@ -225,7 +228,7 @@ export default async function SalesVatRegisterPage({
             </Table>
           )}
         </Panel>
-      ) : !error && from === '' && to === '' ? (
+      ) : !error && !submitted ? (
         <EmptyState title="Choose a period." icon="receipt">
           The register and its CSV use the same server totals.
         </EmptyState>

@@ -38,6 +38,7 @@ import {
   type MouseEvent,
 } from 'react';
 
+import { useFieldSecondary, useInFieldScope } from '@/components/portal/field-scope';
 import { useFormReset } from './use-form-reset';
 import styles from './number-input.module.css';
 
@@ -748,6 +749,10 @@ function NumberBox({
   const finished = withinLimits(shownPlainOf(text), limits);
   const plain = finished.ok ? finished.value : '';
   const wordsText = words && plain !== '' ? words(plain) : '';
+  // Inside a Field the amount in words and the refusal take the field's one message line (UIP-FORM-010); alone they print their own.
+  const inField = useInFieldScope(id);
+  useFieldSecondary(id, wordsText || null);
+  const ownWords = inField ? '' : wordsText;
   const status = notice.text || error?.message || '';
   const invalid = callerInvalid === true || callerInvalid === 'true' || error !== null || pointOnly;
   // Order: the caller's hint, the prefix and unit, the words, then errors (the caller's, then ours).
@@ -758,7 +763,7 @@ function NumberBox({
       ...callerIds.filter((ref) => !ref.endsWith('-error')),
       prefix ? prefixId : undefined,
       suffix ? suffixId : undefined,
-      wordsText ? wordsId : undefined,
+      ownWords ? wordsId : undefined,
       ...callerIds.filter((ref) => ref.endsWith('-error')),
       status ? statusId : undefined,
     ]
@@ -769,7 +774,11 @@ function NumberBox({
   const significant = plain.replace('.', '').replace(/^0+/, '').length;
 
   return (
-    <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>
+    <div
+      ref={rootRef}
+      className={[styles.root, className].filter(Boolean).join(' ')}
+      {...(inField && status ? { 'data-field-override': '' } : {})}
+    >
       <div className={styles.box} data-invalid={invalid || undefined} onMouseDown={onBoxMouseDown}>
         {prefix ? (
           <span id={prefixId} className={styles.affix}>
@@ -871,7 +880,7 @@ function NumberBox({
       {name && hydrated ? (
         <input type="hidden" name={name} value={postedOf(text)} disabled={disabled === true} />
       ) : null}
-      {wordsText ? (
+      {ownWords ? (
         <span id={wordsId} className={styles.words}>
           {wordsText}
         </span>
@@ -880,7 +889,9 @@ function NumberBox({
       <span
         id={statusId}
         role="status"
-        className={styles.status}
+        className={[styles.status, inField ? styles.statusInField : undefined]
+          .filter(Boolean)
+          .join(' ')}
         data-tone={!notice.text && error ? 'error' : undefined}
       >
         {status ? <span key={notice.text ? notice.seq : 'error'}>{status}</span> : null}

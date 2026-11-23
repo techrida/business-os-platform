@@ -18,6 +18,8 @@ import { FileUpload } from '../../../../_upload/file-upload';
 import styles from '../../../../_upload/upload.module.css';
 import { type QuoteFormState, submitQuoteAction } from '../actions';
 
+const PAST_DATE_MESSAGE = 'Enter today or a later date, or leave it empty.';
+
 /**
  * Submit a quotation. A Client Component so the file uploads as it is chosen and the typed values
  * survive a refusal. What it submits goes to a server action. The Idempotency-Key and the
@@ -46,7 +48,13 @@ export function QuoteForm({
   numberSystems?: NumberSystems | undefined;
 }) {
   const [state, formAction, pending] = useActionState<QuoteFormState, FormData>(
-    submitQuoteAction,
+    (prev, form) => {
+      const until = form.get('validUntil');
+      if (typeof until === 'string' && until !== '' && until < today) {
+        return { key: prev.key, fieldErrors: { validUntil: PAST_DATE_MESSAGE } };
+      }
+      return submitQuoteAction(prev, form);
+    },
     initialState ?? { key: idempotencyKey },
   );
   const fe = state.fieldErrors ?? {};
@@ -72,7 +80,7 @@ export function QuoteForm({
   const currencyCode = CURRENCIES.find((c) => c === currency) ?? 'NPR';
 
   return (
-    <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
+    <form noValidate action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <input type="hidden" name="rfqId" value={rfqId} />
       {documentId ? <input type="hidden" name="documentId" value={documentId} /> : null}

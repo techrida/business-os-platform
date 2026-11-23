@@ -20,6 +20,7 @@ import {
 } from 'react';
 
 import { DatePicker, UnfinishedBlocker, useUnfinishedMessage } from './date-picker';
+import { useInFieldScope } from './field-scope';
 import pickerStyles from './date-picker.module.css';
 import { useFormReset } from './use-form-reset';
 import styles from './date-time-picker.module.css';
@@ -185,8 +186,9 @@ export function DateTimePicker({
   const unfinished = (required === true && posted === '') || (day !== '') !== (shownTime !== '');
 
   const unfinishedMessage = useUnfinishedMessage(unfinished);
+  const inField = useInFieldScope(id);
   const describedBy =
-    [callerDescribedBy, unfinishedMessage.shown ? unfinishedMessage.id : undefined]
+    [callerDescribedBy, unfinishedMessage.shown && !inField ? unfinishedMessage.id : undefined]
       .filter(Boolean)
       .join(' ') || undefined;
 
@@ -249,6 +251,8 @@ export function DateTimePicker({
           // A half-filled pair is held in a `noValidate` form; an empty required one is left to the form's own errors.
           hold={(day !== '') !== (shownTime !== '')}
           message="Enter the date and time"
+          controlId={id}
+          rank={1}
           root={rootRef}
           disabled={disabled}
           messageId={unfinishedMessage.id}

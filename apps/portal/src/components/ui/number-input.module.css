@@ -4,6 +4,7 @@
    keyboard ring from globals.css. */
 
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -117,6 +118,16 @@
 /* Empty but present, so the live region exists before its first message. */
 .status:not(:empty) {
   margin-top: 6px;
+}
+
+/* Inside a Field the refusal or error takes the field's one reserved message line below the box (UIP-FORM-010);
+   Field hides its own text while this is showing (field.module.css). */
+.statusInField,
+.statusInField:not(:empty) {
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  margin-top: 8px;
 }
 
 .status[data-tone='error'] {

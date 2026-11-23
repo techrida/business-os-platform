@@ -76,7 +76,7 @@ export function SubmitForm({
 
   return (
     <>
-      <form ref={form} action={formAction}>
+      <form noValidate ref={form} action={formAction}>
         <input type="hidden" name="memoId" value={memoId} />
         <input type="hidden" name="expectedVersion" value={version} />
       </form>

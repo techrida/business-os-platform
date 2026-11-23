@@ -17,7 +17,7 @@ export default function NoAccessPage() {
       <NoticeCard
         title="Your account is not set up yet"
         actions={
-          <form method="post" action="/auth/logout">
+          <form noValidate method="post" action="/auth/logout">
             <Button type="submit">Sign out</Button>
           </form>
         }

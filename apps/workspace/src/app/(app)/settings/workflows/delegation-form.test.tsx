@@ -80,7 +80,7 @@ it('posts the delegation times from the app picker and keeps them after a refuse
   expect(shown('endsAt', 'hour')).toBe('5');
 });
 
-it('does not submit while a required delegation time is missing', async () => {
+it('says which delegation time is missing and does not submit', async () => {
   mounted = await mountForm(<DelegationForm users={USERS} documentTypes={[]} />);
   const { container } = mounted;
   await choose(container, 'fromUserId', 'Mina');
@@ -88,4 +88,6 @@ it('does not submit while a required delegation time is missing', async () => {
   await pickDate(container, 'startsAt', '2026-12-01T09:30');
   await submit(container);
   expect(actions.createDelegationAction).not.toHaveBeenCalled();
+  expect(container.textContent).toContain('Enter the end time.');
+  expect(container.textContent).not.toContain('Enter the start time.');
 });

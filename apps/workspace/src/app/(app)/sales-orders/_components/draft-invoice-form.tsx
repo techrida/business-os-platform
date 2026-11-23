@@ -41,7 +41,7 @@ export function DraftInvoiceForm({
   useFocusOnProblem(state, wrapRef, summaryRef);
 
   return (
-    <form action={formAction} ref={wrapRef} className={styles.inlineForm}>
+    <form noValidate action={formAction} ref={wrapRef} className={styles.inlineForm}>
       <input type="hidden" name="salesOrderId" value={salesOrderId} />
       <input type="hidden" name="scheduleLineId" value={scheduleLineId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
