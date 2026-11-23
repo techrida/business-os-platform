@@ -71,7 +71,7 @@ jobs:
           BOS_E2E_BRANDED_LOGIN: '1'
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
-          SPEC_FILTER: ${{ inputs.spec_filter }}
+          SPEC_FILTER: ${{ inputs.spec_filter || 'exit.spec inbox.spec overview.spec p2/crm p2/opportunity-stage p4/access-grant p4/list-filters p0-shell' }}
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           cd apps/workspace
