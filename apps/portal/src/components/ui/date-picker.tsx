@@ -130,10 +130,13 @@ export function UnfinishedBlocker({
     const form = ref.current?.form;
     if (!hold || disabled === true || !form) return;
     const stop = (event: Event) => {
+      // Another guard on the form (a digit box, a phone list) has already stopped this submit and
+      // put the focus where its problem is; keep that focus and only show this message.
+      const handled = event.defaultPrevented;
       event.preventDefault();
       event.stopPropagation();
       flushSync(onBlocked);
-      root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
+      if (!handled) root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
     };
     form.addEventListener('submit', stop);
     return () => form.removeEventListener('submit', stop);
@@ -199,8 +202,8 @@ export interface DatePickerProps {
    * `native` (default): a required, empty or out-of-range picker blocks a plain GET or POST form in the
    * browser, as any native field does. `aria`: the browser does not block a required or incomplete
    * date; use it in an action form that shows its own errors for those.
-   * In both, a partly typed date stops the submit of a `noValidate` action form, so the action does
-   * not reset the form: the typed segments stay, "Finish the date" shows and the empty segment takes
+   * In both, a partly typed date stops the submit of any form the browser does not already block
+   * (a `noValidate` action form, or an `aria` one), so the action does not reset the form: the typed segments stay, "Finish the date" shows and the empty segment takes
    * the focus.
    */
   validation?: 'native' | 'aria' | undefined;
