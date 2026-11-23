@@ -51,6 +51,9 @@ it('blocks the old sites: title on a DOM element, a multi-line button, and Butto
     await lint('const a = <Button aria-label="x" title="Change picture">x</Button>;'),
   ).toHaveLength(1);
   expect(await lint('const a = <Link href="/" title="Home">Home</Link>;')).toHaveLength(1);
+  // Both spread their props onto a DOM element (opportunities/[id]/page.tsx had a Badge title).
+  expect(await lint('const a = <Badge tone="warning" title="Hold">x</Badge>;')).toHaveLength(1);
+  expect(await lint('const a = <LinkButton href="/" title="Go">x</LinkButton>;')).toHaveLength(1);
 });
 
 it('names the Tooltip component in the error', async () => {
@@ -62,6 +65,9 @@ it('allows iframe and svg titles, and a title prop on our own components', async
   expect(await lint('const a = <iframe title="Document preview" src="/x" />;')).toEqual([]);
   expect(await lint('const a = <svg title="Chart"><title>Chart</title></svg>;')).toEqual([]);
   expect(await lint('const a = <Page title="Leads" />;')).toEqual([]);
+  // `title` is the validation message on an input and the expansion on an abbr, not a hover hint.
+  expect(await lint('const a = <input pattern="[0-9]+" title="Digits only" />;')).toEqual([]);
+  expect(await lint('const a = <abbr title="Value added tax">VAT</abbr>;')).toEqual([]);
   expect(await lint('const a = <Tooltip content="x"><button type="button" /></Tooltip>;')).toEqual(
     [],
   );

@@ -152,9 +152,8 @@ describe('a note its viewer created (TR-Q12f)', () => {
     expect(html).toMatch(
       new RegExp(`id="${described ?? 'missing'}"[^>]*>You created this note, so someone else`),
     );
-    expect(html).toContain(
-      `title="You created this note, so someone else with issue access must issue it."`,
-    );
+    // The reason also opens in the design-system Tooltip on hover or focus, never as a native title bubble.
+    expect(html).not.toMatch(/<button[^>]* title=/);
     // The only form is Back to draft (the creator may still take their approved note back); no issue form.
     expect(html).not.toContain('<h2>Issue ');
     expect(html.match(/name="idempotencyKey"/g)).toHaveLength(1);
@@ -239,7 +238,7 @@ describe('Edit due date', () => {
     const described = /aria-describedby="([^"]+)"[^>]*>Edit due date/.exec(html)?.[1];
     expect(described).toBeDefined();
     expect(html).toContain(`id="${described ?? 'missing'}" class`);
-    expect(html).toContain(`title="${ORDER_REASON.replaceAll("'", '&#x27;')}"`);
+    expect(html).not.toMatch(/<button[^>]* title=/);
     expect(html).not.toContain('name="dueDate"');
   });
 

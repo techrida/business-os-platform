@@ -2,7 +2,6 @@
 
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import {
-  cloneElement,
   createContext,
   useContext,
   type HTMLAttributes,
@@ -70,11 +69,10 @@ export function Tooltip({
   ...triggerProps
 }: TooltipProps) {
   const hasProvider = useContext(ProviderContext);
-  if (content === null || content === undefined || content === false || content === '') {
-    return cloneElement(children, triggerProps);
-  }
+  // No content: keep the same tree (so the child still gets a parent trigger's props merged) but never open.
+  const empty = content === null || content === undefined || content === false || content === '';
   const tooltip = (
-    <TooltipPrimitive.Root>
+    <TooltipPrimitive.Root {...(empty ? { open: false } : {})}>
       <TooltipPrimitive.Trigger asChild {...triggerProps}>
         {children}
       </TooltipPrimitive.Trigger>
