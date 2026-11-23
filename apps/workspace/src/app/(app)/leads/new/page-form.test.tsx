@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { LeadForm } from '@/components/p2/crm/lead-form';
@@ -220,6 +221,14 @@ it('offers only the enabled currencies and posts the one chosen', async () => {
   const mounted = await mountLead(OWNERS, ME, ['NPR', 'USD']);
   try {
     const { container } = mounted;
+    // The Company box (a combobox since BOS-UI-002) still has its list open after typing; a real click on the
+    // currency trigger would blur it first.
+    await act(() => {
+      container
+        .querySelector('input[name="companyName"]')
+        ?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      return Promise.resolve();
+    });
     const trigger = container
       .querySelector('input[type="hidden"][name="currency"]')
       ?.parentElement?.querySelector('button');

@@ -29,7 +29,7 @@ import {
   scoped,
 } from '@bos/db';
 import { HttpException, Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
@@ -147,7 +147,6 @@ export class LeadDuplicatesService {
       return found
         .map((m, i) => ({ m, i }))
         .sort((a, b) => b.m.matchedOn.length - a.m.matchedOn.length || a.i - b.i)
-        .slice(0, LEAD_DUPLICATE_LIMIT)
         .map(({ m }) => m);
     });
   }
@@ -179,7 +178,12 @@ export class LeadDuplicatesService {
       .where(
         scoped(scope).where(
           leads,
-          and(scopeWhereFor(principal, leads, 'crm.lead.read'), or(company, name, email, phone)),
+          and(
+            scopeWhereFor(principal, leads, 'crm.lead.read'),
+            // Open leads only: a converted lead is its customer now, a lost one is over (R6O, "Already a lead").
+            notInArray(leads.stage, ['converted', 'lost']),
+            or(company, name, email, phone),
+          ),
         ),
       )
       // Strongest first (an exact email or phone over a similar name), so the cap never drops a sure match; then an
@@ -209,7 +213,14 @@ export class LeadDuplicatesService {
   private async customers(tx: DbTransaction, p: DuplicateProbe): Promise<LeadDuplicateMatch[]> {
     const { scope, principal } = this.caller.current();
     if (principal.orgKind !== 'staff') return [];
-    const company = flag(p.company, (v) => similar(v, customers.legalName));
+    // The company text also finds a customer by its PAN/VAT or its number (a prefix), so a salesperson can type either.
+    const company = flag(
+      p.company,
+      (v) =>
+        sql`(${similar(v, customers.legalName)} OR ${customers.panVatNo} ILIKE ${`${escapeLike(v)}%`} OR ${
+          customers.number
+        } ILIKE ${`${escapeLike(v)}%`})`,
+    );
     const name = flag(p.name, (v) => similar(v, customerContacts.fullName));
     const email = flag(p.email, (v) => sql`${customerContacts.emailNorm} = ${v}`);
     const phone = flag(p.phoneTail, contactPhoneEndsWith);
@@ -226,6 +237,9 @@ export class LeadDuplicatesService {
         tenantId: customers.tenantId,
         ownerUserId: customers.ownerUserId,
         legalName: customers.legalName,
+        country: customers.country,
+        number: customers.number,
+        pan: customers.panVatNo,
         company: sql<boolean>`bool_or(${company})`,
         name: sql<boolean>`bool_or(${name})`,
         email: sql<boolean>`bool_or(${email})`,
@@ -265,6 +279,9 @@ export class LeadDuplicatesService {
         kind: 'customer' as const,
         id: r.id,
         label: r.legalName,
+        country: r.country,
+        number: r.number,
+        pan: r.pan,
         matchedOn: fieldsOf(r),
       }));
   }
