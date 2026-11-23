@@ -103,12 +103,84 @@ const assigneePeople = (owners: readonly LeadOwnerOption[]) =>
 const has = (owners: readonly LeadOwnerOption[], id: string | null | undefined) =>
   id !== null && id !== undefined && owners.some((o) => o.userId === id);
 
+/** A person the dialog names without them being in the assignable list: the signed-in user, or a record's owner. */
+export interface NamedPerson {
+  userId: string;
+  name: string;
+}
+
+/**
+ * What the "Assigned to" box shows (UIP-FORM-006: a real person, never a placeholder phrase). The form posts nothing
+ * when the box stands for a default, and the API then gives the follow-up to that same person.
+ * - the record's owner is assignable: the box starts on them;
+ * - the owner is not assignable (outside the caller's list): the box still names them, from the record, with a hint;
+ * - the record has no owner: the box names the signed-in user, who gets it;
+ * - only when neither is known is the box empty, with a prompt.
+ */
+export function assigneeFace(args: {
+  owners: readonly LeadOwnerOption[];
+  ownerUserId: string | null | undefined;
+  ownerName?: string | null | undefined;
+  me?: NamedPerson | null | undefined;
+  recordNoun: string;
+}): {
+  defaultValue: string;
+  standsFor: string | undefined;
+  current: { id: string; name: string; role?: string | null } | undefined;
+  hint: string | undefined;
+  placeholder: string;
+} {
+  const { owners, ownerUserId, ownerName, me, recordNoun } = args;
+  const roleOf = (id: string) => owners.find((o) => o.userId === id)?.role ?? null;
+  if (ownerUserId !== null && ownerUserId !== undefined) {
+    if (has(owners, ownerUserId)) {
+      return {
+        defaultValue: ownerUserId,
+        standsFor: undefined,
+        current: undefined,
+        hint: undefined,
+        placeholder: 'Search by name',
+      };
+    }
+    const name = ownerName?.trim() || 'Unnamed user';
+    return {
+      defaultValue: '',
+      standsFor: ownerUserId,
+      current: { id: ownerUserId, name },
+      hint: `${name} owns this ${recordNoun} but is not someone you can assign to, so it goes to them unless you choose another person.`,
+      placeholder: 'Search by name',
+    };
+  }
+  if (me) {
+    return {
+      defaultValue: '',
+      standsFor: me.userId,
+      current: has(owners, me.userId)
+        ? undefined
+        : { id: me.userId, name: me.name, role: roleOf(me.userId) },
+      hint: `This ${recordNoun} has no owner, so the follow-up is yours unless you choose another person.`,
+      placeholder: 'Search by name',
+    };
+  }
+  return {
+    defaultValue: '',
+    standsFor: undefined,
+    current: undefined,
+    hint: `This ${recordNoun} has no owner. Choose who the follow-up goes to.`,
+    placeholder: 'Choose a person',
+  };
+}
+
 export interface ScheduleFollowUpDialogProps {
   /** The record the follow-up is planned on. Default kind: a lead. */
   subjectKind?: Extract<FollowUpSubjectKind, 'leadId' | 'opportunityId'> | undefined;
   subjectId: string;
   /** The record's owner, the default assignee. */
   ownerUserId: string | null;
+  /** The owner's name from the record, shown when they are not in `owners`. */
+  ownerName?: string | null | undefined;
+  /** The signed-in user, named in the box when the record has no owner (the API gives it to them). */
+  me?: NamedPerson | null | undefined;
   /** People the caller may assign to (`GET /v1/leads/owners`, or `/v1/opportunities/follow-up-assignees`). */
   owners: readonly LeadOwnerOption[];
   /** The opening control. Default: a secondary "Schedule follow-up" button. */
@@ -124,6 +196,8 @@ export function ScheduleFollowUpDialog({
   subjectKind = 'leadId',
   subjectId,
   ownerUserId,
+  ownerName,
+  me,
   owners,
   trigger,
 }: ScheduleFollowUpDialogProps) {
@@ -140,17 +214,13 @@ export function ScheduleFollowUpDialog({
     return result;
   }, 'Follow-up scheduled.');
 
-  const ownerListed = has(owners, ownerUserId);
-  const defaultAssignee = ownerListed ? (ownerUserId ?? '') : '';
-  // Left empty, the API picks the record's owner, or the person scheduling when it has none. When the owner is in
-  // the list the box starts on them by name; otherwise the empty box says who the API will pick.
-  const emptyHint = ownerListed
-    ? 'Search by name'
-    : ownerUserId === null
-      ? 'Me'
-      : subjectKind === 'leadId'
-        ? 'Lead owner'
-        : 'Opportunity owner';
+  const face = assigneeFace({
+    owners,
+    ownerUserId,
+    ownerName,
+    me,
+    recordNoun: subjectKind === 'leadId' ? 'lead' : 'opportunity',
+  });
   const shown = dialog.outcome.fieldErrors ?? {};
 
   return (
@@ -200,7 +270,7 @@ export function ScheduleFollowUpDialog({
         <Field label="Due" hint="Kathmandu time." error={shown['dueAt']}>
           {(c) => <DateTimePicker name="dueAt" required {...c} />}
         </Field>
-        <Field label="Assigned to" error={shown['assigneeUserId']}>
+        <Field label="Assigned to" hint={face.hint} error={shown['assigneeUserId']}>
           {(c) => (
             <MemberPicker
               labelledBy={c['aria-labelledby']}
@@ -208,8 +278,10 @@ export function ScheduleFollowUpDialog({
               invalid={c['aria-invalid'] === true}
               name="assigneeUserId"
               people={assigneePeople(owners)}
-              defaultValue={defaultAssignee}
-              placeholder={emptyHint}
+              defaultValue={face.defaultValue}
+              emptyStandsFor={face.standsFor}
+              current={face.current}
+              placeholder={face.placeholder}
             />
           )}
         </Field>
@@ -224,7 +296,10 @@ export function ScheduleFollowUpDialog({
 export interface RescheduleFollowUpDialogProps {
   /** Only for an item that does not carry its own subject ids: treat it as this lead's. */
   leadId?: string | undefined;
-  item: Pick<ActivityDto, 'id' | 'subject' | 'dueAt' | 'assigneeUserId' | 'version'> &
+  item: Pick<
+    ActivityDto,
+    'id' | 'subject' | 'dueAt' | 'assigneeUserId' | 'assigneeName' | 'version'
+  > &
     Partial<Pick<ActivityDto, FollowUpSubjectKind>>;
   owners: readonly LeadOwnerOption[];
   trigger: ReactNode;
@@ -247,6 +322,10 @@ export function RescheduleFollowUpDialog({
     'Follow-up rescheduled.',
   );
   const listed = has(owners, item.assigneeUserId);
+  const current =
+    !listed && item.assigneeUserId
+      ? { id: item.assigneeUserId, name: item.assigneeName?.trim() || 'Unnamed user' }
+      : undefined;
   const err = dialog.outcome.fieldErrors ?? {};
   // The server refreshes this record's page; it builds the path from the kind and id itself.
   const subject = subjectOf(item) ?? (leadId ? { kind: 'leadId' as const, id: leadId } : null);
@@ -288,7 +367,15 @@ export function RescheduleFollowUpDialog({
             />
           )}
         </Field>
-        <Field label="Assigned to" error={err['assigneeUserId']}>
+        <Field
+          label="Assigned to"
+          hint={
+            current
+              ? `${current.name} cannot be assigned by you; leave it to keep them, or choose another person.`
+              : undefined
+          }
+          error={err['assigneeUserId']}
+        >
           {(c) => (
             <MemberPicker
               labelledBy={c['aria-labelledby']}
@@ -297,7 +384,10 @@ export function RescheduleFollowUpDialog({
               name="assigneeUserId"
               people={assigneePeople(owners)}
               defaultValue={listed ? (item.assigneeUserId ?? '') : ''}
-              placeholder={listed ? 'Search by name' : 'Keep current assignee'}
+              // Not in the caller's list: the box still names the current assignee and posts nothing (kept).
+              emptyStandsFor={current?.id}
+              current={current}
+              placeholder="Search by name"
             />
           )}
         </Field>
