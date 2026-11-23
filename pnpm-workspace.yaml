@@ -78,7 +78,7 @@ catalog:
   pino-http: ^11.0.0
   prom-client: ^15.1.3
   jose: ^6.2.18
-  bullmq: ^6.7.8
+  bullmq: ^5.81.5
   ioredis: ^5.11.1
   ioredis-mock: ^8.13.0
   server-only: ^0.0.1
@@ -104,7 +104,7 @@ catalog:
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
   '@fontsource-variable/outfit': ^5.2.0
-  openid-client: ^6.9.1
+  openid-client: 6.8.9 # 6.9.x changes the token response types; src/lib/oidc.ts needs a fix first
   jsdom: ^31.0.1
   '@types/jsdom': ^30.0.0
   # Memo PDF export (server-side, real PDF bytes): needs fontkit shaping for Devanagari names.
