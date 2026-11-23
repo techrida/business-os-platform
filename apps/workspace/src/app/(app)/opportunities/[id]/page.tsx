@@ -522,12 +522,11 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             <>
               {!canDraft ? (
                 <>
-                  {draftBlocker !== null ? (
-                    <span className={styles.quiet}>{draftBlocker}</span>
-                  ) : null}
-                  <LinkButton href={quotesHref} variant="secondary">
-                    View quotations
-                  </LinkButton>
+                  <Tooltip content={draftBlocker}>
+                    <LinkButton href={quotesHref} variant="secondary">
+                      View quotations
+                    </LinkButton>
+                  </Tooltip>
                 </>
               ) : entry.kind === 'resume' ? (
                 <>
