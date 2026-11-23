@@ -1,0 +1,120 @@
+# Browser QA on GitHub-hosted runners: the whole stack (containers + compiled apps, devtools profile) is brought up
+# by .github/qa/up.sh, the dev personas are seeded, and the Playwright specs of apps/workspace and apps/portal run
+# against it. Videos, screenshots and the HTML report are uploaded as artifacts.
+# Standard runners only (free for public repositories): never switch `runs-on` to a larger runner, those are billed.
+name: qa
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec_filter:
+        description: 'Playwright file filter (a path or regex, empty = all), e.g. p4/list-filters'
+        required: false
+        default: ''
+  push:
+    branches: [main, p4-main]
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'infra/**'
+      - 'tools/seed-zitadel/**'
+      - '.github/qa/**'
+      - '.github/workflows/qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  workspace:
+    name: qa workspace (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Bring up the stack and seed the dev personas
+        run: bash .github/qa/up.sh
+
+      - name: Install Chromium
+        run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
+
+      - name: Playwright (workspace, dev project)
+        env:
+          BOS_E2E_RECORD: '1'
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+          SPEC_FILTER: ${{ inputs.spec_filter }}
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: |
+          cd apps/workspace
+          # No quotes around the filter on purpose: an empty value must disappear, a value may hold two words.
+          # shellcheck disable=SC2086
+          pnpm exec playwright test --project=dev --shard="$SHARD" $SPEC_FILTER
+
+      - name: Portal specs (they skip themselves without their fixtures)
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        env:
+          PORTAL_E2E_BASE_URL: https://portal.localhost
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+        run: pnpm --filter @bos/portal e2e
+
+      # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
+      - name: Check the artifacts hold no persona password or TOTP secret
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          node -e "
+          const p=JSON.parse(require('fs').readFileSync('.dev/personas.json','utf8'));
+          const out=[]; const walk=(v)=>{ if(typeof v==='string'){ if(v.length>=8) out.push(v);} else if(v&&typeof v==='object'){ for(const x of Object.values(v)) walk(x);} };
+          walk(p); require('fs').writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\n')+'\n');"
+          dirs=()
+          for d in apps/workspace/playwright-report apps/workspace/test-results apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
+          if [ "${#dirs[@]}" -gt 0 ] && grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}"; then
+            echo "::error::a seeded credential appears in the files listed above; artifacts are not uploaded"
+            rm -rf "${dirs[@]}"
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/needles.txt"
+
+      - name: Upload Playwright report, screenshots and videos
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-workspace-${{ matrix.shard }}
+          path: |
+            apps/workspace/playwright-report
+            apps/workspace/test-results
+            apps/portal/test-results
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Stack logs on failure (env files are never printed)
+        if: ${{ failure() }}
+        run: |
+          for f in .dev/logs/*.log .dev/compose-up.log; do echo "::group::$f"; tail -n 80 "$f" || true; echo "::endgroup::"; done
+          docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml ps -a || true
