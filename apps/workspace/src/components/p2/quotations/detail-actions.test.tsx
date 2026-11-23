@@ -436,6 +436,8 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
       />,
     );
     expect(html).toContain('becomes the live quotation again');
+    expect(html).toContain('>Discard revision</button>');
+    expect(html).not.toContain('>Cancel quotation</button>');
     expect(html).not.toContain('it stays in the list as Cancelled');
     expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('live quotation again');
   });
