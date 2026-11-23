@@ -97,7 +97,7 @@ it('holds a noValidate action form while the day of an uncontrolled picker is cl
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(action).not.toHaveBeenCalled();
   expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
-  expect(segment('month').textContent).not.toBe('mm');
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
 });
 
 it('blocks a plain form while a required picker lacks its day or its time', async () => {
