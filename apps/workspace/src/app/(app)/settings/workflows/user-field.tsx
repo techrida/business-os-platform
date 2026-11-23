@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
-import { Field, Select } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 
 export interface UserOption {
   id: string;
@@ -10,7 +11,13 @@ export interface UserOption {
   name: string;
   /** Shown under the name; null when the name is already the email or there is none. */
   email: string | null;
+  /** Job title and department, muted after the name (BOS-UI-001). */
+  role?: string | null;
 }
+
+/** The people a workflow, group or delegation picker offers, as the one member picker takes them. */
+export const memberOptions = (users: readonly UserOption[]) =>
+  users.map((u) => ({ id: u.id, name: u.name, role: u.role ?? null }));
 
 /**
  * Named choices come from the approval-management lookup. Failed lookups retain the saved target
@@ -40,25 +47,21 @@ export function UserField({
       }
     >
       {(control) => (
-        <Select
-          {...control}
+        <MemberPicker
+          labelledBy={control['aria-labelledby']}
+          describedBy={control['aria-describedby']}
           name={name}
-          required
+          people={memberOptions(available)}
           defaultValue={defaultValue}
+          current={
+            defaultValue && !available.some((u) => u.id === defaultValue)
+              ? { id: defaultValue, name: 'Current person (name unavailable)' }
+              : undefined
+          }
+          required
+          placeholder="Search by name"
           disabled={available.length === 0 && !defaultValue}
-        >
-          <option value="" disabled>
-            Choose a person
-          </option>
-          {defaultValue && !available.some((u) => u.id === defaultValue) ? (
-            <option value={defaultValue}>Current person (name unavailable)</option>
-          ) : null}
-          {available.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.label}
-            </option>
-          ))}
-        </Select>
+        />
       )}
     </Field>
   );

@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Field, Select } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { Panel } from '@/components/ui/panel';
 import { humanizeKey } from '@/lib/kernel-ui';
 
@@ -24,9 +25,9 @@ function roleName(roleKey: string): string {
   return humanizeKey(roleKey);
 }
 
-/** One option of the approver picker: the person, their role and, when they have no address, that fact. */
-export function approverOptionLabel(o: ApproverOption): string {
-  return [o.name, roleName(o.roleKey), o.hasEmail ? null : 'no email'].filter(Boolean).join(' · ');
+/** What the approver picker shows muted after the name: their approval role and, with no address, that fact. */
+export function approverOptionRole(o: ApproverOption): string {
+  return [roleName(o.roleKey), o.hasEmail ? null : 'no email'].filter(Boolean).join(' · ');
 }
 
 /** Shown next to a chosen approver without an email address. */
@@ -194,21 +195,21 @@ function ApproverPicker({
     <div className={styles.approverPicker}>
       <Field
         label={`Approver for step ${step.seq}`}
-        hint="Only the person you choose sees this step in their Inbox and can decide it. You cannot choose yourself."
+        hint="Optional: leave it empty and anyone eligible can decide. Only the person you choose sees this step in their Inbox and can decide it. You cannot choose yourself."
       >
         {(control) => (
-          <Select
+          <MemberPicker
+            labelledBy={control['aria-labelledby']}
+            describedBy={control['aria-describedby']}
+            people={options.map((o) => ({
+              id: o.userId,
+              name: o.name,
+              role: approverOptionRole(o),
+            }))}
             value={chosen ? value : ''}
-            onChange={(e) => onChange(e.target.value)}
-            {...control}
-          >
-            <option value="">{stepLabel(step)} (anyone eligible)</option>
-            {options.map((o) => (
-              <option key={o.userId} value={o.userId}>
-                {approverOptionLabel(o)}
-              </option>
-            ))}
-          </Select>
+            onChange={onChange}
+            placeholder={`${stepLabel(step)} (anyone eligible)`}
+          />
         )}
       </Field>
       {chosen && !chosen.hasEmail ? (
