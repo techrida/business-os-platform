@@ -3,7 +3,9 @@
 // payables picker instead of pasting a raw purchase order id, and the form submits the picked order's id.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { choose, click, mountForm } from '@/test/form-interactions';
+import { fill, mountForm } from '@/test/form-interactions';
+
+import { listedOptions, pickBox, pickByTyping } from '../../procurement/pick-existing.test-helpers';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock('./actions', () => ({
@@ -29,14 +31,15 @@ const item = (vendorPartyId: string, vendorName: string, n: number) => ({
   claimedAmount: '0.00',
   availableAmount: '1000.00',
 });
-const options = () =>
-  Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent?.trim());
-const triggerOf = (container: HTMLElement, name: string) =>
-  container.querySelector(`input[name="${name}"]`)?.parentElement?.querySelector('button') ?? null;
-
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(async () => {
   await mounted?.unmount();
@@ -61,19 +64,20 @@ describe('the purchase order picker of a payment request', () => {
     expect(container.textContent).not.toContain('Purchase order ID');
     expect(field()?.type).toBe('hidden');
 
-    await choose(container, 'vendorPartyId', 'Himal Traders');
-    await click(triggerOf(container, 'purchaseOrderId'));
-    expect(options()).toContain('PO-2083-0007 · Issued');
-    expect(options()).not.toContain('PO-2083-0009 · Closed');
-    await click(triggerOf(container, 'purchaseOrderId'));
-
-    await choose(container, 'purchaseOrderId', 'PO-2083-0007 · Issued');
+    await pickByTyping(container, 'vendorPartyId', 'himal', 'Himal Traders');
+    expect(container.querySelector<HTMLInputElement>('input[name="vendorPartyId"]')?.value).toBe(
+      HIMAL,
+    );
+    // Only this vendor's order is listed, with the vendor named beside its number.
+    await fill(pickBox(container, 'purchaseOrderId'), 'PO-2083');
+    expect(listedOptions()).toEqual(['PO-2083-0007 · IssuedHimal Traders']);
+    await pickByTyping(container, 'purchaseOrderId', 'PO-2083', 'PO-2083-0007 · Issued');
     expect(field()?.value).toBe(PO_HIMAL);
     const form = container.querySelector('form');
     expect(form && new FormData(form).get('purchaseOrderId')).toBe(PO_HIMAL);
 
     // A new vendor clears the order: an order of the previous vendor is never sent.
-    await choose(container, 'vendorPartyId', 'Everest Supplies');
+    await pickByTyping(container, 'vendorPartyId', 'everest', 'Everest Supplies');
     expect(field()?.value).toBe('');
   });
 
@@ -86,8 +90,10 @@ describe('the purchase order picker of a payment request', () => {
       />,
     );
     const { container } = mounted;
-    await choose(container, 'vendorPartyId', 'Himal Traders');
-    expect(container.textContent).toContain('This vendor has no purchase orders');
+    await pickByTyping(container, 'vendorPartyId', 'himal', 'Himal Traders');
+    expect(pickBox(container, 'purchaseOrderId').placeholder).toBe(
+      'This vendor has no purchase orders',
+    );
     expect(container.querySelector<HTMLInputElement>('input[name="purchaseOrderId"]')?.value).toBe(
       '',
     );
