@@ -1,0 +1,7 @@
+# CI-only overlay for the QA workflow (.github/workflows/qa.yml). The worker runs on the runner (not in a container)
+# and the base file keeps gotenberg on the backend network only, so publish it on loopback for the worker.
+services:
+  gotenberg:
+    ports:
+      - '127.0.0.1:3300:3000'
+    networks: [backend, edge]

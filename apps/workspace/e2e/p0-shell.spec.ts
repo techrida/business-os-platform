@@ -96,7 +96,7 @@ test('P0 shell keeps its fixed edges and exposes real session facts without hydr
     await expect(nav.getByRole('link')).toHaveCount(1);
     await expect(nav.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
     await search.clear();
-    await expect(nav.getByRole('link', { name: 'Inbox' })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Inbox', exact: true })).toBeVisible();
   });
 
   await test.step('the Dev pill loads the actual authenticated whoami response', async () => {
