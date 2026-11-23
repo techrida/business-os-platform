@@ -2,9 +2,7 @@
 
 Open-source B2B operations platform by Techrida for Nepali trading and service companies. Run CRM, quotations, sales orders, invoicing, procurement, and payables in one system with built-in approvals and a tamper-evident audit trail.
 
-[![CI](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml)
-[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/techrida/business-os-platform/badge)](https://scorecard.dev/viewer/?uri=github.com/techrida/business-os-platform)
+[![CI](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml?query=branch%3Amain) [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/techrida/business-os-platform/badge)](https://scorecard.dev/viewer/?uri=github.com/techrida/business-os-platform)
 
 ## What it is and who it is for
 
