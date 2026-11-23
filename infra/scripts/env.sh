@@ -1,6 +1,6 @@
 # Source this before running Business OS commands in WSL:  source infra/scripts/env.sh
 # It puts the project's Node 24 + pnpm 11 first on PATH for this shell only, so other
-# projects on the same machine (e.g. another project's Node 22 in ~/.local/bin) are untouched.
+# projects on the same machine (for example a different Node version in ~/.local/bin) are untouched.
 if [ -x "$HOME/.local/share/fnm/fnm" ]; then
   export PATH="$HOME/.local/share/fnm:$PATH"
   eval "$(fnm env --shell bash)" && fnm use --silent-if-unchanged 24 >/dev/null 2>&1

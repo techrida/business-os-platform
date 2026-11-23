@@ -29,6 +29,7 @@ import type { Principal } from '../../platform/authz/can';
 import type { RoleCache } from '../../platform/authz/role-cache';
 import type { DbTransaction } from '../../platform/db/tx';
 import { loadAssignmentConfig, toAssignmentRuleConfig } from '../access-settings/assignment-config';
+import { departmentNames, roleLine } from '../../platform/users/person-role';
 import { type AssignmentRuleConfig, decideAssignment } from './lead-assignment-rule';
 
 type EntityScope = { tenantId: string; organizationId: string };
@@ -48,6 +49,7 @@ export function activeStaffOfEntity(tx: DbTransaction, scope: EntityScope, userI
       displayName: users.displayName,
       email: users.email,
       avatarDocumentId: users.avatarDocumentId,
+      jobTitle: userEntities.jobTitle,
       roleKeys: userEntities.roleKeys,
       departmentId: userEntities.departmentId,
       level: userEntities.level,
@@ -77,6 +79,8 @@ export interface AssignmentCandidate extends AssignmentParty {
   displayName: string | null;
   email: string | null;
   avatarDocumentId: string | null;
+  /** What a picker shows after the name: job title and department (BOS-UI-001). */
+  role?: string | null;
 }
 
 /**
@@ -115,6 +119,11 @@ export async function loadAssignmentParties(
     if (!ROLE_KEY_SET.has(roleKey)) continue;
     rolesOf.set(userId, [...(rolesOf.get(userId) ?? []), roleKey as RoleKey]);
   }
+  const deptNames = await departmentNames(
+    tx,
+    scope,
+    staff.map((row) => row.departmentId),
+  );
   return staff.map((row) => ({
     userId: row.userId,
     roleKeys: (rolesOf.get(row.userId) ?? []).filter(
@@ -125,6 +134,10 @@ export async function loadAssignmentParties(
     displayName: row.displayName,
     email: row.email,
     avatarDocumentId: row.avatarDocumentId,
+    role: roleLine(
+      row.jobTitle,
+      row.departmentId === null ? null : (deptNames.get(row.departmentId) ?? null),
+    ),
   }));
 }
 

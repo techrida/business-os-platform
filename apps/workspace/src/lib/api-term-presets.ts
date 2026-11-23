@@ -25,7 +25,7 @@ export function listTermPresets(session: Session, kind?: TermPresetKind): Promis
 
 export function createTermPreset(
   session: Session,
-  body: { kind: TermPresetKind; name: string; body: string },
+  body: { kind: TermPresetKind; name: string; body: string; isDefault?: boolean },
 ): Promise<TermPreset> {
   return call(session, '/v1/admin/term-presets', TermPresetSchema, json('POST', body));
 }
@@ -33,7 +33,7 @@ export function createTermPreset(
 export function updateTermPreset(
   session: Session,
   id: string,
-  body: { name?: string; body?: string },
+  body: { name?: string; body?: string; isDefault?: boolean },
 ): Promise<TermPreset> {
   return call(session, `/v1/admin/term-presets/${seg(id)}`, TermPresetSchema, json('PATCH', body));
 }
