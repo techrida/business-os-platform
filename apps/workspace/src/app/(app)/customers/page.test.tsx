@@ -102,6 +102,37 @@ describe('customers list page', () => {
     expect(doc.body.innerHTML).not.toContain(OWNER);
   });
 
+  it("shows the primary contact's primary phone in a Phone column and under the name for a narrow screen (R6A, D8)", async () => {
+    mocks.listCustomers.mockResolvedValue({
+      items: [
+        {
+          ...customer,
+          primaryPhone: { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true },
+        },
+        { ...customer, id: MERGED, legalName: 'Kathmandu Steel', primaryPhone: null },
+        // An older payload without the field reads as no phone.
+        { ...customer, id: '44444444-4444-4444-8444-444444444444', legalName: 'Old Payload Ltd' },
+      ],
+      total: 3,
+    });
+    const doc = new DOMParser().parseFromString(await render(), 'text/html');
+    const headers = [...doc.querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    const column = headers.indexOf('Phone');
+    expect(column).toBe(headers.indexOf('Location') + 1);
+    const rows = [...doc.querySelectorAll('tbody tr')];
+    expect(rows.map((tr) => tr.querySelectorAll('td')[column]?.textContent?.trim())).toEqual([
+      '+977 9812345678',
+      'Not set',
+      'Not set',
+    ]);
+    // Under the name, only for the row that has a number.
+    expect(rows.map((tr) => tr.querySelector('td')?.textContent)).toEqual([
+      expect.stringContaining('+977 9812345678'),
+      expect.not.stringContaining('+977'),
+      expect.not.stringContaining('+977'),
+    ]);
+  });
+
   // FX9: one combined column with the city and the country's name; no street line and no phone in the list.
   it("shows each organization's city and country name in a Location column", async () => {
     mocks.listCustomers.mockResolvedValue({
