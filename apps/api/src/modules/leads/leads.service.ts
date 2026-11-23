@@ -585,7 +585,14 @@ export class LeadsService {
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const { expectedVersion, phones: sentPhones, address: sentAddress, ...fields } = body;
+    const {
+      expectedVersion,
+      phones: sentPhones,
+      address: sentAddress,
+      customerId: unlinkCustomer,
+      contactId: unlinkContact,
+      ...fields
+    } = body;
     const sent = { notice: false };
     const edited = await withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
@@ -607,7 +614,20 @@ export class LeadsService {
       const phonesChanged =
         sentPhones !== undefined && !sameLeadPhones(storedPhones, row.phonesSearch, sentPhones);
       const address = addressChange(row, sentAddress);
-      if (changes.length === 0 && !phonesChanged && address === undefined) {
+      // R6T: unlinking needs no read of the customer (the caller may not be able to read it, which is the reason to
+      // unlink). The lead itself was checked above: visible, writable, not converted.
+      const unlink =
+        (unlinkCustomer === null && row.customerId !== null) ||
+        (unlinkContact === null && row.contactId !== null)
+          ? {
+              before: { customerId: row.customerId, contactId: row.contactId },
+              after: {
+                customerId: unlinkCustomer === null ? null : row.customerId,
+                contactId: unlinkCustomer === null || unlinkContact === null ? null : row.contactId,
+              },
+            }
+          : undefined;
+      if (changes.length === 0 && !phonesChanged && address === undefined && unlink === undefined) {
         throw new BadRequestException({ code: 'bad_request', message: 'Nothing to change' });
       }
       // The email cannot be cleared by an edit, so only the stored one and the numbers after the edit decide.
@@ -622,6 +642,7 @@ export class LeadsService {
       // Written with the versioned update, so the phones' own replace below finds the search text already in line.
       if (phonesChanged) set.phonesSearch = phonesSearchText(sentPhones);
       if (address !== undefined) Object.assign(set, address.columns);
+      if (unlink !== undefined) Object.assign(set, unlink.after);
       const newOwner = set.ownerUserId;
       if (typeof newOwner === 'string') {
         await assertAssignable(
@@ -652,11 +673,13 @@ export class LeadsService {
           ...Object.fromEntries(changes.map((c) => [c.field, c.before])),
           ...(phonesChanged ? { phones: storedPhones.map((p) => p.e164) } : {}),
           ...(address === undefined ? {} : { address: address.before }),
+          ...(unlink === undefined ? {} : unlink.before),
         },
         after: {
           ...Object.fromEntries(changes.map((c) => [c.field, c.after])),
           ...(phonesChanged ? { phones: sentPhones.map((p) => p.e164) } : {}),
           ...(address === undefined ? {} : { address: address.after }),
+          ...(unlink === undefined ? {} : unlink.after),
         },
       });
       if (typeof newOwner === 'string') {

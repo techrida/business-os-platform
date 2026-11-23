@@ -58,7 +58,7 @@ export interface LeadSummary {
 export type LeadRow = typeof leads.$inferSelect;
 
 /** The edit body's fields, without the version. */
-type LeadEditFields = Omit<UpdateLeadBody, 'expectedVersion'>;
+type LeadEditFields = Omit<UpdateLeadBody, 'expectedVersion' | 'customerId' | 'contactId'>;
 /**
  * The fields stored on the lead row, one column each; `phones` are rows of their own (lead-phones.ts) and `address`
  * is two columns (`addressChange`), both diffed by the service.
