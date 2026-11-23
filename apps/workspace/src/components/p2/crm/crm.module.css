@@ -55,21 +55,61 @@
   font-size: var(--font-size-body-small);
 }
 
+/* The board is its own scroll container: fixed-width columns side by side, sideways scrolling inside
+   it (shift + wheel, trackpad, scrollbar, keyboard), never the page. Its height is the room left on
+   the screen, so its scrollbar is on screen once the page is scrolled to the board, and each column
+   scrolls its cards on its own under a header that stays put.
+   Edge fades (the Lea Verou local/scroll background trick, no JS) show where more columns wait:
+   a soft shadow appears on a side only while content is hidden there. */
 .board {
+  --board-height: max(24rem, calc(100dvh - 12rem));
+  --board-fade: var(--surface-default);
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(250px, 280px);
+  grid-auto-columns: 280px;
   gap: 12px;
   padding-bottom: 12px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   align-items: start;
+  scroll-padding-inline: 12px;
+  background:
+    linear-gradient(to right, var(--board-fade) 30%, transparent) left center / 40px 100% no-repeat
+      local,
+    linear-gradient(to left, var(--board-fade) 30%, transparent) right center / 40px 100% no-repeat
+      local,
+    linear-gradient(to right, rgb(15 23 42 / 14%), transparent) left center / 14px 100% no-repeat
+      scroll,
+    linear-gradient(to left, rgb(15 23 42 / 14%), transparent) right center / 14px 100% no-repeat
+      scroll;
+  /* Overlay scrollbars hide until touched, which would hide that the board scrolls. A classic
+     scrollbar is always drawn; the WebKit pseudo-elements only apply while the standard properties
+     are auto, so this resets the global thin skin (same as the table wrapper). */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+.board::-webkit-scrollbar {
+  height: 12px;
+}
+
+.board::-webkit-scrollbar-track {
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.board::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-md);
+  background: var(--border-strong);
 }
 
 .column {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   min-width: 0;
+  /* A column never outgrows the board; its cards scroll under the header. */
+  max-height: calc(var(--board-height) - 12px);
   padding: 12px;
   border: var(--border-width-thin) solid var(--border-default);
   border-radius: var(--radius-xl);
@@ -78,15 +118,19 @@
 
 .columnHead {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 .columnTitle {
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
+  text-wrap: balance;
 }
+
 
 .columnNote {
   color: var(--text-secondary);
@@ -102,10 +146,38 @@
 
 .cards {
   display: grid;
+  align-content: start;
   gap: 8px;
+  min-height: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+/* Phones: one column per view, snapping as you swipe; the next column peeks in so it is clear
+   there is more. Dragging a card turns snapping off so the board can be moved by the edges
+   without jumping back. */
+@media (pointer: coarse) {
+  .cardMove summary {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .board {
+    grid-auto-columns: min(85%, 320px);
+    scroll-snap-type: x mandatory;
+  }
+
+  .board[data-dragging='true'] {
+    scroll-snap-type: none;
+  }
+
+  .column {
+    scroll-snap-align: start;
+  }
 }
 
 .card {
@@ -120,6 +192,22 @@
 
 .card[draggable='true'] {
   cursor: grab;
+}
+
+.card[draggable='true']:active {
+  cursor: grabbing;
+}
+
+/* Lift on hover only where there is a real pointer: touch fires phantom hovers on tap. Only the
+   shadow transitions (never `all`), so a card caught mid-hover can still be picked up. */
+@media (hover: hover) and (pointer: fine) {
+  .card {
+    transition: box-shadow 150ms ease-out;
+  }
+
+  .card[draggable='true']:hover {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 8%), 0 4px 12px rgb(15 23 42 / 6%);
+  }
 }
 
 .cardDragging {

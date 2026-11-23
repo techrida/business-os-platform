@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 
+import { edgeScrollDelta } from './board-scroll';
 import styles from './crm.module.css';
 import { MarkContactedDialog } from './mark-contacted-dialog';
 import { MoveForm, toastMoveResult } from './move-form';
@@ -54,6 +55,32 @@ export function Board({
   const [announce, setAnnounce] = useState('');
   const [contact, setContact] = useState<{ card: BoardCard; fromLabel: string } | null>(null);
   const refs = useRef(new Map<string, HTMLLIElement>());
+  const scroller = useRef<HTMLDivElement>(null);
+  const pointerX = useRef<number | null>(null);
+
+  // While a card is dragged, pushing it to the left or right edge of the board scrolls the board
+  // (the browser does not do this for a scroll box inside the page). The pointer position comes from
+  // `dragover`, the only drag event that carries a usable one. Reduced motion keeps it: the person
+  // is steering, and the scroll is instant, never smoothed.
+  useEffect(() => {
+    if (dragId === null) return;
+    let frame = 0;
+    const tick = () => {
+      const el = scroller.current;
+      const x = pointerX.current;
+      if (el !== null && x !== null) {
+        const box = el.getBoundingClientRect();
+        const delta = edgeScrollDelta(x, box);
+        if (delta !== 0) el.scrollLeft += delta;
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+      pointerX.current = null;
+    };
+  }, [dragId]);
 
   const dragged = cards.find((c) => c.id === dragId);
   const canDrop = (stage: string) =>
@@ -111,10 +138,15 @@ export function Board({
         {announce}
       </p>
       <div
+        ref={scroller}
         className={styles.board}
+        data-dragging={dragId === null ? undefined : 'true'}
         role="region"
-        aria-label={`${noun} board (scrolls sideways on narrow screens)`}
+        aria-label={`${noun} board (scrolls sideways)`}
         tabIndex={0}
+        onDragOver={(e) => {
+          pointerX.current = e.clientX;
+        }}
       >
         {columns.map((column) => {
           const headingId = `col-${column.stage}`;
