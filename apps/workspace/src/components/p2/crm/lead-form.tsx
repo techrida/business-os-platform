@@ -484,7 +484,7 @@ export function LeadForm({
             }}
           />
 
-          <Field label="Phone" hint="Optional. Pick each number's country, or type + and its code.">
+          <Field label="Phone" hint="Optional. Pick each number's country, or type its code.">
             {(c) => (
               <PhoneListInput
                 key={phonesKey}
