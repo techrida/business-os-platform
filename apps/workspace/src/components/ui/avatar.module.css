@@ -23,7 +23,7 @@
   height: 100%;
   object-fit: cover;
   border-radius: inherit;
-  background: var(--surface-default);
+  background: var(--avatar-image-bg, var(--surface-default));
 }
 
 /* Logos: the whole mark on white, inset from a hairline edge. */

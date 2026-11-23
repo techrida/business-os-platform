@@ -26,6 +26,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { Panel } from '@/components/ui/panel';
+import { SearchInput } from '@/components/ui/search-input';
 
 import { ActionMenu } from './action-menu';
 import styles from './departments.module.css';
@@ -231,9 +232,8 @@ export function PeopleCard({
           )}
           <Field label="Search members">
             {(control) => (
-              <Input
+              <SearchInput
                 {...control}
-                type="search"
                 value={query}
                 autoComplete="off"
                 onChange={(event) => updateFilters(event.currentTarget.value, levels)}

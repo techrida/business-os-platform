@@ -44,7 +44,7 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
  * does not wipe what was typed (React 19 resets uncontrolled fields after every action).
  *
  * Create and edit both ask for the kind and country (D10). Edit locks the legal name, PAN, kind and
- * country of an approved or suspended vendor (`lockIdentity`): those change through a new KYB review.
+ * country of an approved or suspended vendor (`lockIdentity`).
  * A foreign vendor has no Nepali PAN: it gets an optional Tax ID in the loose shape instead, so
  * switching a foreign vendor to a Nepal kind shows the PAN box, which must be filled.
  *
@@ -125,11 +125,7 @@ export function VendorForm({
   const legalName = (
     <Field
       label="Legal name"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
-          : undefined
-      }
+      hint={lockIdentity ? 'Locked once the vendor is approved.' : undefined}
       error={err.legalName}
     >
       {(control) => (
@@ -225,7 +221,7 @@ export function VendorForm({
       label="Kind"
       hint={
         lockIdentity
-          ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
+          ? 'Locked once the vendor is approved.'
           : mode === 'edit'
             ? 'A foreign vendor is outside Nepal. Any other kind is in Nepal and needs a PAN.'
             : undefined
@@ -252,7 +248,7 @@ export function VendorForm({
   );
 
   const countryHint = lockIdentity
-    ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
+    ? 'Locked once the vendor is approved.'
     : foreign
       ? 'The vendor’s own country, outside Nepal.'
       : 'Vendors in Nepal use Nepal.';

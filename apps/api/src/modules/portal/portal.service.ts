@@ -74,7 +74,8 @@ export function isPortalVisible(
 
 /**
  * A sent version the company has since closed: it was cancelled itself (a Lost deal), or it was replaced by a revision
- * that was then cancelled. Its mailed link, its row in the list and its PDF all say "no longer open" (R6D).
+ * that was then cancelled without giving it back (a Lost or Won deal, or a canceller who may not revise; a revision
+ * cancelled by someone who may revise restores the sent version instead, R6D). Its mailed link, its row in the list and its PDF all say "no longer open" (R6D).
  */
 export function isClosedToCustomer(v: {
   status: PortalVersionHead['status'];

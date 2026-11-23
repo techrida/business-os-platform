@@ -39,8 +39,8 @@ export interface VendorList {
  * PATCH /v1/vendors/:id. `kind` and `country` may change after create (D10) because the foreign rule ties them
  * together: a body that sends one must leave the pair valid with the stored other (a foreign vendor is outside
  * Nepal, any other kind is in it), and the service refuses a Nepal vendor left without a PAN. `legalName`, `pan`,
- * `kind` and `country` lock once the vendor is approved: a change of tax identity goes through a new KYB review,
- * not an edit. The PAN has the loose shape here; the service holds a Nepal vendor to nine digits against the
+ * `kind` and `country` lock once the vendor is approved. Before approval, changing one resets a submitted or approved
+ * KYB case to draft (documents are uploaded again) and sends an under-review vendor back to pending_kyc. The PAN has the loose shape here; the service holds a Nepal vendor to nine digits against the
  * country the vendor will have (FX9). `address` replaces both lines and city, and `null` clears them.
  */
 export const UpdateVendorBodySchema = z.strictObject({
@@ -48,7 +48,8 @@ export const UpdateVendorBodySchema = z.strictObject({
   legalName: text(200).optional(),
   kind: VendorKindSchema.optional(),
   country: CountryCodeSchema.optional(),
-  pan: PanVatNoSchema.optional(),
+  /** `null` clears the PAN of a foreign vendor (a Nepal vendor always has one). */
+  pan: PanVatNoSchema.nullable().optional(),
   address: AddressLinesSchema.nullable().optional(),
   vatRegistered: z.boolean().optional(),
   ownerUserId: z.guid().optional(),
