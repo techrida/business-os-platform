@@ -1,23 +1,68 @@
 'use server';
 
+import type { CustomerDto } from '@bos/contracts';
+
 import { listContacts, listCustomers } from '@/components/p2/customers/api';
 import { requireStaffSession } from '@/lib/bff';
 
-/** Read through the existing APIs with the caller's token; their permissions remain authoritative. */
-export async function searchConversionCustomers(query: string) {
+/** What the conversion dialog shows of a customer it may link: enough to tell two organisations apart. */
+export interface ConversionCustomer {
+  id: string;
+  name: string;
+  number: string;
+  /** The stored PAN or VAT number, or null. */
+  pan: string | null;
+}
+
+const toOption = (c: CustomerDto): ConversionCustomer => ({
+  id: c.id,
+  name: c.legalName,
+  number: c.number,
+  pan: c.panVatNo,
+});
+
+/** A PAN or VAT number as compared: spaces and dashes out, upper case (the API's own match key). */
+const panKey = (value: string): string => value.replace(/[\s-]+/g, '').toUpperCase();
+
+/**
+ * The live search behind the organisation boxes. Read through the existing customer list with the caller's token,
+ * so the tenant scope and `customer.read` stay the API's. `query` is what was typed (name, number or PAN/VAT);
+ * `pan`, when given, is looked up on its own and `panMatches` holds only the customers whose stored number is the
+ * SAME number once spaces and dashes are removed: a duplicate PAN is almost certainly the same company.
+ */
+export async function searchConversionCustomers(
+  query: string,
+  pan?: string,
+): Promise<{
+  customers: ConversionCustomer[];
+  panMatches: ConversionCustomer[];
+  error: string;
+}> {
   const session = await requireStaffSession('/leads');
   const q = query.trim();
-  if (!q || q.length > 100) return { options: [], error: '' };
+  const wantedPan = pan === undefined ? '' : panKey(pan);
+  if ((!q || q.length > 100) && !wantedPan) return { customers: [], panMatches: [], error: '' };
   try {
-    const result = await listCustomers(session, { q, limit: 20 });
+    const [byText, byPan] = await Promise.all([
+      q && q.length <= 100 ? listCustomers(session, { q, limit: 20 }) : null,
+      wantedPan && wantedPan.length <= 100
+        ? listCustomers(session, { q: wantedPan, limit: 20 })
+        : null,
+    ]);
     return {
-      options: result.items.map((c) => ({ id: c.id, label: `${c.legalName} · ${c.number}` })),
+      customers: (byText?.items ?? []).map(toOption),
+      panMatches: (byPan?.items ?? [])
+        .filter(
+          (c) => c.mergedIntoId === null && c.panVatNo !== null && panKey(c.panVatNo) === wantedPan,
+        )
+        .map(toOption),
       error: '',
     };
   } catch {
     return {
-      options: [],
-      error: 'Customers could not be loaded. Check your access and try again.',
+      customers: [],
+      panMatches: [],
+      error: 'Organisations could not be loaded. Check your access and try again.',
     };
   }
 }

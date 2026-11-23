@@ -13,16 +13,43 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(requireStaffSession).mockResolvedValue(session as never);
 });
-it('searches through the authenticated API and returns only IDs and business labels', async () => {
+it('searches through the authenticated API and returns only business fields', async () => {
   vi.mocked(listCustomers).mockResolvedValue({
-    items: [{ id, legalName: 'Acme', number: 'CUS-01', ownerUserId: 'private' }],
+    items: [
+      { id, legalName: 'Acme', number: 'CUS-01', panVatNo: '601234567', ownerUserId: 'private' },
+    ],
     total: 1,
   } as never);
   expect(await searchConversionCustomers(' Acme ')).toEqual({
-    options: [{ id, label: 'Acme · CUS-01' }],
+    customers: [{ id, name: 'Acme', number: 'CUS-01', pan: '601234567' }],
+    panMatches: [],
     error: '',
   });
   expect(listCustomers).toHaveBeenCalledWith(session, { q: 'Acme', limit: 20 });
+});
+it('a PAN lookup keeps only customers with the SAME number once spaces and dashes are removed (not a substring, not a merged record)', async () => {
+  const mk = (n: string, pan: string | null, merged: string | null = null) => ({
+    id: n.repeat(8).slice(0, 8) + id.slice(8),
+    legalName: `Co ${n}`,
+    number: `CUS-${n}`,
+    panVatNo: pan,
+    mergedIntoId: merged,
+  });
+  vi.mocked(listCustomers).mockResolvedValue({
+    items: [
+      mk('1', '601234567'),
+      mk('2', '6012345678'),
+      mk('3', '601-234-567'),
+      mk('4', null),
+      mk('5', '601234567', id),
+    ],
+    total: 5,
+  } as never);
+  const found = await searchConversionCustomers('', '601 234 567');
+  expect(found.panMatches.map((c) => c.number)).toEqual(['CUS-1', 'CUS-3']);
+  expect(found.customers).toEqual([]);
+  expect(listCustomers).toHaveBeenCalledTimes(1);
+  expect(listCustomers).toHaveBeenCalledWith(session, { q: '601234567', limit: 20 });
 });
 it('does not call the API without a staff session', async () => {
   vi.mocked(requireStaffSession).mockRejectedValue(new Error('sign in'));
@@ -55,11 +82,12 @@ it('shows a contact without an email but does not let it be chosen (its quotatio
 it('reports denied or failed lookups without leaking API errors or granting access', async () => {
   vi.mocked(listCustomers).mockRejectedValue(new Error('secret backend details'));
   vi.mocked(listContacts).mockRejectedValue(new Error('secret backend details'));
-  for (const result of [
-    await searchConversionCustomers('Acme'),
-    await loadConversionContacts(id),
-  ]) {
-    expect(result.options).toEqual([]);
+  const people = await searchConversionCustomers('Acme', '601234567');
+  expect(people.customers).toEqual([]);
+  expect(people.panMatches).toEqual([]);
+  const contacts = await loadConversionContacts(id);
+  expect(contacts.options).toEqual([]);
+  for (const result of [people, contacts]) {
     expect(result.error).not.toBe('');
     expect(result.error).not.toContain('secret');
   }
