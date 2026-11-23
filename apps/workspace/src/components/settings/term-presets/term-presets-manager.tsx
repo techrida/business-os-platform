@@ -97,19 +97,21 @@ export function TermPresetsManager({ presets }: { presets: readonly TermPreset[]
                         <p className={styles.preview}>{previewLine(preset.body)}</p>
                       </div>
                       <div className={styles.rowActions}>
-                        <Button
-                          size="small"
-                          variant="secondary"
-                          disabled={changingDefault !== null}
-                          aria-label={
-                            preset.isDefault === true
-                              ? `Clear default ${termKindLabel(kind)}`
-                              : `Make ${preset.name} the default ${termKindLabel(kind)}`
-                          }
-                          onClick={() => void chooseDefault(preset)}
-                        >
-                          {preset.isDefault === true ? 'Clear default' : 'Make default'}
-                        </Button>
+                        {kind !== 'payment_terms' ? (
+                          <Button
+                            size="small"
+                            variant="secondary"
+                            disabled={changingDefault !== null}
+                            aria-label={
+                              preset.isDefault === true
+                                ? `Clear default ${termKindLabel(kind)}`
+                                : `Make ${preset.name} the default ${termKindLabel(kind)}`
+                            }
+                            onClick={() => void chooseDefault(preset)}
+                          >
+                            {preset.isDefault === true ? 'Clear default' : 'Make default'}
+                          </Button>
+                        ) : null}
                         <button
                           type="button"
                           className={styles.iconButton}
