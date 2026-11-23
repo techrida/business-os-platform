@@ -50,6 +50,10 @@ chmod 600 .dev/*.pat .dev/personas.json 2>/dev/null || true
 lap "seeded"
 end
 
+step "demo fixtures"
+dc exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
+end
+
 step "register secrets as masked"
 # Every persona password and TOTP secret is masked in this job's log, whatever prints it.
 node -e "
