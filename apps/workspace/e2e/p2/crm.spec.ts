@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 import { chooseOption, optionLabels, selectByName } from '../helpers/select';
+import { ensureLeadOwner } from '../helpers/lead-owner';
 
 /** Moves a New lead to Contacted: the move needs the call, email or meeting that made the contact (D48). */
 async function markContacted(page: Page) {
@@ -43,6 +44,7 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
       await page
         .getByRole('textbox', { name: 'Email', exact: true })
         .fill(`sunita.${Date.now()}@example.test`);
+      await ensureLeadOwner(page);
       await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     });
@@ -117,6 +119,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
       // A lead needs an email or at least one phone number.
       await page.getByRole('textbox', { name: 'Email', exact: true }).fill(email);
+      await ensureLeadOwner(page);
       await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
       await page.waitForLoadState('networkidle');

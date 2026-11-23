@@ -11,6 +11,7 @@ import {
   toggleOptions,
 } from '../helpers/multi-select';
 import { chooseOption, selectByName } from '../helpers/select';
+import { ensureLeadOwner } from '../helpers/lead-owner';
 
 async function moveStage(page: Page, value: string, label: string) {
   if (value === 'contacted') {
@@ -63,6 +64,7 @@ async function createOpportunity(page: Page, name: string) {
   await page
     .getByRole('textbox', { name: 'Email', exact: true })
     .fill(`${randomUUID()}@example.test`);
+  await ensureLeadOwner(page);
   await page.getByRole('button', { name: 'Create lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
   await moveStage(page, 'contacted', 'Contacted');

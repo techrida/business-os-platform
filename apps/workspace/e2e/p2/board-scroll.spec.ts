@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 import { chooseOption, selectByName } from '../helpers/select';
+import { ensureLeadOwner } from '../helpers/lead-owner';
 
 /**
  * Kanban boards scroll inside themselves, never the whole app (Kuu, 2026-11-23: on Leads > Board,
@@ -36,6 +37,7 @@ for (const route of BOARDS) {
       await page
         .getByRole('textbox', { name: 'Email', exact: true })
         .fill(`board.${Date.now()}@example.test`);
+      await ensureLeadOwner(page);
       await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 
