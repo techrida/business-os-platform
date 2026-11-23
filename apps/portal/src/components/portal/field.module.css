@@ -1,5 +1,7 @@
 .field {
   display: grid;
+  /* A taller neighbour must not stretch this field's rows and move its box (UIP-FORM-010). */
+  align-content: start;
   gap: 6px;
   min-width: 0;
 }
