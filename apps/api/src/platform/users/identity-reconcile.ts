@@ -476,9 +476,10 @@ export async function withFounderRemovalLease<T>(
   fn: () => Promise<T>,
   deadlineMs: number = OPERATION_DEADLINE_MS,
   settleOutstanding?: SettleOutstandingRemoval,
+  waitMs: number = LEASE_WAIT_MS,
 ): Promise<T> {
   const leaseId = randomUUID();
-  const giveUpAt = Date.now() + LEASE_WAIT_MS;
+  const giveUpAt = Date.now() + waitMs;
   let claimStartedAt = Date.now();
   for (;;) {
     claimStartedAt = Date.now();
