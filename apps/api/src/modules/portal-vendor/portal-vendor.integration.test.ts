@@ -515,6 +515,28 @@ describe('vendor portal capability by vendor status (done check 13)', () => {
     });
   });
 
+  it('tells the vendor when its details changed and who changed them, and only for its own case (R6AE)', async () => {
+    const changed = await vendor('pending_kyc');
+    const other = await vendor('pending_kyc');
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.verification_cases (tenant_id, party_id, party_kind, status, checklist,
+            identity_reset_at, identity_reset_by_user_id)
+          VALUES (${scopeA.tenantId}, ${changed}, 'vendor', 'draft', '[]'::jsonb,
+            '2026-11-23T04:00:00Z', ${staffId}),
+                 (${scopeA.tenantId}, ${other}, 'vendor', 'draft', '[]'::jsonb, NULL, NULL)`,
+    );
+    asVendor(changed);
+    const view = await service.onboarding();
+    expect(view.detailsChanged).toEqual({
+      at: '2026-11-23T04:00:00.000Z',
+      by: expect.any(String),
+    });
+    expect(view.detailsChanged?.by).not.toBe('');
+    asVendor(other);
+    expect((await service.onboarding()).detailsChanged).toBeNull();
+  });
+
   it('refuses a staff or customer principal, and a vendor party with no vendor record, with 403', async () => {
     const vendorParty = await vendor('approved');
     asVendor(vendorParty, scopeA, { orgKind: 'staff' });

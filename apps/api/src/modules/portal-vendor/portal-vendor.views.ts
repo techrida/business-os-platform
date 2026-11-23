@@ -213,11 +213,13 @@ export function toOnboardingView(
   status: VendorStatus,
   checklist: readonly ChecklistSource[] | undefined,
   today: string,
+  detailsChanged: { at: string; by: string | null } | null = null,
 ): VendorPortalOnboardingView {
   const byKey = new Map((checklist ?? []).map((i) => [i.key, i]));
   return VendorPortalOnboardingViewSchema.parse({
     status,
     capability: vendorPortalCapability(status),
+    detailsChanged,
     documents: VENDOR_KYC_DOC_TYPES.map((docType: VendorKycDocType) => {
       const item = byKey.get(docType);
       return {
