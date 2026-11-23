@@ -34,7 +34,7 @@ export function OpenCaseForm({
   }, [state]);
 
   return (
-    <form action={formAction} className={styles.openCase}>
+    <form noValidate action={formAction} className={styles.openCase}>
       <input type="hidden" name="partyId" value={partyId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
 

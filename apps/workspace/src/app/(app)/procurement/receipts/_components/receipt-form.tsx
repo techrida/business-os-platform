@@ -300,6 +300,7 @@ export function ReceiptForm({
                               className={rows.full ?? ''}
                               label={lineLabel('Serial numbers')}
                               hint="One per line, as many as units received. Each must be different."
+                              help="One serial number per line, as many as units received. Each must be different."
                               error={errors[`${l.poLineId}.serials`]}
                             >
                               {(c) => (

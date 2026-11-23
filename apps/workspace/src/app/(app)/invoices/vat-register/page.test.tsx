@@ -143,6 +143,15 @@ it('asks for a period without reading or showing an export', async () => {
   expect(api.getSalesVatRegister).not.toHaveBeenCalled();
 });
 
+// noValidate turns off the browser's required check: an empty submit (`?from=&to=`) must still say why.
+it('names the empty start and end dates when the filter is submitted blank', async () => {
+  const html = await render({ from: '', to: '' });
+  expect(html).toContain('Choose the start date.');
+  expect(html).toContain('Choose the end date.');
+  expect(html).not.toContain('Choose a period.');
+  expect(api.getSalesVatRegister).not.toHaveBeenCalled();
+});
+
 it('renders rows with BS dates, document kinds, links, negative credit notes and one total row per currency', async () => {
   const html = await render();
   expect(api.getSalesVatRegister).toHaveBeenCalledExactlyOnceWith(session, period.from, period.to);

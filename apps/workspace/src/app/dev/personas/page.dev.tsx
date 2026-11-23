@@ -35,7 +35,7 @@ export default async function DevPersonasPage() {
           users.
         </p>
         {accounts.map((account) => (
-          <form key={account.id} method="post" action="/dev/api/accounts">
+          <form noValidate key={account.id} method="post" action="/dev/api/accounts">
             <input type="hidden" name="account" value={account.id} />
             <button type="submit">{account.label}</button> <span>{account.login}</span>
           </form>

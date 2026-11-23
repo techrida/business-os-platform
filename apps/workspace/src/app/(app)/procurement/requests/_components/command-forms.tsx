@@ -109,7 +109,7 @@ export function SubmitForm({
         </>
       }
     >
-      <form id={formId} action={formAction} className={styles.panelForm}>
+      <form noValidate id={formId} action={formAction} className={styles.panelForm}>
         <Hidden prId={prId} version={version} state={state} />
         <Outcome state={state} reloadHref={reloadHref} />
       </form>
@@ -161,7 +161,7 @@ export function CancelForm({
         </>
       }
     >
-      <form id={formId} action={formAction} className={styles.panelForm}>
+      <form noValidate id={formId} action={formAction} className={styles.panelForm}>
         <Hidden prId={prId} version={version} state={state} />
         <Outcome state={state} reloadHref={reloadHref} />
       </form>

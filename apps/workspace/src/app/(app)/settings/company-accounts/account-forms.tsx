@@ -51,7 +51,7 @@ export function AddBankAccountForm({
   const errors = state.fieldErrors ?? {};
 
   return (
-    <form action={formAction} className={styles.form} aria-label="Add a bank account">
+    <form noValidate action={formAction} className={styles.form} aria-label="Add a bank account">
       <input type="hidden" name="idempotencyKey" value={key} />
       <div className={styles.formRow}>
         <Field label="Name" error={errors.name}>
@@ -133,7 +133,12 @@ export function AddExpenseAccountForm({ idempotencyKey }: { idempotencyKey: stri
   const errors = state.fieldErrors ?? {};
 
   return (
-    <form action={formAction} className={styles.form} aria-label="Add an expense account">
+    <form
+      noValidate
+      action={formAction}
+      className={styles.form}
+      aria-label="Add an expense account"
+    >
       <input type="hidden" name="idempotencyKey" value={key} />
       <div className={styles.formRow}>
         <Field label="Code" hint="Fixed once added." error={errors.code}>
@@ -250,6 +255,7 @@ export function RenameableName({
   const kept = state.status === 'error' ? (state.fields?.name ?? name) : name;
   return (
     <form
+      noValidate
       action={formAction}
       className={local.renameForm}
       onKeyDown={(event) => {

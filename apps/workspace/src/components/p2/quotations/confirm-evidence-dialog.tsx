@@ -69,7 +69,7 @@ export function ConfirmEvidenceDialog({
           <p role="status">Evidence confirmed. Close this to see it on the quotation.</p>
         </div>
       ) : (
-        <form id={formId} ref={formRef} action={formAction}>
+        <form noValidate id={formId} ref={formRef} action={formAction}>
           <input type="hidden" name="quotationId" value={quotationId} />
           <input type="hidden" name="versionId" value={versionId} />
           <input type="hidden" name="idempotencyKey" value={state.key} />

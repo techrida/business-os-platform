@@ -135,7 +135,7 @@ export function OutcomeDialog({
           </p>
         </div>
       ) : (
-        <form id={formId} ref={connectForm} action={formAction}>
+        <form noValidate id={formId} ref={connectForm} action={formAction}>
           <input type="hidden" name="quotationId" value={quotationId} />
           <input type="hidden" name="versionId" value={versionId} />
           <input type="hidden" name="expectedVersion" value={version} />

@@ -18,7 +18,7 @@ export function FxForm({ today }: { today: string }) {
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
 
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <div className={styles.formRow}>
         <Field label="Currency" error={state.fieldErrors?.currency}>
           {(control) => (

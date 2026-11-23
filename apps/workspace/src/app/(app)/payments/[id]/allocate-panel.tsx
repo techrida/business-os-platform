@@ -155,7 +155,7 @@ function AllocateForm({
 
   return (
     <div ref={wrapRef}>
-      <form action={formAction} className={styles.form}>
+      <form noValidate action={formAction} className={styles.form}>
         <input type="hidden" name="paymentId" value={paymentId} />
         <input type="hidden" name="idempotencyKey" value={state.key} />
         {problem.error ? (

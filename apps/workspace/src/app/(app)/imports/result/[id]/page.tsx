@@ -102,7 +102,7 @@ export default async function ImportResultPage({
         </section>
         <div className={styles.actions}>
           {!committed && !expired && batch.validCount > 0 ? (
-            <form action={commitImportAction}>
+            <form noValidate action={commitImportAction}>
               <input type="hidden" name="id" value={batch.id} />
               <Button type="submit">
                 Import {batch.validCount} {batch.validCount === 1 ? meta.singular : meta.plural}

@@ -80,7 +80,7 @@ export function BillForm({
   const currencyCode = CURRENCIES.find((c) => c === currency) ?? 'NPR';
 
   return (
-    <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
+    <form noValidate action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
       {documentId ? <input type="hidden" name="documentId" value={documentId} /> : null}
 
