@@ -192,4 +192,15 @@ describe('TaxCodesManager', () => {
     expect(alert?.textContent).toContain('Someone else changed this tax code');
     await mounted.unmount();
   });
+
+  it('shows examples in the Add dialog, not format hints under the boxes (UIP-FORM-008)', async () => {
+    const mounted = await mountForm(<TaxCodesManager codes={[VAT13]} today={TODAY} />);
+    await click(buttonByText('Add tax code'));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).not.toContain('1 to 20 capitals');
+    expect(dialog.textContent).not.toContain('up to two decimals');
+    expect(dialog.querySelector('input[placeholder="VAT-13"]')).not.toBeNull();
+    expect(dialog.querySelector('input[placeholder="VAT 13%"]')).not.toBeNull();
+    await mounted.unmount();
+  });
 });
