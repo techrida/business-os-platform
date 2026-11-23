@@ -17,7 +17,8 @@ import { chooseOption, selectByName } from '../helpers/select';
  * Screenshots of every list page land in EVIDENCE_DIR (created by the tests).
  */
 
-const EVIDENCE_DIR = process.env.EVIDENCE_DIR ?? path.join(os.tmpdir(), 'bos-list-filters-evidence');
+const EVIDENCE_DIR =
+  process.env.EVIDENCE_DIR ?? path.join(os.tmpdir(), 'bos-list-filters-evidence');
 const BASE = process.env.BASE_URL ?? 'https://app.localhost';
 
 /** No filter control may need a click to apply itself. */
