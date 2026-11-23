@@ -37,7 +37,7 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
       await chooseOption(selectByName(page, 'source'), 'referral');
       await page
-        .getByRole('textbox', { name: 'Company or organization', exact: true })
+        .getByRole('combobox', { name: 'Company or organization', exact: true })
         .fill('Binford Ltd.');
       await page.getByLabel('Contact person').fill('Sunita Shrestha');
       // A lead needs an email or at least one phone number.
@@ -114,7 +114,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
       await chooseOption(selectByName(page, 'source'), 'referral');
       await page
-        .getByRole('textbox', { name: 'Company or organization', exact: true })
+        .getByRole('combobox', { name: 'Company or organization', exact: true })
         .fill(`Board Test ${stamp} Pvt. Ltd.`);
       await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
       // A lead needs an email or at least one phone number.

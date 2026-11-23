@@ -75,7 +75,17 @@ export async function createDraftMemo(
     });
     // The approver rule may already have chosen the person (a head who cannot decide approvals falls back to the
     // Founder, and the box opens filled). Keep that choice when it is the one asked for.
-    if (approver && (await box.inputValue()) === signers[i]) continue;
+    // The rule arrives after the form, so wait a moment for it before choosing by hand.
+    if (approver) {
+      const prefilled = await expect
+        .poll(() => box.inputValue(), { timeout: 5_000 })
+        .toBe(signers[i])
+        .then(
+          () => true,
+          () => false,
+        );
+      if (prefilled) continue;
+    }
     await box.click();
     await box.fill(signers[i]!);
     // Match the option's own name line, whole. A prefix match also picks "Dev Management Two" when

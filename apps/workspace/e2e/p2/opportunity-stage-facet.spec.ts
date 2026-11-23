@@ -57,7 +57,7 @@ async function createOpportunity(page: Page, name: string) {
   await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(name);
   await chooseOption(selectByName(page, 'source'), 'referral');
   await page
-    .getByRole('textbox', { name: 'Company or organization', exact: true })
+    .getByRole('combobox', { name: 'Company or organization', exact: true })
     .fill(`${name} Company`);
   await page.getByLabel('Contact person').fill(name);
   // A lead needs an email or at least one phone number.
