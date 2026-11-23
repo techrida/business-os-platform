@@ -13,6 +13,7 @@ import { getSession } from '@/lib/session';
 
 import { loadVendor } from '../../load';
 import styles from '../../_upload/upload.module.css';
+import { DetailsChangedNote } from '@/components/vendor/details-changed-note';
 import { KycForm } from './_components/kyc-form';
 
 export const dynamic = 'force-dynamic';
@@ -64,6 +65,12 @@ export default async function UploadKycPage({
           where it stands on your account page.
         </p>
       </div>
+      {view.detailsChanged ? (
+        <DetailsChangedNote detailsChanged={view.detailsChanged} className={styles.confirmation}>
+          {' '}
+          A file you sent before the change cannot be used.
+        </DetailsChangedNote>
+      ) : null}
       {sent === '1' ? (
         <Alert tone="success" role="status" className={styles.confirmation}>
           We received your document. Our team will check it.

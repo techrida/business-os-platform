@@ -450,7 +450,7 @@ it('keeps a short new-contact phone blocked after switching to an existing conta
   await fill(phone(), '981234567');
   await click(radio('contactMode', 'existing'));
   await click(radio('contactMode', 'create'));
-  expect(phone()?.value).toBe('981234567');
+  expect(phone()?.value).toBe('+977 981234567');
   await convert();
   expect(submitted).toHaveLength(0);
   expect(api.convertLead).not.toHaveBeenCalled();

@@ -202,15 +202,16 @@
   cursor: pointer;
 }
 
-.iconAction:hover:not(:disabled) {
+.iconAction:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--button-secondary-bg-hover);
 }
 
-.iconAction:active:not(:disabled) {
+.iconAction:active:not(:disabled):not([aria-disabled='true']) {
   background: var(--button-secondary-bg-active);
 }
 
-.iconAction:disabled {
+.iconAction:disabled,
+.iconAction[aria-disabled='true'] {
   color: var(--button-secondary-disabled-text);
   cursor: progress;
 }

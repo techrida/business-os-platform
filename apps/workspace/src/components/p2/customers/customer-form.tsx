@@ -68,6 +68,7 @@ export function CustomerForm({
   reloadHref,
   description,
   enabledCurrencies,
+  lockIdentity = false,
 }: {
   action: (prev: CustomerFormState, form: FormData) => Promise<CustomerFormState>;
   initial: CustomerValues;
@@ -86,6 +87,8 @@ export function CustomerForm({
    * listed even after it was switched off, so the form never silently changes it.
    */
   enabledCurrencies: readonly Currency[];
+  /** A verified customer's legal name, PAN and country are read-only (R6AE); the API refuses an edit of them. */
+  lockIdentity?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<CustomerFormState, FormData>(action, {
     key: idempotencyKey ?? '',
@@ -277,7 +280,16 @@ export function CustomerForm({
 
       <Panel title="Basic Company Information" className={styles.formSection}>
         <div className={styles.grid}>
-          <Field label="Organization legal name" error={err.legalName} className={WIDE}>
+          <Field
+            label="Organization legal name"
+            hint={
+              lockIdentity
+                ? 'Locked: the legal name of a verified customer cannot be edited.'
+                : undefined
+            }
+            error={err.legalName}
+            className={WIDE}
+          >
             {(control) => (
               <Input
                 name="legalName"
@@ -286,6 +298,7 @@ export function CustomerForm({
                 maxLength={200}
                 autoComplete="organization"
                 placeholder="e.g. Acme Technologies Corporation"
+                readOnly={lockIdentity}
                 required
                 {...control}
               />
@@ -410,6 +423,10 @@ export function CustomerForm({
           value={{ line: values.line, city: values.city, country: countryOf(values.country) }}
           onChange={setAddress}
           errors={{ line: err.line, city: err.city, country: err.country }}
+          countryDisabled={lockIdentity}
+          {...(lockIdentity && {
+            hints: { country: 'Locked: the country of a verified customer cannot be edited.' },
+          })}
         />
       </Panel>
 
@@ -440,7 +457,14 @@ export function CustomerForm({
               </Select>
             )}
           </Field>
-          <Field label="PAN or VAT number" optional error={err.panVatNo}>
+          <Field
+            label="PAN or VAT number"
+            optional
+            hint={
+              lockIdentity ? 'Locked: the PAN of a verified customer cannot be edited.' : undefined
+            }
+            error={err.panVatNo}
+          >
             {(control) =>
               nepalCustomer ? (
                 <PanInput
@@ -450,6 +474,7 @@ export function CustomerForm({
                   edited={panEdited}
                   onEditedChange={setPanEdited}
                   placeholder="123456789"
+                  readOnly={lockIdentity}
                   {...control}
                 />
               ) : (
@@ -466,6 +491,7 @@ export function CustomerForm({
                   autoComplete="off"
                   placeholder="VAT-1234567"
                   className={styles.numeric}
+                  readOnly={lockIdentity}
                   {...control}
                 />
               )

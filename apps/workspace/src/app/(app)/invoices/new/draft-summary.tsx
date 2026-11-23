@@ -68,7 +68,6 @@ export function DraftSummary({
         title="Draft invoice preview"
         description="An invoice number, issue date and final totals are assigned through the invoice workflow."
         trigger={
-          // A natively disabled button gets no hover events, so the reason hangs on a wrapper.
           <Tooltip
             content={
               !customer || !details
@@ -76,11 +75,16 @@ export function DraftSummary({
                 : undefined
             }
           >
-            <span style={{ display: 'inline-flex' }}>
-              <Button variant="secondary" disabled={!customer || !details || pending}>
-                <Icon name="file-text" size={18} /> Preview
-              </Button>
-            </span>
+            <Button
+              variant="secondary"
+              aria-disabled={!customer || !details || pending || undefined}
+              // Still focusable so the tooltip reads; a click on it must not open the dialog.
+              onClick={(event) => {
+                if (!customer || !details || pending) event.preventDefault();
+              }}
+            >
+              <Icon name="file-text" size={18} /> Preview
+            </Button>
           </Tooltip>
         }
         footer={

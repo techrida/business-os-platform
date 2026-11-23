@@ -76,8 +76,8 @@ describe('CompanyEditor contact boxes', () => {
 
   it('opens each saved phone in its own country box and posts its number and country', async () => {
     const editor = await mountEditor({ phones: [NP_LANDLINE, US_PHONE] });
-    expect(editor.box('Phone 1 number').value).toBe('14123456');
-    expect(editor.box('Phone 2 number').value).toBe('4155552671');
+    expect(editor.box('Phone 1 number').value).toBe('+977 1-4123456');
+    expect(editor.box('Phone 2 number').value).toBe('+1 415 555 2671');
     expect(editor.posted('phones.0.number')).toBe('+97714123456');
     expect(editor.posted('phones.0.country')).toBe('NP');
     expect(editor.posted('phones.1.number')).toBe('+14155552671');

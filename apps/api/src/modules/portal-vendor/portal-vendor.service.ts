@@ -61,7 +61,8 @@ export class VendorPortalService {
   async onboarding(): Promise<VendorPortalOnboardingView> {
     const { p, status } = await this.access('onboarding');
     const checklist = await this.store.kybChecklist(p);
-    return toOnboardingView(status, checklist, kathmanduDay(this.clock()));
+    const detailsChanged = await this.store.kybDetailsChanged(p);
+    return toOnboardingView(status, checklist, kathmanduDay(this.clock()), detailsChanged);
   }
 
   /** The caller's purchase orders in the acting entity, each at its newest issued version. */

@@ -15,6 +15,7 @@ import {
   purchaseOrders,
   purchaseOrderVersions,
   vendorBills,
+  users,
   vendors,
   verificationCases,
 } from '@bos/db';
@@ -53,6 +54,8 @@ export interface VendorPortalStore {
   vendorStatus(p: Principal): Promise<VendorStatus | undefined>;
   /** The checklist of the caller's own KYB case; undefined when no case is open yet. */
   kybChecklist(p: Principal): Promise<ChecklistSource[] | undefined>;
+  /** When a change of the vendor's details reset its KYB case and who made it; null when the case never was reset. */
+  kybDetailsChanged(p: Principal): Promise<{ at: string; by: string | null } | null>;
   /** Every purchase order `p` may read that has an issued version, each with its newest version. */
   listPurchaseOrders(p: Principal): Promise<PoRecord[]>;
   /** One purchase order `p` may read with its newest issued version; undefined when out of reach or a draft. */
@@ -139,6 +142,29 @@ export class DrizzleVendorPortalStore implements VendorPortalStore {
       .limit(1);
     if (row === undefined) return undefined;
     return Array.isArray(row.checklist) ? (row.checklist as ChecklistSource[]) : [];
+  }
+
+  async kybDetailsChanged(p: Principal): Promise<{ at: string; by: string | null } | null> {
+    if (p.partyId === null || p.partyId === '') return null;
+    const [row] = await this.db
+      .select({ at: verificationCases.identityResetAt, by: users.displayName })
+      .from(verificationCases)
+      .leftJoin(
+        users,
+        and(
+          eq(users.tenantId, verificationCases.tenantId),
+          eq(users.id, verificationCases.identityResetByUserId),
+        ),
+      )
+      .where(
+        and(
+          eq(verificationCases.tenantId, p.tenantId),
+          eq(verificationCases.partyId, p.partyId),
+          eq(verificationCases.partyKind, 'vendor'),
+        ),
+      )
+      .limit(1);
+    return row?.at ? { at: row.at.toISOString(), by: row.by ?? null } : null;
   }
 
   async listPurchaseOrders(p: Principal): Promise<PoRecord[]> {

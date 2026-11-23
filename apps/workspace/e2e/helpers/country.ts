@@ -20,3 +20,21 @@ export async function pickCountry(box: Locator, search: string, shown: string): 
   await expect(box).toHaveAttribute('aria-expanded', 'false');
   await expect(box).toHaveValue(shown);
 }
+
+/**
+ * Picks a country in a phone row's flag menu (src/components/ui/phone-country-menu.tsx): the flag button opens a
+ * searchable list; its search box is named `<button name> search`. Pass the button as
+ * `getByRole('combobox', { name: 'Phone 2 country', exact: true })`.
+ */
+export async function pickPhoneCountry(button: Locator, search: string): Promise<void> {
+  const page = button.page();
+  const name = (await button.getAttribute('aria-label')) ?? '';
+  const box = page.getByRole('textbox', { name: `${name} search`, exact: true });
+  await expect(async () => {
+    await button.click();
+    await expect(box).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
+  await box.fill(search);
+  await box.press('Enter');
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+}
