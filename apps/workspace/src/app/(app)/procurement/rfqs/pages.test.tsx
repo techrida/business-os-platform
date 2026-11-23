@@ -333,9 +333,10 @@ describe('the detail', () => {
     expect(out).toContain('Everest Supplies Pvt Ltd, Himal Traders Pvt Ltd');
     expect(out).not.toContain('Vendor name unavailable');
     expect(vendorApi.listVendors).not.toHaveBeenCalled();
+    // The quotation page lists the invited vendors in a live-search picker (options show once it is opened).
     const quote = await quotePage();
-    expect(quote).toContain('Everest Supplies Pvt Ltd');
-    expect(quote).toContain('Himal Traders Pvt Ltd');
+    expect(quote).toContain('name="vendorId"');
+    expect(quote).toContain('role="combobox"');
     expect(quote).not.toContain('Vendor name unavailable');
     expect(vendorApi.listVendors).not.toHaveBeenCalled();
   });
@@ -481,7 +482,7 @@ describe('the quotation entry page', () => {
     const out = await quotePage();
     expect(out).toContain('Record quotation');
     expect(out).toContain('Office chair');
-    expect(out).toContain('Everest');
+    expect(out).toContain('Search an invited vendor');
     expect(out).toContain('Quotation document');
   });
 
