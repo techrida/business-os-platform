@@ -793,6 +793,7 @@ export function PaymentForm({
                   label="Tax withheld"
                   optional
                   hint="The amount withheld and not sent."
+                  help="The amount the customer withheld and did not send. The platform works out what the payment settles."
                   error={fe.tdsWithheld}
                 >
                   {(control) => (
@@ -809,6 +810,7 @@ export function PaymentForm({
                 <Field
                   label="Withholding code"
                   hint="Required when tax was withheld."
+                  help="Required when tax was withheld. Type the code exactly as it appears on the tax certificate."
                   error={fe.withholdingCode}
                 >
                   {(control) => (
