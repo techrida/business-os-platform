@@ -126,7 +126,7 @@ async function checkPersonId(page: Page, name: string): Promise<string> {
 }
 
 /**
- * The reach in the "Can see" cell of the Leads row in Check a person: its first span, without the "was ..." note
+ * The reach in the "Can see" cell of the Leads row in Check a person: its first span, without the count or the "was ..." note
  * the page adds after a recent change.
  */
 async function leadsCanSee(page: Page, personId: string): Promise<string> {
@@ -136,7 +136,11 @@ async function leadsCanSee(page: Page, personId: string): Promise<string> {
     .getByRole('row')
     .filter({ has: page.getByRole('rowheader', { name: 'Leads', exact: true }) });
   await expect(row).toHaveCount(1);
-  return (await row.getByRole('cell').first().locator('span').first().innerText()).trim();
+  // The first line only: the cell may add a count underneath ("0 of 0").
+  return (await row.getByRole('cell').first().locator('span').first().innerText())
+    .trim()
+    .split('\n')[0]!
+    .trim();
 }
 
 test('the Founder changes a grant, confirms the warning, saves, and Check a person shows it', async ({
