@@ -8,25 +8,37 @@ const read = (relative: string) => readFileSync(resolve(process.cwd(), relative)
 describe('light-only lock', () => {
   it('pins the login layout, the error boundary and the theme provider to light', () => {
     expect(read('src/lib/theme-mode.ts')).toMatch(/BOS_LIGHT_ONLY\s*=\s*true/);
-    expect(read('src/app/(login)/layout.tsx')).toContain('data-theme={BOS_LIGHT_ONLY ? "light" : undefined}');
-    expect(read('src/app/global-error.tsx')).toContain('data-theme={BOS_LIGHT_ONLY ? "light" : undefined}');
-    expect(read('src/components/theme-provider.tsx')).toContain('forcedTheme={BOS_LIGHT_ONLY ? "light" : undefined}');
+    expect(read('src/app/(login)/layout.tsx')).toContain(
+      'data-theme={BOS_LIGHT_ONLY ? "light" : undefined}',
+    );
+    expect(read('src/app/global-error.tsx')).toContain(
+      'data-theme={BOS_LIGHT_ONLY ? "light" : undefined}',
+    );
+    expect(read('src/components/theme-provider.tsx')).toContain(
+      'forcedTheme={BOS_LIGHT_ONLY ? "light" : undefined}',
+    );
   });
 });
 
 describe('brand tiles', () => {
   const rule = (css: string, selector: string) => {
-    const match = css.match(new RegExp(`(?:^|\\n)${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`));
+    const match = css.match(
+      new RegExp(`(?:^|\\n)${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`),
+    );
     return match?.[1] ?? '';
   };
-  const px = (block: string, prop: string) => block.match(new RegExp(`${prop}:\\s*([\\d.]+)px`))?.[1];
+  const px = (block: string, prop: string) =>
+    block.match(new RegExp(`${prop}:\\s*([\\d.]+)px`))?.[1];
 
-  it.each(['.bos-brand-mark', '.bos-aside-monogram'])('%s is a fixed square that does not shrink', (selector) => {
-    const block = rule(read('src/styles/bos-shell.css'), selector);
-    expect(px(block, 'width')).toBeDefined();
-    expect(px(block, 'width')).toBe(px(block, 'height'));
-    expect(block).toMatch(/flex:\s*(none|0 0 [\d.]+px)/);
-  });
+  it.each(['.bos-brand-mark', '.bos-aside-monogram'])(
+    '%s is a fixed square that does not shrink',
+    (selector) => {
+      const block = rule(read('src/styles/bos-shell.css'), selector);
+      expect(px(block, 'width')).toBeDefined();
+      expect(px(block, 'width')).toBe(px(block, 'height'));
+      expect(block).toMatch(/flex:\s*(none|0 0 [\d.]+px)/);
+    },
+  );
 });
 
 describe('unknown addresses', () => {
