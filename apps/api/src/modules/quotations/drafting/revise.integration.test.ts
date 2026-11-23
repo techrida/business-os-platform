@@ -760,7 +760,7 @@ describe('cancelling an unsent revision gives the replaced version back', () => 
 
   it('does not restore for a caller who may draft but not revise: the revision ends as before', async () => {
     const { q, v1Id, v2 } = await reviseFrom('sent');
-    current.grants = new Map([['quotation.draft', 'own']]) as Map<Permission, Scope>;
+    current.grants = new Map([['quotation.draft', 'own']]);
     await cancelRevision(q, v2);
     expect(await versionRow(v2.id)).toMatchObject({ status: 'cancelled' });
     expect(await versionRow(v1Id)).toMatchObject({ status: 'superseded' });
