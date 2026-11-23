@@ -721,7 +721,7 @@ export function QuoteBuilder({
           description="The issue date, the valid-until date and the currency are required."
         >
           <div className={styles.grid2}>
-            <Field label="Issue date" hint="Required." error={errors['issueDate']}>
+            <Field label="Issue date" error={errors['issueDate']}>
               {(control) => (
                 <DatePicker
                   required
@@ -732,11 +732,7 @@ export function QuoteBuilder({
                 />
               )}
             </Field>
-            <Field
-              label="Valid until"
-              hint="Required. The last day the prices hold; not before the issue date."
-              error={errors['validUntil']}
-            >
+            <Field label="Valid until" error={errors['validUntil']}>
               {(control) => (
                 <DatePicker
                   required
@@ -830,12 +826,13 @@ export function QuoteBuilder({
 
         <Panel
           title="Discount"
-          description="Optional. Applies to the full quotation. Enter a percentage or an amount; the other is worked out from the subtotal."
+          description="Applies to the full quotation. Enter a percentage or an amount; the other is worked out from the subtotal."
         >
           <div className={styles.sectionBody}>
             <div className={styles.grid2}>
               <Field
                 label="Discount %"
+                optional
                 hint="A discount above 12% of the subtotal needs extra approval."
                 error={values.discountMode !== 'amount' ? discountError : undefined}
               >
@@ -850,6 +847,7 @@ export function QuoteBuilder({
               </Field>
               <Field
                 label={`Discount amount (${values.currency})`}
+                optional
                 error={
                   values.discountMode === 'amount'
                     ? pair.overBase && base !== null
@@ -886,10 +884,11 @@ export function QuoteBuilder({
             <div className={styles.grid2}>
               <Field
                 label="Payment term"
+                optional
                 hint={
                   paymentTerms === null
                     ? 'The payment terms did not load. Reload the page to choose one.'
-                    : "Optional. Defaults to the customer's term when left empty."
+                    : "Defaults to the customer's term when left empty."
                 }
                 error={errors.paymentTermId}
               >
@@ -956,14 +955,12 @@ export function QuoteBuilder({
 
         <Panel
           title="Terms"
-          description={
-            termPresets?.length
-              ? 'All optional. A saved option fills the box; edit the text freely after.'
-              : 'All optional.'
-          }
+          {...(termPresets?.length
+            ? { description: 'A saved option fills the box; edit the text freely after.' }
+            : {})}
         >
           <div className={styles.sectionBody}>
-            <Field label="Scope" hint="Optional. What is included." error={errors['scope']}>
+            <Field label="Scope" optional hint="What is included." error={errors['scope']}>
               {(control) => (
                 <TermsField
                   kind="scope"
@@ -980,7 +977,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Assumptions"
-              hint="Optional. What the price and plan rely on."
+              optional
+              hint="What the price and plan rely on."
               error={errors['assumptions']}
             >
               {(control) => (
@@ -999,7 +997,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Exclusions"
-              hint="Optional. What is not included."
+              optional
+              hint="What is not included."
               error={errors['exclusions']}
             >
               {(control) => (
@@ -1018,7 +1017,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Delivery timeline"
-              hint="Optional. When the work is delivered."
+              optional
+              hint="When the work is delivered."
               error={errors['deliveryTimeline']}
             >
               {(control) => (
@@ -1037,7 +1037,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Terms and conditions"
-              hint="Optional. The conditions that apply to this quotation."
+              optional
+              hint="The conditions that apply to this quotation."
               error={errors['termsAndConditions']}
             >
               {(control) => (

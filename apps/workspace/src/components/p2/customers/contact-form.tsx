@@ -183,7 +183,7 @@ function ContactFields({
             />
           )}
         </Field>
-        <Field label="Job title" hint="Optional." error={errors.title}>
+        <Field label="Job title" optional error={errors.title}>
           {(control) => (
             <Input
               name="title"
@@ -197,7 +197,9 @@ function ContactFields({
         </Field>
         <Field
           label="Email"
-          hint={requireEmail ? 'Required: quotations are sent to it.' : 'Optional.'}
+          {...(requireEmail
+            ? { hint: 'Required: quotations are sent to it.' }
+            : { optional: true })}
           error={errors.email}
         >
           {(control) => (
@@ -228,11 +230,7 @@ function ContactFields({
             />
           )}
         </Field>
-        <Field
-          label="Phone"
-          hint="Optional. Pick each number's country, or type + and its code."
-          className={styles.wide ?? ''}
-        >
+        <Field label="Phone" optional className={styles.wide ?? ''}>
           {(control) => (
             <PhoneListInput
               name="phones"

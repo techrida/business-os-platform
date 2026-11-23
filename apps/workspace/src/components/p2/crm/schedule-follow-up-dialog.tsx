@@ -195,7 +195,8 @@ export function ScheduleFollowUpDialog({
         />
         <Field
           label="Subject"
-          hint="Optional. Leave it empty to use the type."
+          optional
+          hint="Leave it empty to use the type."
           error={shown['subject']}
         >
           {(c) => <Input name="subject" maxLength={200} {...c} />}
@@ -208,7 +209,7 @@ export function ScheduleFollowUpDialog({
             <Select name="assigneeUserId" defaultValue={defaultAssignee} options={options} {...c} />
           )}
         </Field>
-        <Field label="Note" hint="Optional." error={shown['body']}>
+        <Field label="Note" optional error={shown['body']}>
           {(c) => <Textarea name="body" rows={3} maxLength={10000} {...c} />}
         </Field>
       </form>

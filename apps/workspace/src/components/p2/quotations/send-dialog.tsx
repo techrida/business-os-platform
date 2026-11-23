@@ -140,7 +140,7 @@ function SendForm({
               )}
             </Field>
 
-            <Field label="Message (optional)" error={state.errors?.message}>
+            <Field label="Message" optional error={state.errors?.message}>
               {(control) => (
                 <Textarea
                   name="message"
