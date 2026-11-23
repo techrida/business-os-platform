@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
-import { isQuotationClosed, QuotationClosed } from './quotation-closed';
+import { isQuotationClosed } from '@/lib/quotation-closed';
+
+import { QuotationClosed } from './quotation-closed';
 
 vi.mock('server-only', () => ({}));
 
