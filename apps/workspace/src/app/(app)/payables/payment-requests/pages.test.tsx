@@ -146,7 +146,8 @@ it('shows controlled entry fields for the vendor, source account and bill items'
   expect(banks.listCompanyBankAccounts).toHaveBeenCalledWith(session);
   expect(html).toContain('name="allocation:0:openItemId"');
   expect(html).toContain('name="allocation:0:amount"');
-  expect(html).toContain('Himal Supplies');
+  // The vendor is a live-search picker: its options show once it is opened.
+  expect(html).toContain('Search a vendor');
   expect(html).not.toContain('Vendor ID');
   // Payment requests are exempt from the currency switch-off (D56 U16-Q1), so the page does not read it.
   expect(currencies.loadEnabledCurrencies).not.toHaveBeenCalled();
