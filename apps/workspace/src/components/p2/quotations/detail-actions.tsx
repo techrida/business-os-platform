@@ -19,6 +19,7 @@ import { opportunityBlockers, type OpportunityFacts } from './opportunity-gate';
 import { OutcomeDialog } from './outcome-dialog';
 import { ReviseForm } from './revise-form';
 import { SendDialog } from './send-dialog';
+import type { ContactCreate } from '../customers/contact-picker';
 
 export interface DetailActionVisibility {
   status: QuotationStatus;
@@ -81,12 +82,15 @@ export function DetailActions({
   maySend,
   mayRecordOutcome,
   opportunity,
+  createContact,
 }: {
   quotationId: string;
   number: string;
   /** The version the actions act on. `current.version` is the `expectedVersion` each one sends. */
   current: QuotationVersionDto;
   contacts: readonly QuotationContact[];
+  /** Lets the Send dialog's contact picker add a contact to the customer; null or missing when the caller may not. */
+  createContact?: ContactCreate | null;
   /** What the server says this caller may do with this quotation now. */
   capabilities: QuotationCapabilities;
   reloadHref: string;
@@ -135,6 +139,7 @@ export function DetailActions({
         <SendDialog
           {...ids}
           contacts={contacts}
+          createContact={createContact ?? null}
           defaultContactId={preselectedContactId(current.contactId, contacts)}
           idempotencyKey={randomUUID()}
           blocker={gate.ok ? null : gate.reason}
@@ -163,6 +168,7 @@ export function DetailActions({
           {...ids}
           awaitingApproval={status === 'submitted'}
           isRevision={(current.supersedesVersionId ?? null) !== null}
+          revisionNo={current.revisionNo}
           idempotencyKey={randomUUID()}
         />
       ) : null}

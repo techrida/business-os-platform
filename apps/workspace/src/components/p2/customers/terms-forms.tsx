@@ -17,6 +17,7 @@ import {
   type TermsEditState,
 } from './terms-form';
 import styles from './commercial-terms.module.css';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 type TermsAction = (prev: TermsEditState, form: FormData) => Promise<TermsEditState>;
 
@@ -291,33 +292,28 @@ function LimitFields({
   const noLimit = (mode as CreditLimitMode) === 'none';
   return (
     <>
-      <fieldset className={styles.choices}>
-        <legend className={styles.legend}>Limit</legend>
-        <label className={styles.choice}>
-          <input
-            type="radio"
-            name="limitMode"
-            value="limit"
-            checked={!noLimit}
-            onChange={() => setMode('limit')}
-          />
-          Set a limit
-        </label>
-        <label className={styles.choice}>
-          <input
-            type="radio"
-            name="limitMode"
-            value="none"
-            checked={noLimit}
-            onChange={() => setMode('none')}
-          />
-          No limit (orders are never held for credit)
-        </label>
-      </fieldset>
+      <RadioGroup
+        asChild
+        name="limitMode"
+        value={noLimit ? 'none' : 'limit'}
+        onValueChange={(next) => setMode(next)}
+      >
+        <fieldset className={styles.choices}>
+          <legend className={styles.legend}>Limit</legend>
+          <label className={styles.choice}>
+            <Radio value="limit" />
+            Set a limit
+          </label>
+          <label className={styles.choice}>
+            <Radio value="none" />
+            No limit (orders are never held for credit)
+          </label>
+        </fieldset>
+      </RadioGroup>
       {noLimit ? null : (
         <Field
           label="Credit limit (NPR)"
-          hint="Up to two decimals, for example 1,00,000.00. 0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
+          hint="0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
           error={error}
         >
           {(c) => (
@@ -325,7 +321,7 @@ function LimitFields({
               name="creditLimit"
               currency="NPR"
               showWords
-              placeholder="0.00"
+              placeholder="1,00,000.00"
               value={amount}
               onValueChange={setAmount}
               {...c}

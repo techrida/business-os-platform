@@ -47,7 +47,7 @@ export function InviteForm({
   const kept = state.status === 'error' ? fields : {};
 
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <PageHeader
         title="Add New User"
         description="Add a colleague and choose the roles they hold."
@@ -122,7 +122,8 @@ export function InviteForm({
           <div className={styles.fieldGrid}>
             <Field
               label="Department"
-              hint="Optional. Access to department records follows it."
+              optional
+              hint="Access to department records follows it."
               error={state.fieldErrors?.departmentId}
             >
               {(control) => (
@@ -137,7 +138,7 @@ export function InviteForm({
                 />
               )}
             </Field>
-            <Field label="Level" hint="Optional. Staff unless you choose otherwise.">
+            <Field label="Level" optional>
               {(control) => (
                 <Select
                   name="level"

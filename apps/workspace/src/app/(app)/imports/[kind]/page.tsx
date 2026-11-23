@@ -91,6 +91,7 @@ export default async function ImportPage({
             </li>
           </ol>
           <form
+            noValidate
             method="post"
             action={`/imports/${slug}/upload`}
             encType="multipart/form-data"

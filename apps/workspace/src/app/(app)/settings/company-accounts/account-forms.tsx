@@ -51,17 +51,14 @@ export function AddBankAccountForm({
   const errors = state.fieldErrors ?? {};
 
   return (
-    <form action={formAction} className={styles.form} aria-label="Add a bank account">
+    <form noValidate action={formAction} className={styles.form} aria-label="Add a bank account">
       <input type="hidden" name="idempotencyKey" value={key} />
       <div className={styles.formRow}>
-        <Field
-          label="Name"
-          hint="What you call it, for example Operating account."
-          error={errors.name}
-        >
+        <Field label="Name" error={errors.name}>
           {(control) => (
             <Input
               name="name"
+              placeholder="Operating account"
               autoComplete="off"
               required
               maxLength={120}
@@ -136,26 +133,33 @@ export function AddExpenseAccountForm({ idempotencyKey }: { idempotencyKey: stri
   const errors = state.fieldErrors ?? {};
 
   return (
-    <form action={formAction} className={styles.form} aria-label="Add an expense account">
+    <form
+      noValidate
+      action={formAction}
+      className={styles.form}
+      aria-label="Add an expense account"
+    >
       <input type="hidden" name="idempotencyKey" value={key} />
       <div className={styles.formRow}>
-        <Field label="Code" hint="Fixed once added, for example 5100." error={errors.code}>
+        <Field label="Code" hint="Fixed once added." error={errors.code}>
           {(control) => (
             <Input
               name="code"
               autoComplete="off"
               required
               maxLength={32}
+              placeholder="5100"
               className={local.short}
               defaultValue={kept.code ?? ''}
               {...control}
             />
           )}
         </Field>
-        <Field label="Name" hint="For example Office supplies." error={errors.name}>
+        <Field label="Name" error={errors.name}>
           {(control) => (
             <Input
               name="name"
+              placeholder="Office supplies"
               autoComplete="off"
               required
               maxLength={120}
@@ -251,6 +255,7 @@ export function RenameableName({
   const kept = state.status === 'error' ? (state.fields?.name ?? name) : name;
   return (
     <form
+      noValidate
       action={formAction}
       className={local.renameForm}
       onKeyDown={(event) => {

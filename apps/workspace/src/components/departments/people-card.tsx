@@ -26,6 +26,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { Panel } from '@/components/ui/panel';
+import { SearchInput } from '@/components/ui/search-input';
 
 import { ActionMenu } from './action-menu';
 import styles from './departments.module.css';
@@ -51,6 +52,7 @@ import {
   type StagedPerson,
 } from './people-model';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export const PEOPLE_STALE_MESSAGE = 'Access was changed by someone else. Reload to see the latest.';
 
@@ -231,9 +233,8 @@ export function PeopleCard({
           )}
           <Field label="Search members">
             {(control) => (
-              <Input
+              <SearchInput
                 {...control}
-                type="search"
                 value={query}
                 autoComplete="off"
                 onChange={(event) => updateFilters(event.currentTarget.value, levels)}
@@ -248,6 +249,7 @@ export function PeopleCard({
             onChange={(values) => updateFilters(query, readLevels(values))}
             allLabel="All levels"
             pluralLabel="levels"
+            className={styles.toolbarFilter ?? ''}
           />
         </div>
 
@@ -299,13 +301,12 @@ export function PeopleCard({
                   <tr key={person.userId} className={leaving ? styles.leaving : undefined}>
                     {editable && (
                       <td className={styles.cellSelect}>
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           className={styles.checkbox}
                           aria-label={`Select ${person.name}`}
                           checked={selected.has(person.userId)}
                           disabled={leaving}
-                          onChange={(event) => toggle(person.userId, event.currentTarget.checked)}
+                          onCheckedChange={(nextChecked) => toggle(person.userId, nextChecked)}
                         />
                       </td>
                     )}

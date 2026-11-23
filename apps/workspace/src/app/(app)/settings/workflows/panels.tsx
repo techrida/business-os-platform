@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
@@ -97,7 +97,7 @@ export function ActionButton({
     );
   }
   return (
-    <form action={formAction} className={styles.rowAction}>
+    <form noValidate action={formAction} className={styles.rowAction}>
       {Object.entries(fields).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
@@ -122,8 +122,17 @@ export function SoleEligiblePublishForm({
   hiddenLabel?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, IDLE);
+  const [reasonError, setReasonError] = useState<string | undefined>();
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    const form = event.currentTarget;
+    const reason = new FormData(form).get('reason');
+    if (typeof reason === 'string' && reason.trim() !== '') return;
+    event.preventDefault();
+    setReasonError('Enter a reason for publishing.');
+    form.querySelector<HTMLElement>('[name="reason"]')?.focus();
+  }
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} onSubmit={onSubmit} className={styles.form}>
       {Object.entries(fields).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
@@ -133,8 +142,18 @@ export function SoleEligiblePublishForm({
       <Field
         label="Reason for publishing"
         hint="New requests will use this version, and the version in use will be retired."
+        error={reasonError}
       >
-        {(control) => <Textarea {...control} name="reason" required maxLength={500} rows={2} />}
+        {(control) => (
+          <Textarea
+            {...control}
+            name="reason"
+            required
+            maxLength={500}
+            rows={2}
+            onChange={() => setReasonError(undefined)}
+          />
+        )}
       </Field>
       <div className={styles.formActions}>
         <Button type="submit" variant="primary" size="small" disabled={pending}>
@@ -151,7 +170,7 @@ export function CreateGroupForm() {
   const [state, formAction, pending] = useActionState(createGroupAction, IDLE);
   const kept = state.status === 'error' ? (state.fields ?? {}) : {};
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <div className={styles.formRow}>
         <Field label="Group name">
           {(control) => (
@@ -164,7 +183,7 @@ export function CreateGroupForm() {
             />
           )}
         </Field>
-        <Field label="Key" hint="Lowercase letters, digits, _ . - ; used by workflow steps.">
+        <Field label="Key">
           {(control) => (
             <Input
               {...control}
@@ -172,6 +191,7 @@ export function CreateGroupForm() {
               required
               autoComplete="off"
               pattern="[a-z][a-z0-9_.\-]{0,63}"
+              placeholder="finance-approvers"
               defaultValue={kept.key ?? ''}
             />
           )}
@@ -211,7 +231,7 @@ export function AddMemberForm({
   const [state, formAction, pending] = useActionState(addMemberAction, IDLE);
   const saved = useSuccessCount(state);
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <input type="hidden" name="groupId" value={groupId} />
       <div className={styles.addRow}>
         <UserField
@@ -246,8 +266,29 @@ export function DelegationForm({
   // Controlled, so the form reset React runs after every action keeps the times a refusal sent back.
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
+  const [startsAtError, setStartsAtError] = useState<string | undefined>();
+  const [endsAtError, setEndsAtError] = useState<string | undefined>();
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    const form = event.currentTarget;
+    const missing = [
+      {
+        name: 'startsAt',
+        value: startsAt,
+        report: setStartsAtError,
+        message: 'Enter the start time.',
+      },
+      { name: 'endsAt', value: endsAt, report: setEndsAtError, message: 'Enter the end time.' },
+    ].filter((time) => time.value === '');
+    if (missing.length === 0) return;
+    event.preventDefault();
+    for (const time of missing) time.report(time.message);
+    form
+      .querySelector(`input[name="${missing[0]!.name}"]`)
+      ?.parentElement?.querySelector<HTMLElement>('[data-placeholder]')
+      ?.focus();
+  }
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} onSubmit={onSubmit} className={styles.form}>
       <div className={styles.formRow}>
         <UserField
           key={`from-${saved}`}
@@ -265,29 +306,35 @@ export function DelegationForm({
         />
       </div>
       <div className={styles.formRow}>
-        <Field label="Starts">
+        <Field label="Starts" error={startsAtError}>
           {(control) => (
             <DateTimePicker
               {...control}
               name="startsAt"
               value={startsAt}
-              onChange={setStartsAt}
+              onChange={(value) => {
+                setStartsAt(value);
+                setStartsAtError(undefined);
+              }}
               required
             />
           )}
         </Field>
-        <Field label="Ends">
+        <Field label="Ends" error={endsAtError}>
           {(control) => (
             <DateTimePicker
               {...control}
               name="endsAt"
               value={endsAt}
-              onChange={setEndsAt}
+              onChange={(value) => {
+                setEndsAt(value);
+                setEndsAtError(undefined);
+              }}
               required
             />
           )}
         </Field>
-        <Field label="Document type (optional)">
+        <Field label="Document type" optional>
           {(control) => (
             <SuggestInput
               {...control}

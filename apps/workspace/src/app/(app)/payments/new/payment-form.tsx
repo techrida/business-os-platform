@@ -14,12 +14,15 @@ import {
   useActionState,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { Combobox } from '@/components/ui/combobox';
+import { type ComboboxOption, matchesQuery } from '@/components/ui/combobox-model';
 import { Field, Input, Select } from '@/components/ui/field';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog } from '@/components/ui/dialog';
@@ -38,19 +41,45 @@ import { money, when } from '@/lib/kernel-format';
 
 import { methodLabel, paymentStatusMeta } from '../_lib/status';
 
+import type { CustomerOption } from './customer-option';
+
 import { recordPaymentAction } from './actions';
 import type { RecordPaymentState } from './form-state';
 import styles from './payment-form.module.css';
 import { MAX_PROOFS, PROOF_ACCEPT, proofProblem } from './proof-rules';
+import { Checkbox } from '@/components/ui/checkbox';
 
-/** One customer the person can choose. Names and numbers only: the form shows no balances. */
-export interface CustomerOption {
-  id: string;
-  name: string;
-  number: string;
-  /** The customer's usual currency, used as the starting choice. */
-  defaultCurrency: Currency | null;
-}
+export type { CustomerOption };
+
+/** What the picker asks when the page's list was cut off: the customers matching the typed text. */
+export type CustomerSearcher = (text: string, signal: AbortSignal) => Promise<CustomerOption[]>;
+
+/** The BFF route beside this page; throws on any failure (the picker then simply offers no more suggestions). */
+export const searchCustomers: CustomerSearcher = async (text, signal) => {
+  const res = await fetch(
+    `/payments/new/customers?${new URLSearchParams({ q: text }).toString()}`,
+    {
+      cache: 'no-store',
+      signal,
+    },
+  );
+  if (!res.ok) throw new Error(`Customer search failed with ${res.status}`);
+  const body = (await res.json()) as { customers?: CustomerOption[] };
+  return body.customers ?? [];
+};
+
+/** How long typing must pause before the picker asks the server. */
+const CUSTOMER_SEARCH_DELAY_MS = 250;
+
+/** The number and PAN/VAT under a customer's name in the list: what the search also matches on. */
+const customerDetail = (c: CustomerOption): string =>
+  [c.number, c.panVatNo].filter(Boolean).join(' · ');
+
+const customerOption = (c: CustomerOption): ComboboxOption => ({
+  id: c.id,
+  label: c.name,
+  description: customerDetail(c),
+});
 
 /**
  * Where a form opened from an invoice starts (U16-Q8 a): the page read the invoice from the API, so the amount is the
@@ -154,6 +183,8 @@ export function PaymentForm({
   idempotencyKey,
   today,
   customers,
+  customersCutOff = false,
+  search = searchCustomers,
   enabledCurrencies,
   initialCustomerId,
   prefill = null,
@@ -166,6 +197,13 @@ export function PaymentForm({
   /** Today in Kathmandu, as `YYYY-MM-DD`: the latest date a payment can have been received. */
   today: string;
   customers: readonly CustomerOption[];
+  /**
+   * The list above is only the first page of a longer one: typing then also asks the server, so any customer can be
+   * found. A complete list is searched in the browser.
+   */
+  customersCutOff?: boolean;
+  /** Where the suggestions of a cut-off list come from. */
+  search?: CustomerSearcher;
   /** The currencies enabled in Settings (`currency.enabled`), NPR first. */
   enabledCurrencies: readonly Currency[];
   initialCustomerId: string;
@@ -185,6 +223,61 @@ export function PaymentForm({
 
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [customerId, setCustomerId] = useState(initialCustomerId);
+  // The customers the picker knows: the page's list plus whatever a search of a cut-off list has found since.
+  const [searched, setSearched] = useState<readonly CustomerOption[]>([]);
+  // The box's text. Only a cut-off list lets the form own it (the server's matches are not filtered again here), so it
+  // starts on the chosen customer's name; a complete list leaves the text to the combobox.
+  const [customerText, setCustomerText] = useState(
+    customersCutOff ? (customers.find((c) => c.id === initialCustomerId)?.name ?? '') : '',
+  );
+  // The server's answer for the text it was asked about, so a match it found by a fuzzier or normalised rule is listed.
+  const [found, setFound] = useState<{ query: string; items: readonly CustomerOption[] } | null>(
+    null,
+  );
+  // The server search for the typed text did not load: say so instead of "No matching customer.".
+  const [searchFailed, setSearchFailed] = useState(false);
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const known = useMemo(() => {
+    const byId = new Map<string, CustomerOption>();
+    for (const c of [...customers, ...searched]) if (!byId.has(c.id)) byId.set(c.id, c);
+    return [...byId.values()];
+  }, [customers, searched]);
+  const customerOptions = useMemo(() => {
+    if (!customersCutOff) return known.map(customerOption);
+    const query = customerText.trim();
+    if (query === '') return customers.map(customerOption);
+    // The answer for this very text as the server gave it; until it arrives, what is already known narrowed by the text.
+    if (found?.query === query) return found.items.map(customerOption);
+    return known.map(customerOption).filter((o) => matchesQuery(o, query));
+  }, [known, customers, customersCutOff, customerText, found]);
+  const customerNoMatchText = searchFailed
+    ? 'Search did not load. Try again.'
+    : 'No matching customer.';
+  const chosenName = known.find((c) => c.id === customerId)?.name;
+  useEffect(() => {
+    const text = customerText.trim();
+    // The name of the chosen customer is not a search.
+    if (!customersCutOff || text.length < 2 || text === chosenName) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      search(text, controller.signal).then(
+        (items) => {
+          if (controller.signal.aborted) return;
+          setSearched((old) => [...old, ...items]);
+          setFound({ query: text, items });
+        },
+        () => {
+          // The list stays as it is (the page's own customers can still be chosen); the empty state says so.
+          if (!controller.signal.aborted) setSearchFailed(true);
+        },
+      );
+    }, CUSTOMER_SEARCH_DELAY_MS);
+    // A new keystroke (or unmount) cancels the wait and the request in flight, so a slow old answer never lands.
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [customerText, customersCutOff, chosenName, search]);
   // An invoice's own currency is used as it is, even when switched off in Settings: a payment is still accepted in it.
   const [currency, setCurrency] = useState<string>(() =>
     prefill !== null
@@ -231,7 +324,8 @@ export function PaymentForm({
 
   function chooseCustomer(id: string) {
     setCustomerId(id);
-    const fallback = customers.find((c) => c.id === id)?.defaultCurrency;
+    if (customersCutOff && id !== '') setCustomerText(known.find((c) => c.id === id)?.name ?? '');
+    const fallback = known.find((c) => c.id === id)?.defaultCurrency;
     if (!currencyChosen) setCurrency(startCurrency(fallback, enabledCurrencies));
     // The invoice's open amount belongs to its customer: drop it unless the person has typed their own.
     if (prefill !== null && id !== prefill.customerId && !amountTouched) setAmount('');
@@ -288,7 +382,7 @@ export function PaymentForm({
   // A switched-off currency is named on the field, never replaced: the chosen one, else the usual one.
   const currencyOptions = paymentCurrencyChoices(enabledCurrencies);
   const chosenOff = currencyOptions.find((c) => c.value === currency && !c.on);
-  const usualCurrency = customers.find((c) => c.id === customerId)?.defaultCurrency ?? null;
+  const usualCurrency = known.find((c) => c.id === customerId)?.defaultCurrency ?? null;
   const currencyHint =
     chosenOff !== undefined
       ? `${CURRENCY_NAME[chosenOff.value]} is switched off in Settings. Payments in it are still recorded.`
@@ -305,7 +399,7 @@ export function PaymentForm({
     currency === prefill.currency;
   const amountHint = showsOpenAmount
     ? `The open amount of ${prefill?.invoiceNumber ?? 'the invoice'}. Change it for a part payment.`
-    : 'The cash that arrived, for example 20,18,180.00.';
+    : undefined;
 
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
@@ -318,7 +412,12 @@ export function PaymentForm({
     const form = formRef.current;
     if (busy || form === null) return;
     // The amount box is plain text, so the browser's check does not see a zero; the action does.
-    if (!form.checkValidity() || !/[1-9]/.test(amount)) {
+    // The customer box is a combobox, which the browser's own check does not see as required.
+    if (
+      !form.checkValidity() ||
+      !/[1-9]/.test(amount) ||
+      (fixedCustomer === null && customerId === '')
+    ) {
       confirmed.current = true;
       form.requestSubmit();
       return;
@@ -347,7 +446,7 @@ export function PaymentForm({
   }
 
   const reviewCurrency = CURRENCIES.find((c) => c === currency);
-  const reviewCustomer = customers.find((c) => c.id === customerId);
+  const reviewCustomer = known.find((c) => c.id === customerId);
   const reviewPayer =
     fixedCustomer !== null
       ? fixedCustomer.name
@@ -512,9 +611,8 @@ export function PaymentForm({
             </ul>
             <label className={styles.check}>
               {/* Keyed by the list, so a new set of matches always starts unticked. */}
-              <input
+              <Checkbox
                 key={referenceMatches.map((m) => m.id).join(',')}
-                type="checkbox"
                 name="referenceConfirmed"
                 value={referenceMatches.map((m) => m.id).join(',')}
               />
@@ -549,20 +647,42 @@ export function PaymentForm({
                 error={fe.customerId}
               >
                 {(control) => (
-                  <Select
-                    value={customerId}
-                    disabled={customerLocked}
-                    onChange={(e) => chooseCustomer(e.target.value)}
+                  // One search-as-you-type box (UIP-FORM-009). The customerId hidden input above posts the choice:
+                  // a locked box posts nothing of its own.
+                  <Combobox
+                    id={control.id}
+                    labelledBy={control['aria-labelledby']}
+                    describedBy={control['aria-describedby']}
+                    invalid={control['aria-invalid'] === true}
                     required
-                    {...control}
-                  >
-                    <option value="">Choose a customer</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.number})
-                      </option>
-                    ))}
-                  </Select>
+                    searchIcon
+                    options={customerOptions}
+                    // Customers have no group: however long the list, no "Unassigned" header.
+                    groupThreshold={Number.POSITIVE_INFINITY}
+                    value={customerId}
+                    onChange={chooseCustomer}
+                    onInputChange={(text) => {
+                      setCustomerText(text);
+                      // A new text is a new search: typing again is how a failed one is retried.
+                      setSearchFailed(false);
+                      // Editing the name after a pick means that customer is no longer the one named.
+                      if (customersCutOff && customerId !== '' && text !== chosenName) {
+                        chooseCustomer('');
+                      }
+                    }}
+                    {...(customersCutOff ? { serverFiltered: true, inputValue: customerText } : {})}
+                    open={customerOpen}
+                    onOpenChange={setCustomerOpen}
+                    disabled={customerLocked}
+                    placeholder="Search by name, number or PAN"
+                    // A server-filtered list is empty when nothing matched, so the same words say both.
+                    emptyText={
+                      customersCutOff
+                        ? customerNoMatchText
+                        : 'There are no customers to choose from.'
+                    }
+                    noMatchText={customerNoMatchText}
+                  />
                 )}
               </Field>
             )}
@@ -601,6 +721,7 @@ export function PaymentForm({
                       {...control}
                       currency={currency}
                       name="amount"
+                      placeholder="25,000.00"
                       required
                       min="0.01"
                       value={amount}
@@ -648,12 +769,14 @@ export function PaymentForm({
 
             <Field
               label="Bank reference"
-              hint="Optional. The transaction or cheque number on the slip, so Finance can match it."
+              optional
+              hint="The transaction or cheque number on the slip, so Finance can match it."
               error={fe.bankReference}
             >
               {(control) => (
                 <Input
                   name="bankReference"
+                  placeholder="TXN-20481"
                   autoComplete="off"
                   maxLength={100}
                   value={bankReference}
@@ -668,7 +791,9 @@ export function PaymentForm({
               <div className={styles.grid}>
                 <Field
                   label="Tax withheld"
-                  hint="The amount withheld and not sent. Leave empty if none."
+                  optional
+                  hint="The amount withheld and not sent."
+                  help="The amount the customer withheld and did not send. The platform works out what the payment settles."
                   error={fe.tdsWithheld}
                 >
                   {(control) => (
@@ -685,6 +810,7 @@ export function PaymentForm({
                 <Field
                   label="Withholding code"
                   hint="Required when tax was withheld."
+                  help="Required when tax was withheld. Type the code exactly as it appears on the tax certificate."
                   error={fe.withholdingCode}
                 >
                   {(control) => (

@@ -102,6 +102,11 @@ export interface CustomerViewInput {
    * the portal passes it; the view carries the key only then, so the PDF render path builds the same view as before.
    */
   renderFailed?: boolean;
+  /**
+   * When the version was sent. The portal passes it so a version that was replaced or expired without ever being sent
+   * stays hidden, the same rule the portal's list applies (`isPortalVisible`). Callers that do not know it leave it out.
+   */
+  sentAt?: Date | null;
 }
 
 /** The version is not one a customer may see (draft, in approval, never sent, cancelled, internal rejection). */
@@ -147,7 +152,9 @@ export function toCustomerQuotationView(
   } else if (
     // A rejection is visible only when the customer made it; an internal one must look like a 404.
     isCustomerVisibleStatus(version.status) &&
-    !(version.status === 'rejected' && version.rejectionSource !== 'customer')
+    !(version.status === 'rejected' && version.rejectionSource !== 'customer') &&
+    // Replaced or expired without ever being sent: the customer was never shown it (same rule as the portal list).
+    !((version.status === 'superseded' || version.status === 'expired') && input.sentAt === null)
   ) {
     status = version.status;
   } else {

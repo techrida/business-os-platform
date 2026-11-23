@@ -10,6 +10,11 @@
   min-width: 0;
 }
 
+/* Each Field ends in a reserved message line (UIP-FORM-010); lift the button to the input box. */
+.filter > button {
+  margin-block-end: calc(var(--line-height-caption) + 8px);
+}
+
 @media (max-width: 640px) {
   .filter > :not(button) {
     flex-basis: 100%;

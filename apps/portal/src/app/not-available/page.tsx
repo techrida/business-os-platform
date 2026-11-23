@@ -19,7 +19,7 @@ export default async function NotAvailablePage() {
       <NoticeCard
         title="This portal is not available for your account"
         actions={
-          <form method="post" action="/auth/logout">
+          <form noValidate method="post" action="/auth/logout">
             <Button type="submit">Sign out</Button>
           </form>
         }

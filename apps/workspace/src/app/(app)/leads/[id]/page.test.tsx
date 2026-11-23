@@ -44,6 +44,7 @@ vi.mock('../actions', () => ({
   moveLeadStageAction: vi.fn(),
   createLeadAction: vi.fn(),
   convertLeadAction: vi.fn(),
+  unlinkLeadCustomerAction: vi.fn(),
   scheduleFollowUpAction: vi.fn(),
   completeFollowUpAction: vi.fn(),
   rescheduleFollowUpAction: vi.fn(),

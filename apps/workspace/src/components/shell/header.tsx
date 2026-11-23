@@ -23,7 +23,7 @@ export function Header({ roles }: { roles: readonly string[] }) {
         <NotificationsBell />
         <div className={styles.who}>
           {/* POST, not a link: signing out changes state, so a crawler or prefetch must not trigger it. */}
-          <form method="post" action="/auth/logout">
+          <form noValidate method="post" action="/auth/logout">
             <Button type="submit" variant="secondary" size="small">
               Sign out
             </Button>

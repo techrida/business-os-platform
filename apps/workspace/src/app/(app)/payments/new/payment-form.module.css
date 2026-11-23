@@ -77,19 +77,6 @@
   display: none;
 }
 
-/* The customer search is a plain GET form that sits above the payment form. */
-.search {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.searchField {
-  flex: 1 1 16rem;
-  min-width: min(100%, 12rem);
-}
-
 .form,
 .grid,
 .form > *,
@@ -155,9 +142,4 @@
   min-height: 40px;
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
-}
-
-.check input {
-  width: 16px;
-  height: 16px;
 }

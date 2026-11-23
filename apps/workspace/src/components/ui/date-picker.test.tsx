@@ -61,11 +61,11 @@ it('keeps the caller hint ahead of the BS line in aria-describedby', async () =>
   );
   const group = mounted.container.querySelector('[aria-describedby]')!;
   const ids = group.getAttribute('aria-describedby')!.split(' ');
-  // React Aria adds its own description id; the caller's hint and the BS line must both be there.
-  const texts = ids.map((id) => document.getElementById(id)?.textContent);
-  expect(texts).toContain('Kathmandu date.');
-  expect(texts).toContain('05 Mangsir 2083 BS');
-  expect(texts.indexOf('Kathmandu date.')).toBeLessThan(texts.indexOf('05 Mangsir 2083 BS'));
+  // The BS date and the caller's hint share the field's one message line (UIP-FORM-010), the date first.
+  const texts = ids.map((id) => document.getElementById(id)?.textContent ?? '');
+  const line = texts.find((t) => t.includes('Kathmandu date.')) ?? '';
+  expect(line).toContain('05 Mangsir 2083 BS');
+  expect(line.indexOf('05 Mangsir 2083 BS')).toBeLessThan(line.indexOf('Kathmandu date.'));
 });
 
 it('shows no BS line for an empty date or when asked not to', async () => {
@@ -107,9 +107,9 @@ it('DateTimePicker names its time field by the field label plus Time and shares 
     'Time',
   ]);
   const described = time.getAttribute('aria-describedby')!.split(' ');
-  expect(described.map((id) => document.getElementById(id)?.textContent)).toContain(
-    'Kathmandu time.',
-  );
+  expect(
+    described.some((id) => document.getElementById(id)?.textContent?.includes('Kathmandu time.')),
+  ).toBe(true);
 });
 
 it('a form reset after an action does not wipe a controlled DatePicker', async () => {

@@ -2,10 +2,14 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fill, mountForm, settle, submit } from '@/test/form-interactions';
+import { click, fill, mountForm, settle, submit } from '@/test/form-interactions';
 
 import type { InvoiceFormState } from './form-state';
-import { ManualInvoiceForm } from './manual-invoice-form';
+import {
+  type CustomerOption,
+  type CustomerSearcher,
+  ManualInvoiceForm,
+} from './manual-invoice-form';
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
@@ -26,18 +30,27 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
+const CUSTOMERS = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
+    label: 'Invoice customer',
+    currency: 'NPR' as const,
+  },
+];
+
 async function mount(
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState> = vi.fn(),
+  customers: readonly CustomerOption[] = CUSTOMERS,
+  extra: { customersCutOff?: boolean; search?: CustomerSearcher } = {},
 ) {
   mounted = await mountForm(
     <ManualInvoiceForm
       action={action}
-      customers={[
-        { id: '11111111-1111-4111-8111-111111111111', label: 'Invoice customer', currency: 'NPR' },
-      ]}
+      customers={customers}
       taxCodes={[]}
       enabledCurrencies={['NPR']}
       idempotencyKey="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      {...extra}
     />,
   );
   const { container } = mounted;
@@ -61,6 +74,147 @@ async function blur(element: HTMLInputElement) {
   await act(() => Promise.resolve(element.focus()));
   await act(() => Promise.resolve(element.blur()));
 }
+
+// UIP-FORM-009: the organization is one search-as-you-type box showing what the search matched. The old form was a
+// plain select, so there was no combobox to type in and no options to read.
+describe('the organization picker', () => {
+  const EVEREST = '22222222-2222-4222-8222-222222222222';
+  const people: CustomerOption[] = [
+    ...CUSTOMERS,
+    {
+      id: EVEREST,
+      label: 'Everest Foods Pvt. Ltd.',
+      detail: 'CUS-0007 · 301234567',
+      currency: 'INR',
+    },
+  ];
+  const options = () =>
+    Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent?.trim());
+
+  it('lists matches while typing, with number and PAN, and posts the chosen id', async () => {
+    const { container, box, form } = await mount(vi.fn(), people);
+    const input = box('Organization legal name');
+    expect(input.getAttribute('role')).toBe('combobox');
+    expect(container.querySelector('select[name="customerId"]')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('button')).map((b) => b.textContent?.trim()),
+    ).not.toContain('Search');
+
+    // By name, then by the PAN the option shows: no button pressed in between.
+    await fill(input, 'everest');
+    expect(options()).toEqual(['Everest Foods Pvt. Ltd.CUS-0007 · 301234567']);
+    await fill(input, '3012');
+    expect(options()).toEqual(['Everest Foods Pvt. Ltd.CUS-0007 · 301234567']);
+    // A pick-existing field: nothing found says so and offers no Create row.
+    await fill(input, 'zzz');
+    expect(options()).toEqual([]);
+    expect(document.body.textContent).toContain('No matching customer.');
+
+    await fill(input, 'everest');
+    await click(document.querySelector('[role="option"]'));
+    expect(form().get('customerId')).toBe(EVEREST);
+    expect(input.value).toBe('Everest Foods Pvt. Ltd.');
+    // Their usual currency (INR) is switched off here, so it is not preselected: the select would blank.
+    expect(form().get('currency')).toBe('NPR');
+  });
+
+  it('lists more than 20 customers as one flat list, with no "Unassigned" header', async () => {
+    // Fails on the old picker: past 20 options the Combobox grouped them under "Unassigned".
+    const many: CustomerOption[] = Array.from({ length: 25 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      label: `Customer ${String(i).padStart(2, '0')}`,
+      currency: 'NPR' as const,
+    }));
+    const { box } = await mount(vi.fn(), many);
+    await click(box('Organization legal name'));
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(25);
+    expect(document.body.textContent).not.toContain('Unassigned');
+  });
+});
+
+// The page loads only the first customers. Past that, typing asks the server (`/invoices/new/customers`) and lists
+// its answer as given; the old picker only filtered the loaded list and said "Add the customer first" for a customer
+// that was merely not loaded.
+describe('the organization picker on a cut-off customer list', () => {
+  const FAR = '33333333-3333-4333-8333-333333333333';
+  const far: CustomerOption = {
+    id: FAR,
+    label: 'Far Away Traders',
+    detail: 'CUS-0457 · 609999999',
+    currency: 'INR',
+  };
+  const options = () =>
+    Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent?.trim());
+  const wait = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+
+  it('asks the server while typing, lists its answer as given and posts the chosen id', async () => {
+    // The text is a misspelling the page's own filter would not match: the server's fuzzy answer is shown as it is.
+    const search = vi.fn<CustomerSearcher>(() => Promise.resolve([far]));
+    const { box, form } = await mount(vi.fn(), CUSTOMERS, { customersCutOff: true, search });
+    const input = box('Organization legal name');
+    await fill(input, 'faraway tradrs');
+    expect(search).not.toHaveBeenCalled();
+    await wait();
+    expect(search).toHaveBeenCalledWith('faraway tradrs', expect.any(AbortSignal));
+    expect(options()).toEqual(['Far Away TradersCUS-0457 · 609999999']);
+    await click(document.querySelector('[role="option"]'));
+    expect(form().get('customerId')).toBe(FAR);
+    expect(input.value).toContain('Far Away Traders');
+    // The chosen customer's usual currency (INR) is switched off here, so the select keeps NPR.
+    expect(form().get('currency')).toBe('NPR');
+  });
+
+  it('does not say "Add the customer first" while the list is cut and the server has not answered', async () => {
+    const search = vi.fn<CustomerSearcher>(() => Promise.resolve([]));
+    const { box } = await mount(vi.fn(), CUSTOMERS, { customersCutOff: true, search });
+    const input = box('Organization legal name');
+    // One letter is matched against the loaded list only: it cannot rule a customer out.
+    await fill(input, 'z');
+    expect(search).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Keep typing to search all customers.');
+    expect(document.body.textContent).not.toContain('Add the customer first');
+    // Once the server has answered for the text, nothing found is a real answer.
+    await fill(input, 'zzz');
+    expect(document.body.textContent).toContain('Searching…');
+    await wait();
+    expect(document.body.textContent).toContain('No matching customer. Add the customer first.');
+  });
+
+  it('says the search did not load, not that nothing matches, when the server search fails', async () => {
+    const search = vi.fn<CustomerSearcher>(() =>
+      Promise.reject(new Error('Customer search failed with 503')),
+    );
+    const { box } = await mount(vi.fn(), CUSTOMERS, { customersCutOff: true, search });
+    await fill(box('Organization legal name'), 'far away');
+    await wait();
+    expect(options()).toEqual([]);
+    expect(document.body.textContent).toContain('Search did not load. Try again.');
+    expect(document.body.textContent).not.toContain('Add the customer first');
+  });
+
+  it('does not ask the server when the whole list is already here', async () => {
+    const search = vi.fn<CustomerSearcher>(() => Promise.resolve([]));
+    const { box } = await mount(vi.fn(), CUSTOMERS, { search });
+    await fill(box('Organization legal name'), 'invoice');
+    await wait();
+    expect(search).not.toHaveBeenCalled();
+    expect(options()).toEqual(['Invoice customer']);
+  });
+});
+
+// UIP-FORM-008: Optional sits beside the label; the hint keeps only what the label cannot say.
+describe('optional fields', () => {
+  it('marks Due date and both discounts Optional in the label row and no hint starts "Optional."', async () => {
+    const { container } = await mount();
+    for (const label of ['Due date', 'Discount %', 'Discount amount (NPR)']) {
+      const el = Array.from(container.querySelectorAll('label[for]')).find((l) =>
+        l.textContent?.startsWith(label),
+      );
+      expect(el?.parentElement?.textContent).toBe(`${label}Optional`);
+    }
+    expect(container.textContent).not.toMatch(/Optional\./);
+  });
+});
 
 // Each test fails on the old form: it had one discount box behind a type select, with no "Discount %" box next to
 // an amount box, so `box('Discount %')` finds nothing and nothing was worked out from the subtotal.

@@ -12,7 +12,10 @@
 //   the system actor `system:users.lock-expiry`. It is the only way back in for a person nobody unlocks by hand, a
 //   sole Founder included. Admin locks never expire.
 //
-// Each lock is handled on its own, and ZITADEL is called with no transaction open, so a slow ZITADEL holds no pooled
+// Each lock is handled on its own, under the tenant's identity lease (the one sync, reconcile, resolve and the admin
+// status actions take), so the unlock and the write here never interleave with an admin lock, deactivate or role set of
+// the same tenant that is half done. A lease that is busy leaves the lock for the next run a minute later.
+// ZITADEL is called with no transaction open, so a slow ZITADEL holds no pooled
 // connection or row lock. ZITADEL is re-read first: a person unlocked or deactivated in the meantime is only mirrored,
 // never unlocked. Each write then takes the user's row lock (the one admin actions and syncs take) and goes ahead only
 // while the lock is still the one read; when an admin changed it while ZITADEL was being unlocked, the person is locked
@@ -20,11 +23,25 @@
 // row lock timed out, say) and the row still shows a lock. A lock that cannot be ended now (ZITADEL down, a refusal,
 // an unknown state) is postponed by one window instead of being retried every minute.
 import { ACCOUNT_LOCKOUT } from '@bos/contracts';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
+import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { AuditService } from '../audit/audit.service';
+import { dbBusyKindOf } from '../db/busy';
 import { DB, type Db } from '../db/db.module';
 import { type DbTransaction, type TxScope, systemActor, withTx } from '../db/tx';
+import {
+  assertFounderLeaseHeld,
+  IdentityReconciler,
+  withFounderRemovalLease,
+} from './identity-reconcile';
+import { runOutsideOperationDeadline } from './operation-deadline';
 import { lockoutPinnedCursor } from './users.constants';
 import { type UserRow, UsersStore } from './users.store';
 import { ZitadelAdminClient, ZitadelNotConfiguredError } from './zitadel-admin.client';
@@ -53,13 +70,16 @@ const errorName = (error: unknown): string => (error instanceof Error ? error.na
 @Injectable()
 export class UserLocks {
   private readonly logger = new Logger(UserLocks.name);
+  private readonly reconciler: IdentityReconciler;
 
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly store: UsersStore,
     private readonly zitadel: ZitadelAdminClient,
     private readonly audit: AuditService,
-  ) {}
+  ) {
+    this.reconciler = new IdentityReconciler(db, store, zitadel, audit);
+  }
 
   /** Pins the attempt limits on every staff org. Never throws: a failed org is logged and retried on the next pass. */
   async ensureLockoutPolicies(): Promise<void> {
@@ -105,17 +125,64 @@ export class UserLocks {
     const result: ExpiryResult = { unlocked: 0, cleared: 0, postponed: 0 };
     for (const due of await this.store.expiredLocks(this.db, now, EXPIRY_BATCH)) {
       try {
-        const outcome = await this.expireOne(due.id, due.tenantId, now);
+        const outcome = await this.underLease(due.tenantId, due.id, () =>
+          this.expireOne(due.id, due.tenantId, now),
+        );
         if (outcome !== 'skipped') result[outcome] += 1;
       } catch (error) {
         if (error instanceof ZitadelNotConfiguredError) {
           this.logger.warn(`users.lock-expiry skipped: ${error.message}`);
           return result;
         }
+        const busy = dbBusyKindOf(error);
+        if (busy !== undefined) {
+          // The access lock or the user's row stayed busy (lock_timeout) or this write lost a deadlock: contention, not a
+          // failure. The lock is still due and the next run handles it.
+          this.logger.warn(
+            `users.lock-expiry: ${due.id} left for the next run (database busy: ${busy})`,
+          );
+          continue;
+        }
         this.logger.error(`users.lock-expiry failed for ${due.id}: kind=${errorName(error)}`);
       }
     }
     return result;
+  }
+
+  /**
+   * Runs one lock's expiry under the tenant's identity lease, without waiting for it: a lease another identity change
+   * holds (or a takeover that could not be settled) leaves the lock due, and the next run tries again.
+   */
+  private async underLease<T>(
+    tenantId: string,
+    userId: string,
+    fn: () => Promise<T>,
+  ): Promise<T | 'skipped'> {
+    const scope = await this.entityScope(tenantId);
+    try {
+      return await withFounderRemovalLease(
+        this.store,
+        tenantId,
+        fn,
+        undefined,
+        (removal, clearRecord, origin) =>
+          this.reconciler.settleOutstandingRemoval(
+            scope,
+            systemActor(LOCK_EXPIRY_ACTOR),
+            removal,
+            clearRecord,
+            origin,
+          ),
+        0,
+      );
+    } catch (error) {
+      if (error instanceof ConflictException) return 'skipped';
+      if (error instanceof ServiceUnavailableException) {
+        this.logger.warn(`users.lock-expiry: ${userId} left for the next run (${error.message})`);
+        return 'skipped';
+      }
+      throw error;
+    }
   }
 
   private async expireOne(
@@ -241,6 +308,10 @@ export class UserLocks {
       scope,
       systemActor(LOCK_EXPIRY_ACTOR),
       async (tx) => {
+        // The access lock, then the lease row, then the user row: the order every identity write takes. A holder that
+        // was taken over writes nothing (503).
+        await lockAccessRevision(tx, scope.tenantId);
+        await assertFounderLeaseHeld(tx);
         const current = await this.store.findById(tx, scope, seen.id, true);
         if (
           !current ||
@@ -269,7 +340,8 @@ export class UserLocks {
     for (const delay of RELOCK_DELAYS_MS) {
       if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
       try {
-        await this.zitadel.lockUser(zitadelUserId);
+        // Best effort that must still run once the operation deadline passed (the lease fence still applies).
+        await runOutsideOperationDeadline(() => this.zitadel.lockUser(zitadelUserId));
         this.logger.warn(`users.lock-expiry: ${userId} locked again in ZITADEL: ${why}`);
         return;
       } catch (error) {

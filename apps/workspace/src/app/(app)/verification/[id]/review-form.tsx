@@ -99,7 +99,6 @@ export function ReviewForm({
       ) : null}
       <HeaderAction
         missing={approvalProblems}
-        pills={false}
         missingTitle="Approval requirements"
         missingLabel="Approval blocked"
         onClick={(event) => open('approve', event.currentTarget)}
@@ -140,7 +139,12 @@ export function ReviewForm({
           </>
         }
       >
-        <form id={formId} onSubmit={(event) => void decide(event)} className={styles.decision}>
+        <form
+          noValidate
+          id={formId}
+          onSubmit={(event) => void decide(event)}
+          className={styles.decision}
+        >
           <Alert tone={rejecting ? 'error' : 'info'}>
             {rejecting
               ? 'Sales will see your reason and can update the documents.'

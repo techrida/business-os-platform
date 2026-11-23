@@ -10,6 +10,7 @@ import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './ac
 import styles from './actions.module.css';
 import { EVIDENCE_LABELS, EVIDENCE_ORDER } from './eligibility';
 import { Choices } from './outcome-dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export interface ConfirmEvidenceDialogProps {
   quotationId: string;
@@ -68,7 +69,7 @@ export function ConfirmEvidenceDialog({
           <p role="status">Evidence confirmed. Close this to see it on the quotation.</p>
         </div>
       ) : (
-        <form id={formId} ref={formRef} action={formAction}>
+        <form noValidate id={formId} ref={formRef} action={formAction}>
           <input type="hidden" name="quotationId" value={quotationId} />
           <input type="hidden" name="versionId" value={versionId} />
           <input type="hidden" name="idempotencyKey" value={state.key} />
@@ -86,14 +87,13 @@ export function ConfirmEvidenceDialog({
             >
               {EVIDENCE_ORDER.map((kind) => (
                 <label key={kind} className={styles.choice}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     name="evidenceKinds"
                     value={kind}
                     checked={kinds.includes(kind)}
-                    onChange={(e) =>
+                    onCheckedChange={(nextChecked) =>
                       setKinds((prev) =>
-                        e.target.checked ? [...prev, kind] : prev.filter((k) => k !== kind),
+                        nextChecked ? [...prev, kind] : prev.filter((k) => k !== kind),
                       )
                     }
                   />
@@ -101,7 +101,7 @@ export function ConfirmEvidenceDialog({
                 </label>
               ))}
             </Choices>
-            <Field label="Note" hint="Optional." error={state.errors?.comment}>
+            <Field label="Note" optional error={state.errors?.comment}>
               {(control) => (
                 <Textarea
                   name="comment"

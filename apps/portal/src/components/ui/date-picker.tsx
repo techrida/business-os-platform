@@ -38,6 +38,11 @@ import {
 import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import { useFormReset } from './use-form-reset';
 import styles from './date-picker.module.css';
+import {
+  useFieldBlocker,
+  useFieldSecondary,
+  useInFieldScope,
+} from '@/components/portal/field-scope';
 
 /** `YYYY-MM-DD` to a calendar date, or null for an empty or malformed value. */
 function toCalendarDate(iso: string | undefined | null): CalendarDate | null {
@@ -107,7 +112,13 @@ export function UnfinishedBlocker({
   onBlocked,
   hold = true,
   native = true,
+  controlId,
+  rank,
 }: {
+  /** The id the `Field` handed the picker: inside a Field the message takes its one message line. */
+  controlId?: string | undefined;
+  /** Which of several blockers in one field shows (the higher one). */
+  rank?: number | undefined;
   hold?: boolean | undefined;
   /** Also let the browser's own validation block a plain form. Off for `validation="aria"`. */
   native?: boolean | undefined;
@@ -119,6 +130,8 @@ export function UnfinishedBlocker({
   onBlocked: () => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
+  const inField = useInFieldScope(controlId);
+  useFieldBlocker(controlId, shown ? message : null, rank);
   useLayoutEffect(() => {
     ref.current?.setCustomValidity(native ? message : '');
   }, [message, native]);
@@ -159,7 +172,7 @@ export function UnfinishedBlocker({
           root.current?.querySelector<HTMLElement>('[data-placeholder]')?.focus();
         }}
       />
-      {shown ? (
+      {shown && !inField ? (
         <span id={messageId} role="alert" className={styles.unfinished}>
           {message}
         </span>
@@ -290,12 +303,16 @@ export function DatePicker({
   // React Aria resets the segments whenever it gets a new date object, so keep one per date.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `refills` forces a new object.
   const fedDate = useMemo(() => toCalendarDate(fed), [fed, refills]);
-  const bs = showBs ? bsLongOfDay(chosen) : null;
+  const bsText = showBs ? bsLongOfDay(chosen) : null;
+  // Inside a Field the BS date goes in the field's one message line (UIP-FORM-010); alone it prints its own.
+  const inField = useInFieldScope(id);
+  useFieldSecondary(id, bsText);
+  const bs = inField ? null : bsText;
   const unfinishedMessage = useUnfinishedMessage(unfinished);
   const describedBy =
     [
       aria['aria-describedby'],
-      unfinishedMessage.shown ? unfinishedMessage.id : undefined,
+      unfinishedMessage.shown && !inField ? unfinishedMessage.id : undefined,
       bs ? bsId : undefined,
     ]
       .filter(Boolean)
@@ -456,6 +473,7 @@ export function DatePicker({
         <UnfinishedBlocker
           native={validation !== 'aria'}
           message="Finish the date"
+          controlId={id}
           root={rootRef}
           disabled={disabled}
           messageId={unfinishedMessage.id}

@@ -4,7 +4,9 @@
 // reloads the entry with that order as ?po=.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { choose, click, mountForm } from '@/test/form-interactions';
+import { fill, mountForm } from '@/test/form-interactions';
+
+import { listedOptions, pickBox, pickByTyping } from '../../procurement/pick-existing.test-helpers';
 
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
@@ -27,8 +29,14 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
-const options = () =>
-  Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent?.trim());
+beforeEach(() => {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 describe('the purchase order picker of a new bill', () => {
   it("offers only the chosen vendor's orders and opens the entry for the one picked", async () => {
@@ -42,8 +50,8 @@ describe('the purchase order picker of a new bill', () => {
         reloadHref="/payables/bills/new"
         entry={{
           vendors: [
-            { id: HIMAL, name: 'Himal Traders' },
-            { id: EVEREST, name: 'Everest Supplies' },
+            { id: HIMAL, name: 'Himal Traders', description: 'PAN 111111111' },
+            { id: EVEREST, name: 'Everest Supplies', description: 'PAN 222222222' },
           ],
           orders: [
             { id: PO_HIMAL, vendorId: HIMAL, label: 'PO-2083-0007 · Issued' },
@@ -57,16 +65,18 @@ describe('the purchase order picker of a new bill', () => {
     expect(container.querySelector('input[name="orderPicker"]')).toBeNull();
     expect(container.textContent).not.toContain('Purchase order ID');
 
-    await choose(container, 'vendorPartyId', 'Himal Traders');
-    const trigger = container
-      .querySelector('input[name="orderPicker"]')
-      ?.parentElement?.querySelector('button');
-    await click(trigger ?? null);
-    expect(options()).toContain('PO-2083-0007 · Issued');
-    expect(options()).not.toContain('PO-2083-0009 · Fully received');
-    await click(trigger ?? null);
+    // One search box, no Find button: typing narrows the vendors, with the PAN beside the name.
+    expect(container.textContent).not.toContain('Find a vendor');
+    await fill(pickBox(container, 'vendorPartyId'), 'everest');
+    expect(listedOptions()).toEqual(['Everest SuppliesPAN 222222222']);
+    await pickByTyping(container, 'vendorPartyId', 'himal', 'Himal Traders');
+    expect(container.querySelector<HTMLInputElement>('input[name="vendorPartyId"]')?.value).toBe(
+      HIMAL,
+    );
 
-    await choose(container, 'orderPicker', 'PO-2083-0007 · Issued');
+    await fill(pickBox(container, 'orderPicker'), 'PO-2083');
+    expect(listedOptions()).toEqual(['PO-2083-0007 · IssuedHimal Traders']);
+    await pickByTyping(container, 'orderPicker', 'PO-2083-0007', 'PO-2083-0007');
     expect(router.push).toHaveBeenCalledWith(`/payables/bills/new?po=${PO_HIMAL}`);
   });
 });

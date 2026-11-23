@@ -23,6 +23,7 @@ import {
   QuotationSummaryQuerySchema,
   QuotationSummarySchema,
   QuotationListItemSchema,
+  trimPercent,
   QuotationTaxSummaryItemSchema,
   QuotationVersionContentSchema,
   QuotationVersionDtoSchema,
@@ -151,14 +152,25 @@ describe('quotation statuses and the transition table', () => {
         'sent>cancelled',
         'sent>expired',
         'sent>superseded',
+        'superseded>approved',
+        'superseded>sent',
       ].sort(),
     );
   });
 
-  it('has no way out of accepted, rejected, expired, cancelled or superseded', () => {
-    for (const s of ['accepted', 'rejected', 'expired', 'cancelled', 'superseded'] as const) {
+  it('has no way out of accepted, rejected, expired or cancelled', () => {
+    for (const s of ['accepted', 'rejected', 'expired', 'cancelled'] as const) {
       expect(quotationTransitionsFrom(s), s).toEqual([]);
     }
+  });
+
+  it('leaves superseded only by a restore, back to the approved or sent status it had (R6D)', () => {
+    const out = quotationTransitionsFrom('superseded');
+    expect(out.map((t) => `${t.action}>${t.to}`).sort()).toEqual([
+      'restore>approved',
+      'restore>sent',
+    ]);
+    expect(out.every((t) => t.by === 'user' && t.reasonRequired)).toBe(true);
   });
 
   it('supersedes only on a revision of an approved or sent version', () => {
@@ -170,7 +182,15 @@ describe('quotation statuses and the transition table', () => {
   it('needs a reason to return, reject, or cancel, and none to approve or submit', () => {
     const needs = (action: string) =>
       QUOTATION_TRANSITIONS.filter((t) => t.action === action).map((t) => t.reasonRequired);
-    for (const a of ['return', 'reject', 'customer_reject', 'cancel', 'cancel_on_lost', 'revise']) {
+    for (const a of [
+      'return',
+      'reject',
+      'customer_reject',
+      'cancel',
+      'cancel_on_lost',
+      'revise',
+      'restore',
+    ]) {
       expect(needs(a).length, a).toBeGreaterThan(0);
       expect(needs(a).every(Boolean), a).toBe(true);
     }
@@ -1105,5 +1125,22 @@ describe('AcceptanceDtoSchema', () => {
 
   it('needs acceptedByName to be present (null, not missing) so the column is always read', () => {
     expect(AcceptanceDtoSchema.safeParse(dto).success).toBe(false);
+  });
+});
+
+describe('trimPercent', () => {
+  it('drops insignificant fractional zeros and a bare point', () => {
+    expect(trimPercent('60.0000')).toBe('60');
+    expect(trimPercent('33.3300')).toBe('33.33');
+    expect(trimPercent('100')).toBe('100');
+    expect(trimPercent('0.0000')).toBe('0');
+    expect(trimPercent('12.5')).toBe('12.5');
+  });
+
+  it('stays linear on a long run of zeros', () => {
+    const input = `1.${'0'.repeat(200_000)}1`;
+    const start = performance.now();
+    expect(trimPercent(input)).toBe(input);
+    expect(performance.now() - start).toBeLessThan(100);
   });
 });

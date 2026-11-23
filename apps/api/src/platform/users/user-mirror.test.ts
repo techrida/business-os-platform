@@ -1,11 +1,18 @@
 import { ACCOUNT_LOCKOUT } from '@bos/contracts';
-import { ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AuditService } from '../audit/audit.service';
+import { AuditService } from '../audit/audit.service';
 import type { DbTransaction } from '../db/db.module';
 import { systemActor, withTx } from '../db/tx';
+import { resetFounderLeaseShutdown, withFounderRemovalLease } from './identity-reconcile';
 import { UserLocks } from './user-locks';
 import { UserMirror, UserSyncContendedError } from './user-mirror';
 import { lockoutPinnedCursor, type UsersSyncData } from './users.constants';
@@ -898,4 +905,171 @@ describe('UserMirror reads ZITADEL with no transaction open and writes only a ro
     expect(store.cursors.get(`users.reconcile:${STAFF_ZORG}`)).toBe('0');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('z1 kept changing'));
   });
+});
+
+describe('R6C1: identity lease follow-ups', () => {
+  afterEach(() => {
+    resetFounderLeaseShutdown();
+    vi.restoreAllMocks();
+  });
+
+  const busy = (code: '55P03' | '40P01') => Object.assign(new Error('busy'), { code });
+
+  it('(a, f) trusts ZITADEL as untouched only after a TTL takeover, and audits the decision', async () => {
+    const record = vi.spyOn(AuditService.prototype, 'record').mockResolvedValue(undefined);
+    zitadel.users.set('z1', zUser('z1'));
+    zitadel.users.set('z2', zUser('z2'));
+    await mirror.syncUser('z1');
+    await mirror.syncUser('z2');
+    const idOf = (z: string) => store.users.find((u) => u.zitadelUserId === z)!;
+    const actions = () => record.mock.calls.map((c) => (c[1] as { action: string }).action);
+
+    // z1: the previous holder released the lease with its removal still recorded: not a takeover.
+    store.founderRemovals.set(TENANT, {
+      userId: idOf('z1').id,
+      zitadelUserId: 'z1',
+      intent: 'deactivate',
+    });
+    await mirror.syncUser('z1');
+    expect(idOf('z1').identityReviewRequired).toBe(true);
+    expect(actions()).not.toContain('identity.removal_untouched');
+
+    // z2: the previous holder died with the lease past its TTL: ZITADEL still shows them active, so nothing is flagged.
+    store.founderRemovals.set(TENANT, {
+      userId: idOf('z2').id,
+      zitadelUserId: 'z2',
+      intent: 'deactivate',
+    });
+    store.founderLeases.set(TENANT, 'dead-holder');
+    store.expiredLeases.add(TENANT);
+    await mirror.syncUser('z2');
+    expect(idOf('z2').identityReviewRequired).not.toBe(true);
+    expect(actions()).toContain('identity.removal_untouched');
+    expect(store.claims.at(-1)).toMatchObject({ ttlTakeover: true });
+  });
+
+  it('(b) shutdown frees the leases this process holds and refuses new ones', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const running = withFounderRemovalLease(store, TENANT, async () => {
+      entered();
+      await gate;
+      return 'finished';
+    });
+    await inside;
+    expect(store.founderLeases.has(TENANT)).toBe(true);
+
+    await mirror.onApplicationShutdown();
+
+    expect(store.founderLeases.has(TENANT)).toBe(false);
+    await expect(
+      withFounderRemovalLease(store, TENANT, () => Promise.resolve(1)),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    release();
+    expect(await running).toBe('finished');
+  });
+
+  it('(b) a reconcile pass that meets a shutdown takes no further lease turns', async () => {
+    for (const id of ['a', 'b']) zitadel.users.set(id, zUser(id));
+    await mirror.onApplicationShutdown();
+    expect(await mirror.reconcile({ yieldMs: 0 })).toEqual({ scanned: 2, changed: 0 });
+    expect(store.users).toEqual([]);
+    expect(store.claims).toEqual([]);
+  });
+
+  it('(c) reconcile gives a waiting identity change the lease between users', async () => {
+    for (const id of ['a', 'b', 'c']) zitadel.users.set(id, zUser(id));
+    const pass = async (yieldMs: number) => {
+      let won = 0;
+      let stop = false;
+      const waiter = (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        while (!stop) {
+          if (await store.claimFounderLease(TENANT, 'waiter', 300, 100)) {
+            won += 1;
+            await store.releaseFounderLease(TENANT, 'waiter');
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      })();
+      await mirror.reconcile({ yieldMs, yieldAfterMs: 0 });
+      stop = true;
+      await waiter;
+      return won;
+    };
+    // No pause: the pass never leaves the lease free long enough for a waiter to be scheduled.
+    expect(await pass(0)).toBe(0);
+    expect(await pass(30)).toBeGreaterThan(0);
+  });
+
+  it('(d) a busy access lock leaves that user for the next pass, and fails a sync job as contention', async () => {
+    zitadel.users.set('z1', zUser('z1'));
+    zitadel.users.set('z2', zUser('z2'));
+    vi.spyOn(store, 'insertUser').mockRejectedValueOnce(busy('55P03'));
+    const result = await mirror.reconcile({ yieldMs: 0 });
+    expect(result.scanned).toBe(2);
+    expect(store.users.map((u) => u.zitadelUserId)).toEqual(['z2']);
+
+    zitadel.users.set('z3', zUser('z3'));
+    vi.spyOn(store, 'insertUser').mockRejectedValueOnce(busy('40P01'));
+    await expect(mirror.syncUser('z3')).rejects.toBeInstanceOf(UserSyncContendedError);
+  });
+
+  it('(e) deactivateMissing asks ZITADEL about a missing person under the tenant lease', async () => {
+    zitadel.users.set('keep', zUser('keep'));
+    zitadel.users.set('gone', zUser('gone'));
+    await mirror.syncUser('keep');
+    await mirror.syncUser('gone');
+    zitadel.users.set('gone', zUser('gone', { status: 'inactive' }));
+    zitadel.hiddenFromList.add('gone');
+    const real = zitadel.getUser.bind(zitadel);
+    const held: boolean[] = [];
+    vi.spyOn(zitadel, 'getUser').mockImplementation((id: string) => {
+      if (id === 'gone') held.push(store.founderLeases.has(TENANT));
+      return real(id);
+    });
+
+    await mirror.reconcile({ yieldMs: 0 });
+
+    expect(held.length).toBeGreaterThan(0);
+    expect(held.every(Boolean)).toBe(true);
+    expect(store.users.find((u) => u.zitadelUserId === 'gone')?.status).toBe('inactive');
+  });
+
+  it('(g) the invited-to-active flip of resolve runs under the tenant lease, and is a 503 while another change holds it', async () => {
+    const userId = await withTx(db, scope, systemActor('test'), async (t) => {
+      const id = await store.insertUser(t, scope, {
+        zitadelUserId: 'z-new',
+        idpOrgId: STAFF_IDP,
+        email: 'inv@techrida.test',
+        displayName: 'In Vited',
+        status: 'invited',
+      });
+      await mirror.bootstrap(t, store.orgs[0]!, scope, id);
+      return id;
+    });
+    const input = { zitadelUserId: 'z-new', tenantId: TENANT, idpOrgId: STAFF_IDP };
+
+    store.founderLeases.set(TENANT, 'other-change');
+    await expect(mirror.resolve(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(store.users.find((u) => u.id === userId)?.status).toBe('invited');
+    expect(queue.added).toEqual([]);
+    store.founderLeases.delete(TENANT);
+
+    const real = store.updateUser.bind(store);
+    const held: boolean[] = [];
+    vi.spyOn(store, 'updateUser').mockImplementation((...args) => {
+      held.push(store.founderLeases.has(TENANT));
+      return real(...args);
+    });
+    expect(await mirror.resolve(input)).toMatchObject({ userId, status: 'active' });
+    expect(held).toEqual([true]);
+    expect(store.founderLeases.has(TENANT)).toBe(false);
+  }, 15_000);
 });

@@ -71,13 +71,13 @@ describe('CompanyEditor contact boxes', () => {
   it('shows the company PAN in a nine-digit box that posts the digits', async () => {
     const editor = await mountEditor({ phones: [], panVatNo: '301234567' });
     expect(editor.hidden('panVatNo').map((i) => i.value)).toEqual(['301234567']);
-    expect(editor.container.textContent).toContain('9 of 9');
+    expect(editor.container.textContent).not.toContain('9 of 9');
   });
 
   it('opens each saved phone in its own country box and posts its number and country', async () => {
     const editor = await mountEditor({ phones: [NP_LANDLINE, US_PHONE] });
-    expect(editor.box('Phone 1 number').value).toBe('14123456');
-    expect(editor.box('Phone 2 number').value).toBe('4155552671');
+    expect(editor.box('Phone 1 number').value).toBe('+977 1-4123456');
+    expect(editor.box('Phone 2 number').value).toBe('+1 415 555 2671');
     expect(editor.posted('phones.0.number')).toBe('+97714123456');
     expect(editor.posted('phones.0.country')).toBe('NP');
     expect(editor.posted('phones.1.number')).toBe('+14155552671');

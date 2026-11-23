@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { displayFormat } from '@/lib/display';
 
+import { DetailsChangedNote } from './details-changed-note';
 import styles from './vendor.module.css';
 import { KYC_DOC_LABEL, KYC_STATE_LOOK, VENDOR_STATUS_LOOK } from './vendor-status';
 
@@ -35,6 +36,10 @@ export function OnboardingView({
         </div>
         <p className={styles.summary}>{look.summary}</p>
       </Card>
+
+      {view.detailsChanged ? (
+        <DetailsChangedNote detailsChanged={view.detailsChanged} {...(display && { display })} />
+      ) : null}
 
       <section aria-labelledby="vendor-checklist-heading" className={styles.section}>
         <h2 id="vendor-checklist-heading" className={styles.sectionTitle}>

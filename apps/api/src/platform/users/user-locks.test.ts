@@ -504,3 +504,37 @@ describe('UserLocks records when the lockout policy was pinned (P2-1)', () => {
     expect(store.cursors.has(lockoutPinnedCursor(STAFF_ZORG))).toBe(false);
   });
 });
+
+describe('R6C1: UserLocks.expire under the tenant lease', () => {
+  const none = { unlocked: 0, cleared: 0, postponed: 0 };
+
+  it('(g) holds the tenant lease while it unlocks, and leaves a due lock while another change holds it', async () => {
+    lockedUser(USER);
+    store.founderLeases.set(TENANT, 'other-change');
+    expect(await locks.expire(NOW)).toEqual(none);
+    expect(zitadel.unlockCalls).toEqual([]);
+    expect(row(USER)).toMatchObject({ lockReason: 'failed_sign_ins' });
+    store.founderLeases.delete(TENANT);
+
+    const held: boolean[] = [];
+    zitadel.duringUnlock = () => held.push(store.founderLeases.has(TENANT));
+    expect(await locks.expire(NOW)).toMatchObject({ unlocked: 1 });
+    expect(held).toEqual([true]);
+    expect(store.founderLeases.has(TENANT)).toBe(false);
+  });
+
+  it('(d) a busy lock (55P03) while writing is contention: warned, not an error, and the person is locked again', async () => {
+    lockedUser(USER);
+    const busy = Object.assign(new Error('lock timeout'), { code: '55P03' });
+    const real = store.findById.bind(store);
+    vi.spyOn(store, 'findById').mockImplementation((q, s, id, lock) =>
+      lock === true ? Promise.reject(busy) : real(q, s, id, lock),
+    );
+
+    expect(await locks.expire(NOW)).toEqual(none);
+
+    expect(vi.mocked(Logger.prototype.error).mock.calls).toEqual([]);
+    expect(zitadel.lockCalls).toEqual([`z-${USER}`]);
+    expect(row(USER)).toMatchObject({ lockReason: 'failed_sign_ins' });
+  });
+});

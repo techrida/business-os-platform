@@ -1,5 +1,7 @@
 .field {
   display: grid;
+  /* A taller neighbour must not stretch this field's rows and move its box (UIP-FORM-010). */
+  align-content: start;
   gap: 8px;
   min-width: 0;
 }
@@ -10,9 +12,57 @@
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-body-small);
   letter-spacing: var(--letter-spacing-medium);
+  /* One line: a label too long for its row is cut here and shown in full in a tooltip (FieldLabel). */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* One line, always the same height: a label that wraps would push its box below the box beside it. A label too long
+   for its row is cut with an ellipsis and shows in full in a tooltip (FieldLabel). */
+.labelRow {
+  display: flex;
+  align-items: center;
+  height: var(--line-height-body-small);
+  min-height: var(--line-height-body-small);
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The instruction button after the label. */
+.help {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  cursor: help;
+}
+
+.help:hover,
+.help:focus-visible {
+  color: var(--text-primary);
+}
+
+/* Right end of the label row; muted so it reads as a note, not as part of the label. */
+.optional {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.message,
 .hint {
+  /* The reserved message line (UIP-FORM-010): one line high even when empty. */
+  min-height: var(--line-height-caption);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
   font-size: var(--font-size-caption);
@@ -20,6 +70,7 @@
 }
 
 .error {
+  min-height: var(--line-height-caption);
   color: var(--status-error);
   overflow-wrap: anywhere;
   font-size: var(--font-size-caption);
@@ -72,4 +123,9 @@
   .control {
     font-size: max(16px, var(--font-size-body-small));
   }
+}
+
+/* A control that prints its own message (the digits boxes) takes the line; the field's text steps aside. */
+.field:has([data-field-override]) > [data-message] {
+  visibility: hidden;
 }

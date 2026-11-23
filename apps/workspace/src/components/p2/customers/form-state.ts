@@ -28,6 +28,8 @@ export interface ContactFormState {
   error?: string;
   /** A short confirmation, such as "Sita Sharma was added." Shown as a toast. */
   saved?: string;
+  /** The saved contact's id, so a picker that opened this form can choose it. */
+  contactId?: string;
   savedCount: number;
   /**
    * Someone else made a main contact between this page loading and the save (409). Shown as a

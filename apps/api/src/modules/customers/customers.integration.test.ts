@@ -40,7 +40,7 @@ import {
   type INestApplication,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -451,6 +451,65 @@ describe('create a customer and read it back', () => {
       expect(CustomerDtoSchema.parse(item)).toBeDefined();
       expect(JSON.stringify(item)).not.toMatch(/@/);
     }
+  });
+
+  it("sends the primary contact's primary phone on each row of the list, and null without one (R6A, D8)", async () => {
+    const tag = randomUUID().slice(0, 6);
+    const withPhone = await createCustomer({
+      legalName: `Phone Row ${tag} Pvt Ltd`,
+      contact: {
+        ...firstContact(),
+        phones: [
+          { ...usWork, isPrimary: false },
+          { ...npMobile, isPrimary: true },
+        ],
+      },
+    });
+    // A second, non-primary contact's number is never the customer's number.
+    const second = await request(baseUrl)
+      .post(`/v1/customers/${withPhone.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({
+        fullName: 'Second Contact',
+        country: 'NP',
+        isPrimary: false,
+        phones: [{ country: 'IN', e164: '+919812345678', isPrimary: true }],
+      });
+    expect(second.status, JSON.stringify(second.body)).toBe(201);
+    const none = await createCustomer({ legalName: `Phone Row ${tag} None Pvt Ltd` });
+    const res = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Phone Row ${tag}` });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = (res.body as { items: Record<string, unknown>[] }).items;
+    const byId = new Map(items.map((c) => [c.id, c]));
+    expect(byId.get(withPhone.id)).toMatchObject({
+      primaryPhone: { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true },
+    });
+    expect(byId.get(none.id)).toMatchObject({ primaryPhone: null });
+    for (const item of items) expect(CustomerDtoSchema.parse(item)).toBeDefined();
+  });
+
+  it('leaves a stored number that no longer passes the phone check out of its row instead of failing the list (R6A)', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const bad = await createCustomer({
+      legalName: `Bad Phone ${tag} Pvt Ltd`,
+      contact: { ...firstContact(), phones: [{ ...npMobile, isPrimary: true }] },
+    });
+    // Valid E.164 shape for the database, but no US number has an exchange starting with 1.
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.customer_contact_phones SET country = 'US', e164 = '+14151234567'
+             WHERE tenant_id = ${a.tenantId}
+               AND contact_id IN (SELECT id FROM app.customer_contacts WHERE customer_id = ${bad.id})`,
+      ),
+    );
+    const res = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Bad Phone ${tag}` });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = (res.body as { items: Record<string, unknown>[] }).items;
+    expect(items.find((c) => c.id === bad.id)).toMatchObject({ primaryPhone: null });
   });
 
   it('is a 400 without an Idempotency-Key and for a body that breaks the contract', async () => {
@@ -1346,6 +1405,8 @@ describe('detail can and verification presence (audit #6)', () => {
     );
     const body = await detail(mine.id);
     expect(body.portalAccess).toEqual({ hasUser: false, canInvite: true, blocked: null });
+    // R6AE: the writer learns the customer is verified (its identity fields are locked); a reader without write does not.
+    expect(body.verification).toEqual({ exists: true, approved: true });
   });
 
   it("tells Sales a colleague's customer has a case, without offering to start one or leaking the case", async () => {

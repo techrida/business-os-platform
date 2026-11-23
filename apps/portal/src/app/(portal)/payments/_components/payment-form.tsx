@@ -168,7 +168,7 @@ export function PaymentForm({
   const busy = pending || uploading > 0;
 
   return (
-    <form action={formAction} className={quotation.form}>
+    <form noValidate action={formAction} className={quotation.form}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
       {invoice ? <input type="hidden" name="invoice" value={invoice.id} /> : null}
       {proofs.map((p) => (
@@ -221,11 +221,7 @@ export function PaymentForm({
             </Select>
           )}
         </Field>
-        <Field
-          label="Amount paid"
-          hint="The cash you sent, for example 20,18,180.00."
-          error={fe.amount}
-        >
+        <Field label="Amount paid" error={fe.amount}>
           {(control) => (
             <AmountBox
               {...control}
@@ -235,6 +231,7 @@ export function PaymentForm({
               required
               min="0.01"
               showWords
+              placeholder="20,18,180.00"
               value={amount}
               onValueChange={setAmount}
             />
@@ -275,16 +272,13 @@ export function PaymentForm({
         </Field>
       </div>
 
-      <Field
-        label="Bank reference (optional)"
-        hint="The transaction or cheque number on your slip."
-        error={fe.bankReference}
-      >
+      <Field label="Bank reference" optional error={fe.bankReference}>
         {(control) => (
           <Input
             name="bankReference"
             autoComplete="off"
             maxLength={100}
+            placeholder="TXN-48213"
             value={bankReference}
             onChange={(e) => setBankReference(e.target.value)}
             {...control}

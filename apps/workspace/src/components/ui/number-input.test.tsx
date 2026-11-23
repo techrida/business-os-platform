@@ -421,19 +421,19 @@ describe('controlled', () => {
 });
 
 describe('accessibility', () => {
-  it('describes the box with the hint, the prefix, the error and its own status, in order', async () => {
+  it('describes the box with the prefix, the message line (the error replaces the hint) and its own status, in order', async () => {
     const { box, container } = await mount(
-      <Field label="Amount" hint="Including VAT" error="Too high">
+      <Field label="Amount" error="Too high">
         {(control) => <MoneyInput {...control} currency="NPR" />}
       </Field>,
     );
     const ids = () => box.getAttribute('aria-describedby')!.split(' ');
     const textOf = (id: string) => container.querySelector(`[id="${id}"]`)?.textContent;
-    expect(ids().map(textOf)).toEqual(['Including VAT', 'NPR', 'Too high']);
+    expect(ids().map(textOf)).toEqual(['NPR', 'Too high']);
     expect(box.getAttribute('aria-invalid')).toBe('true');
     expect(box.labels?.[0]?.textContent).toBe('Amount');
     await typeKeys(box, ',');
-    expect(ids().map(textOf)).toEqual(['Including VAT', 'NPR', 'Too high', USE_A_POINT]);
+    expect(ids().map(textOf)).toEqual(['NPR', 'Too high', USE_A_POINT]);
   });
 
   it('shows the amount in words, read on focus rather than announced', async () => {
@@ -813,23 +813,20 @@ describe('review fixes', () => {
     expect(hidden()).toBe('1250000');
   });
 
-  it('reads the words after the hint and prefix and before the error', async () => {
+  it('reads the words after the prefix and before the error', async () => {
+    // Outside a Field the words print their own line; inside one they share the field's message line.
     const { box, container } = await mount(
-      <Field label="Amount" hint="Including VAT" error="Too high">
-        {(control) => <MoneyInput {...control} currency="NPR" showWords />}
-      </Field>,
+      <>
+        <MoneyInput aria-describedby="amount-error" currency="NPR" showWords aria-label="Amount" />
+        <span id="amount-error">Too high</span>
+      </>,
     );
     await typeKeys(box, '2018180');
     const order = box
       .getAttribute('aria-describedby')!
       .split(' ')
       .map((id) => container.querySelector(`[id="${id}"]`)?.textContent);
-    expect(order).toEqual([
-      'Including VAT',
-      'NPR',
-      amountInWords('2018180', 'NPR', 'south_asian'),
-      'Too high',
-    ]);
+    expect(order).toEqual(['NPR', amountInWords('2018180', 'NPR', 'south_asian'), 'Too high']);
   });
 
   it('focuses the input when the prefix is pressed', async () => {

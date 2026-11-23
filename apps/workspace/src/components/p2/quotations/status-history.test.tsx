@@ -91,6 +91,16 @@ describe('historyTitle', () => {
     expect(historyTitle('sent', 'superseded')).toBe('Replaced by a newer revision');
   });
 
+  it('labels a restore as such, not as a second approval or send (R6D)', () => {
+    expect(historyTitle('superseded', 'sent', null, 'Revision 2 cancelled: not needed')).toBe(
+      'Restored after revision 2 was cancelled',
+    );
+    expect(historyTitle('superseded', 'approved', null, 'Revision 3 cancelled: x')).toBe(
+      'Restored after revision 3 was cancelled',
+    );
+    expect(historyTitle('superseded', 'sent')).toBe('Restored after a revision was cancelled');
+  });
+
   it('says who rejected only when the version knows', () => {
     expect(historyTitle('sent', 'rejected', 'customer')).toBe('Rejected by the customer');
     expect(historyTitle('submitted', 'rejected', 'internal')).toBe('Rejected internally');

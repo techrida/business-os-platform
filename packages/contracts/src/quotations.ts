@@ -53,7 +53,10 @@ export function paymentPercentUnits(percent: string): number {
 /** Trim the insignificant fractional zeros without rounding a decimal string. */
 export function trimPercent(percent: string): string {
   if (!percent.includes('.')) return percent;
-  const trimmed = percent.replace(/0+$/, '').replace(/\.$/, '');
+  let end = percent.length;
+  while (end > 0 && percent[end - 1] === '0') end -= 1;
+  if (end > 0 && percent[end - 1] === '.') end -= 1;
+  const trimmed = percent.slice(0, end);
   return trimmed === '' || trimmed === '-' ? '0' : trimmed;
 }
 
@@ -99,6 +102,7 @@ export const QUOTATION_ACTIONS = [
   'customer_reject',
   'expire',
   'revise',
+  'restore',
   'cancel',
   'cancel_on_lost',
 ] as const;
@@ -143,6 +147,10 @@ export const QUOTATION_TRANSITIONS: readonly QuotationTransition[] = [
   edge('expire', 'sent', 'expired', false, 'system'),
   edge('revise', 'approved', 'superseded', true),
   edge('revise', 'sent', 'superseded', true),
+  // Cancelling an unsent revision gives the version it replaced back (R6D): the one way out of Superseded. Written
+  // by the cancel route for a caller who may revise, never by the Lost cascade.
+  edge('restore', 'superseded', 'approved', true),
+  edge('restore', 'superseded', 'sent', true),
   edge('cancel', 'draft', 'cancelled', true),
   edge('cancel', 'returned', 'cancelled', true),
   edge('cancel', 'submitted', 'cancelled', true),

@@ -74,7 +74,10 @@ export function isPortalVisible(
 
 /**
  * A sent version the company has since closed: it was cancelled itself (a Lost deal), or it was replaced by a revision
- * that was then cancelled. Its mailed link, its row in the list and its PDF all say "no longer open" (R6D).
+ * that was then cancelled without giving it back (a Lost or Won deal, or a canceller who may not revise; a revision
+ * cancelled by someone who may revise restores the sent version instead, R6D). An expired version that was revised and
+ * whose revision was then cancelled is closed too: it stays `expired` (only a superseded version is restored), and the
+ * list must not keep showing it as expired. Its mailed link, its row in the list and its PDF all say "no longer open" (R6D).
  */
 export function isClosedToCustomer(v: {
   status: PortalVersionHead['status'];
@@ -83,7 +86,8 @@ export function isClosedToCustomer(v: {
 }): boolean {
   return (
     v.sentAt !== null &&
-    (v.status === 'cancelled' || (v.status === 'superseded' && v.quotationCancelled))
+    (v.status === 'cancelled' ||
+      ((v.status === 'superseded' || v.status === 'expired') && v.quotationCancelled))
   );
 }
 
@@ -259,7 +263,6 @@ export class PortalService {
       issuerLegalName: _legalName,
       documentStyle: _documentStyle,
       renderAttempts,
-      sentAt: _sentAt,
       quotationCancelled: _quotationCancelled,
       ...input
     } = source;

@@ -382,12 +382,13 @@ describe('quotation detail page', () => {
       capabilities: { ...quote.capabilities, canCancel: true },
     });
     const html = await render();
-    expect(html).toContain('>Cancel quotation</button>');
     // Revision 2 of the fixture: cancelling it discards the revision and gives the earlier one back (R6D).
+    expect(html).toContain('>Discard revision</button>');
+    expect(html).toContain('Cancel revision 2 of');
     expect(html).toContain('Cancelling discards this revision and its approval request');
 
     mocks.getQuotation.mockResolvedValue(quote);
-    expect(await render()).not.toContain('>Cancel quotation</button>');
+    expect(await render()).not.toContain('>Discard revision</button>');
   });
 
   it('asks for no evidence on a quotation that is not accepted', async () => {

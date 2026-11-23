@@ -18,6 +18,8 @@ import { FileUpload } from '../../../../_upload/file-upload';
 import styles from '../../../../_upload/upload.module.css';
 import { type QuoteFormState, submitQuoteAction } from '../actions';
 
+const PAST_DATE_MESSAGE = 'Enter today or a later date, or leave it empty.';
+
 /**
  * Submit a quotation. A Client Component so the file uploads as it is chosen and the typed values
  * survive a refusal. What it submits goes to a server action. The Idempotency-Key and the
@@ -46,7 +48,13 @@ export function QuoteForm({
   numberSystems?: NumberSystems | undefined;
 }) {
   const [state, formAction, pending] = useActionState<QuoteFormState, FormData>(
-    submitQuoteAction,
+    (prev, form) => {
+      const until = form.get('validUntil');
+      if (typeof until === 'string' && until !== '' && until < today) {
+        return { key: prev.key, fieldErrors: { validUntil: PAST_DATE_MESSAGE } };
+      }
+      return submitQuoteAction(prev, form);
+    },
     initialState ?? { key: idempotencyKey },
   );
   const fe = state.fieldErrors ?? {};
@@ -72,7 +80,7 @@ export function QuoteForm({
   const currencyCode = CURRENCIES.find((c) => c === currency) ?? 'NPR';
 
   return (
-    <form action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
+    <form noValidate action={formAction} className={`${quotation.form} ${styles.formFrame}`}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <input type="hidden" name="rfqId" value={rfqId} />
       {documentId ? <input type="hidden" name="documentId" value={documentId} /> : null}
@@ -112,7 +120,7 @@ export function QuoteForm({
         </Field>
         <Field
           label="Total of your quotation"
-          hint="The amount printed on your quotation, for example 20,18,180.00. We check it against the file."
+          hint="We check it against the file."
           error={fe.total}
         >
           {(control) => (
@@ -123,6 +131,7 @@ export function QuoteForm({
               numberSystems={numberSystems}
               required
               showWords
+              placeholder="20,18,180.00"
               value={total}
               onValueChange={setTotal}
             />
@@ -131,27 +140,20 @@ export function QuoteForm({
       </div>
 
       <div className={styles.grid}>
-        <Field
-          label="Your reference (optional)"
-          hint="The number on your quotation, if it has one."
-          error={fe.vendorRef}
-        >
+        <Field label="Your reference" optional error={fe.vendorRef}>
           {(control) => (
             <Input
               name="vendorRef"
               autoComplete="off"
               maxLength={64}
+              placeholder="QT-2083-0412"
               value={vendorRef}
               onChange={(e) => setVendorRef(e.target.value)}
               {...control}
             />
           )}
         </Field>
-        <Field
-          label="Prices valid until (optional)"
-          hint="The last day we can accept these prices."
-          error={fe.validUntil}
-        >
+        <Field label="Prices valid until" optional error={fe.validUntil}>
           {(control) => (
             <DatePicker
               {...control}
@@ -165,8 +167,9 @@ export function QuoteForm({
       </div>
 
       <Field
-        label="Delivery time in days (optional)"
-        hint="Whole days from our order to delivery."
+        label="Delivery time in days"
+        optional
+        hint="Counted from our order to delivery."
         error={fe.deliveryDays}
       >
         {(control) => (
@@ -176,6 +179,7 @@ export function QuoteForm({
             intDigits={4}
             scale={0}
             max="1000"
+            placeholder="14"
             value={deliveryDays}
             onValueChange={setDeliveryDays}
           />

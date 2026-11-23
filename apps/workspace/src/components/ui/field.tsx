@@ -1,5 +1,7 @@
 import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
 
+import { FieldHelp, FieldLabel } from './field-label';
+import { FieldScope } from './field-scope';
 import styles from './field.module.css';
 
 /** What `Field` hands to its control so the label, hint and error are all wired up. */
@@ -25,13 +27,25 @@ export interface FieldControlProps {
  */
 export function Field({
   label,
+  optional,
   hint,
+  help,
   error,
   children,
   className,
 }: {
   label: ReactNode;
+  /**
+   * Marks a field that may be left empty with a muted "Optional" at the right end of the label row (UIP-FORM-008).
+   * The label and the hint do not repeat it.
+   */
+  optional?: boolean;
   hint?: ReactNode;
+  /**
+   * An instruction that must stay reachable when an error takes the message line (UIP-FORM-010): an info button after
+   * the label whose tooltip holds it. Use it when the hint says how to fill the field, not for a plain description.
+   */
+  help?: ReactNode;
   error?: ReactNode;
   children: (control: FieldControlProps) => ReactNode;
   className?: string;
@@ -40,30 +54,35 @@ export function Field({
   const labelId = `${base}-label`;
   const hintId = `${base}-hint`;
   const errorId = `${base}-error`;
-  const describedBy =
-    [hint ? hintId : undefined, error ? errorId : undefined].filter(Boolean).join(' ') || undefined;
+  // One reserved message line (UIP-FORM-010): an error replaces the hint, so it is that one element's id.
+  const optionalId = `${base}-optional`;
+  const describedBy = [optional ? optionalId : undefined, error ? errorId : hintId]
+    .filter(Boolean)
+    .join(' ');
   const cls = [styles.field, className].filter(Boolean).join(' ');
   return (
     <div className={cls}>
-      <label id={labelId} htmlFor={base} className={styles.label}>
-        {label}
-      </label>
-      {children({
-        id: base,
-        'aria-describedby': describedBy,
-        'aria-invalid': error ? true : undefined,
-        'aria-labelledby': labelId,
-      })}
-      {hint ? (
-        <span id={hintId} className={styles.hint}>
-          {hint}
-        </span>
-      ) : null}
-      {error ? (
-        <span id={errorId} className={styles.error}>
-          {error}
-        </span>
-      ) : null}
+      <div className={styles.labelRow}>
+        <FieldLabel id={labelId} htmlFor={base}>
+          {label}
+        </FieldLabel>
+        {help ? (
+          <FieldHelp label={typeof label === 'string' ? label : undefined}>{help}</FieldHelp>
+        ) : null}
+        {optional ? (
+          <span id={optionalId} className={styles.optional}>
+            Optional
+          </span>
+        ) : null}
+      </div>
+      <FieldScope hint={hint} error={error} hintId={hintId} errorId={errorId} controlId={base}>
+        {children({
+          id: base,
+          'aria-describedby': describedBy,
+          'aria-invalid': error ? true : undefined,
+          'aria-labelledby': labelId,
+        })}
+      </FieldScope>
     </div>
   );
 }

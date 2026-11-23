@@ -43,7 +43,7 @@ describe('QuoteForm numbers', () => {
 
   it('keeps delivery days to whole digits, at most 1000, with no stepper', async () => {
     const container = await mount();
-    const days = boxOf(container, 'Delivery time in days (optional)');
+    const days = boxOf(container, 'Delivery time in days');
     await fill(days, '14');
     expect(posted(container, 'deliveryDays')).toBe('14');
     await fill(days, '14.5');
@@ -77,4 +77,14 @@ describe('QuoteForm valid-until date', () => {
     await pickDate(container, 'validUntil', '2026-11-09');
     expect(valid()).toBe(false);
   }, 15_000);
+
+  it('marks optional fields beside the label and shows an example total instead of a format hint', async () => {
+    const container = await mount();
+    expect(container.textContent).not.toContain('(optional)');
+    expect(container.textContent).not.toContain('for example');
+    expect(container.textContent?.match(/Optional/g)).toHaveLength(3);
+    expect(boxOf(container, 'Total of your quotation').placeholder).toBe('20,18,180.00');
+    const reference = boxOf(container, 'Your reference');
+    expect(reference.parentElement?.textContent).toContain('Optional');
+  });
 });

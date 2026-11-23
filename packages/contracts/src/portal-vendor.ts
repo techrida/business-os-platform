@@ -175,6 +175,13 @@ export type VendorPortalBankView = z.infer<typeof VendorPortalBankViewSchema>;
 export const VendorPortalOnboardingViewSchema = z.strictObject({
   status: VendorStatusSchema,
   capability: VendorPortalCapabilitySchema,
+  /**
+   * Set when a change of the company's details (legal name, PAN, kind or country) reset the checklist: when, and the
+   * name of the staff member who made it. The documents have to be uploaded again; a file sent before cannot be reused.
+   */
+  detailsChanged: z
+    .strictObject({ at: z.iso.datetime({ offset: true }), by: z.string().nullable() })
+    .nullable(),
   documents: z.array(
     z.strictObject({
       docType: VendorKycDocTypeSchema,

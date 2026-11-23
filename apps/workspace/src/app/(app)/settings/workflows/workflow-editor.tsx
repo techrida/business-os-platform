@@ -45,6 +45,7 @@ import {
   type ThresholdOp,
 } from './spec-form';
 import { memberOptions, type UserOption } from './user-field';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type SlaDefaults = Parameters<typeof emptySpecForm>[1];
 
@@ -398,7 +399,13 @@ export function WorkflowEditor({
   const basicsCount = hasBasics ? 1 : 0;
 
   return (
-    <form ref={formRef} action={formAction} onSubmit={onSubmit} className={styles.editor}>
+    <form
+      noValidate
+      ref={formRef}
+      action={formAction}
+      onSubmit={onSubmit}
+      className={styles.editor}
+    >
       {workflowKey ? <input type="hidden" name="key" value={workflowKey} /> : null}
       <input type="hidden" name="spec" value={built.ok ? JSON.stringify(built.spec) : ''} />
 
@@ -458,10 +465,7 @@ export function WorkflowEditor({
                     />
                   )}
                 </Field>
-                <Field
-                  label="Key"
-                  hint="Lowercase letters, digits, _ . - ; cannot be changed later."
-                >
+                <Field label="Key" hint="Cannot be changed later.">
                   {(control) => (
                     <Input
                       {...control}
@@ -470,6 +474,7 @@ export function WorkflowEditor({
                       required
                       autoComplete="off"
                       pattern="[a-z][a-z0-9_.\-]{0,63}"
+                      placeholder="invoice-approval"
                       onChange={(e) => setKey(e.target.value)}
                     />
                   )}
@@ -494,10 +499,10 @@ export function WorkflowEditor({
                   )}
                 </Field>
                 <label className={`${styles.check} ${SPAN}`}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
+                    className={styles.checkBox}
                     checked={form.distinctApprovers}
-                    onChange={(e) => patch({ distinctApprovers: e.target.checked })}
+                    onCheckedChange={(nextChecked) => patch({ distinctApprovers: nextChecked })}
                   />
                   One person cannot approve two steps of the same request
                 </label>

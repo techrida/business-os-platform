@@ -267,7 +267,9 @@ export function RecommendForm({
         </Field>
         <Field
           label="If fewer quotations than required"
-          hint="Needed only when this RFQ has fewer quotations than the company’s minimum. Say why you are recommending anyway. Otherwise leave it empty."
+          optional
+          hint="Needed only below the company’s minimum number of quotations."
+          help="Needed only when this RFQ has fewer quotations than the company’s minimum. Say why you are recommending anyway. Otherwise leave it empty."
           error={err.fewerThanThreeReason}
           className={WIDE}
         >
@@ -350,7 +352,7 @@ export function CommitForm({
         </>
       }
     >
-      <form id={formId} action={formAction} className={styles.panelForm}>
+      <form noValidate id={formId} action={formAction} className={styles.panelForm}>
         <input type="hidden" name="rfqId" value={rfqId} />
         <input type="hidden" name="idempotencyKey" value={state.key} />
         {state.error ? (
@@ -451,6 +453,7 @@ export function ExtendDeadlineForm({
         <Field
           label="New quotation deadline"
           hint="Kathmandu time. Later than the current deadline and than now."
+          help="Kathmandu time. It must be later than the current deadline and later than now."
           error={state.errors.deadline}
         >
           {(control) => (

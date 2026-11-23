@@ -174,9 +174,9 @@ async function flush() {
   });
 }
 
-const checkbox = (scope: HTMLElement, text: string): HTMLInputElement => {
+const checkbox = (scope: HTMLElement, text: string): HTMLButtonElement => {
   const label = [...scope.querySelectorAll('label')].find((l) => l.textContent?.includes(text));
-  const input = label?.querySelector('input');
+  const input = label?.querySelector<HTMLButtonElement>('button[role="checkbox"]');
   if (!input) throw new Error(`No checkbox "${text}"`);
   return input;
 };
@@ -229,7 +229,7 @@ it('keeps a value the server refused on its control, marked with the reason', as
   await flush();
 
   const refused = checkbox(card('Leads'), managers);
-  expect(refused.checked).toBe(false);
+  expect(refused.getAttribute('aria-checked')).toBe('false');
   expect(refused.getAttribute('aria-invalid')).toBe('true');
   const describedBy = refused.getAttribute('aria-describedby') ?? '';
   expect(describedBy).not.toBe('');
@@ -241,7 +241,7 @@ it('keeps a value the server refused on its control, marked with the reason', as
   // Changing the control away from the refused value clears the mark.
   await click(refused);
   const cleared = checkbox(card('Leads'), managers);
-  expect(cleared.checked).toBe(true);
+  expect(cleared.getAttribute('aria-checked')).toBe('true');
   expect(cleared.getAttribute('aria-invalid')).toBeNull();
   expect(card('Leads').textContent).not.toContain(reason);
 });
@@ -286,7 +286,7 @@ it('marks a value the dry run refuses with a field error, with no Try again', as
   await flush();
 
   expect(actions.save).not.toHaveBeenCalled();
-  expect(checkbox(card('Leads'), managers).checked).toBe(false);
+  expect(checkbox(card('Leads'), managers).getAttribute('aria-checked')).toBe('false');
   expectMarked(managers, reason);
 });
 
@@ -352,9 +352,7 @@ it('shows view-only cards with every control disabled and no foot buttons', asyn
   await render(false);
   await click(byLabel('View Leads'));
   const leads = card('Leads');
-  const controls = [
-    ...leads.querySelectorAll<HTMLButtonElement | HTMLInputElement>('li button, input'),
-  ];
+  const controls = [...leads.querySelectorAll<HTMLButtonElement>('li button')];
   expect(controls.length).toBeGreaterThan(0);
   for (const control of controls) expect(control.disabled).toBe(true);
   expect(leads.textContent).not.toContain('Review changes');
@@ -372,9 +370,11 @@ it('asks before discarding unsaved edits when another card opens', async () => {
   expect(dialog?.textContent).toContain('Discard your changes to Leads?');
   await click(dialogButton('Keep editing'));
   await flush();
-  expect(checkbox(card('Leads'), 'Department heads also see their whole department').checked).toBe(
-    false,
-  );
+  expect(
+    checkbox(card('Leads'), 'Department heads also see their whole department').getAttribute(
+      'aria-checked',
+    ),
+  ).toBe('false');
 
   await click(byLabel('Edit Invoices'));
   await flush();
