@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   createDraftMemo,
@@ -94,25 +94,48 @@ test('the inbox shows the reason for each item, and excludes the requester’s m
  * The inbox list never scrolls the whole page sideways: the approvals table scrolls inside its own
  * box. It once measured 761px wide in a 390px window and 869px in an 834px one, because the hidden
  * "Actions" header escaped the table's scroll box. A memo for the Founder makes sure the table is
- * on screen (an empty inbox would pass vacuously); it is rejected at the end.
+ * on screen (an empty inbox would pass vacuously). The Founder rejects it in `finally`, so a failed
+ * width check leaves no pending request behind.
  */
 test('the inbox list fits the viewport on a phone and a tablet', async ({ browser, baseURL }) => {
   test.setTimeout(180_000);
   const appBase = baseURL ?? 'https://app.localhost';
   const title = `Inbox width e2e ${new Date().toISOString()}`;
   const opened: Signed[] = [];
+  let submitted = false;
+  let reason = '';
+  let founder: Signed | undefined;
+
+  // The Founder rejects the memo. Used by the cleanup below; safe to reach from any point after the submit.
+  const rejectMemo = async (page: Page) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/inbox');
+    // A new request reaches the inbox shortly after the submit; wait for it once.
+    await expect(async () => {
+      await page.reload();
+      await expect(inboxRow(page, title)).toBeVisible({ timeout: 3_000 });
+    }).toPass({ timeout: 30_000 });
+    await openFromInbox(page, title, reason);
+    await page.getByRole('button', { name: 'Reject', exact: true }).click();
+    const rejection = page.getByRole('dialog', { name: 'Reject request' });
+    await rejection
+      .getByLabel('Reason for rejection', { exact: true })
+      .fill('Rejected by the inbox width spec.');
+    await rejection.locator('footer').getByRole('button', { name: 'Reject', exact: true }).click();
+    await page.waitForURL(/\/inbox\?decided=reject/, { timeout: 30_000 });
+  };
 
   try {
     const sales = await signInAs(browser, appBase, 'sales');
     opened.push(sales);
     await createDraftMemo(sales.page, { title, recommenders: [], approver: 'Dev Founder' });
-    const reason = (await readPreviewSteps(sales.page))[0]?.reason ?? '';
+    reason = (await readPreviewSteps(sales.page))[0]?.reason ?? '';
     await submitMemo(sales.page);
+    submitted = true;
 
-    const founder = await signInAs(browser, appBase, 'founder');
+    founder = await signInAs(browser, appBase, 'founder');
     opened.push(founder);
     const page = founder.page;
-    // A new request reaches the inbox shortly after the submit; wait for it once.
     await page.goto('/inbox');
     await expect(async () => {
       await page.reload();
@@ -136,22 +159,17 @@ test('the inbox list fits the viewport on a phone and a tablet', async ({ browse
         await expect.poll(fits).toBe(true);
       });
     }
-
-    await test.step('the Founder rejects the memo so nothing is left pending', async () => {
-      await page.setViewportSize({ width: 1440, height: 900 });
-      await openFromInbox(page, title, reason);
-      await page.getByRole('button', { name: 'Reject', exact: true }).click();
-      const rejection = page.getByRole('dialog', { name: 'Reject request' });
-      await rejection
-        .getByLabel('Reason for rejection', { exact: true })
-        .fill('Rejected by the inbox width spec.');
-      await rejection
-        .locator('footer')
-        .getByRole('button', { name: 'Reject', exact: true })
-        .click();
-      await page.waitForURL(/\/inbox\?decided=reject/, { timeout: 30_000 });
-    });
   } finally {
-    await Promise.all(opened.map((signed) => signed.context.close()));
+    try {
+      if (submitted) {
+        await test.step('the Founder rejects the memo so nothing is left pending', async () => {
+          const signed = founder ?? (await signInAs(browser, appBase, 'founder'));
+          if (founder === undefined) opened.push(signed);
+          await rejectMemo(signed.page);
+        });
+      }
+    } finally {
+      await Promise.all(opened.map((signed) => signed.context.close()));
+    }
   }
 });
