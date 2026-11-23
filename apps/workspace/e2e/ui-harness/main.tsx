@@ -25,12 +25,18 @@ const terms = [
   { value: 'net-60', label: 'Net 60' },
 ];
 
+const longList = Array.from({ length: 60 }, (_, i) => ({
+  value: `opt-${i}`,
+  label: `Option ${i}`,
+}));
+
 function Controls({ scope }: { scope: 'page' | 'dialog' }) {
   const [combo, setCombo] = useState('');
   const [open, setOpen] = useState(false);
   return (
     <div style={{ display: 'grid', gap: 16, padding: 16 }}>
       <Select aria-label={`${scope} terms`} options={terms} defaultValue="net-30" />
+      <Select aria-label={`${scope} long list`} options={longList} defaultValue="opt-0" />
       <Combobox
         label={`${scope} company`}
         options={[

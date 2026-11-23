@@ -88,7 +88,7 @@ function editableKey(raw: string): SettingKey {
 }
 
 /**
- * The company logo is not this route's to change. `logoDocumentId` moves only through ImagesService.set (a scanned
+ * The company logo is not this route's to change. `logoDocumentId`, `logoOnDarkDocumentId` and `logoOnLightDocumentId` move only through ImagesService.set (a scanned
  * upload, an `image.set` audit, the previous document removed) and `legacyLogoDataUrl` only through the legacy logo
  * migration; both write through SettingsService directly. Whatever the request holds for them is replaced by the
  * stored value, read under the setting's lock (`getLocked`), so a concurrent logo change is never reverted either.
@@ -98,12 +98,16 @@ function withStoredLogo(value: unknown, stored: SettingValue<'entity.profile'>):
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
   const {
     logoDocumentId: _ignoredDocument,
+    logoOnDarkDocumentId: _ignoredOnDark,
+    logoOnLightDocumentId: _ignoredOnLight,
     legacyLogoDataUrl: _ignoredLegacy,
     ...rest
   } = value as Record<string, unknown>;
   return {
     ...rest,
     logoDocumentId: stored.logoDocumentId,
+    logoOnDarkDocumentId: stored.logoOnDarkDocumentId,
+    logoOnLightDocumentId: stored.logoOnLightDocumentId,
     ...(stored.legacyLogoDataUrl === undefined
       ? {}
       : { legacyLogoDataUrl: stored.legacyLogoDataUrl }),

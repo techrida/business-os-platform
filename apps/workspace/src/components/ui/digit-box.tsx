@@ -75,6 +75,8 @@ export interface DigitBoxProps {
    */
   edited?: boolean | undefined;
   onEditedChange?: ((edited: boolean) => void) | undefined;
+  /** UIP-FORM-008: a fixed-format box does not narrate its length ("0 of 9"); it reports an error only when wrong. */
+  hideCount?: boolean | undefined;
 }
 
 interface EngineProps extends DigitBoxProps {
@@ -116,6 +118,7 @@ export function DigitBox({
   className,
   edited,
   onEditedChange,
+  hideCount,
   rules,
   prefix,
   onPlus,
@@ -365,7 +368,7 @@ export function DigitBox({
   }, []);
 
   const digits = foreign(text) ? '' : text;
-  const countText = foreign(text) ? '' : rules.count(digits);
+  const countText = foreign(text) || hideCount === true ? '' : rules.count(digits);
   const status = notice.text || error || '';
   const invalid = callerInvalid === true || callerInvalid === 'true' || error !== null;
   // Order: the caller's hint, the prefix and count, then errors (the caller's, then ours).
