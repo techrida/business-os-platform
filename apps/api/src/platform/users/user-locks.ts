@@ -23,7 +23,13 @@
 // row lock timed out, say) and the row still shows a lock. A lock that cannot be ended now (ZITADEL down, a refusal,
 // an unknown state) is postponed by one window instead of being retried every minute.
 import { ACCOUNT_LOCKOUT } from '@bos/contracts';
-import { ConflictException, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { AuditService } from '../audit/audit.service';
@@ -132,7 +138,9 @@ export class UserLocks {
         if (busy !== undefined) {
           // The access lock or the user's row stayed busy (lock_timeout) or this write lost a deadlock: contention, not a
           // failure. The lock is still due and the next run handles it.
-          this.logger.warn(`users.lock-expiry: ${due.id} left for the next run (database busy: ${busy})`);
+          this.logger.warn(
+            `users.lock-expiry: ${due.id} left for the next run (database busy: ${busy})`,
+          );
           continue;
         }
         this.logger.error(`users.lock-expiry failed for ${due.id}: kind=${errorName(error)}`);

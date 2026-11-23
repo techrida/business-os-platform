@@ -281,7 +281,8 @@ export abstract class UsersStore {
     ttlSeconds: number,
     timeoutMs: number,
   ): Promise<boolean> {
-    return (await this.claimFounderLeaseWithOrigin(tenantId, leaseId, ttlSeconds, timeoutMs)).claimed;
+    return (await this.claimFounderLeaseWithOrigin(tenantId, leaseId, ttlSeconds, timeoutMs))
+      .claimed;
   }
   /**
    * Same claim, and says how it was won. `ttlTakeover` is true only when the lease was held by another holder that had
@@ -912,7 +913,10 @@ export class SqlUsersStore extends UsersStore {
                  OR ops.sync_cursors.updated_at < now() - make_interval(secs => ${ttlSeconds})
               RETURNING name`,
         );
-        return { claimed: claimed.length > 0, ttlTakeover: claimed.length > 0 && before?.ttl === true };
+        return {
+          claimed: claimed.length > 0,
+          ttlTakeover: claimed.length > 0 && before?.ttl === true,
+        };
       });
     } catch (error) {
       const code =

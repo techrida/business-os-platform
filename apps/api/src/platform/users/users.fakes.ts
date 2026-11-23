@@ -376,7 +376,8 @@ export class FakeUsersStore extends UsersStore {
     const held = this.founderLeases.get(tenantId);
     let ttlTakeover = false;
     if (held !== undefined && held !== leaseId) {
-      if (!this.expiredLeases.has(tenantId)) return Promise.resolve({ claimed: false, ttlTakeover });
+      if (!this.expiredLeases.has(tenantId))
+        return Promise.resolve({ claimed: false, ttlTakeover });
       ttlTakeover = true;
       this.expiredLeases.delete(tenantId);
     }
