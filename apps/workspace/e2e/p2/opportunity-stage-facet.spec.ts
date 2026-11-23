@@ -87,10 +87,7 @@ test('the opportunity table combines multiple stages with search and restores fi
   browser,
   baseURL,
 }) => {
-  // Three leads are each taken through contact, qualification and conversion in the browser before the
-  // filters run. On the compiled stack that setup plus the history steps ran past 240 s (FQA3: every
-  // step done, then the limit hit), so the limit is raised rather than the coverage cut.
-  test.setTimeout(480_000);
+  test.setTimeout(240_000);
   const { context, page } = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
   const query = `Stage facet & ${randomUUID()}`;
   const qualifiedName = `${query} First`;
