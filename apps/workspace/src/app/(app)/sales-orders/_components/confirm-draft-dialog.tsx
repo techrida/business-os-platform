@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { EvidenceUpload } from '@/components/ui/evidence-upload';
 import { TransactionFormDialog } from '@/components/p3/transaction-form-dialog';
 
-import { confirmOrderAction } from '../_lib/actions';
+import { confirmDraftAction } from '../_lib/actions';
 import type { ActionState } from '../_lib/state';
 import { CreditHoldHelp } from './credit-hold-help';
 
@@ -44,7 +44,7 @@ export function ConfirmDraftDialog({
       submit="Confirm order"
       successMessage="Order confirmed"
       initial={{ key: idempotencyKey }}
-      action={confirmOrderAction}
+      action={confirmDraftAction}
       reloadHref={reloadHref}
       focusHeadingOnDone
       blocked={blocked}
