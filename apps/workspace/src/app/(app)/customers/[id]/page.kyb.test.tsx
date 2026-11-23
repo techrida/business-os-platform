@@ -76,8 +76,11 @@ beforeEach(() => {
 });
 
 /** The Verification card comes before the profile card (first in the right column), or after it. */
-const cardFirst = (h: string) =>
-  h.indexOf('id="verification"') < h.indexOf('Organization Information');
+const cardFirst = (h: string) => {
+  const card = h.indexOf('id="verification"');
+  expect(card).toBeGreaterThan(-1);
+  return card < h.indexOf('Organization Information');
+};
 
 describe('not-verified banner and card position', () => {
   it('no case: banner offers Start verification, card is first', async () => {
@@ -88,7 +91,7 @@ describe('not-verified banner and card position', () => {
     const t = textOf(h);
     expect(t).toContain("This customer isn't verified yet");
     expect(t).toContain('No verification case has been started.');
-    expect(t).toContain('Portal access stays closed until the KYB verification is approved.');
+    expect(t).toContain('Portal invites stay closed until the KYB verification is approved.');
     expect(h).toContain('href="#verification"');
     expect(h).toContain('role="status"');
     expect(cardFirst(h)).toBe(true);
@@ -170,6 +173,16 @@ describe('not-verified banner and card position', () => {
     const h = await html();
     expect(textOf(h)).not.toContain("isn't verified yet");
     expect(cardFirst(h)).toBe(false);
+  });
+
+  it('an empty list while the record says a case exists is not reported as no case', async () => {
+    api.getCustomerDetail.mockResolvedValue(
+      customer({ can: reader, verification: { exists: true } }),
+    );
+    const t = textOf(await html());
+    expect(t).toContain("This customer isn't verified yet");
+    expect(t).toContain('A verification case exists but is not approved.');
+    expect(t).not.toContain('No verification case has been started.');
   });
 
   it('a failed case list shows no banner', async () => {

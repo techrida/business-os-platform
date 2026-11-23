@@ -34,6 +34,8 @@ export function kybStanding(input: {
       const found = input.cases.find((c) => c.status === status);
       if (found) return { kind: 'unverified', state: status, caseId: found.id };
     }
+    // The list is empty but the record says a case exists: say so rather than "no case".
+    if (input.caseExists === true) return { kind: 'unverified', state: 'unreadable', caseId: null };
     return { kind: 'unverified', state: 'none', caseId: null };
   }
   if (input.caseExists === false) return { kind: 'unverified', state: 'none', caseId: null };
@@ -50,7 +52,7 @@ export interface KybBanner {
   action: { label: string; href: string } | null;
 }
 
-const BLOCKS = 'Portal access stays closed until the KYB verification is approved.';
+const BLOCKS = 'Portal invites stay closed until the KYB verification is approved.';
 
 /** The page-level alert for a not-verified customer, in the words of the real state. */
 export function kybBanner(
@@ -83,14 +85,18 @@ export function kybBanner(
     case 'rejected':
       return {
         title,
-        text: `The last verification case was rejected. ${BLOCKS}`,
+        text: `The verification case was rejected. ${BLOCKS}`,
         action: opts.mayRead && caseHref ? { label: 'Open the case', href: caseHref } : null,
       };
     case 'expired':
       return {
         title,
         text: `The last verification has expired. ${BLOCKS}`,
-        action: opts.mayOpen ? { label: 'Reopen verification', href: card } : null,
+        action: opts.mayOpen
+          ? { label: 'Reopen verification', href: card }
+          : opts.mayRead && caseHref
+            ? { label: 'Open the case', href: caseHref }
+            : null,
       };
     case 'unreadable':
       return {
