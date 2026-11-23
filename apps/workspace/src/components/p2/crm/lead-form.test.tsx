@@ -137,10 +137,12 @@ describe('lead form country and phones', () => {
     const group = numberBox(container, 1).closest('[role="group"][aria-labelledby]')!;
     const label = document.getElementById(group.getAttribute('aria-labelledby')!);
     expect(label?.textContent?.trim()).toBe('Phone');
-    const hints = (group.getAttribute('aria-describedby') ?? '')
+    const notes = (group.getAttribute('aria-describedby') ?? '')
       .split(' ')
       .map((id) => document.getElementById(id)?.textContent);
-    expect(hints).toContain("Optional. Pick each number's country, or type + and its code.");
+    // Optional sits beside the label (UIP-FORM-008), not in a hint under the box.
+    expect(notes).toContain('Optional');
+    expect(notes.join(' ')).not.toContain('Optional.');
   });
 
   it('posts two phones in different countries, which parseLead turns into the contract list', async () => {
