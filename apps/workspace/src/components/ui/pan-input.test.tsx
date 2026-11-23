@@ -49,16 +49,16 @@ describe('PanInput', () => {
     expect(pan.status()).toBe('A PAN is exactly 9 digits.');
   });
 
-  it('shows a live count and clears the refusal on the next good key', async () => {
+  it('shows no counter and clears the refusal on the next good key', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
-    expect(pan.count()).toBe('0 of 9');
+    expect(pan.count()).toBeUndefined();
     await typeKeys(pan.box, '1234567');
-    expect(pan.count()).toBe('7 of 9');
+    expect(pan.count()).toBeUndefined();
     await typeKeys(pan.box, 'x');
     expect(pan.status()).not.toBe('');
     await typeKeys(pan.box, '8');
     expect(pan.status()).toBe('');
-    expect(pan.count()).toBe('8 of 9');
+    expect(pan.count()).toBeUndefined();
   });
 
   it('is a numeric-keypad text box, not a number input', async () => {
@@ -161,10 +161,9 @@ describe('PanInput', () => {
     await submit(pan.container);
   });
 
-  it('describes the box with its count, and the status line is a live region', async () => {
+  it('has no counter, and the status line is a live region', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
-    const countId = pan.container.querySelector('[id$="-count"]')!.id;
-    expect(pan.box.getAttribute('aria-describedby')).toContain(countId);
+    expect(pan.container.querySelector('[id$="-count"]')).toBeNull();
     expect(pan.container.querySelector('[role="status"]')).not.toBeNull();
   });
 

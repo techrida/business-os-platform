@@ -25,12 +25,18 @@ export interface FieldControlProps {
  */
 export function Field({
   label,
+  optional,
   hint,
   error,
   children,
   className,
 }: {
   label: ReactNode;
+  /**
+   * Marks a field that may be left empty with a muted "Optional" at the right end of the label row (UIP-FORM-008).
+   * Never write "(optional)" in the label or "Optional." in the hint.
+   */
+  optional?: boolean;
   hint?: ReactNode;
   error?: ReactNode;
   children: (control: FieldControlProps) => ReactNode;
@@ -45,9 +51,12 @@ export function Field({
   const cls = [styles.field, className].filter(Boolean).join(' ');
   return (
     <div className={cls}>
-      <label id={labelId} htmlFor={base} className={styles.label}>
-        {label}
-      </label>
+      <div className={styles.labelRow}>
+        <label id={labelId} htmlFor={base} className={styles.label}>
+          {label}
+        </label>
+        {optional ? <span className={styles.optional}>Optional</span> : null}
+      </div>
       {children({
         id: base,
         'aria-describedby': describedBy,
