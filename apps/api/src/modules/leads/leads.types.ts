@@ -1,6 +1,7 @@
 // Query and mapping types of the leads module. The bodies (create, edit, stage change) are contracts; only the list
 // query, the row-to-DTO mapping and the edit's field diff live here.
 import {
+  type AddressLines,
   type LeadDto,
   type LeadLostReasonRef,
   limitOffset,
@@ -58,8 +59,11 @@ export type LeadRow = typeof leads.$inferSelect;
 
 /** The edit body's fields, without the version. */
 type LeadEditFields = Omit<UpdateLeadBody, 'expectedVersion'>;
-/** The fields stored on the lead row; `phones` are rows of their own (lead-phones.ts), diffed by the service. */
-type LeadField = Exclude<keyof LeadEditFields, 'phones'>;
+/**
+ * The fields stored on the lead row, one column each; `phones` are rows of their own (lead-phones.ts) and `address`
+ * is two columns (`addressChange`), both diffed by the service.
+ */
+type LeadField = Exclude<keyof LeadEditFields, 'phones' | 'address'>;
 type LeadColumn = keyof typeof leads.$inferInsert;
 
 /** Body field to column. `email` is stored normalised under another name. */
@@ -97,7 +101,7 @@ export interface LeadFieldChange {
  */
 export function changedLeadFields(
   row: LeadRow,
-  body: Omit<LeadEditFields, 'phones'>,
+  body: Omit<LeadEditFields, 'phones' | 'address'>,
 ): LeadFieldChange[] {
   const changes: LeadFieldChange[] = [];
   for (const field of Object.keys(EDITABLE) as LeadField[]) {
@@ -113,6 +117,52 @@ export function changedLeadFields(
     if (!same) changes.push({ field, column, before, after });
   }
   return changes;
+}
+
+/** The lead's address as the DTO carries it: both columns, or null when it has none (0199 keeps them together). */
+export function addressOfLead(row: {
+  addressLine: string | null;
+  addressCity: string | null;
+}): AddressLines | null {
+  return row.addressLine === null || row.addressCity === null
+    ? null
+    : { line: row.addressLine, city: row.addressCity };
+}
+
+/** The address columns for `address`: both set, or both null (`leads_address_check`). */
+export function addressColumnsOf(address: AddressLines | null | undefined): {
+  addressLine: string | null;
+  addressCity: string | null;
+} {
+  return address === null || address === undefined
+    ? { addressLine: null, addressCity: null }
+    : { addressLine: address.line, addressCity: address.city };
+}
+
+/**
+ * The address edit of an update, or undefined when the body leaves the address out or sends what is stored. `null`
+ * clears it. `before` and `after` are the DTO shapes, for the audit.
+ */
+export function addressChange(
+  row: LeadRow,
+  sent: AddressLines | null | undefined,
+):
+  | {
+      before: AddressLines | null;
+      after: AddressLines | null;
+      columns: ReturnType<typeof addressColumnsOf>;
+    }
+  | undefined {
+  if (sent === undefined) return undefined;
+  const before = addressOfLead(row);
+  if (
+    before === null
+      ? sent === null
+      : sent !== null && before.line === sent.line && before.city === sent.city
+  ) {
+    return undefined;
+  }
+  return { before, after: sent, columns: addressColumnsOf(sent) };
 }
 
 /**
@@ -142,6 +192,7 @@ export function toLeadDto(
     companyName: row.companyName,
     contactName: row.contactName,
     country: row.country as LeadDto['country'],
+    address: addressOfLead(row),
     email: row.emailNorm,
     phones,
     customerId: row.customerId,
