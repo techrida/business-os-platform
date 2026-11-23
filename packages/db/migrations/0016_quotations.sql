@@ -19,8 +19,7 @@
 --     quotations and quotation_versions reference each other; the parent's half is added after both exist.
 --   * one_live_version: at most one version per quotation in a live status. "Live" is exactly the contracts'
 --     QUOTATION_REVISION_RULES.liveStatuses: draft, submitted, returned, approved, sent. The terminal statuses
---     (accepted, rejected, expired, cancelled, superseded) are outside it; cancelling an unsent revision (R6D) moves
---     the superseded version back to approved or sent once the draft has left the live set. A revision of an Approved or Sent
+--     (accepted, rejected, expired, cancelled, superseded) are outside it. A revision of an Approved or Sent
 --     version therefore writes, in one transaction: old status = 'superseded', INSERT the new draft (supersedes =
 --     old), then old superseded_by_version_id = new.
 --   * Freeze (quotation_versions_guard): a version is inserted as draft. Once its status is not draft or returned,
