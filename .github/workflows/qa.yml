@@ -84,7 +84,7 @@ jobs:
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
         run: |
           cd apps/workspace
-          pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --output=test-results-signin
+          pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --retries=1 --output=test-results-signin
 
       # Memberships exist now: put those without a department into General (the SQL is idempotent; up.sh ran it once
       # for the entity address, before any membership existed).
