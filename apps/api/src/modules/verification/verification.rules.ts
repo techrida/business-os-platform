@@ -128,3 +128,28 @@ export function reopenChecklist(items: readonly ChecklistItem[], today: string):
       : i,
   );
 }
+
+/**
+ * The documents of a case that were first uploaded before an identity change reset it (R6AE). A file is "before the
+ * change" when its first version is older than `resetAt`; a later version of the same document does not make it new.
+ * These stay on the case as history but cannot be put on the checklist again. A case never reset has none.
+ */
+export function documentsBeforeReset(
+  versions: readonly Pick<DocumentVersionDto, 'documentId' | 'createdAt'>[],
+  resetAt: Date | null,
+): Set<string> {
+  const before = new Set<string>();
+  if (resetAt === null) return before;
+  const first = new Map<string, number>();
+  for (const v of versions) {
+    const at = Date.parse(v.createdAt);
+    const seen = first.get(v.documentId);
+    if (seen === undefined || at < seen) first.set(v.documentId, at);
+  }
+  for (const [documentId, at] of first) if (at < resetAt.getTime()) before.add(documentId);
+  return before;
+}
+
+/** What a person reads when they try to reuse a file from before the change. */
+export const FILE_BEFORE_CHANGE_MESSAGE =
+  'This file was uploaded before the details changed. Upload it again.';
