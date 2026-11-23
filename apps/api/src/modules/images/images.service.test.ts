@@ -378,7 +378,10 @@ describe('set: the logo for dark and for light backgrounds', () => {
       // The pre-documents logo belongs to the main slot: a variant upload leaves it.
       expect(written['legacyLogoDataUrl']).toBe('data:image/png;base64,AAAA');
       expect(documents.removeInTransaction).toHaveBeenCalledWith(tx, scope, old);
-      expect(audit.record.mock.calls[0]?.[1]).toMatchObject({ action: 'image.set', entityType: ownerType });
+      expect(audit.record.mock.calls[0]?.[1]).toMatchObject({
+        action: 'image.set',
+        entityType: ownerType,
+      });
     },
   );
 

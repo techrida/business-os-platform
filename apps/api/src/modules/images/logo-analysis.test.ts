@@ -29,7 +29,7 @@ async function logo(colour: string, opts: { transparent: boolean }): Promise<Buf
 const pixel = async (bytes: Buffer, x: number, y: number) => {
   const { data } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const meta = await sharp(bytes).metadata();
-  const at = (y * meta.width! + x) * 4;
+  const at = (y * (meta.width ?? 0) + x) * 4;
   return [data[at]!, data[at + 1]!, data[at + 2]!, data[at + 3]!];
 };
 

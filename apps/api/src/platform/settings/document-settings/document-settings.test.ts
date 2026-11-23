@@ -799,7 +799,7 @@ describe('POST admin/settings/documents/preview', () => {
       expect(logos.forScope).toHaveBeenCalledWith(scope);
       expect(logos.resolve).toHaveBeenCalledWith(
         LOGO_DOC,
-        expect.objectContaining({ colour: expect.stringMatching(/^#[0-9a-f]{6}$/i) }),
+        expect.objectContaining({ onDarkDocumentId: null, onLightDocumentId: null }),
       );
     });
 
