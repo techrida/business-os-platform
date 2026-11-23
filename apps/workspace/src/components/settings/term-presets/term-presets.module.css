@@ -83,7 +83,8 @@
 .rowActions {
   display: flex;
   flex: none;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
 }
 
 .iconButton {

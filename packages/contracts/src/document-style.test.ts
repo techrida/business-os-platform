@@ -79,6 +79,18 @@ describe('document settings', () => {
     ).toBe(true);
   });
 
+  it('allows one default per kind and rejects a second default of the same kind', () => {
+    const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+    const a = { id: id(1), kind: 'scope', name: 'A', body: 'x', isDefault: true } as const;
+    expect(
+      TermPresetListSchema.safeParse([a, { ...a, id: id(2), name: 'B', isDefault: false }]).success,
+    ).toBe(true);
+    expect(
+      TermPresetListSchema.safeParse([a, { ...a, id: id(3), kind: 'exclusions' }]).success,
+    ).toBe(true);
+    expect(TermPresetListSchema.safeParse([a, { ...a, id: id(2), name: 'B' }]).success).toBe(false);
+  });
+
   it('rejects a script-bearing legacy logo', () => {
     expect(
       SETTINGS['entity.profile'].safeParse({
