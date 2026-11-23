@@ -5,7 +5,8 @@ import { notFound, redirect } from 'next/navigation';
 
 import { Alert } from '@/components/portal/alert';
 import styles from '@/components/portal/page.module.css';
-import { isQuotationClosed, QuotationClosed } from '@/components/portal/quotation-closed';
+import { QuotationClosed } from '@/components/portal/quotation-closed';
+import { isQuotationClosed } from '@/lib/quotation-closed';
 import { QuotationNextStep } from '@/components/portal/quotation-next-step';
 import { canRespond, todayInKathmandu } from '@/components/portal/quotation-status';
 import { QuotationView } from '@/components/portal/quotation-view';

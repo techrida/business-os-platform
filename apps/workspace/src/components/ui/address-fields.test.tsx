@@ -59,8 +59,11 @@ async function mount(props: Parameters<typeof Harness>[0] = {}) {
 describe('AddressFields', () => {
   it('labels Address and City optional unless required; Country never is', async () => {
     const optional = await mount();
-    expect(optional.byLabel('Address (optional)').tagName).toBe('TEXTAREA');
-    expect(optional.byLabel('City (optional)').tagName).toBe('INPUT');
+    expect(optional.byLabel('Address').tagName).toBe('TEXTAREA');
+    expect(optional.byLabel('City').tagName).toBe('INPUT');
+    // The marker sits beside the label, never inside it (UIP-FORM-008), and Country has none.
+    expect(optional.container.textContent?.match(/Optional/g)).toHaveLength(2);
+    expect(optional.container.textContent).not.toContain('(optional)');
     expect(optional.byLabel('Country').getAttribute('role')).toBe('combobox');
     await mounted!.unmount();
     const required = await mount({ required: true });

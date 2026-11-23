@@ -445,9 +445,11 @@ export class VerificationService implements OnModuleInit {
   /** Who reset the case by changing the party's identity, and when; null for a case that never was reset. */
   private async identityResetOf(
     tenantId: string,
-    row: Pick<CaseRow, 'identityResetAt' | 'identityResetByUserId'>,
+    row: Pick<CaseRow, 'identityResetAt' | 'identityResetByUserId' | 'status'>,
   ): Promise<{ at: string; by: string; byName: string | null } | null> {
     if (row.identityResetAt === null || row.identityResetByUserId === null) return null;
+    // The note says "upload the documents again": it goes once the case is submitted again or decided.
+    if (row.status !== 'draft' && row.status !== 'rejected') return null;
     const [user] = await this.db
       .select({ name: users.displayName })
       .from(users)

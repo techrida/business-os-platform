@@ -33,6 +33,11 @@ export function ContactForm({
   requireEmail,
   customerCountry = DEFAULT_COUNTRY,
   inDialog = false,
+  initialName = '',
+  open: openProp,
+  onOpenChange,
+  hidePrimary = false,
+  onSaved,
 }: {
   action: (prev: ContactFormState, form: FormData) => Promise<ContactFormState>;
   customerId: string;
@@ -45,6 +50,18 @@ export function ContactForm({
   /** The customer's country, which a new contact starts in. */
   customerCountry?: CountryCode;
   inDialog?: boolean;
+  /** The full name the form starts with (a picker's `Create "<typed>"`). */
+  initialName?: string;
+  /**
+   * Controlled dialog (a picker opens it, so it has no trigger button of its own). Only with `inDialog`; the
+   * caller closes it on `onOpenChange(false)` and on `onSaved`.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Leave out the main-contact tick: a picker does not know whether the customer has a main contact. */
+  hidePrimary?: boolean;
+  /** Called once when a contact is saved, with its id. */
+  onSaved?: (contactId: string | undefined) => void;
 }) {
   const [state, formAction, pending] = useActionState<ContactFormState, FormData>(action, {
     key: idempotencyKey,
@@ -53,7 +70,11 @@ export function ContactForm({
   });
   const formId = useId();
   const [openedAt, setOpenedAt] = useState<number | null>(null);
-  const empty: ContactValues = { ...EMPTY_CONTACT_VALUES, country: customerCountry };
+  const empty: ContactValues = {
+    ...EMPTY_CONTACT_VALUES,
+    country: customerCountry,
+    fullName: initialName,
+  };
   const [draft, setDraft] = useState({ savedCount: 0, values: empty });
   const values = draft.savedCount === state.savedCount ? draft.values : empty;
   // React resets the form after every action and the phone list then restores its default, so the
@@ -65,9 +86,16 @@ export function ContactForm({
   const phones = phoneDraft.savedCount === state.savedCount ? phoneDraft.phones : [];
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
+  const onSavedRef = useRef(onSaved);
+  useEffect(() => {
+    onSavedRef.current = onSaved;
+  });
 
   useEffect(() => {
-    if (state.saved) toast.success(state.saved);
+    if (state.saved) {
+      toast.success(state.saved);
+      onSavedRef.current?.(state.contactId);
+    }
     if (state.primaryTaken) toast.error(state.primaryTaken);
     if (state.error) summaryRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
@@ -104,6 +132,7 @@ export function ContactForm({
         errors={state.errors}
         hasPrimary={hasPrimary}
         requireEmail={requireEmail}
+        hidePrimary={hidePrimary}
       />
 
       {inDialog ? null : <div className={styles.actions}>{submit}</div>}
@@ -115,16 +144,21 @@ export function ContactForm({
   return (
     <Dialog
       trigger={
-        <Button variant="tertiary" size="small">
-          <span aria-hidden="true" className={styles.plus}>
-            +
-          </span>
-          Add Contact
-        </Button>
+        openProp === undefined ? (
+          <Button variant="tertiary" size="small">
+            <span aria-hidden="true" className={styles.plus}>
+              +
+            </span>
+            Add Contact
+          </Button>
+        ) : undefined
       }
       title="Add Contact"
-      open={openedAt === state.savedCount}
-      onOpenChange={(open) => setOpenedAt(open ? state.savedCount : null)}
+      open={openProp ?? openedAt === state.savedCount}
+      onOpenChange={(open) => {
+        if (openProp === undefined) setOpenedAt(open ? state.savedCount : null);
+        else onOpenChange?.(open);
+      }}
       locked={pending}
       closeOnOutsideClick={false}
       footer={
@@ -151,6 +185,7 @@ function ContactFields({
   errors,
   hasPrimary,
   requireEmail,
+  hidePrimary,
 }: {
   values: ContactValues;
   onChange: (values: ContactValues) => void;
@@ -159,6 +194,7 @@ function ContactFields({
   errors: ContactFormState['errors'];
   hasPrimary: boolean;
   requireEmail: boolean;
+  hidePrimary: boolean;
 }) {
   const primaryReasonId = useId();
   // Never send a tick the page knows is refused (the box was ticked before the page reloaded).
@@ -184,7 +220,7 @@ function ContactFields({
             />
           )}
         </Field>
-        <Field label="Job title" hint="Optional." error={errors.title}>
+        <Field label="Job title" optional error={errors.title}>
           {(control) => (
             <Input
               name="title"
@@ -198,7 +234,9 @@ function ContactFields({
         </Field>
         <Field
           label="Email"
-          hint={requireEmail ? 'Required: quotations are sent to it.' : 'Optional.'}
+          {...(requireEmail
+            ? { hint: 'Required: quotations are sent to it.' }
+            : { optional: true })}
           error={errors.email}
         >
           {(control) => (
@@ -229,11 +267,7 @@ function ContactFields({
             />
           )}
         </Field>
-        <Field
-          label="Phone"
-          hint="Optional. Pick each number's country, or type + and its code."
-          className={styles.wide ?? ''}
-        >
+        <Field label="Phone" optional className={styles.wide ?? ''}>
           {(control) => (
             <PhoneListInput
               name="phones"
@@ -247,17 +281,19 @@ function ContactFields({
           )}
         </Field>
       </div>
-      <label className={styles.check}>
-        <Checkbox
-          name="isPrimary"
-          checked={isPrimary}
-          disabled={hasPrimary}
-          aria-describedby={hasPrimary ? primaryReasonId : undefined}
-          onCheckedChange={(nextChecked) => onChange({ ...values, isPrimary: nextChecked })}
-        />
-        Make this the main contact
-      </label>
-      {hasPrimary ? (
+      {hidePrimary ? null : (
+        <label className={styles.check}>
+          <Checkbox
+            name="isPrimary"
+            checked={isPrimary}
+            disabled={hasPrimary}
+            aria-describedby={hasPrimary ? primaryReasonId : undefined}
+            onCheckedChange={(nextChecked) => onChange({ ...values, isPrimary: nextChecked })}
+          />
+          Make this the main contact
+        </label>
+      )}
+      {hasPrimary && !hidePrimary ? (
         <p id={primaryReasonId} className={styles.checkReason}>
           {PRIMARY_TAKEN_REASON}
         </p>

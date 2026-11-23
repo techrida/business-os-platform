@@ -455,6 +455,8 @@ export default async function CustomerPage({
       ? contacts.value.items.map((c) => ({
           id: c.id,
           label: c.email !== null ? `${c.fullName} (${c.email})` : c.fullName,
+          name: c.fullName,
+          detail: [c.title, c.email].filter(Boolean).join(' · ') || undefined,
           hasEmail: c.email !== null && c.email !== '',
         }))
       : [];
@@ -625,6 +627,11 @@ export default async function CustomerPage({
                       action={invitePortalAdminAction}
                       customerId={customer.id}
                       contacts={inviteOptions}
+                      createContact={{
+                        action: addContactAction,
+                        customerId: customer.id,
+                        customerCountry: customer.country,
+                      }}
                       // One key per render, so retrying names the same request.
                       idempotencyKey={randomUUID()}
                       first={portalAccess?.hasUser !== true}

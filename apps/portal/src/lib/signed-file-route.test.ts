@@ -126,6 +126,8 @@ describe('handleSignedFile', () => {
         const res = await run(mode);
         expect(res.status, `${mode} ${status}`).toBe(expected);
         if (expected === 410) expect(await res.text()).toContain('expired');
+        if (expected === 410) expect(res.headers.get('x-document-state')).toBe('expired');
+        if (expected === 404) expect(res.headers.get('x-document-state')).toBe('not-found');
       }
     }
     // A 401 from the link request itself still means "sign in".
@@ -143,6 +145,17 @@ describe('handleSignedFile', () => {
       const text = await res.text();
       expect(text).toContain('no longer open');
       expect(text).not.toContain('try again');
+      expect(res.headers.get('x-document-state')).toBe('closed');
+    }
+  });
+
+  it('tells a server failure apart from an expired link and a closed quotation (R6D)', async () => {
+    for (const mode of ['download', 'preview'] as const) {
+      openFile.mockRejectedValueOnce(new ApiError(500, 'x'));
+      const res = await run(mode);
+      expect(res.status).toBe(502);
+      expect(res.headers.get('x-document-state')).toBe('error');
+      expect(await res.text()).not.toContain('expired');
     }
   });
 

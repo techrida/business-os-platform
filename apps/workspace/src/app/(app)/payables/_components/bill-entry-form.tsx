@@ -293,11 +293,7 @@ export function BillEntryForm({
                         </>
                       )}
                     </Field>
-                    <Field
-                      label="Withholding (optional)"
-                      hint="Leave empty when no tax is withheld."
-                      error={errors[`${i}.tdsCodeId`]}
-                    >
+                    <Field label="Withholding" optional error={errors[`${i}.tdsCodeId`]}>
                       {(control) => (
                         <Select
                           name={fieldName(i, 'tdsCodeId')}

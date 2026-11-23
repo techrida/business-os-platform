@@ -1,0 +1,86 @@
+/* PhoneField: one rounded field with the flag button inside on the left and the number after it. The box carries the
+   shared field look (field.module.css), like DigitBox and CountrySelect. */
+
+.root {
+  min-width: 0;
+}
+
+.box {
+  composes: control from './field.module.css';
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: text;
+}
+
+.box:hover:not([data-disabled]) {
+  border-color: var(--input-hover-border);
+}
+
+.box:focus-within {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
+}
+
+.box[data-invalid] {
+  border-color: var(--input-error-border);
+}
+
+.box[data-invalid]:focus-within {
+  box-shadow: var(--bos-field-focus-shadow-error);
+}
+
+.box[data-disabled],
+.box[data-disabled]:hover {
+  border-color: var(--input-border);
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Above the global field-focus rule: the box shows focus, not the input inside it. */
+.box .input,
+.box .input:focus:not(:disabled),
+.box .input[aria-invalid='true']:focus:not(:disabled) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+}
+
+.input::placeholder {
+  color: var(--text-secondary);
+}
+
+/* The box is exactly the field control height (42px, 44px on touch), like the label select beside it (UIP-FORM-010):
+   the vertical padding of the shared control look would make it taller than its neighbours. */
+.root .box {
+  height: 42px;
+  min-height: 42px;
+  padding-block: 0;
+}
+
+@media (pointer: coarse) {
+  .root .box {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .box .input {
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}
+
+@media (forced-colors: active) {
+  .box:focus-within {
+    outline: 2px solid Highlight;
+  }
+}

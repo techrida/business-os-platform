@@ -14,12 +14,13 @@ import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { getPermissionCheck } from '@/lib/live-permissions';
 
 import { createManualInvoiceAction } from './actions';
-import { ManualInvoiceForm, type CustomerOption } from './manual-invoice-form';
+import { toCustomerOption } from './customer-option';
+import { ManualInvoiceForm } from './manual-invoice-form';
 
 export const metadata: Metadata = { title: 'Create Invoice · Business OS' };
 export const dynamic = 'force-dynamic';
 
-/** How many customers the picker holds. A longer list says so instead of silently cutting. */
+/** How many customers the picker holds up front. A longer list is searched on the server as the person types. */
 const CUSTOMER_LIMIT = CUSTOMER_LIST_MAX_LIMIT;
 
 export default async function NewInvoicePage() {
@@ -67,13 +68,7 @@ export default async function NewInvoicePage() {
   }
 
   const { items, total } = customerResult.value;
-  const customers: CustomerOption[] = items
-    .filter((c) => c.mergedIntoId === null)
-    .map((c) => ({
-      id: c.id,
-      label: `${c.legalName} (${c.number})`,
-      currency: c.defaultCurrency,
-    }));
+  const customers = items.filter((c) => c.mergedIntoId === null).map(toCustomerOption);
   const taxCodes: TaxCode[] | null = taxResult.status === 'fulfilled' ? taxResult.value : null;
   const cut = total !== null ? total > items.length : items.length >= CUSTOMER_LIMIT;
 
@@ -91,11 +86,8 @@ export default async function NewInvoicePage() {
         <ManualInvoiceForm
           action={createManualInvoiceAction}
           customers={customers}
-          customersNote={
-            cut
-              ? `Showing the first ${items.length} customers. If yours is missing, ask an administrator to raise the invoice.`
-              : undefined
-          }
+          // A cut list is searched on the server while the person types (`/invoices/new/customers`).
+          customersCutOff={cut}
           taxCodes={taxCodes}
           enabledCurrencies={enabledCurrencies}
           // One key per render of this page: a double click or a retry creates the invoice once.

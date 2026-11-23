@@ -18,7 +18,7 @@ const DECISIONS = [
     title: 'Approve request',
     guidance:
       'Your approval is recorded. If another step is required, the request goes to the next approver.',
-    field: 'Comment (optional)',
+    field: 'Comment',
     placeholder: 'Anything the requester should know',
   },
   {
@@ -142,7 +142,7 @@ export function DecisionForm({
                     {state.error}
                   </Alert>
                 ) : null}
-                <Field label={decision.field} error={failure?.commentError}>
+                <Field label={decision.field} optional={approving} error={failure?.commentError}>
                   {(control) => (
                     <Textarea
                       {...control}

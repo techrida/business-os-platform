@@ -1,7 +1,5 @@
 'use client';
-// Small pieces of the convert wizard: the step indicator, the right-hand "Optional" mark of a label row, and the box
-// that carries a search icon inside on the right.
-import type { ReactNode } from 'react';
+// Small pieces of the convert wizard: the step indicator, and the box that carries a search icon inside on the right.
 
 import { CONVERT_STEPS, type ConvertStep } from './convert-model';
 import styles from './convert-dialog.module.css';
@@ -26,15 +24,5 @@ export function StepIndicator({ step }: { step: ConvertStep }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-/** A field label with a muted "Optional" at the right end of the row; nothing under the box (UIP-FORM-008). */
-export function OptionalLabel({ children }: { children: ReactNode }) {
-  return (
-    <span className={styles.labelRow}>
-      <span>{children}</span>
-      <span className={styles.optional}>Optional</span>
-    </span>
   );
 }
