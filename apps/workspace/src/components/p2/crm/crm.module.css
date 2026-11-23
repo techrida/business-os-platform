@@ -42,6 +42,13 @@
 
 /* ---- Board ---- */
 
+/* The board's wrapper is a grid item of the page. Without min-width: 0 its automatic minimum is the
+   width of every column side by side, so the whole page (sidebar and header too) scrolled sideways
+   instead of the board. */
+.boardRoot {
+  min-width: 0;
+}
+
 .boardHint {
   margin-bottom: 12px;
   color: var(--text-secondary);

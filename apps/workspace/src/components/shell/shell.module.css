@@ -9,6 +9,10 @@
   display: grid;
   grid-template-columns: var(--bos-sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
+  /* The shell never scrolls sideways. A page with something wider than its column (a board, a
+     table, a long token) scrolls inside its own container; `clip` (not `hidden`) leaves
+     position: sticky and focus rings alone. */
+  overflow-x: clip;
 }
 
 .frame[data-shell-collapsed='true'] {
@@ -20,6 +24,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 100vh;
+  overflow-x: clip;
   background: var(--surface-default);
 }
 
