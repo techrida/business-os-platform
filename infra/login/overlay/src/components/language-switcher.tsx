@@ -27,8 +27,8 @@ export function LanguageSwitcher({ languages }: { languages: Lang[] }) {
 
   return (
     <div className="bos-lang">
-      <Listbox value={selected} onChange={handleChange}>
-        <ListboxButton className="bos-lang__trigger" aria-label="Language">
+      <Listbox value={selected} onChange={handleChange} by="code">
+        <ListboxButton className="bos-lang__trigger" aria-label={`Language: ${selected.name}`}>
           <span className="bos-lang__value">{selected.name}</span>
           <svg
             className="bos-lang__chevron"
