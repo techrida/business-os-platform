@@ -798,7 +798,7 @@ it('the PAN box has no helper line and no "n of 9" count, a muted Optional on th
 
 it('puts the search icon inside the organisation box and has no Search button anywhere in the wizard', async () => {
   await mountNewCustomer({ customerId: CUSTOMER });
-  const wrap = box('Organisation').parentElement!.parentElement!;
+  const wrap = box('Organisation').parentElement!;
   expect(wrap.querySelector('svg')).not.toBeNull();
   expect(
     [...dialog().querySelectorAll('button')].some((b) => /search/i.test(b.textContent ?? '')),

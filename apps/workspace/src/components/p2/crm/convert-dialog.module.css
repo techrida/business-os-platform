@@ -80,25 +80,6 @@
   font-weight: var(--font-weight-regular, 400);
 }
 
-/* A searching box carries its icon inside, on the right (UIP-FORM-009). */
-.searchBox {
-  position: relative;
-  min-width: 0;
-}
-
-.searchBox input[role='combobox'] {
-  padding-inline-end: 40px;
-}
-
-.searchIcon {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-end: 12px;
-  transform: translateY(-50%);
-  color: var(--text-secondary);
-  pointer-events: none;
-}
-
 .matchText {
   display: grid;
   min-width: 0;

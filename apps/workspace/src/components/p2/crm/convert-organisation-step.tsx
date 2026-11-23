@@ -16,7 +16,7 @@ import { PanInput } from '@/components/ui/pan-input';
 
 import type { ConvertLead } from './convert-dialog';
 import { customerDescription, panToLookUp } from './convert-model';
-import { OptionalLabel, SearchBox } from './convert-parts';
+import { OptionalLabel } from './convert-parts';
 import type { ChosenCustomer, OrganisationState, StepContext } from './convert-types';
 import convert from './convert-dialog.module.css';
 import type { ConversionCustomer } from './record-lookups';
@@ -140,56 +140,55 @@ function LinkExisting({
       }
     >
       {(c) => (
-        <SearchBox>
-          <Combobox
-            id={c.id}
-            name="customerId"
-            maxLength={100}
-            labelledBy={c['aria-labelledby']}
-            describedBy={c['aria-describedby']}
-            invalid={c['aria-invalid'] === true}
-            required
-            keepOrder
-            serverFiltered
-            showDescriptionWhenClosed
-            groupThreshold={Number.POSITIVE_INFINITY}
-            options={options}
-            value={customerId}
-            onInputChange={setText}
-            onChange={(id) => {
-              if (id === '') {
-                org.setChosen(null);
-                patch({ customerId: '', contactId: '' });
-                return;
-              }
-              const found = customers.find((m) => m.id === id);
-              if (found) org.setChosen(found);
+        <Combobox
+          id={c.id}
+          name="customerId"
+          maxLength={100}
+          labelledBy={c['aria-labelledby']}
+          describedBy={c['aria-describedby']}
+          invalid={c['aria-invalid'] === true}
+          required
+          searchIcon
+          keepOrder
+          serverFiltered
+          showDescriptionWhenClosed
+          groupThreshold={Number.POSITIVE_INFINITY}
+          options={options}
+          value={customerId}
+          onInputChange={setText}
+          onChange={(id) => {
+            if (id === '') {
+              org.setChosen(null);
+              patch({ customerId: '', contactId: '' });
+              return;
+            }
+            const found = customers.find((m) => m.id === id);
+            if (found) org.setChosen(found);
+            setText('');
+            patch({ customerId: id, contactId: '' });
+          }}
+          open={open}
+          onOpenChange={setOpen}
+          addOption={{
+            always: true,
+            label: (typed) => `Create "${typed}"`,
+            // Create "<typed>" switches to the create form with the typed name filled in.
+            onAdd: (typed) => {
+              org.setChosen(null);
               setText('');
-              patch({ customerId: id, contactId: '' });
-            }}
-            open={open}
-            onOpenChange={setOpen}
-            addOption={{
-              always: true,
-              label: (typed) => `Create "${typed}"`,
-              // Create "<typed>" switches to the create form with the typed name filled in.
-              onAdd: (typed) => {
-                org.setChosen(null);
-                setText('');
-                patch({
-                  customerMode: 'create',
-                  customerId: '',
-                  contactId: '',
-                  contactMode: 'create',
-                  legalName: typed,
-                });
-              },
-            }}
-            emptyText="Type a name, PAN/VAT or customer number."
-            noMatchText="No matching organisation."
-            placeholder="Search an organisation"
-          />
-        </SearchBox>
+              patch({
+                customerMode: 'create',
+                customerId: '',
+                contactId: '',
+                contactMode: 'create',
+                legalName: typed,
+              });
+            },
+          }}
+          emptyText="Type a name, PAN/VAT or customer number."
+          noMatchText="No matching organisation."
+          placeholder="Search an organisation"
+        />
       )}
     </Field>
   );
@@ -218,38 +217,37 @@ function CreateOrganisation({ ctx, org }: { ctx: StepContext; org: OrganisationS
       <div className={styles.formGrid}>
         <Field label="Legal name" error={err['legalName']}>
           {(c) => (
-            <SearchBox>
-              <Combobox
-                id={c.id}
-                name="legalName"
-                maxLength={200}
-                labelledBy={c['aria-labelledby']}
-                describedBy={c['aria-describedby']}
-                invalid={c['aria-invalid'] === true}
-                required
-                keepOrder
-                serverFiltered
-                defaultActive="add"
-                groupThreshold={Number.POSITIVE_INFINITY}
-                options={options}
-                value=""
-                inputValue={legalName}
-                onInputChange={(text) => patch({ legalName: text })}
-                onChange={(id) => {
-                  const found = customers.find((m) => m.id === id);
-                  if (found) link(found);
-                }}
-                open={open}
-                onOpenChange={setOpen}
-                addOption={{
-                  always: true,
-                  label: (typed) => `Keep "${typed}" as a new organisation`,
-                  onAdd: () => undefined,
-                }}
-                emptyText="Type at least 2 letters to look for an existing organisation."
-                noMatchText="No existing organisation matches."
-              />
-            </SearchBox>
+            <Combobox
+              id={c.id}
+              name="legalName"
+              maxLength={200}
+              labelledBy={c['aria-labelledby']}
+              describedBy={c['aria-describedby']}
+              invalid={c['aria-invalid'] === true}
+              required
+              searchIcon
+              keepOrder
+              serverFiltered
+              defaultActive="add"
+              groupThreshold={Number.POSITIVE_INFINITY}
+              options={options}
+              value=""
+              inputValue={legalName}
+              onInputChange={(text) => patch({ legalName: text })}
+              onChange={(id) => {
+                const found = customers.find((m) => m.id === id);
+                if (found) link(found);
+              }}
+              open={open}
+              onOpenChange={setOpen}
+              addOption={{
+                always: true,
+                label: (typed) => `Keep "${typed}" as a new organisation`,
+                onAdd: () => undefined,
+              }}
+              emptyText="Type at least 2 letters to look for an existing organisation."
+              noMatchText="No existing organisation matches."
+            />
           )}
         </Field>
         <Field label={<OptionalLabel>PAN or VAT number</OptionalLabel>} error={err['panVatNo']}>
