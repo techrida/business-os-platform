@@ -90,6 +90,7 @@ export function ConvertDialog({
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ConvertStep>(0);
   // Errors found when moving on (the same rules the server applies); a server answer replaces them.
+  const [blocked, setBlocked] = useState(0);
   const [local, setLocal] = useState<Partial<Record<string, string>> | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const summary = useRef<HTMLDivElement>(null);
@@ -122,6 +123,7 @@ export function ConvertDialog({
     // match is step 1, a contact match step 2).
     const back =
       firstStepWithError(state.fieldErrors) ??
+      (lead.customerId && state.error?.includes('linked to a customer') ? 0 : null) ??
       (state.duplicates?.length
         ? (Math.min(...state.duplicates.map((d) => (d.kind === 'customer' ? 0 : 1))) as ConvertStep)
         : null);
@@ -138,6 +140,22 @@ export function ConvertDialog({
         ?.focus();
     }
   }, [open, pending, state, local]);
+
+  useEffect(() => {
+    if (blocked === 0 || !form.current) return;
+    const panels = [...form.current.querySelectorAll<HTMLElement>('[data-step-panel]')];
+    const here = panels[step];
+    if (here?.querySelector('[aria-invalid="true"]:not(:disabled)')) return;
+    const other = panels.findIndex(
+      (panel, index) =>
+        index !== step && panel.querySelector('[aria-invalid="true"]:not(:disabled)'),
+    );
+    // Phones live on the Contact step: that is where an unfinished or doubled number waits.
+    const target = other >= 0 ? other : step === 1 ? -1 : 1;
+    if (target >= 0) setStep(target as ConvertStep);
+    // Only a new blocked submit matters, not a later change of step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked]);
 
   useEffect(() => {
     if (Object.keys(state.fieldErrors).length) toast.error('Check the highlighted fields.');
@@ -158,7 +176,12 @@ export function ConvertDialog({
     // PAN, an unfinished phone) has already cancelled the event and shown its reason.
     const stopped = event.defaultPrevented;
     event.preventDefault();
-    if (stopped) return;
+    if (stopped) {
+      // A box on ANOTHER step stopped the submit (a half-typed phone left behind with Back): its reason is not on
+      // screen, so take the user to it once the box has shown its error.
+      setBlocked((n) => n + 1);
+      return;
+    }
     const parsed = parseConvert(new FormData(event.currentTarget));
     const problems = parsed.ok ? {} : errorsOfStep(parsed.fieldErrors, step);
     if (Object.keys(problems).length > 0) {

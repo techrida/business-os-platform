@@ -168,7 +168,11 @@ function LinkExisting({
             patch({ customerId: id, contactId: '' });
           }}
           open={open}
-          onOpenChange={setOpen}
+          onOpenChange={(next) => {
+            setOpen(next);
+            // A closed box shows the chosen customer again, whatever was typed over it.
+            if (!next) setText('');
+          }}
           addOption={{
             always: true,
             label: (typed) => `Create "${typed}"`,
