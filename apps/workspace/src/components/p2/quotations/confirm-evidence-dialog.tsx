@@ -101,7 +101,7 @@ export function ConfirmEvidenceDialog({
                 </label>
               ))}
             </Choices>
-            <Field label="Note" hint="Optional." error={state.errors?.comment}>
+            <Field label="Note" optional error={state.errors?.comment}>
               {(control) => (
                 <Textarea
                   name="comment"
