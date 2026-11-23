@@ -11,6 +11,7 @@ import type { ComboboxOption } from '@/components/ui/combobox-model';
 import { CountrySelect } from '@/components/ui/country-select';
 import { Field, Input } from '@/components/ui/field';
 import { PhoneListInput } from '@/components/ui/phone-list-input';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 import type { ConvertLead } from './convert-dialog';
 import { OptionalLabel } from './convert-parts';
@@ -97,26 +98,21 @@ export function ContactStep({
       <legend className={styles.legend}>Contact</legend>
       {canLink ? (
         <>
-          <label className={styles.choice}>
-            <input
-              type="radio"
-              name="contactMode"
-              value="create"
-              checked={contactMode === 'create'}
-              onChange={set('contactMode')}
-            />
-            Create a contact from the lead
-          </label>
-          <label className={styles.choice}>
-            <input
-              type="radio"
-              name="contactMode"
-              value="existing"
-              checked={contactMode === 'existing'}
-              onChange={set('contactMode')}
-            />
-            Link to an existing contact
-          </label>
+          <RadioGroup
+            neutral
+            name="contactMode"
+            value={contactMode}
+            onValueChange={(next) => set('contactMode')({ target: { value: next } })}
+          >
+            <label className={styles.choice}>
+              <Radio value="create" />
+              Create a contact from the lead
+            </label>
+            <label className={styles.choice}>
+              <Radio value="existing" />
+              Link to an existing contact
+            </label>
+          </RadioGroup>
         </>
       ) : (
         <input type="hidden" name="contactMode" value="create" />

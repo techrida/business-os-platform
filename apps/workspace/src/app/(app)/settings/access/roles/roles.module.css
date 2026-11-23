@@ -183,19 +183,6 @@
   line-height: var(--line-height-body-small);
 }
 
-.checkbox {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  accent-color: var(--action-primary);
-  cursor: pointer;
-}
-
-.checkbox:disabled {
-  cursor: not-allowed;
-}
-
 /* ---- permission rows -------------------------------------------------------------------------- */
 
 .rows {
