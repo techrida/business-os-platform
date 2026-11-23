@@ -88,9 +88,6 @@ export function PaymentRequestEntry({
   const summary = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrap, summary);
   const errors = state.errors ?? {};
-  // Read by the review dialog's close handler, which can run after the server's answer has arrived.
-  const problem = useRef(false);
-  problem.current = Boolean(state.error) || Object.keys(errors).length > 0;
   const vendors = [
     ...new Map(items.map((item) => [item.vendorPartyId, item.vendorName])).entries(),
   ];
@@ -188,7 +185,7 @@ export function PaymentRequestEntry({
               // the opener must not take it back.
               onCloseAutoFocus={(event) => {
                 event.preventDefault();
-                if (problem.current) {
+                if (state.error || Object.keys(errors).length > 0) {
                   focusProblem(state, wrap.current, summary.current);
                   return;
                 }

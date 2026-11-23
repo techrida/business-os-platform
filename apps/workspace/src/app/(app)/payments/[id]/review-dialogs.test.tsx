@@ -6,23 +6,22 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { click, mountForm } from '@/test/form-interactions';
 
-import type { PaymentActions } from '../_lib/status';
-
+interface State {
+  key: string;
+  done?: boolean;
+  error?: string;
+}
 const actions = vi.hoisted(() => ({
-  verifyAction: vi.fn((prev: { key: string }) => Promise.resolve({ ...prev, done: true })),
-  rejectAction: vi.fn((prev: { key: string }) => Promise.resolve({ ...prev, done: true })),
-  reverseAction: vi.fn((prev: { key: string }) => Promise.resolve({ ...prev, done: true })),
+  verifyAction: vi.fn((prev: State): Promise<State> => Promise.resolve({ ...prev, done: true })),
+  rejectAction: vi.fn((prev: State): Promise<State> => Promise.resolve({ ...prev, done: true })),
+  reverseAction: vi.fn((prev: State): Promise<State> => Promise.resolve({ ...prev, done: true })),
 }));
 vi.mock('./review-actions', () => actions);
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const { ReviewDialogs } = await import('./review-dialogs');
 
-const ALL: PaymentActions = {
-  verify: true,
-  reject: true,
-  reverse: true,
-} as unknown as PaymentActions;
+const ALL = { verify: true, reject: true, reverse: true };
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
