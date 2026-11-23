@@ -21,7 +21,11 @@ import { followUpActionsFor, hasFollowUpActions, subjectOf } from './follow-up-s
 import { sentence } from './format';
 import { ACTIVITY_KIND_LABELS, isOverdue } from './forms';
 import styles from './follow-ups-card.module.css';
-import { RescheduleFollowUpDialog, ScheduleFollowUpDialog } from './schedule-follow-up-dialog';
+import {
+  RescheduleFollowUpDialog,
+  ScheduleFollowUpDialog,
+  type NamedPerson,
+} from './schedule-follow-up-dialog';
 
 export interface FollowUpsCardProps {
   /** The lead the card belongs to. Without one (an opportunity's card) nothing can be scheduled. */
@@ -29,6 +33,10 @@ export interface FollowUpsCardProps {
   /** The record's planned activities (`GET /v1/activities?leadId=&status=planned`). */
   items: readonly ActivityDto[];
   ownerUserId?: string | null | undefined;
+  /** The owner's name from the record, for the Schedule dialog when they are not in `owners`. */
+  ownerName?: string | null | undefined;
+  /** The signed-in user, named by the Schedule dialog when the record has no owner. */
+  me?: NamedPerson | null | undefined;
   /** People the caller may assign to (`GET /v1/leads/owners`): the Reschedule and Schedule choices. */
   owners: readonly LeadOwnerOption[];
   /** Offer Schedule follow-up in the header. Default: yes, when there is a lead. */
@@ -271,6 +279,8 @@ export function FollowUpsCard({
   leadId,
   items,
   ownerUserId,
+  ownerName,
+  me,
   owners,
   schedule,
   canEdit = true,
@@ -289,6 +299,8 @@ export function FollowUpsCard({
           <ScheduleFollowUpDialog
             subjectId={scheduleFor}
             ownerUserId={ownerUserId ?? null}
+            ownerName={ownerName}
+            me={me}
             owners={owners}
           />
         ) : undefined
