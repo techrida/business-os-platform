@@ -82,6 +82,8 @@ import {
 import { LeadsCaller } from './leads.caller';
 import { LeadLostReasonsService, lostReasonRefs } from './lost-reasons.service';
 import {
+  addressChange,
+  addressColumnsOf,
   changedLeadFields,
   type LeadRow,
   type LeadSummary,
@@ -351,6 +353,7 @@ export class LeadsService {
             companyName: body.companyName,
             contactName: body.contactName,
             country: body.country,
+            ...addressColumnsOf(body.address),
             emailNorm: body.email === undefined ? null : body.email.trim().toLowerCase(),
             phonesSearch: phonesSearchText(body.phones),
             requirement: body.requirement ?? null,
@@ -575,7 +578,7 @@ export class LeadsService {
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const { expectedVersion, phones: sentPhones, ...fields } = body;
+    const { expectedVersion, phones: sentPhones, address: sentAddress, ...fields } = body;
     const sent = { notice: false };
     const edited = await withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
@@ -596,7 +599,8 @@ export class LeadsService {
       const storedPhones = await loadPhonesOfLead(tx, scope, id);
       const phonesChanged =
         sentPhones !== undefined && !sameLeadPhones(storedPhones, row.phonesSearch, sentPhones);
-      if (changes.length === 0 && !phonesChanged) {
+      const address = addressChange(row, sentAddress);
+      if (changes.length === 0 && !phonesChanged && address === undefined) {
         throw new BadRequestException({ code: 'bad_request', message: 'Nothing to change' });
       }
       // The email cannot be cleared by an edit, so only the stored one and the numbers after the edit decide.
@@ -610,6 +614,7 @@ export class LeadsService {
       >;
       // Written with the versioned update, so the phones' own replace below finds the search text already in line.
       if (phonesChanged) set.phonesSearch = phonesSearchText(sentPhones);
+      if (address !== undefined) Object.assign(set, address.columns);
       const newOwner = set.ownerUserId;
       if (typeof newOwner === 'string') {
         await assertAssignable(
@@ -639,10 +644,12 @@ export class LeadsService {
         before: {
           ...Object.fromEntries(changes.map((c) => [c.field, c.before])),
           ...(phonesChanged ? { phones: storedPhones.map((p) => p.e164) } : {}),
+          ...(address === undefined ? {} : { address: address.before }),
         },
         after: {
           ...Object.fromEntries(changes.map((c) => [c.field, c.after])),
           ...(phonesChanged ? { phones: sentPhones.map((p) => p.e164) } : {}),
+          ...(address === undefined ? {} : { address: address.after }),
         },
       });
       if (typeof newOwner === 'string') {
