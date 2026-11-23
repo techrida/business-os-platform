@@ -22,7 +22,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Principal } from '../../platform/authz/principal';
-import { PortalService } from './portal.service';
+import { isClosedToCustomer, PortalService } from './portal.service';
 import type { PortalQuotationStore, PortalVersionHead, PortalViewSource } from './portal.store';
 
 const TENANT = '0a000000-0000-4000-8000-000000000001';
@@ -544,6 +544,17 @@ describe('PortalService.get', () => {
     expect((error as ConflictException).getResponse()).toMatchObject({ code: 'quotation_closed' });
     // A revision still open keeps showing the superseded page.
     await expect(service.get(vid(11))).resolves.toMatchObject({ status: 'superseded' });
+  });
+
+  it('closes a sent version that expired and whose revision was cancelled, as it does a superseded one (R6D)', () => {
+    const sentAt = new Date('2026-11-08T10:00:00Z');
+    for (const status of ['expired', 'superseded'] as const) {
+      expect(isClosedToCustomer({ status, sentAt, quotationCancelled: true }), status).toBe(true);
+      expect(isClosedToCustomer({ status, sentAt, quotationCancelled: false }), status).toBe(false);
+      expect(isClosedToCustomer({ status, sentAt: null, quotationCancelled: true }), status).toBe(
+        false,
+      );
+    }
   });
 
   it('never shows a version that was never sent, whatever it was replaced or expired into (R6D)', async () => {

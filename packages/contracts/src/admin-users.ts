@@ -83,6 +83,8 @@ export const AdminUsersSummarySchema = z.object({
   active: z.number().int().nonnegative(),
   invited: z.number().int().nonnegative(),
   deactivated: z.number().int().nonnegative(),
+  /** People flagged for identity review; the Users page badge reads it without listing them. Absent from an older API. */
+  flagged: z.number().int().nonnegative().optional(),
   departments: z.array(DepartmentSchema),
   canSendPasswordReset: z.boolean(),
   /** Whether the caller may deactivate, reactivate, lock and unlock people (F1-Q5); absent from an older API. */

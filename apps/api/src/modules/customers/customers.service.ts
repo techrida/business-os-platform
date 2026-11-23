@@ -790,7 +790,9 @@ export class CustomersService {
           .from(verificationCases)
           .where(
             and(eq(verificationCases.tenantId, scope.tenantId), eq(verificationCases.partyId, id)),
-          );
+          )
+          // Locked, so an approval running now commits first and this edit then reads `approved` (409).
+          .for('update');
         if (verification?.status === 'approved') {
           throw new ConflictException({
             code: 'customer_identity_locked',

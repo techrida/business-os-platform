@@ -12,7 +12,7 @@ import {
   RejectQuotationBodySchema,
   rejectPortalQuotation,
 } from '@/lib/api';
-import { isQuotationClosed } from '@/components/portal/quotation-closed';
+import { isQuotationClosed } from '@/lib/quotation-closed';
 import { getSession } from '@/lib/session';
 
 /**

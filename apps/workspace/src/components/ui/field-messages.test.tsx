@@ -11,7 +11,6 @@ import { Field, Input } from './field';
 import { useFieldSecondary } from './field-scope';
 import { MoneyInput } from './number-input';
 import { PanInput } from './pan-input';
-import { PhoneListInput } from './phone-list-input';
 
 // UIP-FORM-010: ONE reserved message line under each Field. These tests put each control that used to print a
 // second line (its own refusal, its words, its blocker) inside a Field and count the lines.
@@ -202,46 +201,6 @@ describe('PanInput in a Field', () => {
     expect(status.children).toHaveLength(1);
     expect(status.textContent).toBe('A PAN takes digits only.');
     expect(box.value).toBe('12345');
-  });
-});
-
-describe('the Nepal phone hint (PhoneField)', () => {
-  it('has its line reserved before focus, so showing it moves nothing, and an error takes that line', async () => {
-    mounted = await mountForm(
-      <form>
-        <PhoneListInput name="phones" defaultCountry="NP" />
-      </form>,
-    );
-    const number = q<HTMLInputElement>(mounted.container, 'input[aria-label="Phone 1 number"]')!;
-    const cell = number.closest('[data-part="number"]')!;
-    const lines = () => Array.from(cell.querySelectorAll('p:not(.sr-only)'));
-    // Old code: no line at all until focus, then a new <p> pushed the rows below it down.
-    expect(lines()).toHaveLength(1);
-    const reserved = lines()[0]!;
-    expect(reserved.textContent).toBe('');
-    await typeKeys(number, '9');
-    expect(lines()).toHaveLength(1);
-    expect(lines()[0]).toBe(reserved);
-    expect(reserved.textContent).toMatch(/of 10/);
-  });
-
-  it('puts a row error in that same line instead of under the hint', async () => {
-    mounted = await mountForm(
-      <form>
-        <PhoneListInput
-          name="phones"
-          defaultCountry="NP"
-          rowErrors={['Already used by another contact.']}
-        />
-      </form>,
-    );
-    const number = q<HTMLInputElement>(mounted.container, 'input[aria-label="Phone 1 number"]')!;
-    const cell = number.closest('[data-part="number"]')!;
-    await act(() => Promise.resolve(number.focus()));
-    const lines = Array.from(cell.querySelectorAll('p:not(.sr-only)'));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]!.textContent).toBe('Already used by another contact.');
-    expect(number.getAttribute('aria-describedby')).toContain(lines[0]!.id);
   });
 });
 

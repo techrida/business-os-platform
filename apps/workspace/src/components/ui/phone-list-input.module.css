@@ -14,8 +14,7 @@
 .rows {
   display: flex;
   flex-direction: column;
-  /* Each row carries its own reserved message line, which supplies most of the space between rows. */
-  gap: 4px;
+  gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -52,7 +51,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  /* Line the extras up with the 42px controls, not with the count line under the number. */
+  /* Line the extras up with the 42px box, not with the message line under it. */
   .extras {
     flex-wrap: nowrap;
     min-height: 42px;
@@ -70,7 +69,8 @@
   flex: none;
   align-items: center;
   gap: 6px;
-  min-height: 36px;
+  /* Same height as the number box and the label select (the field control height), so the row lines up. */
+  min-height: 42px;
   color: var(--text-primary);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
@@ -92,8 +92,8 @@
 .iconButton {
   display: inline-grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   padding: 0;
   border: var(--border-width-thin) solid transparent;
   border-radius: var(--radius-md);
@@ -129,7 +129,17 @@
   transform: rotate(180deg);
 }
 
-.rowError,
+.rowError {
+  /* The reserved message line under the box: one caption line high even when empty (UIP-FORM-010). */
+  min-height: var(--line-height-caption);
+  margin: 4px 0 0;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
 .listError {
   margin: 6px 0 0;
   color: var(--status-error);
