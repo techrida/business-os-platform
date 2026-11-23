@@ -168,7 +168,10 @@ describe('new quotation default terms (UIP-FORM-012)', () => {
       contacts: [],
       taxCodes: [],
       paymentTerms: [],
-      termPresets: [terms, { ...terms, id: terms.id.replace(/1$/, '2'), name: 'Other', isDefault: undefined }],
+      termPresets: [
+        terms,
+        { ...terms, id: terms.id.replace(/1$/, '2'), name: 'Other', isDefault: undefined },
+      ],
     });
     await render();
     expect(initial().termsAndConditions).toBe('<p>Net 30.</p>');

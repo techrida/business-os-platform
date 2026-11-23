@@ -430,13 +430,10 @@ export const TermPresetListSchema = z
     (list) => new Set(list.map((p) => `${p.kind}:${p.name.toLowerCase()}`)).size === list.length,
     'preset names must be unique within a field',
   )
-  .refine(
-    (list) => {
-      const kinds = list.filter((p) => p.isDefault === true).map((p) => p.kind);
-      return new Set(kinds).size === kinds.length;
-    },
-    'only one default per field',
-  );
+  .refine((list) => {
+    const kinds = list.filter((p) => p.isDefault === true).map((p) => p.kind);
+    return new Set(kinds).size === kinds.length;
+  }, 'only one default per field');
 export type TermPresetList = z.infer<typeof TermPresetListSchema>;
 
 /**

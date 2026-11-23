@@ -60,9 +60,7 @@ export function pickOutcome(
 }
 
 export type PickerState =
-  | { state: 'empty' }
-  | { state: 'preset'; preset: TermPreset }
-  | { state: 'custom' };
+  { state: 'empty' } | { state: 'preset'; preset: TermPreset } | { state: 'custom' };
 
 /**
  * What the picker shows (UIP-FORM-012): the name of the preset whose words the field holds, "Custom"
