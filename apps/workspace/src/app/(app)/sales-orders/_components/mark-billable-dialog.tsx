@@ -49,6 +49,7 @@ export function MarkBillableDialog({
       initial={{ key: idempotencyKey }}
       action={markBillableAction}
       reloadHref={reloadHref}
+      focusHeadingOnDone
       blocked={blocked}
     >
       {(state) => (
