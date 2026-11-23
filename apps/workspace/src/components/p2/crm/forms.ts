@@ -310,8 +310,6 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
  * clears the address (`null`); half of one is refused on the field that is missing.
  */
 export function parseLeadAddress(form: FormData): Parsed<UpdateLeadBody> {
-  const line = field(form, 'address.line');
-  const city = field(form, 'address.city');
   const expectedVersion = numberField(form, 'expectedVersion') ?? Number.NaN;
   const address = leadAddress(form) ?? null;
   const r = UpdateLeadBodySchema.safeParse({ address, expectedVersion });
