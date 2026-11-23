@@ -77,6 +77,11 @@ jobs:
           cd apps/workspace
           pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --output=test-results-signin
 
+      # Memberships exist now: put those without a department into General (the SQL is idempotent; up.sh ran it once
+      # for the entity address, before any membership existed).
+      - name: Demo fixtures for the memberships the sign-ins created
+        run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
+
       - name: Playwright (workspace, dev project)
         env:
           BOS_E2E_RECORD: '1'
