@@ -109,7 +109,9 @@ describe('lead form country and phones', () => {
     const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
     const container = await mountLead(action);
     expect(boxFor(container, 'Country')).not.toBeNull();
-    expect(container.querySelector<HTMLInputElement>('input[name="country"]')?.value).toBe('NP');
+    expect(container.querySelector<HTMLInputElement>('input[name="address.country"]')?.value).toBe(
+      'NP',
+    );
     expect(countryBox(container, 1).value).toBe('+977');
     expect(numberBox(container, 1).getAttribute('inputmode')).toBe('tel');
     expect(container.querySelector('input[name="phone"]')).toBeNull();
@@ -120,7 +122,9 @@ describe('lead form country and phones', () => {
     await click(container.querySelector('button[data-action="add"]'));
     await typeKeys(numberBox(container, 2), '98123');
     await pickCountry(boxFor(container, 'Country')!, 'India');
-    expect(container.querySelector<HTMLInputElement>('input[name="country"]')?.value).toBe('IN');
+    expect(container.querySelector<HTMLInputElement>('input[name="address.country"]')?.value).toBe(
+      'IN',
+    );
     expect(countryBox(container, 1).value).toBe('+91');
     expect(container.querySelector<HTMLInputElement>('input[name="phones.0.country"]')?.value).toBe(
       'IN',
@@ -276,7 +280,9 @@ describe('lead form country and phones', () => {
       />,
     );
     const { container } = mounted;
-    expect(container.querySelector<HTMLInputElement>('input[name="country"]')?.value).toBe('US');
+    expect(container.querySelector<HTMLInputElement>('input[name="address.country"]')?.value).toBe(
+      'US',
+    );
     expect(container.querySelector<HTMLInputElement>('input[name="phones.1.number"]')?.value).toBe(
       '+14155552671',
     );
