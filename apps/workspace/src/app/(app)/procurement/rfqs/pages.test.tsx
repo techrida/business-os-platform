@@ -29,6 +29,21 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/procurement/rfqs',
   useSearchParams: () => new URLSearchParams(),
 }));
+// The picker's options are only in the markup while it is open, so the real form is wrapped to record the invited
+// vendors the quotation page handed it.
+const quoteForm = vi.hoisted(() => ({
+  props: vi.fn<(p: { vendors: readonly { id: string; name: string }[] }) => void>(),
+}));
+vi.mock('./_components/quote-form', async (original) => {
+  const actual = await original<typeof import('./_components/quote-form')>();
+  return {
+    ...actual,
+    QuoteForm: (props: Parameters<typeof actual.QuoteForm>[0]) => {
+      quoteForm.props(props);
+      return actual.QuoteForm(props);
+    },
+  };
+});
 vi.mock('./actions', () => ({
   createRfqAction: vi.fn(),
   recordQuotationAction: vi.fn(),
@@ -337,7 +352,11 @@ describe('the detail', () => {
     const quote = await quotePage();
     expect(quote).toContain('name="vendorId"');
     expect(quote).toContain('role="combobox"');
-    expect(quote).not.toContain('Vendor name unavailable');
+    // The names come with the RFQ itself, so a refused vendor directory cannot blank them.
+    expect(quoteForm.props.mock.calls[0]![0].vendors).toEqual([
+      { id: V1, name: 'Everest Supplies Pvt Ltd' },
+      { id: V2, name: 'Himal Traders Pvt Ltd' },
+    ]);
     expect(vendorApi.listVendors).not.toHaveBeenCalled();
   });
 
@@ -482,7 +501,10 @@ describe('the quotation entry page', () => {
     const out = await quotePage();
     expect(out).toContain('Record quotation');
     expect(out).toContain('Office chair');
-    expect(out).toContain('Search an invited vendor');
+    expect(quoteForm.props.mock.calls[0]![0].vendors.map((v) => v.name)).toEqual([
+      'Everest Supplies Pvt Ltd',
+      'Himal Traders Pvt Ltd',
+    ]);
     expect(out).toContain('Quotation document');
   });
 
