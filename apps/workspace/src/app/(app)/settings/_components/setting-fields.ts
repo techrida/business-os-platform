@@ -21,6 +21,8 @@ import {
   type SettingKey,
 } from '@bos/contracts';
 
+import type { MemberOption } from '@/components/ui/member-picker';
+
 export type FieldKind =
   | 'integer'
   | 'percent'
@@ -73,12 +75,18 @@ export interface FieldSpec {
   isDefault: boolean;
   /** Number input constraints derived from the contract schema (UIP-FORM-004). */
   numberBounds?: NumberBounds;
-  /** For `select` and `person`. A `person` field adds its own empty choice (PERSON_DEFAULT_OPTION) first. */
+  /** For `select`. */
   options?: readonly { value: string; label: string }[];
+  /** For `person`: who can be chosen, by name and role (the one member picker, BOS-UI-001). */
+  people?: readonly MemberOption[];
+  /**
+   * For `person`: the Sales head, who an empty value stands for (saving none stores null, so the Sales head owns such
+   * leads). The picker shows this person, never a placeholder phrase. Absent when the entity has no Sales head.
+   */
+  salesHeadId?: string;
+  /** For `person`: the saved person the list no longer holds, kept in the box by a plain name. */
+  unavailablePerson?: { id: string; name: string };
 }
-
-/** The empty choice of the default lead owner picker: saving it stores null, so the Sales head owns such leads. */
-export const PERSON_DEFAULT_OPTION = 'Sales head (default)';
 
 /** Human labels for the contract's SCHEDULE_TRIGGERS enum. Typed so adding a trigger fails to compile until labelled. */
 export const TRIGGER_LABEL: Record<ScheduleTrigger, string> = {

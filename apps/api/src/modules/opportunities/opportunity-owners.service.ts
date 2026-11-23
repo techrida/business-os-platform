@@ -69,6 +69,7 @@ export class OpportunityOwnersService {
             displayName: c.displayName?.trim() || 'Unnamed user',
             email: '',
             avatarDocumentId: c.avatarDocumentId,
+            role: c.role,
           }))
           .sort(byName);
       },
