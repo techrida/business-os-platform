@@ -143,7 +143,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
       await founder.goto(`/memos/${memoId}`);
       await expect(async () => {
         await founder.reload();
-        await expect(founder.getByText('Approved', { exact: true })).toBeVisible({
+        await expect(founder.getByText('Approved', { exact: true }).first()).toBeVisible({
           timeout: 3_000,
         });
       }).toPass({ timeout: 30_000 });
@@ -212,7 +212,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
 
       // Sales has no audit.read, so the same page explains why the trail is empty for them.
       await sales.goto(`/memos/${memoId}`);
-      await expect(sales.getByText('Approved', { exact: true })).toBeVisible();
+      await expect(sales.getByText('Approved', { exact: true }).first()).toBeVisible();
       await expect(
         sales.getByText('The audit trail is only open to roles with audit access', {
           exact: false,
