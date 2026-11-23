@@ -185,7 +185,8 @@ it('does not offer approval of a file that expires today in Kathmandu while UTC 
 
   const expired = await renderProvided('2026-11-20');
   expect(expired).toMatch(/aria-label="Approve [^"]*" aria-disabled="true"/);
-  expect(expired).toContain('Approval requires a clean, unexpired file.');
+  // UIP-FORM-011: that reason is the Approve button's tooltip, not text under it.
+  expect(expired).not.toContain('Approval requires a clean, unexpired file.');
 
   const current = await renderProvided('2026-11-21');
   expect(current).toMatch(/aria-label="Approve [^"]*" aria-disabled="false"/);

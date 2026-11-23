@@ -138,26 +138,15 @@ export function PromiseDialog({
 }
 
 /**
- * Record promise, shown but off, with the plain reason under it. The button stays in the tab order with
+ * Record promise, shown but off, with the plain reason in a tooltip (UIP-FORM-011, no text beside it). The button stays in the tab order with
  * `aria-disabled` (a natively disabled button cannot be focused, so its reason would never be read out).
  */
 export function PromiseBlocked({ reason }: { reason: string }) {
-  const reasonId = useId();
   return (
-    <div className={styles.blocked}>
-      <Tooltip content={reason}>
-        <Button
-          variant="secondary"
-          aria-disabled="true"
-          aria-describedby={reasonId}
-          onClick={(e) => e.preventDefault()}
-        >
-          Record promise
-        </Button>
-      </Tooltip>
-      <p id={reasonId} className={styles.blockedReason}>
-        {reason}
-      </p>
-    </div>
+    <Tooltip content={reason}>
+      <Button variant="secondary" aria-disabled="true" onClick={(e) => e.preventDefault()}>
+        Record promise
+      </Button>
+    </Tooltip>
   );
 }

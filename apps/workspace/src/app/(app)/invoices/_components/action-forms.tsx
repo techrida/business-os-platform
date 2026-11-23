@@ -229,23 +229,16 @@ function ActionBlocked({
   reason: string;
   primary?: boolean;
 }) {
-  const reasonId = useId();
   return (
-    <div className={styles.blocked}>
-      <Tooltip content={reason}>
-        <Button
-          variant={primary ? 'primary' : 'secondary'}
-          aria-disabled="true"
-          aria-describedby={reasonId}
-          onClick={(e) => e.preventDefault()}
-        >
-          {label}
-        </Button>
-      </Tooltip>
-      <p id={reasonId} className={styles.blockedReason}>
-        {reason}
-      </p>
-    </div>
+    <Tooltip content={reason}>
+      <Button
+        variant={primary ? 'primary' : 'secondary'}
+        aria-disabled="true"
+        onClick={(e) => e.preventDefault()}
+      >
+        {label}
+      </Button>
+    </Tooltip>
   );
 }
 

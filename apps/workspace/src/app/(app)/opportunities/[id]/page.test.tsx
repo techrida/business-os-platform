@@ -234,11 +234,12 @@ describe('opportunity quotation actions (demo feedback: New quotation made four 
     ]);
   });
 
-  it('says in plain words why New quotation is missing on an open deal the server refuses (R4a Q4 a)', async () => {
+  it('keeps New quotation off an open deal the server refuses, with no caption the server refuses (R4a Q4 a)', async () => {
     mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { canDraftQuotation: false }));
     const html = await render();
     expect(headerLinks(html).map(([label]) => label)).toEqual(['View quotations']);
-    expect(parse(html).body.textContent).toContain(START_QUOTATION_REFUSED);
+    // UIP-FORM-011: the reason is the View quotations tooltip, not a caption beside it.
+    expect(parse(html).body.textContent).not.toContain(START_QUOTATION_REFUSED);
 
     // Allowed, or a closed deal: nothing to explain.
     mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { canDraftQuotation: true }));

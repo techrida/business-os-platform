@@ -10,8 +10,8 @@ const ruleModule = new URL('../../../../../tools/eslint/native-title-rule.mjs', 
   .href;
 
 async function lint(code: string) {
-  const { NATIVE_TITLE_RULE } = (await import(/* @vite-ignore */ ruleModule)) as {
-    NATIVE_TITLE_RULE: Linter.RuleEntry;
+  const { RESTRICTED_SYNTAX } = (await import(/* @vite-ignore */ ruleModule)) as {
+    RESTRICTED_SYNTAX: Linter.RuleEntry;
   };
   const linter = new Linter({ configType: 'flat' });
   const messages = linter.verify(
@@ -23,7 +23,7 @@ async function lint(code: string) {
           parser: tseslint.parser,
           parserOptions: { ecmaFeatures: { jsx: true } },
         },
-        rules: { 'no-restricted-syntax': NATIVE_TITLE_RULE },
+        rules: { 'no-restricted-syntax': RESTRICTED_SYNTAX },
       },
     ],
     'sample.tsx',
@@ -71,4 +71,24 @@ it('allows iframe and svg titles, and a title prop on our own components', async
   expect(await lint('const a = <Tooltip content="x"><button type="button" /></Tooltip>;')).toEqual(
     [],
   );
+});
+
+it('UIP-FORM-011: blocks a caption in an actions slot and a blocked button wired to a caption', async () => {
+  // A <p> inside the page header's actions prop.
+  expect(
+    await lint('const a = <Page actions={<><p>Why not</p><Button>Go</Button></>} />;'),
+  ).toHaveLength(1);
+  // The old shape: aria-disabled + aria-describedby pointing at text under the button.
+  expect(
+    await lint(
+      'const a = <div><Button aria-disabled="true" aria-describedby={id}>Go</Button><p id={id}>Why</p></div>;',
+    ),
+  ).toHaveLength(1);
+  // The new shape, and an ordinary header, are fine.
+  expect(
+    await lint(
+      'const a = <Tooltip content="Why"><Button aria-disabled="true">Go</Button></Tooltip>;',
+    ),
+  ).toEqual([]);
+  expect(await lint('const a = <Page actions={<Button>Go</Button>} />;')).toEqual([]);
 });
