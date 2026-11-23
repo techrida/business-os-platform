@@ -7,7 +7,7 @@ import { beginLogin } from '@/lib/oidc';
 
 // BOS_DEV_ACCOUNT_SERVICE: privileged local test entry, never imported by production routes.
 // Only operator-configured exact HTTPS origins extend the local development boundary.
-// This is not a wildcard trust of a tailnet or of all *.ts.net hosts.
+// This is not a wildcard trust of a private network or of every host under a shared domain.
 function trustedDevelopmentOrigin(value: string): URL {
   const url = new URL(value);
   if (

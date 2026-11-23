@@ -14,7 +14,7 @@ import {
 } from '@/app/(app)/settings/departments/actions';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Combobox } from '@/components/ui/combobox';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { ConfirmDialog, Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
@@ -191,17 +191,14 @@ export function NewDepartmentDialog({
           error={headError}
         >
           {(control) => (
-            <Combobox
+            <MemberPicker
               labelledBy={control['aria-labelledby']}
               describedBy={control['aria-describedby']}
               invalid={control['aria-invalid'] === true}
-              options={staff.map((person) => ({
+              people={staff.map((person) => ({
                 id: person.id,
-                label: person.name,
-                description:
-                  person.department !== null
-                    ? `Moves from ${person.department.name}`
-                    : (person.email ?? undefined),
+                name: person.name,
+                role: person.department !== null ? `Moves from ${person.department.name}` : null,
                 searchText: person.email ?? '',
               }))}
               value={head}
