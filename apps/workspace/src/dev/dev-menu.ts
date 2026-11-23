@@ -339,7 +339,10 @@ function mount(): () => void {
   let modalCheck = 0;
   const checkModal = (): void => {
     modalCheck = 0;
-    const open = document.querySelector(MODAL_SELECTOR) !== null;
+    // A Radix popover also carries role=dialog; it sits in a popper wrapper and is not a modal.
+    const open = [...document.querySelectorAll(MODAL_SELECTOR)].some(
+      (node) => node.closest('[data-radix-popper-content-wrapper]') === null,
+    );
     if (open === modalOpen) return;
     modalOpen = open;
     render();
@@ -357,6 +360,8 @@ function mount(): () => void {
   document.addEventListener(
     'keydown',
     (event) => {
+      // The chip is out of sight behind a modal, so its keys leave the dialog's Escape alone.
+      if (modalOpen) return;
       if (event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') {
         event.preventDefault();
         update({ hidden: !state.hidden });
