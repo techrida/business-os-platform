@@ -463,7 +463,7 @@ describe('UserMirror as the UserDirectory backend', () => {
       expectedCalls: 1,
     },
   ])(
-    'setRoles when sync copies phase-B grants before phase C fails via revoked grant: $label (round 3: denied, no compensation)',
+    'setRoles when the caller grant is revoked before phase C and a sync during phase B is held off by the lease: $label (denied, no compensation)',
     async ({ initial, requested, expectedZitadel, expectedCalls }) => {
       zitadel.users.set('z1', zUser('z1'));
       zitadel.grants.set('z1', [...initial]);
@@ -474,8 +474,9 @@ describe('UserMirror as the UserDirectory backend', () => {
       const realSetGrants = zitadel.setGrants.bind(zitadel);
       vi.spyOn(zitadel, 'setGrants').mockImplementationOnce(async (...args) => {
         await realSetGrants(...args);
-        // Webhook sync mirrors our phase-B grants into DB, and the caller's grant is revoked before phase C.
-        await mirror.syncUser('z1');
+        // A webhook sync cannot mirror the phase-B grants now: the role set holds the tenant's lease (R6E). The caller's
+        // grant is revoked before phase C.
+        await expect(mirror.syncUser('z1')).rejects.toBeInstanceOf(UserSyncContendedError);
         revoked = true;
       });
 

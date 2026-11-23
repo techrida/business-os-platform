@@ -92,7 +92,8 @@ describe('SettingCard markup and typed controls', () => {
     expect(html.match(/aria-label="Reset [^"]+ to default"/g)).toEqual([
       'aria-label="Reset Memo number prefix to default"',
     ]);
-    expect(html).toContain('title="Back to default (MEMO)"');
+    // The default shows in the design-system Tooltip (opens on hover or focus), never as a native title bubble.
+    expect(html).not.toContain(' title="');
     expect(html).not.toContain('Undo change to');
     // Never inside the field's label, so the input keeps its own name.
     expect(html).not.toMatch(/<label[^>]*>[^<]*<button/);

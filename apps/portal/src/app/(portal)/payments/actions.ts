@@ -123,8 +123,10 @@ export async function submitPaymentAction(
     ),
   ];
   const bankReference = text(form, 'bankReference').trim();
-  const withholdingCode = text(form, 'withholdingCode').trim();
   const tds = normalizeAmount(text(form, 'tdsWithheld'));
+  // A code left in the box after the tax was cleared is not sent: tax above zero with no code still errors in the
+  // API. `[1-9]` is "some non-zero digit", a shape test on the text (the staff app's rule, EF5).
+  const withholdingCode = /[1-9]/.test(tds) ? text(form, 'withholdingCode').trim() : '';
   const candidate = {
     currency: text(form, 'currency'),
     amount: normalizeAmount(text(form, 'amount')),
