@@ -23,6 +23,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // A database dropped under a lent-out connection must not fail the run (packages/db/src/testing/vitest-setup.ts).
+    setupFiles: [source('../../packages/db/src/testing/vitest-setup.ts')],
     include: ['src/**/*.test.ts'],
     // One Postgres for the whole run, migrated once; every integration test copies it
     // (packages/db/src/testing/test-database.ts).
