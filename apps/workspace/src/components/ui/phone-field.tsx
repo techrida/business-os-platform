@@ -17,6 +17,7 @@ import {
   displayPhone,
   E164_MAX_DIGITS,
   examplePhone,
+  couldBeNational,
   interpretTyped,
   refusesExtraDigit,
   type PhoneTyped,
@@ -127,7 +128,9 @@ export function PhoneField({
       via === 'type' &&
       bare &&
       dial !== '' &&
-      refusesExtraDigit(country, e164.slice(1 + dial.length), sourceDigits)
+      refusesExtraDigit(country, e164.slice(1 + dial.length), sourceDigits) &&
+      // The own code typed in front of the number (`91 98765 43210` in India) is not a typo.
+      !(sourceDigits.startsWith(dial) && couldBeNational(country, sourceDigits.slice(dial.length)))
     ) {
       setText(displayPhone(e164));
       caret.current = digitCount(displayPhone(e164));
@@ -176,16 +179,28 @@ export function PhoneField({
     const input = event.target;
     let value = input.value;
     let at = input.selectionStart ?? value.length;
-    // Backspace over a space or bracket the field added removes nothing by itself: take the digit before it instead.
+    const native = event.nativeEvent as InputEvent;
+    const forward = native.inputType === 'deleteContentForward';
+    // Backspace or Delete over a space or bracket the field added removes nothing by itself: take the neighbouring
+    // digit instead, unless that digit is part of the country code shown in front (then nothing is removed).
     if (digitCount(value) === digitCount(text) && value.length < text.length) {
-      let index = at - 1;
-      while (index >= 0 && !/\d/.test(value[index]!)) index -= 1;
-      if (index >= 0) {
+      let index = forward ? at : at - 1;
+      while (index >= 0 && index < value.length && !/\d/.test(value[index]!)) {
+        index += forward ? 1 : -1;
+      }
+      if (index >= 0 && index < value.length) {
+        const dial = countryCallingCode(country) ?? '';
+        if (text.startsWith('+') && digitCount(value, index) < dial.length) {
+          setText(text);
+          return;
+        }
         value = value.slice(0, index) + value.slice(index + 1);
-        at = index;
+        at = forward ? at : index;
       }
     }
-    apply(value, digitCount(value, at));
+    // More than one digit at once (browser autofill) is a whole number arriving, like a paste.
+    const arrived = digitCount(value) - digitCount(text) > 1;
+    apply(value, digitCount(value, at), arrived ? 'paste' : 'type');
   }
 
   function onPaste(event: ClipboardEvent<HTMLInputElement>) {
