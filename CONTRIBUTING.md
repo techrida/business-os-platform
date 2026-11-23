@@ -80,7 +80,7 @@ pnpm --filter @bos/portal e2e
 
 ## Pull request process
 
-1. Push your branch to your fork or feature branch and open a pull request using the repository template (`.github/pull_request_template.md`).
+1. Push your branch to your fork or feature branch and open a pull request using the repository template ([.github/pull_request_template.md](.github/pull_request_template.md)).
 2. Describe what changed, why it changed, and which checks you ran.
 3. Wait for all GitHub Actions CI jobs to pass:
    - `checks`: typecheck, lint, unit tests, format check, and image pin check
@@ -92,7 +92,7 @@ pnpm --filter @bos/portal e2e
 
 ## Licensing of contributions
 
-Business OS is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). By submitting a pull request or other contribution to this repository, you agree that your contribution is licensed under `AGPL-3.0-only` as stated in the repository `LICENSE` file.
+Business OS is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). By submitting a pull request or other contribution to this repository, you agree that your contribution is licensed under `AGPL-3.0-only` as stated in [LICENSE](LICENSE).
 
 ## Code of conduct
 

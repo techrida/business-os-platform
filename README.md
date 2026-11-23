@@ -2,7 +2,7 @@
 
 Open-source B2B operations platform by Techrida for Nepali trading and service companies. Run CRM, quotations, sales orders, invoicing, procurement, and payables in one system with built-in approvals and a tamper-evident audit trail.
 
-[![CI](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml?query=branch%3Amain) [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/techrida/business-os-platform/badge)](https://scorecard.dev/viewer/?uri=github.com/techrida/business-os-platform)
+[![CI](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techrida/business-os-platform/actions/workflows/ci.yml?query=branch%3Amain) [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/techrida/business-os-platform/badge)](https://scorecard.dev/viewer/?uri=github.com/techrida/business-os-platform)
 
 ## What it is and who it is for
 
@@ -130,4 +130,4 @@ Business OS treats Nepali business rules as core behavior rather than add-ons. A
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and run `bash tools/gate.sh` to verify your changes locally.
 - Follow the [Code of Conduct](CODE_OF_CONDUCT.md) in all project spaces.
 - Report suspected vulnerabilities privately by following [SECURITY.md](SECURITY.md).
-- Business OS is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). See the `LICENSE` file in the repository root for full terms.
+- Business OS is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). See [LICENSE](LICENSE) for full terms and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for third-party license notices.
