@@ -2,7 +2,7 @@
 // under it. Plain functions, so the wording and the narrowing are unit-tested without a browser.
 import type { MemoApproverRule, MemoDirectory } from '@bos/contracts';
 
-import { approverChoices } from './staff-picker';
+import { approverChoices } from './memo-members';
 
 type Person = MemoDirectory['people'][number];
 

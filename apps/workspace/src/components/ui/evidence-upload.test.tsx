@@ -130,6 +130,21 @@ const removeButton = () =>
   document.querySelector<HTMLButtonElement>('button[aria-label="Remove Signed acceptance.pdf"]');
 
 describe('EvidenceUpload', () => {
+  it('puts a muted "Optional" beside the label when optional, and nothing when not (UIP-FORM-008)', async () => {
+    mounted = await mountForm(inForm({ optional: true, hint: 'Kept with the order.' }));
+    const group = document.querySelector<HTMLElement>('[role="group"]')!;
+    expect(group.textContent).toContain('Evidence document');
+    expect(group.textContent).toContain('Optional');
+    // The marker is in the label row, not in the label (whose text names the group) or under the box.
+    expect(group.getAttribute('aria-labelledby')).not.toBeNull();
+    expect(document.getElementById(group.getAttribute('aria-labelledby')!)?.textContent).toBe(
+      'Evidence document',
+    );
+    await mounted.unmount();
+    mounted = await mountForm(inForm());
+    expect(document.querySelector('[role="group"]')?.textContent).not.toContain('Optional');
+  });
+
   it('labels a keyboard-reachable file chooser and says which files it takes', async () => {
     mounted = await mountForm(inForm({ hint: 'The signed acceptance form.' }));
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;

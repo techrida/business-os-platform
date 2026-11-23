@@ -60,7 +60,9 @@ describe('vendorFailure: the 409 refusals', () => {
   });
 
   it('a locked identity and a frozen vendor have their own sentences', () => {
-    expect(vendorFailure(err(409, 'vendor_identity_locked'), 'edit').message).toMatch(/KYB review/);
+    expect(vendorFailure(err(409, 'vendor_identity_locked'), 'edit').message).toMatch(
+      /cannot be edited/,
+    );
     expect(vendorFailure(err(409, 'vendor_not_editable'), 'edit').message).toMatch(
       /blocked or archived/,
     );

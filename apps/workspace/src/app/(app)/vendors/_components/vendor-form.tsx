@@ -15,6 +15,7 @@ import type { VendorField, VendorValues } from '../_lib/forms';
 import { VENDOR_STATUS_LABEL } from '../_lib/model';
 import type { VendorFormState } from '../_lib/state';
 import styles from '../vendors.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const KIND_LABEL: Record<VendorKind, string> = {
   company: 'Company (registered, with a PAN)',
@@ -44,7 +45,7 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
  * does not wipe what was typed (React 19 resets uncontrolled fields after every action).
  *
  * Create and edit both ask for the kind and country (D10). Edit locks the legal name, PAN, kind and
- * country of an approved or suspended vendor (`lockIdentity`): those change through a new KYB review.
+ * country of an approved or suspended vendor (`lockIdentity`).
  * A foreign vendor has no Nepali PAN: it gets an optional Tax ID in the loose shape instead, so
  * switching a foreign vendor to a Nepal kind shows the PAN box, which must be filled.
  *
@@ -125,11 +126,7 @@ export function VendorForm({
   const legalName = (
     <Field
       label="Legal name"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
-          : undefined
-      }
+      hint={lockIdentity ? 'Locked once the vendor is approved.' : undefined}
       error={err.legalName}
     >
       {(control) => (
@@ -149,12 +146,9 @@ export function VendorForm({
 
   const pan = foreign ? (
     <Field
-      label="Tax ID (optional)"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved.'
-          : 'The vendor’s own tax or VAT number: 5 to 20 letters, digits or hyphens.'
-      }
+      label="Tax ID"
+      optional
+      hint={lockIdentity ? 'Locked while the vendor is approved.' : undefined}
       error={err.pan}
     >
       {(control) => (
@@ -163,6 +157,7 @@ export function VendorForm({
           value={values.pan}
           onChange={set('pan')}
           maxLength={20}
+          placeholder="GB123456789"
           autoCapitalize="characters"
           spellCheck={false}
           readOnly={lockIdentity}
@@ -173,11 +168,7 @@ export function VendorForm({
   ) : (
     <Field
       label="PAN"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved.'
-          : 'Nine digits. Every vendor except a foreign one needs it.'
-      }
+      hint={lockIdentity ? 'Locked while the vendor is approved.' : undefined}
       error={err.pan}
     >
       {(control) => (
@@ -185,6 +176,7 @@ export function VendorForm({
           name="pan"
           value={values.pan}
           onValueChange={(pan) => set('pan')({ target: { value: pan } })}
+          placeholder="123456789"
           readOnly={lockIdentity}
           required
           edited={panEdited}
@@ -197,11 +189,10 @@ export function VendorForm({
 
   const vat = (
     <label className={styles.check}>
-      <input
-        type="checkbox"
+      <Checkbox
         name="vatRegistered"
         checked={values.vatRegistered}
-        onChange={(e) => setValues((v) => ({ ...v, vatRegistered: e.target.checked }))}
+        onCheckedChange={(nextChecked) => setValues((v) => ({ ...v, vatRegistered: nextChecked }))}
       />
       Registered for VAT
     </label>
@@ -230,7 +221,7 @@ export function VendorForm({
       label="Kind"
       hint={
         lockIdentity
-          ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
+          ? 'Locked once the vendor is approved.'
           : mode === 'edit'
             ? 'A foreign vendor is outside Nepal. Any other kind is in Nepal and needs a PAN.'
             : undefined
@@ -257,7 +248,7 @@ export function VendorForm({
   );
 
   const countryHint = lockIdentity
-    ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
+    ? 'Locked once the vendor is approved.'
     : foreign
       ? 'The vendor’s own country, outside Nepal.'
       : 'Vendors in Nepal use Nepal.';
@@ -314,11 +305,7 @@ export function VendorForm({
             ))}
           </ul>
           <label className={styles.check}>
-            <input
-              type="checkbox"
-              name="sameNameConfirmed"
-              value={state.sameName.map((m) => m.id).join(',')}
-            />
+            <Checkbox name="sameNameConfirmed" value={state.sameName.map((m) => m.id).join(',')} />
             This is a different vendor. Add it anyway.
           </label>
         </Alert>
@@ -355,11 +342,7 @@ export function VendorForm({
           <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
             <div className={styles.grid}>
               {legalName}
-              <Field
-                label="Trade name"
-                hint="Optional. The name the vendor is known by."
-                error={err.tradeName}
-              >
+              <Field label="Trade name" optional error={err.tradeName}>
                 {(control) => (
                   <Input
                     name="tradeName"

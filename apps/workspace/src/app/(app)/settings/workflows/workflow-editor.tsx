@@ -21,6 +21,7 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { DecimalInput, MoneyInput } from '@/components/ui/number-input';
 import { SuggestInput } from '@/components/ui/suggest-input';
 
@@ -43,7 +44,8 @@ import {
   type StepForm,
   type ThresholdOp,
 } from './spec-form';
-import type { UserOption } from './user-field';
+import { memberOptions, type UserOption } from './user-field';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type SlaDefaults = Parameters<typeof emptySpecForm>[1];
 
@@ -317,21 +319,20 @@ export function WorkflowEditor({
               ))}
             </Select>
           ) : step.kind === 'user' ? (
-            <Select
-              {...control}
+            <MemberPicker
+              labelledBy={control['aria-labelledby']}
+              describedBy={control['aria-describedby']}
+              people={memberOptions(users ?? [])}
               value={step.target}
-              onChange={(e) => change({ target: e.target.value })}
-            >
-              <option value="">Choose a person</option>
-              {step.target !== '' && !(users ?? []).some((u) => u.id === step.target) ? (
-                <option value={step.target}>Current person (name unavailable)</option>
-              ) : null}
-              {(users ?? []).map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.label}
-                </option>
-              ))}
-            </Select>
+              onChange={(target) => change({ target })}
+              current={
+                step.target !== '' && !(users ?? []).some((u) => u.id === step.target)
+                  ? { id: step.target, name: 'Current person (name unavailable)' }
+                  : undefined
+              }
+              placeholder="Choose a person"
+              disabled={users === null && step.target === ''}
+            />
           ) : (
             <SuggestInput
               {...control}
@@ -458,10 +459,7 @@ export function WorkflowEditor({
                     />
                   )}
                 </Field>
-                <Field
-                  label="Key"
-                  hint="Lowercase letters, digits, _ . - ; cannot be changed later."
-                >
+                <Field label="Key" hint="Cannot be changed later.">
                   {(control) => (
                     <Input
                       {...control}
@@ -470,6 +468,7 @@ export function WorkflowEditor({
                       required
                       autoComplete="off"
                       pattern="[a-z][a-z0-9_.\-]{0,63}"
+                      placeholder="invoice-approval"
                       onChange={(e) => setKey(e.target.value)}
                     />
                   )}
@@ -494,10 +493,10 @@ export function WorkflowEditor({
                   )}
                 </Field>
                 <label className={`${styles.check} ${SPAN}`}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
+                    className={styles.checkBox}
                     checked={form.distinctApprovers}
-                    onChange={(e) => patch({ distinctApprovers: e.target.checked })}
+                    onCheckedChange={(nextChecked) => patch({ distinctApprovers: nextChecked })}
                   />
                   One person cannot approve two steps of the same request
                 </label>

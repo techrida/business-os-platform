@@ -55,3 +55,18 @@ if (typeof Text !== 'undefined') {
     proto.getBoundingClientRect = emptyRect;
   }
 }
+
+// jsdom has no ResizeObserver. Radix controls (the design-system Checkbox, Radio and Tooltip) measure
+// their element with it, so a test that mounts one would throw without this no-op.
+if (typeof window !== 'undefined' && typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+// jsdom has no scrollIntoView; the member and option lists call it to keep the highlighted row visible.
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => undefined;
+}

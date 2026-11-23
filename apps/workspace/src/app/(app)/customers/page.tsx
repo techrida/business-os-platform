@@ -1,4 +1,10 @@
-import { CUSTOMER_RELATIONSHIPS, countryName, pageWindow, type CustomerDto } from '@bos/contracts';
+import {
+  CUSTOMER_RELATIONSHIPS,
+  countryName,
+  formatPartyPhoneForPrint,
+  pageWindow,
+  type CustomerDto,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -92,6 +98,12 @@ function Row({
               {c.legalName}
             </Link>
             <span className={styles.number}>{c.number}</span>
+            {/* Narrow screens hide the Phone column; the number sits under the name instead (R6A, D8). */}
+            {c.primaryPhone != null ? (
+              <span className={styles.phoneUnderName}>
+                {formatPartyPhoneForPrint(c.primaryPhone.e164)}
+              </span>
+            ) : null}
             {duplicate !== undefined || c.mergedIntoId !== null ? (
               <div className={styles.flags}>
                 {duplicate !== undefined ? (
@@ -108,8 +120,16 @@ function Row({
           </div>
         </div>
       </Td>
-      {/* FX9: city and country only; the full address and the phones are on the detail page. */}
+      {/* FX9: city and country only; the full address and every phone are on the detail page. */}
       <Td>{`${c.address.city}, ${countryName(c.country)}`}</Td>
+      {/* R6A (D8): the primary contact's primary number, as the list sends it. */}
+      <Td nowrap className={styles.phoneColumn ?? ''}>
+        {c.primaryPhone != null ? (
+          formatPartyPhoneForPrint(c.primaryPhone.e164)
+        ) : (
+          <span className={styles.quiet}>Not set</span>
+        )}
+      </Td>
       <Td>{c.industry ?? <span className={styles.quiet}>Not set</span>}</Td>
       <Td nowrap>{c.panVatNo ?? <span className={styles.quiet}>Not set</span>}</Td>
       <Td nowrap>
@@ -292,6 +312,7 @@ export default async function CustomersPage({
                 <tr>
                   <Th className={styles.organizationColumn}>Organization</Th>
                   <Th>Location</Th>
+                  <Th className={styles.phoneColumn ?? ''}>Phone</Th>
                   <Th>Industry</Th>
                   <Th>PAN/VAT</Th>
                   <Th>Owner</Th>

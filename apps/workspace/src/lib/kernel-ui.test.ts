@@ -29,6 +29,10 @@ describe('describeFailure', () => {
   it.each([
     ['duplicate_pan_vat', 'Another customer already has this PAN/VAT number.'],
     ['primary_contact_exists', 'This customer already has a primary contact.'],
+    [
+      'customer_identity_locked',
+      'The legal name, PAN and country of a verified customer cannot be edited.',
+    ],
     ['kyb_not_verified', "This customer's verification must be approved first."],
     [
       'contact_activity_required',

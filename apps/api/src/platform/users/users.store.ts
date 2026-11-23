@@ -275,12 +275,26 @@ export abstract class UsersStore {
    * One statement, so two requests cannot both win. A lease older than `ttlSeconds` is dead (its holder crashed) and is
    * taken over. It spans the ZITADEL call of a Founder-removing action, which no transaction or row lock may.
    */
-  abstract claimFounderLease(
+  async claimFounderLease(
     tenantId: string,
     leaseId: string,
     ttlSeconds: number,
     timeoutMs: number,
-  ): Promise<boolean>;
+  ): Promise<boolean> {
+    return (await this.claimFounderLeaseWithOrigin(tenantId, leaseId, ttlSeconds, timeoutMs))
+      .claimed;
+  }
+  /**
+   * Same claim, and says how it was won. `ttlTakeover` is true only when the lease was held by another holder that had
+   * outlived `ttlSeconds` (a crashed or stalled one). A lease its holder released, or never held, is not a takeover. A
+   * claim that cannot tell reports false, which callers treat as the cautious answer.
+   */
+  abstract claimFounderLeaseWithOrigin(
+    tenantId: string,
+    leaseId: string,
+    ttlSeconds: number,
+    timeoutMs: number,
+  ): Promise<{ claimed: boolean; ttlTakeover: boolean }>;
   /**
    * Frees the lease when `leaseId` still holds it; a lease taken over after its TTL is left alone. An outstanding
    * Founder removal recorded under it stays on the free lease, and the next holder takes it over with the lease.
@@ -800,6 +814,7 @@ export class SqlUsersStore extends UsersStore {
             (count(*) FILTER (WHERE u.status = 'active'))::int AS active,
             (count(*) FILTER (WHERE u.status = 'invited'))::int AS invited,
             (count(*) FILTER (WHERE u.status = 'inactive'))::int AS deactivated,
+            (count(*) FILTER (WHERE u.identity_review_required))::int AS flagged,
             coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id, 'name', d.name)
                         ORDER BY lower(d.name), d.id)
               FROM app.departments d WHERE d.tenant_id = ${scope.tenantId}
@@ -860,22 +875,33 @@ export class SqlUsersStore extends UsersStore {
     return row?.cursor ?? null;
   }
 
-  async claimFounderLease(
+  async claimFounderLeaseWithOrigin(
     tenantId: string,
     leaseId: string,
     ttlSeconds: number,
     timeoutMs: number,
-  ): Promise<boolean> {
+  ): Promise<{ claimed: boolean; ttlTakeover: boolean }> {
     // The statement may wait on the row of a holder that is releasing it; it never waits longer than the caller's own
     // wait for the lease, so that wait is real. A timeout counts as "not claimed".
     const ms = Math.max(100, Math.floor(timeoutMs));
     try {
-      const claimed = await this.db.transaction(async (tx) => {
+      return await this.db.transaction(async (tx) => {
         await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${ms}`));
         await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${ms}`));
+        // Read under the row lock the claim below takes anyway, so the age seen here is the age the claim tests: a
+        // takeover is a lease another holder still shows (not free, not ours) that is older than the TTL.
+        const [before] = await rows<{ ttl: boolean }>(
+          tx,
+          sql`SELECT (updated_at < now() - make_interval(secs => ${ttlSeconds})
+                      AND NOT (cursor = ${FOUNDER_LEASE_FREE}
+                               OR starts_with(cursor, ${FOUNDER_LEASE_FREE + FOUNDER_REMOVAL_SEPARATOR}::text)
+                               OR cursor = ${leaseId}
+                               OR starts_with(cursor, ${leaseId + FOUNDER_REMOVAL_SEPARATOR}::text))) AS ttl
+                FROM ops.sync_cursors WHERE name = ${founderLeaseName(tenantId)} FOR UPDATE`,
+        );
         // The cursor is `free` or a lease id, optionally followed by `|<outstanding removal>`: a claim keeps that
         // suffix, so a removal its holder never cleared passes to the next holder with the lease.
-        return rows<{ name: string }>(
+        const claimed = await rows<{ name: string }>(
           tx,
           sql`INSERT INTO ops.sync_cursors (name, cursor, updated_at)
               VALUES (${founderLeaseName(tenantId)}, ${leaseId}, now())
@@ -888,13 +914,16 @@ export class SqlUsersStore extends UsersStore {
                  OR ops.sync_cursors.updated_at < now() - make_interval(secs => ${ttlSeconds})
               RETURNING name`,
         );
+        return {
+          claimed: claimed.length > 0,
+          ttlTakeover: claimed.length > 0 && before?.ttl === true,
+        };
       });
-      return claimed.length > 0;
     } catch (error) {
       const code =
         (error as { code?: string; cause?: { code?: string } }).code ??
         (error as { cause?: { code?: string } }).cause?.code;
-      if (code === '57014' || code === '55P03') return false;
+      if (code === '57014' || code === '55P03') return { claimed: false, ttlTakeover: false };
       throw error;
     }
   }

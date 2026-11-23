@@ -36,6 +36,8 @@ export interface EvidenceUploadProps {
   name: string;
   /** What the file is, for example "Evidence document". */
   label: string;
+  /** May be left empty: a muted "Optional" at the right end of the label row (UIP-FORM-008), same as `Field`. */
+  optional?: boolean | undefined;
   hint?: ReactNode | undefined;
   /** The form's own refusal for this field. */
   error?: string | undefined;
@@ -83,13 +85,14 @@ function isFileView(body: unknown): body is FileView {
 /**
  * @example
  *   <EvidenceUpload kind="vendor-bill" ownerId={bill.id} name="evidenceDocumentId"
- *     label="Evidence (optional)" error={errors.evidenceDocumentId} onBlockingChange={setBlocked} />
+ *     label="Evidence" optional error={errors.evidenceDocumentId} onBlockingChange={setBlocked} />
  */
 export function EvidenceUpload({
   kind,
   ownerId,
   name,
   label,
+  optional = false,
   hint,
   error,
   onBlockingChange,
@@ -240,9 +243,12 @@ export function EvidenceUpload({
       aria-labelledby={titleId}
       aria-busy={uploading || undefined}
     >
-      <span id={titleId} className={styles.label}>
-        {label}
-      </span>
+      <div className={styles.labelRow}>
+        <span id={titleId} className={styles.label}>
+          {label}
+        </span>
+        {optional ? <span className={styles.optional}>Optional</span> : null}
+      </div>
       <input type="hidden" name={name} value={file?.documentId ?? ''} />
 
       {file ? (

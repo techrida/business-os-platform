@@ -104,9 +104,7 @@ describe('vendor form', () => {
 
   it('D10: an approved vendor shows the kind and country locked, and posts neither', () => {
     const out = edit('company', true);
-    expect(out).toContain(
-      'Locked while the vendor is approved. A change goes through a new KYB review.',
-    );
+    expect(out).toContain('Locked once the vendor is approved.');
     // A disabled control posts nothing, so the locked kind and country are not read as a change.
     const hidden = (name: string) =>
       [...out.matchAll(/<input[^>]*>/g)]
@@ -123,7 +121,20 @@ describe('vendor form', () => {
   it('edit of a foreign vendor offers an optional Tax ID instead of the nine-digit PAN', () => {
     const out = edit('foreign');
     expect(names(out)).toContain('pan');
-    expect(out).toContain('Tax ID (optional)');
+    expect(out).toContain('>Tax ID</label><span');
+    expect(out).toContain('>Optional</span>');
+    expect(out).not.toContain('Tax ID (optional)');
     expect(out).not.toContain('>PAN<');
+  });
+
+  it('marks optional fields beside the label and shows examples instead of format hints (UIP-FORM-008)', () => {
+    const out = create();
+    expect(out).not.toContain('(optional)');
+    expect(out).not.toContain('Optional.');
+    expect(out).not.toContain('Nine digits');
+    expect(out).toContain('placeholder="123456789"');
+    // Trade name, Address and City each carry the marker; PAN, Legal name, Kind and Country do not.
+    expect(out.match(/>Optional<\/span>/g)).toHaveLength(3);
+    expect(out).toContain('>Trade name</label><span');
   });
 });

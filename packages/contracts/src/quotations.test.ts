@@ -151,14 +151,25 @@ describe('quotation statuses and the transition table', () => {
         'sent>cancelled',
         'sent>expired',
         'sent>superseded',
+        'superseded>approved',
+        'superseded>sent',
       ].sort(),
     );
   });
 
-  it('has no way out of accepted, rejected, expired, cancelled or superseded', () => {
-    for (const s of ['accepted', 'rejected', 'expired', 'cancelled', 'superseded'] as const) {
+  it('has no way out of accepted, rejected, expired or cancelled', () => {
+    for (const s of ['accepted', 'rejected', 'expired', 'cancelled'] as const) {
       expect(quotationTransitionsFrom(s), s).toEqual([]);
     }
+  });
+
+  it('leaves superseded only by a restore, back to the approved or sent status it had (R6D)', () => {
+    const out = quotationTransitionsFrom('superseded');
+    expect(out.map((t) => `${t.action}>${t.to}`).sort()).toEqual([
+      'restore>approved',
+      'restore>sent',
+    ]);
+    expect(out.every((t) => t.by === 'user' && t.reasonRequired)).toBe(true);
   });
 
   it('supersedes only on a revision of an approved or sent version', () => {
@@ -170,7 +181,15 @@ describe('quotation statuses and the transition table', () => {
   it('needs a reason to return, reject, or cancel, and none to approve or submit', () => {
     const needs = (action: string) =>
       QUOTATION_TRANSITIONS.filter((t) => t.action === action).map((t) => t.reasonRequired);
-    for (const a of ['return', 'reject', 'customer_reject', 'cancel', 'cancel_on_lost', 'revise']) {
+    for (const a of [
+      'return',
+      'reject',
+      'customer_reject',
+      'cancel',
+      'cancel_on_lost',
+      'revise',
+      'restore',
+    ]) {
       expect(needs(a).length, a).toBeGreaterThan(0);
       expect(needs(a).every(Boolean), a).toBe(true);
     }

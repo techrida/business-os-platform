@@ -17,6 +17,7 @@ import type { ActionState } from '../../orders/_lib/state';
 import { createReceiptAction } from '../actions';
 import rows from '../../rfqs/_components/line-rows.module.css';
 import styles from '../receipts.module.css';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 /**
  * The new-receipt form. The page works out, on the server, what each line has room for (open minus
@@ -139,22 +140,25 @@ export function ReceiptForm({
 
         <Panel title="Receipt details">
           {kinds.length > 1 ? (
-            <fieldset className={styles.kindGroup}>
-              <legend>What is being received</legend>
-              {kinds.map((k) => (
-                <label key={k} className={styles.choice}>
-                  <input
-                    type="radio"
-                    name="kind"
-                    value={k}
-                    checked={kind === k}
-                    onChange={() => setKind(k)}
-                  />
-                  {KIND_TEXT[k]}
-                </label>
-              ))}
-              {errors['kind'] ? <span className={styles.fieldError}>{errors['kind']}</span> : null}
-            </fieldset>
+            <RadioGroup
+              asChild
+              name="kind"
+              value={kind}
+              onValueChange={(next) => setKind(next as ReceiptKind)}
+            >
+              <fieldset className={styles.kindGroup}>
+                <legend>What is being received</legend>
+                {kinds.map((k) => (
+                  <label key={k} className={styles.choice}>
+                    <Radio value={k} />
+                    {KIND_TEXT[k]}
+                  </label>
+                ))}
+                {errors['kind'] ? (
+                  <span className={styles.fieldError}>{errors['kind']}</span>
+                ) : null}
+              </fieldset>
+            </RadioGroup>
           ) : (
             <>
               <input type="hidden" name="kind" value={kind} />
@@ -182,10 +186,11 @@ export function ReceiptForm({
                 />
               )}
             </Field>
-            <Field label="Location" hint="Optional. Where it was put." error={errors['location']}>
+            <Field label="Location" optional error={errors['location']}>
               {(c) => (
                 <Input
                   name="location"
+                  placeholder="Main store, rack B2"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   maxLength={200}

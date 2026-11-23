@@ -28,9 +28,11 @@ function render(today: string, over: Parameters<typeof sampleView>[0] = {}) {
   );
 }
 
+// Inline `style` attributes (the design-system checkbox's hidden form input carries one) are CSS, not words a customer reads.
 const words = (html: string) =>
   new Set(
     html
+      .replace(/ style="[^"]*"/g, '')
       .replace(/([a-z])([A-Z])/g, '$1 $2')
       .split(/[^A-Za-z]+/)
       .map((w) => w.toLowerCase()),
@@ -40,7 +42,7 @@ describe('RespondPanel', () => {
   it('offers accept (name, confirmation) and reject (comment) with the key, and no internal word', () => {
     const html = render('2026-11-10');
     expect(html).toContain('name="acceptedByName"');
-    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('role="checkbox"');
     expect(html).toContain('name="confirm"');
     expect(html).toContain('name="comment"');
     expect(html).toContain(`value="${IDEM}"`);

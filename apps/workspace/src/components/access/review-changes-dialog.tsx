@@ -12,9 +12,9 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Combobox } from '@/components/ui/combobox';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { Dialog } from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/field';
+import { Field, Textarea } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 
@@ -29,6 +29,7 @@ import {
   warningKey,
 } from './review-model';
 import styles from './review-changes-dialog.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export type ReviewPreviewResult =
   | { ok: true; preview: AccessPreviewResponse }
@@ -73,7 +74,7 @@ export type ReviewRunCheck = (input: {
 export interface ReviewPerson {
   id: string;
   name: string;
-  /** Shown after the name in the picker: a department or an email. */
+  /** Shown muted after the name in the picker, as the person's role: a department or a job title. */
   description?: string | undefined;
 }
 
@@ -359,11 +360,10 @@ function OpenReview({
                         return (
                           <li key={key} className={styles.warning}>
                             <label className={styles.confirm}>
-                              <input
-                                type="checkbox"
+                              <Checkbox
                                 checked={ticked.has(key)}
                                 disabled={saving}
-                                onChange={(event) => toggle(key, event.currentTarget.checked)}
+                                onCheckedChange={(nextChecked) => toggle(key, nextChecked)}
                               />
                               <span>I understand: {warning.message}</span>
                             </label>
@@ -385,23 +385,24 @@ function OpenReview({
                 </section>
               ) : null}
 
-              <div className={styles.block}>
-                <label htmlFor={noteId} className={styles.noteLabel}>
-                  Why are you changing this? (optional)
-                </label>
-                <Textarea
-                  id={noteId}
-                  value={note}
-                  maxLength={NOTE_LIMIT}
-                  rows={2}
-                  disabled={saving}
-                  aria-describedby={`${noteId}-count`}
-                  onChange={(event) => setNote(event.currentTarget.value)}
-                />
-                <span id={`${noteId}-count`} className={styles.count}>
-                  {note.length} of {NOTE_LIMIT} characters
-                </span>
-              </div>
+              <Field label="Why are you changing this?" optional>
+                {(control) => (
+                  <>
+                    <Textarea
+                      {...control}
+                      value={note}
+                      maxLength={NOTE_LIMIT}
+                      rows={2}
+                      disabled={saving}
+                      aria-describedby={`${control.id}-count`}
+                      onChange={(event) => setNote(event.currentTarget.value)}
+                    />
+                    <span id={`${control.id}-count`} className={styles.count}>
+                      {note.length} of {NOTE_LIMIT} characters
+                    </span>
+                  </>
+                )}
+              </Field>
 
               {problem ? (
                 <Alert tone="error" role="alert">
@@ -518,9 +519,9 @@ function CheckWithChanges({
         <span id={labelId} className={styles.noteLabel}>
           Person
         </span>
-        <Combobox
+        <MemberPicker
           labelledBy={labelId}
-          options={people.map((p) => ({ id: p.id, label: p.name, description: p.description }))}
+          people={people.map((p) => ({ id: p.id, name: p.name, role: p.description }))}
           value={person}
           onChange={(id) => void pick(id)}
           open={open}

@@ -14,6 +14,7 @@ import { Alert } from './alert';
 import { Field, Input, Textarea } from './field';
 import styles from './quotation.module.css';
 import type { Respondability } from './quotation-status';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * Accept or reject one quotation. A Client Component only so a refusal (409 stale, validation)
@@ -117,7 +118,7 @@ function AcceptForm({
   const [name, setName] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
-  const checkRef = useRef<HTMLInputElement>(null);
+  const checkRef = useRef<HTMLButtonElement>(null);
   const checkId = useId();
 
   useEffect(() => {
@@ -152,14 +153,13 @@ function AcceptForm({
 
       <div>
         <label className={styles.check} htmlFor={checkId}>
-          <input
+          <Checkbox
             ref={checkRef}
             id={checkId}
-            type="checkbox"
             name="confirm"
-            required
+            aria-required="true"
             checked={confirmed}
-            onChange={(e) => setConfirmed(e.target.checked)}
+            onCheckedChange={(nextChecked) => setConfirmed(nextChecked)}
             aria-invalid={state.confirmError ? true : undefined}
             aria-describedby={state.confirmError ? `${checkId}-error` : undefined}
           />

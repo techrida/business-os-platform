@@ -19,7 +19,7 @@ import {
 } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 
-import { decideAssignment } from '../../modules/leads/lead-assignment-rule';
+import { decideAssignment, defaultSalesOwner } from '../../modules/leads/lead-assignment-rule';
 import {
   type AssignmentCandidate,
   loadAssignmentParties,
@@ -60,12 +60,18 @@ export async function defaultLeadOwnerCandidates(
   scope: EntityScope,
   roleCache: RoleCache,
 ): Promise<SettingsPerson[]> {
-  const out: SettingsPerson[] = [];
+  const candidates: AssignmentCandidate[] = [];
   for (const candidate of await loadAssignmentParties(tx, scope)) {
-    if ((await refusal(roleCache, scope, candidate)) === null) {
-      out.push({ userId: candidate.userId, displayName: shownName(candidate.displayName) });
-    }
+    if ((await refusal(roleCache, scope, candidate)) === null) candidates.push(candidate);
   }
+  // The person an unset setting means: the Sales head. Shown instead of a placeholder (BOS-UI-001).
+  const head = defaultSalesOwner(candidates);
+  const out: SettingsPerson[] = candidates.map((candidate) => ({
+    userId: candidate.userId,
+    displayName: shownName(candidate.displayName),
+    role: candidate.role,
+    ...(candidate.userId === head ? { salesHead: true } : {}),
+  }));
   return out.sort(
     (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
   );

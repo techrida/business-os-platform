@@ -7,6 +7,7 @@ import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { choose, click, fill, mountForm, settle, typeKeys } from '@/test/form-interactions';
+import { countryFlag, phoneCountryButton, pickPhoneCountry } from '@/test/phone-field';
 
 import { EMAIL_OR_PHONE, parseLead } from './forms';
 import { LeadForm } from './lead-form';
@@ -78,8 +79,7 @@ const submitButton = (container: HTMLElement) =>
   container.querySelector<HTMLButtonElement>('button[type="submit"]');
 const numberBox = (container: HTMLElement, n: number) =>
   container.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} number"]`)!;
-const countryBox = (container: HTMLElement, n: number) =>
-  container.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} country"]`)!;
+const countryBox = (container: HTMLElement, n: number) => phoneCountryButton(container, n)!;
 
 /** A complete lead, apart from the email and the phones, so parseLead reads what the form posted. */
 async function fillRequired(container: HTMLElement) {
@@ -112,7 +112,7 @@ describe('lead form country and phones', () => {
     expect(container.querySelector<HTMLInputElement>('input[name="address.country"]')?.value).toBe(
       'NP',
     );
-    expect(countryBox(container, 1).value).toBe('+977');
+    expect(countryBox(container, 1).textContent).toBe(countryFlag('NP'));
     expect(numberBox(container, 1).getAttribute('inputmode')).toBe('tel');
     expect(container.querySelector('input[name="phone"]')).toBeNull();
   });
@@ -125,11 +125,11 @@ describe('lead form country and phones', () => {
     expect(container.querySelector<HTMLInputElement>('input[name="address.country"]')?.value).toBe(
       'IN',
     );
-    expect(countryBox(container, 1).value).toBe('+91');
+    expect(countryBox(container, 1).textContent).toBe(countryFlag('IN'));
     expect(container.querySelector<HTMLInputElement>('input[name="phones.0.country"]')?.value).toBe(
       'IN',
     );
-    expect(countryBox(container, 2).value).toBe('+977');
+    expect(countryBox(container, 2).textContent).toBe(countryFlag('NP'));
   });
 
   it('describes the phone list by its hint for screen readers', async () => {
@@ -137,10 +137,12 @@ describe('lead form country and phones', () => {
     const group = numberBox(container, 1).closest('[role="group"][aria-labelledby]')!;
     const label = document.getElementById(group.getAttribute('aria-labelledby')!);
     expect(label?.textContent?.trim()).toBe('Phone');
-    const hints = (group.getAttribute('aria-describedby') ?? '')
+    const notes = (group.getAttribute('aria-describedby') ?? '')
       .split(' ')
       .map((id) => document.getElementById(id)?.textContent);
-    expect(hints).toContain("Optional. Pick each number's country, or type + and its code.");
+    // Optional sits beside the label (UIP-FORM-008), not in a hint under the box.
+    expect(notes).toContain('Optional');
+    expect(notes.join(' ')).not.toContain('Optional.');
   });
 
   it('posts two phones in different countries, which parseLead turns into the contract list', async () => {
@@ -149,7 +151,7 @@ describe('lead form country and phones', () => {
     await fillRequired(container);
     await typeKeys(numberBox(container, 1), '9812345678');
     await click(container.querySelector('button[data-action="add"]'));
-    await pickCountry(countryBox(container, 2), 'United States');
+    await pickPhoneCountry(countryBox(container, 2), 'United States');
     await typeKeys(numberBox(container, 2), '4155552671');
     await click(submitButton(container));
     expect(action).toHaveBeenCalledTimes(1);
@@ -302,7 +304,7 @@ describe('lead form country and phones', () => {
     expect(container.querySelector<HTMLInputElement>('input[name="phones.0.number"]')?.value).toBe(
       '+9779812345678',
     );
-    expect(numberBox(container, 1).value).toBe('9812345678');
+    expect(numberBox(container, 1).value).toBe('+977 9812345678');
   });
 });
 

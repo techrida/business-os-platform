@@ -66,10 +66,12 @@ import { READ_ONLY, withTx, type Actor, type TxScope } from '../../platform/db/t
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
+import { roleLines } from '../../platform/users/person-role';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
-import { loadContactPhones, replaceContactPhones } from './contact-phones';
+import { loadContactPhones, loadPrimaryPhones, replaceContactPhones } from './contact-phones';
 import { customerVisibleWhere } from './customer-read-scope';
+import { VerificationService } from '../verification/verification.service';
 import { CustomersCaller } from './customers.caller';
 import {
   escapeLike,
@@ -285,6 +287,8 @@ export class CustomersService {
     private readonly caller: CustomersCaller,
     private readonly audit: AuditService,
     @Optional() @Inject(CUSTOMERS_CLOCK) private readonly clock: () => Date = () => new Date(),
+    /** Resets a customer's verification case on an identity edit; units that build this service by hand may omit it. */
+    @Optional() private readonly verification?: VerificationService,
   ) {
     // The terms of an entity other than the acting one are read by the caller's live grants in THAT entity.
     this.liveGrants = {
@@ -346,8 +350,18 @@ export class CustomersService {
       scope.tenantId,
       rows.map((r) => r.ownerUserId),
     );
+    // R6A (D8): the primary contact's primary number, one query for the page.
+    const phones = await loadPrimaryPhones(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.id),
+    );
     return {
-      items: rows.map((r) => ({ ...toCustomerDto(r), ownerName: nameIn(names, r.ownerUserId) })),
+      items: rows.map((r) => ({
+        ...toCustomerDto(r),
+        ownerName: nameIn(names, r.ownerUserId),
+        primaryPhone: phones.get(r.id) ?? null,
+      })),
       total,
     };
   }
@@ -421,6 +435,13 @@ export class CustomersService {
       person.roles.push(r.roleKey as RoleKey);
       people.set(r.userId, person);
     }
+    const roles = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => roleLines(tx, scope, [...people.keys()]),
+      READ_ONLY,
+    );
     const out: CustomerOwnerOption[] = [];
     for (const [userId, person] of people) {
       if (
@@ -431,7 +452,11 @@ export class CustomersService {
           'customer.write',
         )
       ) {
-        out.push({ userId, displayName: personLabel(person.displayName) });
+        out.push({
+          userId,
+          displayName: personLabel(person.displayName),
+          role: roles.get(userId) ?? null,
+        });
       }
     }
     return out.sort(
@@ -498,7 +523,12 @@ export class CustomersService {
       actingEntity,
       people,
       can,
-      verification: { exists: caseStatus !== null },
+      // Only a caller who may change the customer learns it is verified (the edit form locks the identity fields; the
+      // API refuses that edit for them anyway), so a reader without write sees no more than the case's existence.
+      verification: {
+        exists: caseStatus !== null,
+        ...(can.write && caseStatus === 'approved' && { approved: true }),
+      },
       portalAccess: customerPortalAccess(row, principal, can, hasPortalUser, caseStatus),
     };
   }
@@ -747,6 +777,29 @@ export class CustomersService {
         this.assertVisible('customer.write', row, principal);
       }
 
+      // What really changes. The tax identity is the legal name, the PAN and the country: once the customer's
+      // verification is approved they are locked, and before approval a change of them voids what was uploaded.
+      const nextPan = fields.panVatNo === undefined ? undefined : normalizePan(fields.panVatNo);
+      const legalNameChanged = fields.legalName !== undefined && fields.legalName !== row.legalName;
+      const panChanged = nextPan !== undefined && nextPan !== row.panVatNo;
+      const countryChanged = fields.country !== undefined && fields.country !== row.country;
+      const identityChanged = legalNameChanged || panChanged || countryChanged;
+      if (identityChanged) {
+        const [verification] = await tx
+          .select({ status: verificationCases.status })
+          .from(verificationCases)
+          .where(
+            and(eq(verificationCases.tenantId, scope.tenantId), eq(verificationCases.partyId, id)),
+          )
+          // Locked, so an approval running now commits first and this edit then reads `approved` (409).
+          .for('update');
+        if (verification?.status === 'approved') {
+          throw new ConflictException({
+            code: 'customer_identity_locked',
+            message: 'The legal name, PAN and country of a verified customer cannot be edited',
+          });
+        }
+      }
       // An address is its street lines, city and country together (FX9), so a new address names its country.
       if (fields.address !== undefined && fields.country === undefined) {
         throw new BadRequestException({
@@ -767,6 +820,23 @@ export class CustomersService {
       const pan = fields.panVatNo === undefined ? undefined : normalizePan(fields.panVatNo);
       if (pan !== undefined) await this.assertPanFree(tx, scope.tenantId, pan, id);
       if (ownerChange) await this.assertUser(tx, scope.tenantId, fields.ownerUserId!);
+      // A PATCH that repeats the stored values writes nothing, so it keeps the version.
+      const changes =
+        identityChanged ||
+        ownerChange ||
+        (fields.industry !== undefined && fields.industry !== row.industry) ||
+        (fields.relationship !== undefined && fields.relationship !== row.relationship) ||
+        (fields.defaultCurrency !== undefined && fields.defaultCurrency !== row.defaultCurrency) ||
+        (fields.address !== undefined &&
+          (fields.address.line !== row.addressLine || fields.address.city !== row.addressCity));
+      if (!changes) {
+        if (row.version !== expectedVersion) {
+          throw new ConflictException(
+            'This record was changed by someone else; reload it and try again',
+          );
+        }
+        return toCustomerDto(row);
+      }
       try {
         const updated = await updateVersioned(tx, customers, id, expectedVersion, {
           ...(fields.legalName !== undefined && {
@@ -800,6 +870,27 @@ export class CustomersService {
             before: { ownerUserId: row.ownerUserId },
             after: { ownerUserId: updated.ownerUserId },
           });
+        }
+        if (identityChanged && this.verification !== undefined) {
+          const caseReset = await this.verification.resetForIdentityChangeInTx(
+            tx,
+            scope,
+            id,
+            'The customer’s legal name, PAN or country changed; upload the documents again.',
+          );
+          if (caseReset) {
+            await this.audit.record(tx, {
+              action: 'customer.verification_reset',
+              entityType: 'customers',
+              entityId: id,
+              before: { legalName: row.legalName, pan: row.panVatNo, country: row.country },
+              after: {
+                legalName: updated.legalName,
+                pan: updated.panVatNo,
+                country: updated.country,
+              },
+            });
+          }
         }
         return toCustomerDto(updated);
       } catch (error) {

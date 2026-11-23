@@ -70,9 +70,15 @@ dev_tools_boundary() {
   node "$CHECKER" "$REPO_ROOT/apps/portal/.next"
 }
 
+# Tracked files must be fit for a public repository (no internal files or private paths; AGPL license fields).
+public_repo_check() {
+  node --test tools/check-public-repo.test.mjs && node tools/check-public-repo.mjs
+}
+
 step install pnpm install --frozen-lockfile
 step build env BOS_BUILD_PROFILE=production BOS_NEXT_DIST_DIR=.next-gate pnpm -r --if-present build
 step dev-tools dev_tools_boundary
+step public-repo public_repo_check
 step typecheck pnpm typecheck
 step lint pnpm lint
 step format:check pnpm format:check

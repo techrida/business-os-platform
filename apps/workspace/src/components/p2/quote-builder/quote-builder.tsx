@@ -19,6 +19,8 @@ import { Card } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Select } from '@/components/ui/field';
+
+import { ContactPicker, type ContactCreate } from '../customers/contact-picker';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -28,6 +30,7 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './actions';
 import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
+import { leaveAction } from './leave-link';
 import { LinesSection } from './lines-section';
 import {
   currencyChoiceText,
@@ -62,6 +65,9 @@ export type BuilderTarget =
 export interface ContactOption {
   id: string;
   label: string;
+  /** The contact's name and what else a search matches (title, email); the picker falls back to `label`. */
+  name?: string;
+  detail?: string | undefined;
 }
 
 interface PreviewView {
@@ -170,6 +176,7 @@ export function QuoteBuilder({
   initial,
   context,
   contacts,
+  createContact = null,
   taxCodes,
   paymentTerms,
   termPresets,
@@ -189,6 +196,8 @@ export function QuoteBuilder({
   context: ReactNode;
   /** null when the contact list failed to load. */
   contacts: readonly ContactOption[] | null;
+  /** When set, the Contact picker's last row adds a contact to the customer and chooses it. */
+  createContact?: ContactCreate | null;
   taxCodes: readonly TaxCode[] | null;
   paymentTerms: readonly PaymentTerm[] | null;
   /** Saved term sets for the Terms fields; null when they could not be loaded (no dropdown is shown). */
@@ -250,6 +259,8 @@ export function QuoteBuilder({
 
   const keyCounter = useRef(1000);
   const leaving = useRef(false);
+  // The link the user clicked while edits are unsaved; set while the leave-without-saving dialog is open.
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
   const latest = useRef(values);
   useEffect(() => {
     latest.current = values;
@@ -452,15 +463,18 @@ export function QuoteBuilder({
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
       const a = (e.target as Element | null)?.closest?.('a[href]');
-      if (!a || a.getAttribute('target') === '_blank' || a.getAttribute('href')?.startsWith('#')) {
+      if (
+        !a ||
+        a.getAttribute('target') === '_blank' ||
+        a.hasAttribute('download') ||
+        a.getAttribute('href')?.startsWith('#')
+      ) {
         return;
       }
-      if (!window.confirm('You have unsaved changes to this quotation. Leave without saving?')) {
-        e.preventDefault();
-        e.stopPropagation();
-      } else {
-        leaving.current = true;
-      }
+      // Hold the click and ask in the design-system dialog; confirming then follows the link.
+      e.preventDefault();
+      e.stopPropagation();
+      setLeaveHref((a as HTMLAnchorElement).href);
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     document.addEventListener('click', onClick, true);
@@ -590,8 +604,29 @@ export function QuoteBuilder({
     }
   }
 
+  function leaveTo(href: string) {
+    leaving.current = true;
+    const action = leaveAction(href, window.location.href);
+    if (action.kind === 'push') router.push(action.path);
+    else window.location.assign(action.href);
+  }
+
   return (
     <div className={styles.layout}>
+      <ConfirmDialog
+        open={leaveHref !== null}
+        onOpenChange={(next) => {
+          if (!next) setLeaveHref(null);
+        }}
+        title="Leave without saving?"
+        description="You have unsaved changes to this quotation. They will be lost if you leave."
+        confirmLabel="Leave"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          if (leaveHref !== null) leaveTo(leaveHref);
+        }}
+      />
       <div className={styles.heading}>
         <PageHeader
           title={title}
@@ -691,27 +726,29 @@ export function QuoteBuilder({
           {context}
           <Field
             label="Contact"
+            optional
             hint={
               contacts === null
                 ? 'The contact list did not load. Reload the page to choose one.'
-                : 'Optional. Who at the customer receives this quotation.'
+                : 'Who at the customer receives this quotation.'
             }
             error={errors['contactId']}
           >
             {(control) => (
-              <Select
+              <ContactPicker
+                control={control}
+                name="contactId"
+                options={(contacts ?? []).map((c) => ({
+                  id: c.id,
+                  name: c.name ?? c.label,
+                  detail: c.detail,
+                }))}
                 value={values.contactId}
-                onChange={(e) => set('contactId')(e.target.value)}
+                onChange={set('contactId')}
+                create={contacts === null ? null : createContact}
                 disabled={contacts === null}
-                {...control}
-              >
-                <option value="">No contact chosen</option>
-                {(contacts ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
+                placeholder="Search a contact"
+              />
             )}
           </Field>
         </Card>
@@ -721,7 +758,7 @@ export function QuoteBuilder({
           description="The issue date, the valid-until date and the currency are required."
         >
           <div className={styles.grid2}>
-            <Field label="Issue date" hint="Required." error={errors['issueDate']}>
+            <Field label="Issue date" error={errors['issueDate']}>
               {(control) => (
                 <DatePicker
                   required
@@ -732,11 +769,7 @@ export function QuoteBuilder({
                 />
               )}
             </Field>
-            <Field
-              label="Valid until"
-              hint="Required. The last day the prices hold; not before the issue date."
-              error={errors['validUntil']}
-            >
+            <Field label="Valid until" error={errors['validUntil']}>
               {(control) => (
                 <DatePicker
                   required
@@ -830,12 +863,13 @@ export function QuoteBuilder({
 
         <Panel
           title="Discount"
-          description="Optional. Applies to the full quotation. Enter a percentage or an amount; the other is worked out from the subtotal."
+          description="Applies to the full quotation. Enter a percentage or an amount; the other is worked out from the subtotal."
         >
           <div className={styles.sectionBody}>
             <div className={styles.grid2}>
               <Field
                 label="Discount %"
+                optional
                 hint="A discount above 12% of the subtotal needs extra approval."
                 error={values.discountMode !== 'amount' ? discountError : undefined}
               >
@@ -850,6 +884,7 @@ export function QuoteBuilder({
               </Field>
               <Field
                 label={`Discount amount (${values.currency})`}
+                optional
                 error={
                   values.discountMode === 'amount'
                     ? pair.overBase && base !== null
@@ -886,10 +921,11 @@ export function QuoteBuilder({
             <div className={styles.grid2}>
               <Field
                 label="Payment term"
+                optional
                 hint={
                   paymentTerms === null
                     ? 'The payment terms did not load. Reload the page to choose one.'
-                    : "Optional. Defaults to the customer's term when left empty."
+                    : "Defaults to the customer's term when left empty."
                 }
                 error={errors.paymentTermId}
               >
@@ -956,14 +992,12 @@ export function QuoteBuilder({
 
         <Panel
           title="Terms"
-          description={
-            termPresets?.length
-              ? 'All optional. A saved option fills the box; edit the text freely after.'
-              : 'All optional.'
-          }
+          {...(termPresets?.length
+            ? { description: 'A saved option fills the box; edit the text freely after.' }
+            : {})}
         >
           <div className={styles.sectionBody}>
-            <Field label="Scope" hint="Optional. What is included." error={errors['scope']}>
+            <Field label="Scope" optional hint="What is included." error={errors['scope']}>
               {(control) => (
                 <TermsField
                   kind="scope"
@@ -980,7 +1014,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Assumptions"
-              hint="Optional. What the price and plan rely on."
+              optional
+              hint="What the price and plan rely on."
               error={errors['assumptions']}
             >
               {(control) => (
@@ -999,7 +1034,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Exclusions"
-              hint="Optional. What is not included."
+              optional
+              hint="What is not included."
               error={errors['exclusions']}
             >
               {(control) => (
@@ -1018,7 +1054,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Delivery timeline"
-              hint="Optional. When the work is delivered."
+              optional
+              hint="When the work is delivered."
               error={errors['deliveryTimeline']}
             >
               {(control) => (
@@ -1037,7 +1074,8 @@ export function QuoteBuilder({
             </Field>
             <Field
               label="Terms and conditions"
-              hint="Optional. The conditions that apply to this quotation."
+              optional
+              hint="The conditions that apply to this quotation."
               error={errors['termsAndConditions']}
             >
               {(control) => (

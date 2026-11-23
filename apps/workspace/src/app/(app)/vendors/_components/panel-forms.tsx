@@ -2,13 +2,24 @@
 
 import type { CountryCode, PartyPhoneInput, VendorStatus } from '@bos/contracts';
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useActionState,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Combobox } from '@/components/ui/combobox';
+import type { ComboboxOption } from '@/components/ui/combobox-model';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { CountrySelect } from '@/components/ui/country-select';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Input, Textarea } from '@/components/ui/field';
 import fieldStyles from '@/components/ui/field.module.css';
 import { PhoneListInput, type PhoneRowProblem } from '@/components/ui/phone-list-input';
 import { toast } from '@/components/ui/toast';
@@ -25,6 +36,7 @@ import { EMPTY_BANK_VALUES, type BankField, type ContactField } from '../_lib/fo
 import type { LifecycleOption } from '../_lib/model';
 import { panelStart, type PanelState } from '../_lib/state';
 import styles from '../vendors.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * The small forms on the vendor detail page. Each is a Client Component only so a refusal shows
@@ -73,26 +85,49 @@ export function ContactForm({
   vendorId,
   vendorCountry,
   idempotencyKey,
+  initialName,
+  onAdded,
+  onCancel,
 }: {
   vendorId: string;
   /** A new contact starts in the vendor's country; the person can pick another. */
   vendorCountry: CountryCode;
   idempotencyKey: string;
+  /** Fills Name when the form opens from a picker's `Create "<typed>"`. */
+  initialName?: string;
+  /** Called once the contact is saved, so a form that opened this one can step back to its own fields. */
+  onAdded?: () => void;
+  /** Adds a Cancel button that goes back to wherever this form was opened from. */
+  onCancel?: () => void;
 }) {
   const [state, formAction, pending] = useActionState<PanelState<ContactField>, FormData>(
     addContactAction,
     panelStart<ContactField>(idempotencyKey),
   );
+  const notifyAdded = useEffectEvent(() => onAdded?.());
+  useEffect(() => {
+    if (state.savedCount > 0) notifyAdded();
+  }, [state.savedCount]);
   return (
     <form action={formAction} noValidate className={styles.panelForm}>
       <input type="hidden" name="vendorId" value={vendorId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <Notice state={state} reloadHref={`/vendors/${vendorId}`} title="Contact not saved" />
-      <ContactFields key={state.savedCount} errors={state.errors} vendorCountry={vendorCountry} />
+      <ContactFields
+        key={state.savedCount}
+        errors={state.errors}
+        vendorCountry={vendorCountry}
+        initialName={initialName ?? ''}
+      />
       <div className={styles.actions}>
         <Button type="submit" variant="secondary" disabled={pending}>
           {pending ? 'Saving' : 'Add contact'}
         </Button>
+        {onCancel ? (
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        ) : null}
       </div>
     </form>
   );
@@ -103,11 +138,13 @@ const PHONES_UNFINISHED = 'Finish or remove the phone number marked below.';
 function ContactFields({
   errors,
   vendorCountry,
+  initialName,
 }: {
   errors: PanelState<ContactField>['errors'];
   vendorCountry: CountryCode;
+  initialName: string;
 }) {
-  const [v, setV] = useState({ name: '', email: '', role: '', isPortalAdmin: false });
+  const [v, setV] = useState({ name: initialName, email: '', role: '', isPortalAdmin: false });
   const [country, setCountry] = useState<CountryCode>(vendorCountry);
   // The valid numbers so far. They are the list's `defaultValue`, so the reset React runs after a refused
   // submit puts them back instead of wiping them; a save remounts this block (keyed on `savedCount`).
@@ -156,12 +193,22 @@ function ContactFields({
             />
           )}
         </Field>
-        <Field label="Role" hint="Optional, for example Accounts." error={errors.role}>
-          {(c) => <Input name="role" value={v.role} onChange={set('role')} maxLength={80} {...c} />}
+        <Field label="Role" optional error={errors.role}>
+          {(c) => (
+            <Input
+              name="role"
+              value={v.role}
+              onChange={set('role')}
+              maxLength={80}
+              placeholder="Accounts"
+              {...c}
+            />
+          )}
         </Field>
         <Field
           label="Email"
-          hint="Optional. Needed if this person will get portal access."
+          optional
+          hint="Needed if this person will get portal access."
           error={errors.email}
         >
           {(c) => (
@@ -195,9 +242,12 @@ function ContactFields({
           )}
         </Field>
         <div className={styles.wide}>
-          <span id={phonesLabel} className={fieldStyles.label}>
-            Phone numbers (optional)
-          </span>
+          <div className={fieldStyles.labelRow}>
+            <span id={phonesLabel} className={fieldStyles.label}>
+              Phone numbers
+            </span>
+            <span className={fieldStyles.optional}>Optional</span>
+          </div>
           <PhoneListInput
             name="phones"
             aria-labelledby={phonesLabel}
@@ -214,11 +264,10 @@ function ContactFields({
         </div>
       </div>
       <label className={styles.check}>
-        <input
-          type="checkbox"
+        <Checkbox
           name="isPortalAdmin"
           checked={v.isPortalAdmin}
-          onChange={(e) => setV((x) => ({ ...x, isPortalAdmin: e.target.checked }))}
+          onCheckedChange={(nextChecked) => setV((x) => ({ ...x, isPortalAdmin: nextChecked }))}
         />
         Marks this person as the vendor’s portal administrator
       </label>
@@ -408,30 +457,32 @@ function BankFields({ errors }: { errors: PanelState<BankField>['errors'] }) {
           />
         )}
       </Field>
-      <Field label="Branch" hint="Optional." error={errors.branch}>
+      <Field label="Branch" optional error={errors.branch}>
         {(c) => (
           <Input name="branch" value={v.branch} onChange={set('branch')} maxLength={120} {...c} />
         )}
       </Field>
-      <Field label="Account name" hint="As held at the bank." error={errors.accountName}>
+      <Field label="Account name" error={errors.accountName}>
         {(c) => (
           <Input
             name="accountName"
             value={v.accountName}
             onChange={set('accountName')}
             maxLength={160}
+            placeholder="As held at the bank"
             required
             {...c}
           />
         )}
       </Field>
-      <Field label="Account number" hint="Spaces are ignored." error={errors.accountNumber}>
+      <Field label="Account number" error={errors.accountNumber}>
         {(c) => (
           <Input
             name="accountNumber"
             value={v.accountNumber}
             onChange={set('accountNumber')}
             maxLength={50}
+            placeholder="0012 3456 7890"
             autoComplete="off"
             spellCheck={false}
             className={styles.numeric}
@@ -440,13 +491,14 @@ function BankFields({ errors }: { errors: PanelState<BankField>['errors'] }) {
           />
         )}
       </Field>
-      <Field label="SWIFT code" hint="Optional, for foreign banks." error={errors.swift}>
+      <Field label="SWIFT code" optional error={errors.swift}>
         {(c) => (
           <Input
             name="swift"
             value={v.swift}
             onChange={set('swift')}
             maxLength={11}
+            placeholder="NABILNPKA"
             autoComplete="off"
             spellCheck={false}
             {...c}
@@ -703,24 +755,62 @@ export function BankDecision({
 export interface PortalContactOption {
   id: string;
   label: string;
+  /** Shown beside the name; the invitation goes here. */
+  email: string | null;
   /** A contact without an email cannot be invited. */
   hasEmail: boolean;
 }
 
+/**
+ * Pick the contact who gets portal access: one search-as-you-type box, the email beside each name. When nobody
+ * matches (or the person is new), the last row is `Create "<typed>"`: it swaps this form for the add-contact
+ * fields with that name filled in, and a saved contact brings the picker back with them in the list.
+ */
 export function PortalForm({
   vendorId,
+  vendorCountry,
   contacts,
   idempotencyKey,
+  addContactKey,
 }: {
   vendorId: string;
+  /** A contact created from the picker starts in the vendor's country. */
+  vendorCountry: CountryCode;
   contacts: PortalContactOption[];
   idempotencyKey: string;
+  /** The Idempotency-Key for the add-contact form this picker can open. */
+  addContactKey: string;
 }) {
   const [state, formAction, pending] = useActionState<PanelState, FormData>(
     grantPortalAction,
     panelStart(idempotencyKey),
   );
   const [choice, setChoice] = useState('');
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState<string | null>(null);
+  const options = useMemo<ComboboxOption[]>(
+    () =>
+      contacts.map((o) => ({
+        id: o.id,
+        label: o.label,
+        description: o.email ?? 'No email',
+        disabled: !o.hasEmail,
+        disabledReason: 'Add an email to this contact to invite them',
+      })),
+    [contacts],
+  );
+  if (creating !== null) {
+    return (
+      <ContactForm
+        vendorId={vendorId}
+        vendorCountry={vendorCountry}
+        idempotencyKey={addContactKey}
+        initialName={creating}
+        onAdded={() => setCreating(null)}
+        onCancel={() => setCreating(null)}
+      />
+    );
+  }
   return (
     <form action={formAction} noValidate className={styles.panelForm}>
       <input type="hidden" name="vendorId" value={vendorId} />
@@ -732,20 +822,30 @@ export function PortalForm({
         error={state.errors.contactId}
       >
         {(c) => (
-          <Select
+          <Combobox
+            id={c.id}
             name="contactId"
+            labelledBy={c['aria-labelledby']}
+            describedBy={c['aria-describedby']}
+            invalid={c['aria-invalid'] === true}
+            searchIcon
+            keepOrder
+            // Contacts have no group: a long list stays flat instead of showing an "Unassigned" header.
+            groupThreshold={Number.POSITIVE_INFINITY}
+            options={options}
             value={choice}
-            onChange={(e) => setChoice(e.target.value)}
-            {...c}
-          >
-            <option value="">Choose a contact</option>
-            {contacts.map((o) => (
-              <option key={o.id} value={o.id} disabled={!o.hasEmail}>
-                {o.label}
-                {o.hasEmail ? '' : ' (no email)'}
-              </option>
-            ))}
-          </Select>
+            onChange={setChoice}
+            open={open}
+            onOpenChange={setOpen}
+            placeholder="Search by name or email"
+            emptyText="No contacts yet. Type a name to add one."
+            noMatchText="No contact matches."
+            addOption={{
+              always: true,
+              label: (text) => `Create "${text}"`,
+              onAdd: (text) => setCreating(text),
+            }}
+          />
         )}
       </Field>
       <div className={styles.actions}>

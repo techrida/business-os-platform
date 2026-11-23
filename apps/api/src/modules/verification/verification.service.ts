@@ -71,6 +71,8 @@ import {
   checklistKeysFor,
   defaultChecklistFor,
   documentProblems,
+  documentsBeforeReset,
+  FILE_BEFORE_CHANGE_MESSAGE,
   isEditable,
   missingRequired,
   reopenChecklist,
@@ -365,9 +367,6 @@ export class VerificationService implements OnModuleInit {
       l.row.submittedByUserId === this.caller.current().principal.userId
         ? 'The submitter cannot review this case.'
         : null;
-    if (l.row.partyKind === 'vendor') {
-      return { ...toVerificationCaseDto(l.row), ...label, can, reviewBlockedReason };
-    }
     const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
     const used = new Set(checklistOf(l.row).map((i) => i.documentId));
     const latest = new Map<string, (typeof versions)[number]>();
@@ -377,6 +376,20 @@ export class VerificationService implements OnModuleInit {
         (!latest.has(v.documentId) || latest.get(v.documentId)!.version < v.version)
       )
         latest.set(v.documentId, v);
+    const reset = {
+      identityReset: await this.identityResetOf(scope.tenantId, l.row),
+      beforeChangeDocumentIds: [...documentsBeforeReset(versions, l.row.identityResetAt)],
+    };
+    if (l.row.partyKind === 'vendor') {
+      return {
+        ...toVerificationCaseDto(l.row),
+        ...label,
+        can,
+        reviewBlockedReason,
+        looseEvidence: [...latest.values()],
+        ...reset,
+      };
+    }
     const items = checklistOf(l.row);
     const eligible = versions.filter((v) => v.status !== 'rejected');
     const evidenceReady = items
@@ -425,6 +438,26 @@ export class VerificationService implements OnModuleInit {
           : [],
       looseEvidence: [...latest.values()],
       reviewBlockedReason,
+      ...reset,
+    };
+  }
+
+  /** Who reset the case by changing the party's identity, and when; null for a case that never was reset. */
+  private async identityResetOf(
+    tenantId: string,
+    row: Pick<CaseRow, 'identityResetAt' | 'identityResetByUserId' | 'status'>,
+  ): Promise<{ at: string; by: string; byName: string | null } | null> {
+    if (row.identityResetAt === null || row.identityResetByUserId === null) return null;
+    // The note says "upload the documents again": it goes once the case is submitted again or decided.
+    if (row.status !== 'draft' && row.status !== 'rejected') return null;
+    const [user] = await this.db
+      .select({ name: users.displayName })
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.id, row.identityResetByUserId)));
+    return {
+      at: row.identityResetAt.toISOString(),
+      by: row.identityResetByUserId,
+      byName: user?.name ?? null,
     };
   }
 
@@ -590,6 +623,73 @@ export class VerificationService implements OnModuleInit {
     });
   }
 
+  /**
+   * Resets a party's verification case after a change of its identity (legal name, PAN, kind or country) before
+   * approval, inside the caller's transaction, so the party and its case change together. Authorization is the
+   * caller's (it holds the party's write permission). The case goes back to draft with every checklist row emptied:
+   * every required document is uploaded and reviewed again. For a customer's document-review case the review round
+   * moves on too, which closes the old round: no earlier approval counts for the new one. The files stay on the
+   * case as history, marked "before the change" by `identity_reset_at`, and cannot be put on the checklist again
+   * (documentsBeforeReset). Returns whether a case was reset: no case, or a case with nothing on it (a draft with no
+   * file, a rejected or expired one with none) already needs documents and stays as it is. `note` is what the
+   * party's users read as the case's note.
+   */
+  async resetForIdentityChangeInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    partyId: string,
+    note: string,
+  ): Promise<boolean> {
+    const [existing] = await tx
+      .select({ id: verificationCases.id })
+      .from(verificationCases)
+      .where(
+        and(eq(verificationCases.tenantId, scope.tenantId), eq(verificationCases.partyId, partyId)),
+      );
+    if (existing === undefined) return false;
+    const l = await this.lock(tx, scope.tenantId, existing.id);
+    const items = checklistOf(l.row);
+    // A file uploaded to the case but not yet on the checklist also counts: it was sent for the old details.
+    const holdsDocuments =
+      items.some((i) => i.documentId !== null) ||
+      (await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, l.row.id, tx)).length > 0;
+    if (l.row.status !== 'submitted' && l.row.status !== 'approved' && !holdsDocuments)
+      return false;
+    await this.preserveLegacyDecision(tx, l.row);
+    const emptied = items.map((i) => ({
+      key: i.key,
+      required: i.required,
+      status: 'missing' as const,
+      documentId: null,
+      expiresOn: null,
+    }));
+    const documentReview = l.row.reviewPolicy === 'document_review_v1';
+    const actorUserId = this.caller.current().principal.userId;
+    // The database's clock, as the files' own timestamps are: a file registered before this transaction is older.
+    const dbNow = await tx.execute<{ at: Date }>(sql`select now() as at`);
+    const resetAt = new Date(dbNow.rows[0]!.at);
+    const updated = await updateVersioned(tx, verificationCases, l.row.id, l.row.version, {
+      status: 'draft',
+      checklist: emptied,
+      reviewerUserId: null,
+      decidedAt: null,
+      reason: note,
+      ...(documentReview && { reviewRound: l.row.reviewRound + 1 }),
+      identityResetAt: resetAt,
+      identityResetByUserId: actorUserId,
+      updatedAt: this.now(),
+    });
+    await this.audit.record(tx, {
+      action: 'verification.returned_to_draft',
+      entityType: 'verification_case',
+      entityId: updated.id,
+      before: { status: l.row.status, version: l.row.version },
+      after: { status: 'draft', version: updated.version },
+      meta: { partyId, note },
+    });
+    return true;
+  }
+
   // ---------------------------------------------------------------------------------------------- checklist
 
   /**
@@ -632,6 +732,9 @@ export class VerificationService implements OnModuleInit {
           code: 'unprocessable',
           message: 'documentId is not a document of this verification case',
         });
+      }
+      if (documentsBeforeReset(versions, l.row.identityResetAt).has(body.documentId)) {
+        throw conflict(FILE_BEFORE_CHANGE_MESSAGE);
       }
       await assertNotInfected(tx, scope, [body.documentId]);
       const before = checklistOf(l.row);
@@ -1037,6 +1140,9 @@ export class VerificationService implements OnModuleInit {
         throw conflict('Only unattached files in an editable case can be removed');
       const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id, tx);
       if (!versions.some((v) => v.documentId === documentId)) throw notFound('Document');
+      if (documentsBeforeReset(versions, loaded.row.identityResetAt).has(documentId)) {
+        throw conflict('A file from before the details changed stays on the case as history');
+      }
       return this.documents.removeInTransaction(tx, scope, documentId);
     });
     await this.documents.cleanupRemoved(cleanup);

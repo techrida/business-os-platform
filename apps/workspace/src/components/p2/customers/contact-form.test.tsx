@@ -4,6 +4,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { click, fill, mountForm, submit, typeKeys } from '@/test/form-interactions';
+import { countryFlag, phoneFlag } from '@/test/phone-field';
 
 import { ContactForm, PRIMARY_TAKEN_REASON } from './contact-form';
 import type { ContactFormState } from './form-state';
@@ -53,10 +54,10 @@ async function mount(
 }
 
 const box = (root: HTMLElement) =>
-  root.querySelector<HTMLInputElement>('input[type="checkbox"][name="isPrimary"]')!;
+  root.querySelector<HTMLButtonElement>('button[role="checkbox"]')!;
 
-const phoneBox = (root: ParentNode, n: number, part: 'number' | 'country' = 'number') =>
-  root.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} ${part}"]`);
+const phoneBox = (root: ParentNode, n: number) =>
+  root.querySelector<HTMLInputElement>(`input[aria-label="Phone ${n} number"]`);
 
 /** Types an international number the way a person does: `+` first, then the rest. */
 async function typeInternational(root: ParentNode, n: number, rest: string) {
@@ -108,7 +109,7 @@ describe('the main-contact box (demo feedback: a second primary answered 409)', 
     expect(box(root).disabled).toBe(false);
     expect(box(root).hasAttribute('aria-describedby')).toBe(false);
     await click(box(root));
-    expect(box(root).checked).toBe(true);
+    expect(box(root).getAttribute('aria-checked')).toBe('true');
   });
 
   it('shows a lost race as an error toast, not an inline alert', async () => {
@@ -139,6 +140,25 @@ describe('the email of a new contact', () => {
     expect(email.required).toBe(false);
     expect(root.querySelector('input[name="requireEmail"]')).toBeNull();
   });
+
+  it('shows "Optional" beside the label of each field that may stay empty, never as a hint (UIP-FORM-008)', async () => {
+    const root = await mount({ requireEmail: false });
+    const row = (text: string) =>
+      [...root.querySelectorAll('label')].find((l) => l.textContent === text)?.parentElement
+        ?.textContent;
+    expect(row('Job title')).toBe('Job titleOptional');
+    expect(row('Email')).toBe('EmailOptional');
+    expect(row('Phone')).toBe('PhoneOptional');
+    expect(row('Full name')).toBe('Full name');
+    expect(root.textContent).not.toContain('Optional.');
+    expect(root.textContent).not.toContain("Pick each number's country");
+  });
+
+  it('keeps no "Optional" marker on the email when it is required', async () => {
+    const root = await mount({ requireEmail: true });
+    const label = [...root.querySelectorAll('label')].find((l) => l.textContent === 'Email');
+    expect(label?.parentElement?.textContent).toBe('Email');
+  });
 });
 
 describe('the phones and country of a new contact (FX9)', () => {
@@ -159,7 +179,7 @@ describe('the phones and country of a new contact (FX9)', () => {
   it('posts +1 4155552671 typed into a Nepal row as a US number', async () => {
     const action = recordingAction();
     const root = await mount({}, action);
-    expect(phoneBox(root, 1, 'country')?.value).toBe('+977');
+    expect(phoneFlag(root, 1)).toBe(countryFlag('NP'));
     await typeInternational(root, 1, '1 4155552671');
     await submit(root);
     expect(postedPhones(action.mock.calls[0]?.[1])).toEqual([
@@ -171,7 +191,7 @@ describe('the phones and country of a new contact (FX9)', () => {
     const action = recordingAction();
     const root = await mount({ customerCountry: 'IN' }, action);
     expect(countryBox(root).getAttribute('aria-labelledby')).toBeTruthy();
-    expect(phoneBox(root, 1, 'country')?.value).toBe('+91');
+    expect(phoneFlag(root, 1)).toBe(countryFlag('IN'));
     await fill(root.querySelector('[name="fullName"]'), 'Sita Rai');
     await submit(root);
     expect(action.mock.calls[0]?.[1].get('country')).toBe('IN');
@@ -252,6 +272,7 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
     'ResizeObserver',
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -275,7 +296,7 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
   const email = dialog?.querySelector<HTMLInputElement>('[name="email"]') ?? null;
   const footerSubmit = dialog?.querySelector('footer button[type="submit"]') ?? null;
   expect(email?.required).toBe(true);
-  expect(dialog?.querySelector<HTMLInputElement>('[name="isPrimary"]')?.disabled).toBe(true);
+  expect(dialog?.querySelector<HTMLButtonElement>('button[role="checkbox"]')?.disabled).toBe(true);
 
   await fill(fullName, 'Sita Rai');
   await typeInternational(dialog!, 1, '1 4155552671');
@@ -285,7 +306,7 @@ it('submits from the dialog footer, keeping a refused draft and closing after a 
   expect(dialog?.querySelector<HTMLInputElement>('[name="phones.0.number"]')?.value).toBe(
     '+14155552671',
   );
-  expect(phoneBox(dialog!, 1)?.value).toBe('4155552671');
+  expect(phoneBox(dialog!, 1)?.value).toBe('+1 415 555 2671');
   expect(action.mock.calls[0]?.[1].get('requireEmail')).toBe('yes');
   expect(fullName?.value).toBe('Sita Rai');
   expect(email?.getAttribute('aria-invalid')).toBe('true');

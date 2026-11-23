@@ -100,7 +100,7 @@ export function BankForm({
             />
           )}
         </Field>
-        <Field label="Branch (optional)" error={fe.branch}>
+        <Field label="Branch" optional error={fe.branch}>
           {(control) => (
             <Input
               name="branch"
@@ -129,11 +129,7 @@ export function BankForm({
       </Field>
 
       <div className={styles.grid}>
-        <Field
-          label="Account number"
-          hint="6 to 34 letters, digits or hyphens."
-          error={fe.accountNumber}
-        >
+        <Field label="Account number" error={fe.accountNumber}>
           {(control) => (
             <Input
               name="accountNumber"
@@ -142,17 +138,14 @@ export function BankForm({
               spellCheck={false}
               required
               maxLength={40}
+              placeholder="0012345678901"
               value={values.accountNumber}
               onChange={set('accountNumber')}
               {...control}
             />
           )}
         </Field>
-        <Field
-          label="Account number again"
-          hint="Type it a second time to be sure."
-          error={fe.confirmAccountNumber}
-        >
+        <Field label="Account number again" error={fe.confirmAccountNumber}>
           {(control) => (
             <Input
               name="confirmAccountNumber"
@@ -169,7 +162,7 @@ export function BankForm({
         </Field>
       </div>
 
-      <Field label="SWIFT code (optional)" hint="For an account outside Nepal." error={fe.swift}>
+      <Field label="SWIFT code" optional hint="For an account outside Nepal." error={fe.swift}>
         {(control) => (
           <Input
             name="swift"
@@ -177,6 +170,7 @@ export function BankForm({
             autoCapitalize="characters"
             spellCheck={false}
             maxLength={11}
+            placeholder="NABILNPKA"
             value={values.swift}
             onChange={set('swift')}
             {...control}

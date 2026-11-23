@@ -7,7 +7,7 @@
 // polls with a backoff until the picture can be served. Once it is, the other avatars of the record on the page are
 // told to try again and the caller refreshes a second time.
 import { IMAGE_ACCEPT, IMAGE_HINT, imagePath, type ImageOwnerType } from '@bos/contracts';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { announceImageReady, Avatar, type AvatarSize } from './avatar';
 import { Button } from './button';
@@ -75,6 +75,16 @@ export interface ImageUploadProps {
    * head of a record's profile card. Initials, preview and scanning state are the same at either size.
    */
   size?: Extract<AvatarSize, 'large' | 'xlarge'> | undefined;
+  /**
+   * Drawn instead of the initials while there is no picture: a clearly marked example for a slot that has nothing
+   * yet (the company logo variants). It must carry its own screen-reader text saying the slot is empty.
+   */
+  placeholder?: ReactNode;
+  /**
+   * The colour the picture sits on, for a logo made for one kind of background (a white logo on near-black). It
+   * replaces the white behind the picture and in its preview.
+   */
+  stageBackground?: string | undefined;
 }
 
 /**
@@ -106,6 +116,8 @@ export function ImageUpload({
   disabled = false,
   readOnly = false,
   size = 'large',
+  placeholder,
+  stageBackground,
 }: ImageUploadProps) {
   const ids = useId();
   const titleId = `${ids}-title`;
@@ -275,8 +287,17 @@ export function ImageUpload({
       size={size}
       shape={shape}
       fit={fit}
+      {...(stageBackground
+        ? {
+            style: {
+              '--avatar-image-bg': stageBackground,
+              '--avatar-fill': stageBackground,
+            } as CSSProperties,
+          }
+        : {})}
     />
   );
+  const shown = !hasPicture && placeholder ? placeholder : avatar;
 
   const picture: ReactNode = previewable ? (
     <Dialog
@@ -317,11 +338,11 @@ export function ImageUpload({
         </>
       }
     >
-      <PreviewStage documentId={imageDocumentId} name={name} />
+      <PreviewStage documentId={imageDocumentId} name={name} background={stageBackground} />
     </Dialog>
   ) : (
     <span className={styles.picture} data-shape={shape} data-static="true">
-      {avatar}
+      {shown}
       <BusyVeil busy={busy} />
     </span>
   );
@@ -427,11 +448,19 @@ export function ImageUpload({
 }
 
 /** The large picture in the preview dialog, whole and in its own proportions. */
-function PreviewStage({ documentId, name }: { documentId: string | null; name: string }) {
+function PreviewStage({
+  documentId,
+  name,
+  background,
+}: {
+  documentId: string | null;
+  name: string;
+  background?: string | undefined;
+}) {
   const src = documentId ? imagePath(documentId) : null;
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   return (
-    <div className={styles.stage}>
+    <div className={styles.stage} style={background ? { background } : undefined}>
       {src && failedSrc !== src ? (
         // eslint-disable-next-line @next/next/no-img-element -- same-origin proxied picture; next/image adds nothing here
         <img

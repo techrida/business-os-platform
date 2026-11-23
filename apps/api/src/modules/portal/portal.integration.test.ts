@@ -527,6 +527,45 @@ describe('portal reads on a real database', () => {
     });
   });
 
+  it('says no longer open (409) on an expired version that was revised and whose revision was then cancelled, and drops it from the list (R6D)', async () => {
+    const w = await seedWorld();
+    const v1 = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const scope = { tenantId: w.tenantId, organizationId: w.entityA };
+    // Expired, then revised: an expired version stays `expired` (only Approved and Sent become superseded).
+    const v2Id = await withTx(db, scope, seedActor(), async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.quotation_versions SET status = 'expired' WHERE id = ${v1.versionId}::uuid`,
+      );
+      const draftId = await insertDraft(tx, w, w.entityA, v1.quotationId, 2, v1.versionId);
+      await tx.execute(sql`
+        UPDATE app.quotation_versions SET superseded_by_version_id = ${draftId}::uuid
+         WHERE id = ${v1.versionId}::uuid`);
+      await tx.execute(sql`
+        UPDATE app.quotations SET current_version_id = ${draftId}::uuid WHERE id = ${v1.quotationId}::uuid`);
+      return draftId;
+    });
+    const portal = serviceFor(customerOf(w, w.entityA, w.partyP));
+    // While the revision is open the customer still sees the expired quotation.
+    expect((await portal.list()).map((i) => [i.id, i.status])).toEqual([[v1.versionId, 'expired']]);
+
+    await withTx(db, scope, seedActor(), async (tx) => {
+      await tx.execute(sql`
+        UPDATE app.quotation_versions
+           SET status = 'cancelled', cancelled_at = now(), cancel_reason = 'Opportunity marked lost: Price'
+         WHERE id = ${v2Id}::uuid`);
+    });
+
+    expect(await portal.list()).toEqual([]);
+    expect(await refusal(portal.get(v1.versionId))).toEqual({
+      status: 409,
+      body: { code: 'quotation_closed', message: 'This quotation is no longer open' },
+    });
+    expect(await refusal(portal.quotationPdfLink(v1.versionId))).toEqual({
+      status: 409,
+      body: { code: 'quotation_closed', message: 'This quotation is no longer open' },
+    });
+  });
+
   it('never shows a version that was approved but never sent, once it was revised or expired (R6D visibility)', async () => {
     const w = await seedWorld();
     const revisedUnsent = await seedQuotation(w, w.entityA, w.partyP, 'approved');

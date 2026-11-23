@@ -14,6 +14,7 @@ import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ProcurementFormActions } from '../../form-actions';
+import { PickExisting } from '../../pick-existing';
 import styles from '../../requests/requests.module.css';
 import {
   emptyQuoteValues,
@@ -24,6 +25,7 @@ import {
 import type { RfqFormState } from '../_lib/state';
 import type { VendorOption } from './rfq-form';
 import rows from './line-rows.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const WIDE = styles.wide ?? '';
 
@@ -211,20 +213,17 @@ export function QuoteForm({
             <>
               <Field label="Vendor" hint="Only invited vendors." error={err.vendorId}>
                 {(control) => (
-                  <Select
+                  <PickExisting
+                    control={control}
                     name="vendorId"
+                    options={vendors.map((v) => ({ id: v.id, label: v.name }))}
                     value={values.vendorId}
-                    onChange={set('vendorId')}
+                    onChange={(id) => set('vendorId')({ target: { value: id } })}
                     required
-                    {...control}
-                  >
-                    <option value="">Choose a vendor</option>
-                    {vendors.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name}
-                      </option>
-                    ))}
-                  </Select>
+                    placeholder="Search an invited vendor"
+                    emptyText="No vendor has been invited to this RFQ."
+                    noMatchText="No invited vendor matches."
+                  />
                 )}
               </Field>
               <EvidenceUpload
@@ -239,10 +238,11 @@ export function QuoteForm({
               />
             </>
           ) : null}
-          <Field label="Vendor’s reference" hint="Optional." error={err.vendorRef}>
+          <Field label="Vendor’s reference" optional error={err.vendorRef}>
             {(control) => (
               <Input
                 name="vendorRef"
+                placeholder="QT-2083-114"
                 value={values.vendorRef}
                 onChange={set('vendorRef')}
                 maxLength={100}
@@ -266,7 +266,7 @@ export function QuoteForm({
               </Select>
             )}
           </Field>
-          <Field label="Valid until" hint="Optional." error={err.validUntil}>
+          <Field label="Valid until" optional error={err.validUntil}>
             {(control) => (
               <DatePicker
                 {...control}
@@ -276,11 +276,12 @@ export function QuoteForm({
               />
             )}
           </Field>
-          <Field label="Delivery time (days)" hint="Optional." error={err.deliveryDays}>
+          <Field label="Delivery time (days)" optional error={err.deliveryDays}>
             {(control) => (
               <DecimalInput
                 {...control}
                 name="deliveryDays"
+                placeholder="14"
                 intDigits={4}
                 scale={0}
                 min="0"
@@ -290,10 +291,11 @@ export function QuoteForm({
               />
             )}
           </Field>
-          <Field label="Warranty" hint="Optional." error={err.warranty} className={WIDE}>
+          <Field label="Warranty" optional error={err.warranty} className={WIDE}>
             {(control) => (
               <Input
                 name="warranty"
+                placeholder="12 months from delivery"
                 value={values.warranty}
                 onChange={set('warranty')}
                 maxLength={500}
@@ -301,7 +303,7 @@ export function QuoteForm({
               />
             )}
           </Field>
-          <Field label="Terms" hint="Optional." error={err.terms} className={WIDE}>
+          <Field label="Terms" optional error={err.terms} className={WIDE}>
             {(control) => (
               <RichTextEditor
                 name="terms"
@@ -355,11 +357,11 @@ export function QuoteForm({
                   <div className={rows.fields}>
                     <div className={rows.item}>
                       <label className={rows.include}>
-                        <input
-                          type="checkbox"
+                        <Checkbox
+                          className={rows.includeBox}
                           name={`lines.${i}.include`}
                           checked={line.include}
-                          onChange={(e) => setLine(i, { include: e.target.checked })}
+                          onCheckedChange={(nextChecked) => setLine(i, { include: nextChecked })}
                         />
                         <span className={rows.item}>
                           <span className="sr-only">Quote line {pl.lineNo}: </span>

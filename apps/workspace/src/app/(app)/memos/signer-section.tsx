@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'rea
 
 import { Button } from '@/components/ui/button';
 import { useExclusiveOpen } from '@/components/ui/combobox';
+import { MemberPicker } from '@/components/ui/member-picker';
 
 import { approverHint, ruleApproverChoices } from './approver-rule';
 import { PlusIcon, TrashIcon } from './memo-icons';
@@ -16,7 +17,7 @@ import {
   type RecommenderRows,
 } from './signer-rows';
 import styles from './memo-template.module.css';
-import { approverChoices, StaffPicker } from './staff-picker';
+import { approverChoices, memoMembers } from './memo-members';
 import { Tooltip } from '@/components/ui/tooltip';
 
 type Person = MemoDirectory['people'][number];
@@ -28,10 +29,13 @@ const NO_APPROVERS =
 /** One signer block: the same small label above the same picker layout for Prepared, Recommended and Approved. */
 function SignerGroup({
   label,
+  optional = false,
   hint,
   children,
 }: {
   label: string;
+  /** A muted "Optional" at the right end of the label row, as on a Field (UIP-FORM-008). */
+  optional?: boolean;
   hint?: ReactNode;
   children: ReactNode;
 }) {
@@ -44,9 +48,12 @@ function SignerGroup({
       aria-describedby={hint ? hintId : undefined}
       className={styles.signerGroup}
     >
-      <span id={labelId} className={styles.signerLabel}>
-        {label}
-      </span>
+      <div className={styles.signerLabelRow}>
+        <span id={labelId} className={styles.signerLabel}>
+          {label}
+        </span>
+        {optional ? <span className={styles.signerOptional}>Optional</span> : null}
+      </div>
       {hint ? (
         <span id={hintId} className={styles.signerHint}>
           {hint}
@@ -115,9 +122,12 @@ export function SignerSection({
     <div className={styles.signerSection}>
       <SignerGroup label="Prepared by">
         <div className={styles.signerRow}>
-          <StaffPicker
+          <MemberPicker
+            placeholder="Enter Name"
+            noMatchText="No matching staff members."
+            emptyText="No staff members are available in this company."
             label="Prepared by"
-            people={preparer}
+            people={memoMembers(preparer)}
             value={currentUserId}
             // Clearing the text only empties the box for a moment: the author stays the signed-in person.
             onChange={() => undefined}
@@ -129,10 +139,11 @@ export function SignerSection({
 
       <SignerGroup
         label="Recommended by"
+        optional
         hint={
           noApprovers
             ? NO_APPROVERS
-            : 'Optional. Only people who can decide approvals are listed. Choose them in approval-route order; empty rows are ignored.'
+            : 'Only people who can decide approvals are listed. Choose them in approval-route order; empty rows are ignored.'
         }
       >
         {recommenders.map((id, i) => (
@@ -141,15 +152,16 @@ export function SignerSection({
             <span className={styles.signerIndex} aria-hidden="true">
               {i + 1}.
             </span>
-            <StaffPicker
+            <MemberPicker
+              placeholder="Enter Name"
+              noMatchText="No matching staff members."
               label={`Recommended by ${i + 1}`}
-              people={approverChoices(people, id)}
+              people={memoMembers(approverChoices(people, id), { disabledIds: without(id) })}
               emptyText={NO_APPROVERS}
               value={id}
               onChange={(userId) => onRecommenders(setRecommender(recommenders, i, userId))}
               open={exclusive.isOpen(`r${i}`)}
               onOpenChange={(open) => exclusive.setOpen(`r${i}`, open)}
-              disabledIds={without(id)}
               inputRef={(el) => {
                 inputs.current[i] = el;
               }}
@@ -206,15 +218,18 @@ export function SignerSection({
         }
       >
         <div className={styles.signerRow}>
-          <StaffPicker
+          <MemberPicker
+            placeholder="Enter Name"
+            noMatchText="No matching staff members."
             label="Approved by"
-            people={ruleApproverChoices(people, approverRule, approvedBy)}
+            people={memoMembers(ruleApproverChoices(people, approverRule, approvedBy), {
+              disabledIds: without(approvedBy),
+            })}
             emptyText={approverRule?.blockReason ?? NO_APPROVERS}
             value={approvedBy}
             onChange={onApprovedBy}
             open={exclusive.isOpen('approved')}
             onOpenChange={(open) => exclusive.setOpen('approved', open)}
-            disabledIds={without(approvedBy)}
           />
         </div>
       </SignerGroup>

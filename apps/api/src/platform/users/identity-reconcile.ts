@@ -40,6 +40,8 @@ export const IDENTITY_REVIEW_REQUIRED = 'identity.review_required';
 export const IDENTITY_RECONCILED = 'identity.reconciled';
 /** An admin read ZITADEL again and cleared the flag. */
 export const IDENTITY_REVIEW_RESOLVED = 'identity.review_resolved';
+/** A removal inherited with the lease was cleared without flagging: ZITADEL still held the person as it found them. */
+export const IDENTITY_REMOVAL_UNTOUCHED = 'identity.removal_untouched';
 
 /** What the denial may call in ZITADEL: read, and close a person. Never open, grant, replace or delete. */
 export type CloseOnlyIdentity = Pick<
@@ -209,8 +211,20 @@ export class IdentityReconciler {
     actor: Actor,
     removal: PendingFounderRemoval,
     clearRecord: (tx: DbTransaction) => Promise<boolean>,
+    origin: LeaseOrigin = { ttlTakeover: false },
   ): Promise<void> {
-    const untouched = await this.providerUntouched(scope, removal);
+    // "Untouched" is trusted only after a TTL takeover: that holder crashed or stalled for the whole TTL, so none of its
+    // provider calls can still land after this read. A lease its holder released (or a takeover this code cannot
+    // classify) may have a slow provider request still in flight, so the person is flagged without that check.
+    const untouched = origin.ttlTakeover && (await this.providerUntouched(scope, removal));
+    const decision = untouched
+      ? 'untouched'
+      : origin.ttlTakeover
+        ? 'changed_or_unreadable'
+        : 'not_ttl_takeover';
+    this.logger.log(
+      `users.review: removal ${removal.intent} of ${removal.zitadelUserId} inherited with the lease: ${decision}; ${untouched ? 'cleared, not flagged' : 'flagging'}`,
+    );
     const local = await withTx(
       this.db,
       scope,
@@ -244,8 +258,15 @@ export class IdentityReconciler {
     if (local) {
       await this.record(scope, actor, IDENTITY_REVIEW_REQUIRED, local.id, {
         reason: `users.${removal.intent}:lease_taken_over`,
+        decision,
         before: local.before,
         after: local.after,
+      });
+    } else if (untouched) {
+      await this.record(scope, actor, IDENTITY_REMOVAL_UNTOUCHED, removal.userId, {
+        reason: `users.${removal.intent}:lease_taken_over`,
+        decision,
+        zitadelUserId: removal.zitadelUserId,
       });
     }
   }
@@ -356,6 +377,11 @@ const LEASE_TTL_SECONDS = 300;
 const LEASE_FENCE_MS = (LEASE_TTL_SECONDS - 60) * 1000;
 export { assertWithinOperationDeadline, OPERATION_DEADLINE_MS } from './operation-deadline';
 
+/** How the lease was won: `ttlTakeover` only when another holder had outlived the TTL. */
+export interface LeaseOrigin {
+  ttlTakeover: boolean;
+}
+
 /** The lease the current operation holds (see withFounderRemovalLease). */
 interface LeaseHolder {
   store: UsersStore;
@@ -366,6 +392,38 @@ interface LeaseHolder {
 }
 
 const lease = new AsyncLocalStorage<LeaseHolder>();
+
+/**
+ * Leases this process holds right now, so a shutdown can free them at once instead of leaving each for the TTL to
+ * expire (the next holder would wait out up to LEASE_TTL_SECONDS, then take over a lease whose holder is long gone).
+ */
+const heldLeases = new Set<{ store: UsersStore; tenantId: string; leaseId: string }>();
+let shuttingDown = false;
+
+/**
+ * Shutdown hook body: frees every lease this process holds and refuses new ones. A removal recorded on a freed lease
+ * stays on it, and the next holder flags the person (it is not a TTL takeover, so ZITADEL is not trusted as untouched).
+ * A holder still running finds its lease gone and writes nothing (assertFounderLeaseHeld). Never throws.
+ */
+export async function releaseHeldFounderLeases(): Promise<void> {
+  shuttingDown = true;
+  await Promise.all(
+    [...heldLeases].map((held) =>
+      held.store.releaseFounderLease(held.tenantId, held.leaseId).catch(() => undefined),
+    ),
+  );
+  heldLeases.clear();
+}
+
+/** Whether shutdown has begun: long loops that take leases stop starting new turns. */
+export function isFounderLeaseShutdown(): boolean {
+  return shuttingDown;
+}
+
+/** Test seam: lets a test that called releaseHeldFounderLeases claim leases again. */
+export function resetFounderLeaseShutdown(): void {
+  shuttingDown = false;
+}
 
 /** The operation's lease was taken over (it stalled past the TTL): it changes nothing more. */
 export class FounderLeaseLostError extends ServiceUnavailableException {
@@ -454,6 +512,7 @@ export async function dropOwnFounderRemoval(userId: string): Promise<void> {
 export type SettleOutstandingRemoval = (
   removal: PendingFounderRemoval,
   clearRecord: (tx: DbTransaction) => Promise<boolean>,
+  origin: LeaseOrigin,
 ) => Promise<void>;
 
 /**
@@ -478,15 +537,24 @@ export async function withFounderRemovalLease<T>(
   settleOutstanding?: SettleOutstandingRemoval,
   waitMs: number = LEASE_WAIT_MS,
 ): Promise<T> {
+  if (shuttingDown) {
+    throw new ServiceUnavailableException('The service is shutting down. Try again in a moment.');
+  }
   const leaseId = randomUUID();
   const giveUpAt = Date.now() + waitMs;
   let claimStartedAt = Date.now();
+  let origin: LeaseOrigin = { ttlTakeover: false };
   for (;;) {
     claimStartedAt = Date.now();
     const remaining = giveUpAt - claimStartedAt;
-    if (
-      await store.claimFounderLease(tenantId, leaseId, LEASE_TTL_SECONDS, Math.max(remaining, 100))
-    ) {
+    const claim = await store.claimFounderLeaseWithOrigin(
+      tenantId,
+      leaseId,
+      LEASE_TTL_SECONDS,
+      Math.max(remaining, 100),
+    );
+    if (claim.claimed) {
+      origin = { ttlTakeover: claim.ttlTakeover };
       break;
     }
     if (Date.now() >= giveUpAt) {
@@ -499,6 +567,8 @@ export async function withFounderRemovalLease<T>(
   }
   // Measured from before the winning claim statement, so the fence never ends later than the database thinks.
   const fenceAt = claimStartedAt + LEASE_FENCE_MS;
+  const registered = { store, tenantId, leaseId };
+  heldLeases.add(registered);
   try {
     const inherited = await store.outstandingFounderRemoval(tenantId, leaseId);
     if (inherited) {
@@ -510,8 +580,10 @@ export async function withFounderRemovalLease<T>(
         });
       }
       try {
-        await settleOutstanding(inherited, (tx) =>
-          store.settleFounderRemoval(tenantId, leaseId, tx),
+        await settleOutstanding(
+          inherited,
+          (tx) => store.settleFounderRemoval(tenantId, leaseId, tx),
+          origin,
         );
       } catch {
         throw new ServiceUnavailableException(
@@ -523,6 +595,7 @@ export async function withFounderRemovalLease<T>(
       runWithOperationDeadline(deadlineMs, fn, fenceAt),
     );
   } finally {
+    heldLeases.delete(registered);
     await store.releaseFounderLease(tenantId, leaseId).catch(() => undefined);
   }
 }

@@ -2,6 +2,7 @@
   "name": "@bos/portal",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Business OS customer portal (Next.js backend-for-frontend).",
   "scripts": {
     "dev": "next dev -p 3002",
@@ -17,6 +18,8 @@
     "@bos/pdf-viewer": "workspace:*",
     "@fontsource-variable/outfit": "catalog:",
     "@internationalized/date": "catalog:",
+    "@radix-ui/react-checkbox": "catalog:",
+    "@radix-ui/react-radio-group": "catalog:",
     "@radix-ui/react-tooltip": "catalog:",
     "ioredis": "catalog:",
     "next": "catalog:",
