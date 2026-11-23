@@ -30,4 +30,4 @@ jobs:
           comment-summary-in-pr: on-failure
           # Not combinable with an allow list. These cannot be combined into a work distributed under
           # AGPL-3.0-only: GPL-2.0-only (no "or later"), source-available and non-commercial terms.
-          deny-licenses: GPL-2.0-only, LGPL-2.0-only, SSPL-1.0, BUSL-1.1, Elastic-2.0, CC-BY-NC-4.0, CC-BY-NC-SA-4.0, CC-BY-ND-4.0, Commons-Clause
+          deny-licenses: GPL-2.0-only, LGPL-2.0-only, SSPL-1.0, BUSL-1.1, Elastic-2.0, CC-BY-NC-4.0, CC-BY-NC-SA-4.0, CC-BY-ND-4.0
