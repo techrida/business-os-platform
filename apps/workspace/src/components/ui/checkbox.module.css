@@ -36,12 +36,11 @@
   inset: -4px;
 }
 
-.box:hover:not([data-disabled]),
-.box:hover:not([aria-disabled='true']) {
+.box:hover:not([data-disabled]):not([aria-disabled='true']):not(:disabled) {
   background: var(--checkbox-hover-bg);
 }
 
-.radio:hover:not([data-disabled]) {
+.radio:hover:not([data-disabled]):not([aria-disabled='true']):not(:disabled) {
   background: var(--radio-hover-bg);
 }
 
@@ -79,6 +78,7 @@
 }
 
 .box[data-disabled],
+.box:disabled,
 .box[aria-disabled='true'] {
   cursor: not-allowed;
   border-color: var(--checkbox-disabled-border);
@@ -87,6 +87,7 @@
 }
 
 .radio[data-disabled],
+.radio:disabled,
 .radio[aria-disabled='true'] {
   cursor: not-allowed;
   border-color: var(--radio-disabled-border);
@@ -109,4 +110,9 @@
     forced-color-adjust: none;
     background: Highlight;
   }
+}
+
+/* A wrapper that adds no box of its own (RadioGroup `neutral`). */
+.neutral {
+  display: contents;
 }

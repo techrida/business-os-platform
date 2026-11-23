@@ -227,3 +227,41 @@ it('a controlled radio group keeps its choice when the form resets', async () =>
   expect(radios[1]!.getAttribute('aria-checked')).toBe('true');
   expect(radios[0]!.getAttribute('aria-checked')).toBe('false');
 });
+
+it('posts what the screen shows after a form reset (React resets a form after each action)', async () => {
+  function Harness() {
+    const [on, setOn] = useState(false);
+    const [mode, setMode] = useState('a');
+    return (
+      <form>
+        <Checkbox
+          aria-label="Opt in"
+          name="optIn"
+          value="yes"
+          checked={on}
+          onCheckedChange={setOn}
+        />
+        <RadioGroup name="mode" value={mode} onValueChange={setMode} aria-label="Mode">
+          <Radio value="a" aria-label="A" />
+          <Radio value="b" aria-label="B" />
+        </RadioGroup>
+        <Checkbox aria-label="Subscribe" name="subscribe" defaultChecked />
+      </form>
+    );
+  }
+  const { container } = await mountForm(<Harness />);
+  const form = container.querySelector('form')!;
+  await click(container.querySelector('[aria-label="Opt in"]'));
+  await click(container.querySelector('[aria-label="B"]'));
+  await click(container.querySelector('[aria-label="Subscribe"]'));
+  expect(Object.fromEntries(new FormData(form))).toEqual({ optIn: 'yes', mode: 'b' });
+  await act(() => Promise.resolve(form.reset()));
+  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+  // The controlled ones kept the parent's state and post it, not their first-render values; the
+  // uncontrolled box went back to its default (ticked), like a native one.
+  expect(Object.fromEntries(new FormData(form))).toEqual({
+    optIn: 'yes',
+    mode: 'b',
+    subscribe: 'on',
+  });
+});
