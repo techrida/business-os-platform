@@ -31,7 +31,7 @@ for (const route of BOARDS) {
         .fill(`Board scroll e2e ${Date.now()}`);
       await chooseOption(selectByName(page, 'source'), 'referral');
       await page
-        .getByRole('textbox', { name: 'Company or organization', exact: true })
+        .getByRole('combobox', { name: 'Company or organization', exact: true })
         .fill('Binford');
       await page.getByLabel('Contact person').fill('Sunita Shrestha');
       await page

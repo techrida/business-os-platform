@@ -73,7 +73,7 @@ async function createLead(
   await title.fill(lead.title);
   await chooseOption(selectByName(page, 'source'), lead.source);
   await page
-    .getByRole('textbox', { name: 'Company or organization', exact: true })
+    .getByRole('combobox', { name: 'Company or organization', exact: true })
     .fill(lead.company);
   await page.getByLabel('Contact person').fill(lead.contact);
   // A lead needs an email or at least one phone number.
