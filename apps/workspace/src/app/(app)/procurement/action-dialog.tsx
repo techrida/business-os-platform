@@ -89,7 +89,7 @@ export function ProcurementActionDialog({
         {done ? (
           <p role="status">{state.done} Close this to see the new status.</p>
         ) : (
-          <form id={formId} action={formAction} className={styles.actionForm}>
+          <form noValidate id={formId} action={formAction} className={styles.actionForm}>
             <input type="hidden" name={recordField} value={recordId} />
             <input type="hidden" name="idempotencyKey" value={state.key} />
             <ErrorSummary

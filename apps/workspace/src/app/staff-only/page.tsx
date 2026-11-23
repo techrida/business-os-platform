@@ -18,7 +18,7 @@ export default async function StaffOnlyPage() {
         footerLinks={getFooterLinks()}
         title="This is the staff workspace"
         actions={
-          <form method="post" action="/auth/logout">
+          <form noValidate method="post" action="/auth/logout">
             <Button type="submit">Sign out</Button>
           </form>
         }

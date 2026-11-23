@@ -399,7 +399,13 @@ export function WorkflowEditor({
   const basicsCount = hasBasics ? 1 : 0;
 
   return (
-    <form ref={formRef} action={formAction} onSubmit={onSubmit} className={styles.editor}>
+    <form
+      noValidate
+      ref={formRef}
+      action={formAction}
+      onSubmit={onSubmit}
+      className={styles.editor}
+    >
       {workflowKey ? <input type="hidden" name="key" value={workflowKey} /> : null}
       <input type="hidden" name="spec" value={built.ok ? JSON.stringify(built.spec) : ''} />
 

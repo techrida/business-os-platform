@@ -59,7 +59,7 @@ export function RolesEditor({
         </>
       }
     >
-      <form id={formId} action={formAction}>
+      <form noValidate id={formId} action={formAction}>
         <input type="hidden" name="userId" value={userId} />
         <RoleCheckboxes
           idPrefix={formId}

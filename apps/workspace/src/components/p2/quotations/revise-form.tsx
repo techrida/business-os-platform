@@ -57,7 +57,7 @@ export function ReviseForm({
       submitLabel="Start revision"
       pending={pending}
     >
-      <form id={formId} ref={formRef} action={formAction}>
+      <form noValidate id={formId} ref={formRef} action={formAction}>
         <input type="hidden" name="quotationId" value={quotationId} />
         <input type="hidden" name="versionId" value={versionId} />
         <input type="hidden" name="expectedVersion" value={version} />

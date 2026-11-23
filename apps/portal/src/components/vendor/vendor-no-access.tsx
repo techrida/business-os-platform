@@ -13,7 +13,7 @@ export function VendorNoAccess() {
       <NoticeCard
         title="Your vendor account cannot use this page"
         actions={
-          <form method="post" action="/auth/logout">
+          <form noValidate method="post" action="/auth/logout">
             <Button type="submit">Sign out</Button>
           </form>
         }

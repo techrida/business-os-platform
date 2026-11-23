@@ -47,7 +47,7 @@ export function InviteForm({
   const kept = state.status === 'error' ? fields : {};
 
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <PageHeader
         title="Add New User"
         description="Add a colleague and choose the roles they hold."

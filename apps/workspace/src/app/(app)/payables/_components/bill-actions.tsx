@@ -89,7 +89,7 @@ function Form({
             <p role="status">{state.done} Close this to see the new status.</p>
           </div>
         ) : (
-          <form id={formId} action={formAction} className={actions.form}>
+          <form noValidate id={formId} action={formAction} className={actions.form}>
             <input type="hidden" name={idField} value={common.targetId} />
             <input type="hidden" name="idempotencyKey" value={state.key} />
             {state.error ? (

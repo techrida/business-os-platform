@@ -577,7 +577,7 @@ export function PaymentRequestCommand({
         {state.done ? (
           <p role="status">{state.done}</p>
         ) : (
-          <form id={formId} action={action} className={styles.form}>
+          <form noValidate id={formId} action={action} className={styles.form}>
             <input type="hidden" name="requestId" value={id} />
             <input type="hidden" name="idempotencyKey" value={state.key} />
             {state.error ? (
