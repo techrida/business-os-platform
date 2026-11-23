@@ -290,16 +290,19 @@ describe('changing the owner on PATCH /v1/customers/:id', () => {
 
   it('accepts the stored owner alone from either grant, and from neither refuses it before any lookup', async () => {
     const customer = await createCustomer();
+    // The founder created it, so sending the founder again repeats the stored owner: nothing is written and the
+    // version stays 1 (R6AE: a PATCH that repeats the stored values keeps the version).
     as('management');
     expect(
       (await patch(customer.id, { expectedVersion: 1, ownerUserId: usersA.founder })).status,
     ).toBe(200);
     as('sales');
     expect(
-      (await patch(customer.id, { expectedVersion: 2, ownerUserId: usersA.founder })).status,
+      (await patch(customer.id, { expectedVersion: 1, ownerUserId: usersA.founder })).status,
     ).toBe(200);
+    expect((await storedOwner(customer.id))?.version).toBe(1);
     as('accountant');
-    expect((await patch(customer.id, { expectedVersion: 3, ownerUserId: colleague })).status).toBe(
+    expect((await patch(customer.id, { expectedVersion: 1, ownerUserId: colleague })).status).toBe(
       403,
     );
     expect((await patch(randomUUID(), { expectedVersion: 1, ownerUserId: colleague })).status).toBe(

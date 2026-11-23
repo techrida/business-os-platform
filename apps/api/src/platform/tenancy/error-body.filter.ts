@@ -67,6 +67,7 @@ export type ErrorCode =
   | 'kyc_expired'
   | 'vendor_not_editable'
   | 'vendor_identity_locked'
+  | 'customer_identity_locked'
   | 'account_exists'
   | 'no_verified_bank_account'
   | 'callback_evidence_not_clean'
@@ -242,6 +243,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   kyc_expired: 'The vendor tax clearance has expired',
   vendor_not_editable: 'This vendor can no longer be edited',
   vendor_identity_locked: 'The legal name and tax numbers of an approved vendor cannot be changed',
+  customer_identity_locked:
+    'The legal name, PAN and country of a verified customer cannot be edited',
   account_exists: 'This vendor already has this bank account',
   no_verified_bank_account: 'The vendor has no verified bank account',
   callback_evidence_not_clean: 'The call-back evidence has not passed the virus scan',
@@ -454,6 +457,7 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'kyc_expired',
   'vendor_not_editable',
   'vendor_identity_locked',
+  'customer_identity_locked',
   'account_exists',
   'no_verified_bank_account',
   'callback_evidence_not_clean',

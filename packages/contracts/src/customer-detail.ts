@@ -49,7 +49,14 @@ export type CustomerOwnerOption = z.infer<typeof CustomerOwnerOptionSchema>;
  * Whether this customer has a verification case at all. Existence only: the case itself (status, files) is read
  * through the verification routes under verification.read, so a caller who may not read it learns nothing more.
  */
-export const CustomerVerificationPresenceSchema = z.object({ exists: z.boolean() });
+export const CustomerVerificationPresenceSchema = z.object({
+  exists: z.boolean(),
+  /**
+   * Whether the case is approved. The legal name, PAN and country of a verified customer are locked (R6AE), so the
+   * edit form shows them read-only; the API refuses the edit with 409 `customer_identity_locked` regardless.
+   */
+  approved: z.boolean().optional(),
+});
 export type CustomerVerificationPresence = z.infer<typeof CustomerVerificationPresenceSchema>;
 
 /**
