@@ -1,7 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
-import { selectByLabel } from './select';
-
 /**
  * Helpers for the list filters (src/components/ui/{multi-select,filter-bar}.tsx). Filters apply as
  * soon as they change and live in the URL as repeated params (`?status=a&status=b`); there is no
@@ -19,7 +17,12 @@ export type MultiOption = string | { label: string };
 
 /** The filter dropdown named `label` (exact), for example `multiSelectByLabel(page, 'Status')`. */
 export function multiSelectByLabel(scope: Scope, label: string): Locator {
-  return selectByLabel(scope, label);
+  // The trigger is named by its value and then its label ("All stages Stage"), and `getByLabel` does not
+  // match that joined name on the label alone, so the name is matched by its last words.
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return scope
+    .locator('button[aria-haspopup="listbox"]')
+    .and(scope.getByRole('button', { name: new RegExp(`(^|\\s)${escaped}$`) }));
 }
 
 /** The instant search box of a list, found by the label its toolbar gives it. */
