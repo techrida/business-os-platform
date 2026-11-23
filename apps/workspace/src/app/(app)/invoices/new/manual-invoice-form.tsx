@@ -8,6 +8,7 @@ import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
+import { matchesQuery } from '@/components/ui/combobox-model';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Select, Textarea } from '@/components/ui/field';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
@@ -23,16 +24,31 @@ import { type DiscountMode, parseDiscount } from './forms';
 import { LinesEditor, useLines } from './lines-editor';
 import type { LineValues } from './lines';
 import styles from './manual-invoice.module.css';
+import type { CustomerOption } from './customer-option';
 
-export interface CustomerOption {
-  id: string;
-  /** The customer's legal name. */
-  label: string;
-  /** The number and PAN/VAT shown under the name in the picker, so a search by either finds the customer. */
-  detail?: string | undefined;
-  /** The customer's usual currency: it preselects the currency when the customer is chosen. */
-  currency: Currency | null;
-}
+export type { CustomerOption };
+
+/** What the picker asks when the page's list was cut off: the customers matching the typed text. */
+export type CustomerSearcher = (text: string, signal: AbortSignal) => Promise<CustomerOption[]>;
+
+/** The BFF route beside this page; throws on any failure (the picker then says the search did not load). */
+export const searchCustomers: CustomerSearcher = async (text, signal) => {
+  const res = await fetch(
+    `/invoices/new/customers?${new URLSearchParams({ q: text }).toString()}`,
+    {
+      cache: 'no-store',
+      signal,
+    },
+  );
+  if (!res.ok) throw new Error(`Customer search failed with ${res.status}`);
+  const body = (await res.json()) as { customers?: CustomerOption[] };
+  return body.customers ?? [];
+};
+
+/** How long typing must pause before the picker asks the server. */
+const CUSTOMER_SEARCH_DELAY_MS = 250;
+/** Shorter text is matched against the page's own list only. */
+const CUSTOMER_SEARCH_MIN_CHARS = 2;
 
 const PLAIN_DECIMAL = /^(\d+\.?\d*|\.\d+)$/;
 const HUNDRED = new Dec(100);
@@ -85,7 +101,8 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
 export function ManualInvoiceForm({
   action,
   customers,
-  customersNote,
+  customersCutOff = false,
+  search = searchCustomers,
   taxCodes,
   enabledCurrencies,
   idempotencyKey,
@@ -93,7 +110,10 @@ export function ManualInvoiceForm({
 }: {
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState>;
   customers: readonly CustomerOption[] | null;
-  customersNote?: string | undefined;
+  /** The page's list is only the first customers: the picker asks the server while the person types. */
+  customersCutOff?: boolean;
+  /** Where a cut-off list's matches come from; the BFF route by default. */
+  search?: CustomerSearcher;
   taxCodes: readonly TaxCode[] | null;
   /** The company's switched-on currencies (`currency.enabled`), read once by the page. */
   enabledCurrencies: readonly Currency[];
@@ -108,10 +128,66 @@ export function ManualInvoiceForm({
   });
   const [customerId, setCustomerId] = useState('');
   const [customerOpen, setCustomerOpen] = useState(false);
-  const customerOptions = useMemo(
-    () => (customers ?? []).map((c) => ({ id: c.id, label: c.label, description: c.detail })),
-    [customers],
+  // The customers the picker knows: the page's list plus whatever a search of a cut-off list has found since.
+  const [searched, setSearched] = useState<readonly CustomerOption[]>([]);
+  const [customerText, setCustomerText] = useState('');
+  // The server's answer for the text it was asked about, so a match it found by a fuzzier or normalised rule is listed.
+  const [found, setFound] = useState<{ query: string; items: readonly CustomerOption[] } | null>(
+    null,
   );
+  // The server search for the typed text did not load: say so instead of "No matching customer.".
+  const [searchFailed, setSearchFailed] = useState(false);
+  const known = useMemo(() => {
+    const byId = new Map<string, CustomerOption>();
+    for (const c of [...(customers ?? []), ...searched]) if (!byId.has(c.id)) byId.set(c.id, c);
+    return [...byId.values()];
+  }, [customers, searched]);
+  const query = customerText.trim();
+  const customerOptions = useMemo(() => {
+    const toOption = (c: CustomerOption) => ({ id: c.id, label: c.label, description: c.detail });
+    if (!customersCutOff) return known.map(toOption);
+    // The chosen customer stays listed even when it came from a search, so the closed box can still read its name.
+    const chosen = known.find((c) => c.id === customerId);
+    const own = customers ?? [];
+    if (query === '')
+      return (chosen && !own.includes(chosen) ? [...own, chosen] : own).map(toOption);
+    // The answer for this very text as the server gave it; until it arrives, what is already known narrowed by the text.
+    if (found?.query === query) return found.items.map(toOption);
+    return known.map(toOption).filter((o) => matchesQuery(o, query));
+  }, [known, customers, customersCutOff, customerId, query, found]);
+  useEffect(() => {
+    if (!customersCutOff || query.length < CUSTOMER_SEARCH_MIN_CHARS) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      search(query, controller.signal).then(
+        (items) => {
+          if (controller.signal.aborted) return;
+          setSearched((old) => [...old, ...items]);
+          setFound({ query, items });
+        },
+        () => {
+          // The list stays as it is (the page's own customers can still be chosen); the empty state says so.
+          if (!controller.signal.aborted) setSearchFailed(true);
+        },
+      );
+    }, CUSTOMER_SEARCH_DELAY_MS);
+    // A new keystroke (or unmount) cancels the wait and the request in flight, so a slow old answer never lands.
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, customersCutOff, search]);
+  // Nothing matched. A list the page did not cut off is complete; a cut-off one is only sure once the server has
+  // answered for this text.
+  const noMatchText = !customersCutOff
+    ? 'No matching customer. Add the customer first.'
+    : searchFailed
+      ? 'Search did not load. Try again.'
+      : query.length < CUSTOMER_SEARCH_MIN_CHARS
+        ? `Not in the first ${customers?.length ?? 0} customers. Find it on the Customers list.`
+        : found?.query === query
+          ? 'No matching customer. Add the customer first.'
+          : 'Searching…';
   const [currency, setCurrency] = useState<Currency>('NPR');
   const [manualReason, setManualReason] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -133,7 +209,7 @@ export function ManualInvoiceForm({
 
   const numberSystems = useNumberSystems();
   const errors = state.errors;
-  const customer = customers?.find((c) => c.id === customerId);
+  const customer = known.find((c) => c.id === customerId);
   const discount = parseDiscount(discountMode, discountValue);
   // The side typed last is the one posted; the other is worked out from it and the subtotal, so a
   // changed line price moves only the worked-out side. Emptying either side means no discount.
@@ -157,7 +233,7 @@ export function ManualInvoiceForm({
   const currencies = currencyChoices(enabledCurrencies);
   const choose = (id: string): void => {
     setCustomerId(id);
-    const usual = customers?.find((c) => c.id === id)?.currency;
+    const usual = known.find((c) => c.id === id)?.currency;
     // A usual currency that has since been switched off is not preselected: the select would blank.
     if (usual && currencies.some((o) => o.value === usual)) setCurrency(usual);
   };
@@ -206,13 +282,12 @@ export function ManualInvoiceForm({
           <Field
             label="Organization legal name"
             error={errors['customerId']}
-            hint={customersNote}
             className={styles.wide ?? ''}
           >
             {(control) => (
               // One search-as-you-type box (UIP-FORM-009); `name` posts the chosen id as the select did. An invoice
               // is raised for a customer that exists, so there is no Create row: the customer is added on
-              // Customers first.
+              // Customers first. A list the page cut off asks the server while the person types.
               <Combobox
                 id={control.id}
                 labelledBy={control['aria-labelledby']}
@@ -226,11 +301,30 @@ export function ManualInvoiceForm({
                 value={customerId}
                 onChange={choose}
                 open={customerOpen}
-                onOpenChange={setCustomerOpen}
+                onOpenChange={(open) => {
+                  setCustomerOpen(open);
+                  // Closing ends the search: the box reads the chosen name again and the full list is back.
+                  if (!open) {
+                    setCustomerText('');
+                    setSearchFailed(false);
+                  }
+                }}
+                onInputChange={(text) => {
+                  setCustomerText(text);
+                  // A new text is a new search: typing again is how a failed one is retried.
+                  setSearchFailed(false);
+                }}
+                {...(customersCutOff ? { serverFiltered: true } : {})}
                 disabled={customers === null || customers.length === 0}
                 placeholder="Search by name, number or PAN"
-                emptyText="There are no customers to invoice yet."
-                noMatchText="No matching customer. Add the customer first."
+                // A server-filtered list is empty when nothing matched, and the box then shows `emptyText`, not
+                // `noMatchText`: with customers on the page that is the same message.
+                emptyText={
+                  customers !== null && customers.length > 0
+                    ? noMatchText
+                    : 'There are no customers to invoice yet.'
+                }
+                noMatchText={noMatchText}
               />
             )}
           </Field>

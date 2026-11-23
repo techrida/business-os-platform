@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { click, fill, mountForm, settle, submit } from '@/test/form-interactions';
 
 import type { InvoiceFormState } from './form-state';
-import { type CustomerOption, ManualInvoiceForm } from './manual-invoice-form';
+import {
+  type CustomerOption,
+  type CustomerSearcher,
+  ManualInvoiceForm,
+} from './manual-invoice-form';
 
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
@@ -37,6 +41,7 @@ const CUSTOMERS = [
 async function mount(
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState> = vi.fn(),
   customers: readonly CustomerOption[] = CUSTOMERS,
+  extra: { customersCutOff?: boolean; search?: CustomerSearcher } = {},
 ) {
   mounted = await mountForm(
     <ManualInvoiceForm
@@ -45,6 +50,7 @@ async function mount(
       taxCodes={[]}
       enabledCurrencies={['NPR']}
       idempotencyKey="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      {...extra}
     />,
   );
   const { container } = mounted;
@@ -123,6 +129,78 @@ describe('the organization picker', () => {
     await click(box('Organization legal name'));
     expect(document.querySelectorAll('[role="option"]')).toHaveLength(25);
     expect(document.body.textContent).not.toContain('Unassigned');
+  });
+});
+
+// The page loads only the first customers. Past that, typing asks the server (`/invoices/new/customers`) and lists
+// its answer as given; the old picker only filtered the loaded list and said "Add the customer first" for a customer
+// that was merely not loaded.
+describe('the organization picker on a cut-off customer list', () => {
+  const FAR = '33333333-3333-4333-8333-333333333333';
+  const far: CustomerOption = {
+    id: FAR,
+    label: 'Far Away Traders',
+    detail: 'CUS-0457 · 609999999',
+    currency: 'INR',
+  };
+  const options = () =>
+    Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent?.trim());
+  const wait = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+
+  it('asks the server while typing, lists its answer as given and posts the chosen id', async () => {
+    // The text is a misspelling the page's own filter would not match: the server's fuzzy answer is shown as it is.
+    const search = vi.fn<CustomerSearcher>(() => Promise.resolve([far]));
+    const { box, form } = await mount(vi.fn(), CUSTOMERS, { customersCutOff: true, search });
+    const input = box('Organization legal name');
+    await fill(input, 'faraway tradrs');
+    expect(search).not.toHaveBeenCalled();
+    await wait();
+    expect(search).toHaveBeenCalledWith('faraway tradrs', expect.any(AbortSignal));
+    expect(options()).toEqual(['Far Away TradersCUS-0457 · 609999999']);
+    await click(document.querySelector('[role="option"]'));
+    expect(form().get('customerId')).toBe(FAR);
+    expect(input.value).toContain('Far Away Traders');
+    // The chosen customer's usual currency (INR) is switched off here, so the select keeps NPR.
+    expect(form().get('currency')).toBe('NPR');
+  });
+
+  it('does not say "Add the customer first" while the list is cut and the server has not answered', async () => {
+    const search = vi.fn<CustomerSearcher>(() => Promise.resolve([]));
+    const { box } = await mount(vi.fn(), CUSTOMERS, { customersCutOff: true, search });
+    const input = box('Organization legal name');
+    // One letter is matched against the loaded list only: it cannot rule a customer out.
+    await fill(input, 'z');
+    expect(search).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(
+      'Not in the first 1 customers. Find it on the Customers list.',
+    );
+    expect(document.body.textContent).not.toContain('Add the customer first');
+    // Once the server has answered for the text, nothing found is a real answer.
+    await fill(input, 'zzz');
+    expect(document.body.textContent).toContain('Searching…');
+    await wait();
+    expect(document.body.textContent).toContain('No matching customer. Add the customer first.');
+  });
+
+  it('says the search did not load, not that nothing matches, when the server search fails', async () => {
+    const search = vi.fn<CustomerSearcher>(() =>
+      Promise.reject(new Error('Customer search failed with 503')),
+    );
+    const { box } = await mount(vi.fn(), CUSTOMERS, { customersCutOff: true, search });
+    await fill(box('Organization legal name'), 'far away');
+    await wait();
+    expect(options()).toEqual([]);
+    expect(document.body.textContent).toContain('Search did not load. Try again.');
+    expect(document.body.textContent).not.toContain('Add the customer first');
+  });
+
+  it('does not ask the server when the whole list is already here', async () => {
+    const search = vi.fn<CustomerSearcher>(() => Promise.resolve([]));
+    const { box } = await mount(vi.fn(), CUSTOMERS, { search });
+    await fill(box('Organization legal name'), 'invoice');
+    await wait();
+    expect(search).not.toHaveBeenCalled();
+    expect(options()).toEqual(['Invoice customer']);
   });
 });
 
