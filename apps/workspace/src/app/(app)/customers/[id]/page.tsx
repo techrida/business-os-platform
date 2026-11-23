@@ -55,6 +55,7 @@ import { OpenCaseForm } from '../../verification/open-case-form';
 import { CompanyLogoUpload } from '../_components/company-logo-upload';
 
 import { CustomerFeedback } from './customer-feedback';
+import { kybBanner, kybStanding } from './verification-state';
 import styles from './customer.module.css';
 
 export const metadata: Metadata = { title: 'Organization · Business OS' };
@@ -287,7 +288,7 @@ function Verification({
   open: { customerId: string; idempotencyKey: string } | null;
 }) {
   return (
-    <Panel title="Verification" as="aside">
+    <Panel title="Verification" as="aside" id="verification" className={styles.verificationCard}>
       {result.status === 'rejected' ? (
         <PanelProblem
           what="verification status"
@@ -429,6 +430,19 @@ export default async function CustomerPage({
     mayChangeOwner ? listCustomerOwners(session) : Promise.resolve([]),
   ]);
 
+  const standing = kybStanding({
+    mayRead: can.readVerification,
+    cases: cases.status === 'fulfilled' ? cases.value.items : null,
+    caseExists: customer.verification === undefined ? null : customer.verification.exists,
+    portalBlock: customer.portalAccess?.blocked ?? null,
+  });
+  // A not-verified customer puts the Verification card first and says so at the top of the page.
+  const unverified = standing.kind === 'unverified' && !merged ? standing : null;
+  const banner =
+    unverified !== null
+      ? kybBanner(unverified, { mayRead: can.readVerification, mayOpen: can.openVerification })
+      : null;
+
   const mayWrite = can.write;
   const maySeeVerification = can.readVerification;
   const relationship = RELATIONSHIP[customer.relationship];
@@ -483,6 +497,17 @@ export default async function CustomerPage({
     },
   ];
 
+  const verificationCard = (
+    <Verification
+      result={cases}
+      here={here}
+      maySee={maySeeVerification}
+      caseExists={customer.verification?.exists === true}
+      // One key per render, so retrying names the same request.
+      open={can.openVerification ? { customerId: customer.id, idempotencyKey: randomUUID() } : null}
+    />
+  );
+
   return (
     <Page>
       <Breadcrumb
@@ -500,12 +525,28 @@ export default async function CustomerPage({
         </Alert>
       ) : null}
 
+      {banner !== null ? (
+        <Alert
+          tone="warning"
+          role="status"
+          title={banner.title}
+          actions={banner.action ? <a href={banner.action.href}>{banner.action.label}</a> : null}
+        >
+          {banner.text}
+        </Alert>
+      ) : null}
+
       <Tabs defaultSelectedKey="contacts">
         <TabList aria-label="Organization sections">
           <Tab id="contacts">Contacts</Tab>
           <Tab id="terms">Terms by legal entity</Tab>
         </TabList>
-        <div className={styles.columns}>
+        <div
+          className={[styles.columns, unverified !== null ? styles.columnsUnverified : '']
+            .filter(Boolean)
+            .join(' ')}
+        >
+          {unverified !== null ? <div className={styles.attention}>{verificationCard}</div> : null}
           <Card className={styles.profile} as="aside" aria-labelledby="organization-name">
             <div className={styles.profileIdentity}>
               <div className={styles.profileLogo}>
@@ -600,18 +641,7 @@ export default async function CustomerPage({
                   mayInvite && contacts.status === 'fulfilled' && inviteOptions.length === 0,
               }}
             />
-            <Verification
-              result={cases}
-              here={here}
-              maySee={maySeeVerification}
-              caseExists={customer.verification?.exists === true}
-              // One key per render, so retrying names the same request.
-              open={
-                can.openVerification
-                  ? { customerId: customer.id, idempotencyKey: randomUUID() }
-                  : null
-              }
-            />
+            {unverified === null ? verificationCard : null}
           </div>
         </div>
       </Tabs>

@@ -8,6 +8,7 @@ import { addContactAction } from '@/components/p2/customers/actions';
 import { ContextCard } from '@/components/p2/quote-builder/context-card';
 import { LoadFailure } from '@/components/p2/quote-builder/load-failure';
 import { loadLookups } from '@/components/p2/quote-builder/lookups';
+import { withDefaultTerms } from '@/components/p2/quote-builder/saved-options';
 import { defaultDates, emptyValues } from '@/components/p2/quote-builder/model';
 import { QuoteBuilder } from '@/components/p2/quote-builder/quote-builder';
 import * as api from '@/components/p2/quote-builder/api';
@@ -105,6 +106,8 @@ export default async function NewQuotationPage({
   const currency = customerResult?.defaultCurrency ?? opportunity.currency;
   const initial = emptyValues({ currency, ...defaultDates() });
   initial.contactId = opportunity.contactId ?? '';
+  // Each terms field starts with the default saved option chosen in settings, if there is one.
+  const startValues = withDefaultTerms(initial, lookups.termPresets);
 
   return (
     <Page>
@@ -138,7 +141,7 @@ export default async function NewQuotationPage({
             </Alert>
           ) : null
         }
-        initial={initial}
+        initial={startValues}
         context={<ContextCard customer={customerResult} opportunity={opportunity} />}
         contacts={lookups.contacts}
         createContact={

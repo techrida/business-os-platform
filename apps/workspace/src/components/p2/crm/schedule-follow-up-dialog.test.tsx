@@ -141,8 +141,8 @@ it('plans a follow-up on an opportunity, leaving it to the deal owner when they 
     />,
   );
   await click(mounted.container.querySelector('button'));
-  expect(dialog()?.textContent).toContain('Opportunity owner');
-  expect(dialog()?.textContent).not.toContain('Lead owner');
+  // The owner is not a choice, so the empty box says who the API will pick (a placeholder, not a fake person).
+  expect(inDialog('input[role="combobox"]')?.getAttribute('placeholder')).toBe('Opportunity owner');
   await pickDate(dialog()!, 'dueAt', '2026-11-22T09:00');
   await click(footerButton('Schedule'));
   await settle();
@@ -165,8 +165,7 @@ it('says the follow-up goes to the person scheduling it when the record has no o
     />,
   );
   await click(mounted.container.querySelector('button'));
-  expect(dialog()?.textContent).toContain('Me');
-  expect(dialog()?.textContent).not.toContain('Opportunity owner');
+  expect(inDialog('input[role="combobox"]')?.getAttribute('placeholder')).toBe('Me');
   await mounted.unmount();
 });
 
