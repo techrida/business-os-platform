@@ -244,7 +244,8 @@ it.each(['vendor', 'customer'] as const)(
     expect(text).toContain('old-registration.pdf');
     expect(text).toContain('Before the change');
     // A vendor case has no loose-file removal; a customer's keeps it.
-    expect(html.includes('Remove old-registration.pdf')).toBe(kind === 'customer');
+    // Files from before the change stay as history: no remove control for either kind.
+    expect(html.includes('Remove old-registration.pdf')).toBe(false);
   },
 );
 

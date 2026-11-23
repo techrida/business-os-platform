@@ -1829,6 +1829,29 @@ describe('R6AE: a customer identity edit locks after approval and resets the rev
     expect(await resetAudit(partyId)).toHaveLength(0);
   });
 
+  it('stamps a draft that holds only an unattached file, and keeps that file as undeletable history', async () => {
+    const partyId = await newCustomer();
+    const draft = await openCase(partyId);
+    const loose = await attach(draft.id, 'clean');
+    await customersService().update(partyId, await customerVersion(partyId), {
+      legalName: 'Third Name Ltd',
+    });
+    const c = await getCase(draft.id);
+    expect(c.identityReset).not.toBeNull();
+    expect(c.beforeChangeDocumentIds).toContain(loose.documentId);
+    const reuse = await putDocument(
+      draft.id,
+      'registration_certificate',
+      loose.documentId,
+      c.version,
+    );
+    expect(reuse.status).toBe(409);
+    const del = await api().delete(
+      `/v1/verification-cases/${draft.id}/loose-documents/${loose.documentId}`,
+    );
+    expect(del.status, JSON.stringify(del.body)).toBe(409);
+  });
+
   it('shows the reset only to the tenant that owns the case', async () => {
     const partyId = await newCustomer();
     const filled = await fillRequired(await openCase(partyId));
