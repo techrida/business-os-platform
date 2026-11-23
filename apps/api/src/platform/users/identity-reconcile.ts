@@ -415,6 +415,11 @@ export async function releaseHeldFounderLeases(): Promise<void> {
   heldLeases.clear();
 }
 
+/** Whether shutdown has begun: long loops that take leases stop starting new turns. */
+export function isFounderLeaseShutdown(): boolean {
+  return shuttingDown;
+}
+
 /** Test seam: lets a test that called releaseHeldFounderLeases claim leases again. */
 export function resetFounderLeaseShutdown(): void {
   shuttingDown = false;

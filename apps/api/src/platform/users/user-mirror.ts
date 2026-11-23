@@ -40,6 +40,7 @@ import {
   isDefiniteRefusal,
   recordedFounderRemovalOf,
   recordFounderRemoval,
+  isFounderLeaseShutdown,
   releaseHeldFounderLeases,
   type SettleOutstandingRemoval,
   withFounderRemovalLease,
@@ -121,18 +122,35 @@ export interface NextState {
 export interface ReconcileLimits {
   maxPages?: number;
   maxDeactivations?: number;
-  /** Pause after each user's turn on the tenant lease; default RECONCILE_YIELD_MS. 0 turns the pause off (tests). */
+  /** Length of the pause that lets a waiter claim the lease; default RECONCILE_YIELD_MS. 0 turns the pause off (tests). */
   yieldMs?: number;
+  /** A pause is taken once this much time has passed since the last one, between two users; default RECONCILE_YIELD_AFTER_MS. */
+  yieldAfterMs?: number;
 }
 
 /**
- * Pause after each user of a reconcile pass has had the tenant lease. Another identity change polls for the lease every
- * 150 ms (LEASE_POLL_MS); a pass that claims the next user's turn straight after releasing the last would win every
- * time and starve it. One pause longer than the poll lets any waiter claim in between.
+ * A reconcile pass takes the tenant lease once per user. Another identity change polls for it every 150 ms
+ * (LEASE_POLL_MS); a pass that claims the next user's turn straight after releasing the last would win almost every time
+ * and starve it. So after every RECONCILE_YIELD_AFTER_MS of work the pass pauses RECONCILE_YIELD_MS, longer than one poll,
+ * between two users: a waiter gets the lease within about a second, and the pass pays at most a sixth of its time (the
+ * jobs of the users queue run one at a time, so a long pause would delay every sync and lock expiry behind it).
  */
 const RECONCILE_YIELD_MS = 200;
+const RECONCILE_YIELD_AFTER_MS = 1_000;
+/** How long the invited-to-active flip of resolve waits for the lease: it runs inside a person's request. */
+const RESOLVE_LEASE_WAIT_MS = 1_500;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** The between-users pause of a reconcile pass: call after each user; it sleeps only when a pause is due. */
+function pacer(yieldMs: number, afterMs: number): () => Promise<void> {
+  let last = Date.now();
+  return async () => {
+    if (yieldMs <= 0 || Date.now() - last < afterMs) return;
+    await sleep(yieldMs);
+    last = Date.now();
+  };
+}
 
 function sameRoles(a: readonly string[], b: readonly string[]): boolean {
   const left = [...new Set(a)].sort();
@@ -313,6 +331,7 @@ export class UserMirror implements OnApplicationShutdown {
     const maxPages = limits.maxPages ?? MAX_PAGES;
     const maxDeactivations = limits.maxDeactivations ?? MAX_DEACTIVATIONS_PER_PASS;
     const yieldMs = limits.yieldMs ?? RECONCILE_YIELD_MS;
+    const yieldAfterMs = limits.yieldAfterMs ?? RECONCILE_YIELD_AFTER_MS;
     let scanned = 0;
     let changed = 0;
     for (const org of await this.store.listStaffIdpOrgs()) {
@@ -329,6 +348,7 @@ export class UserMirror implements OnApplicationShutdown {
       let abort: string | null = null;
       // Set once the tenant's identity lease could not be had: the rest of this org is left for the next pass.
       let leaseBusy = false;
+      const pace = pacer(yieldMs, yieldAfterMs);
       try {
         for (;;) {
           if (pages >= maxPages) {
@@ -346,6 +366,8 @@ export class UserMirror implements OnApplicationShutdown {
           for (const user of page.users) {
             scanned += 1;
             seen.add(user.id);
+            // Shutting down: no new lease turns, the org is left for the next pass (and nobody is deactivated).
+            if (!leaseBusy && isFounderLeaseShutdown()) leaseBusy = true;
             if (leaseBusy) continue;
             try {
               const didChange = await this.underLease(
@@ -365,7 +387,7 @@ export class UserMirror implements OnApplicationShutdown {
               this.logger.warn(`${error.message}; left for the next pass`);
             }
             // The lease is free between users: let a waiting identity change claim it before the next turn.
-            if (!leaseBusy && yieldMs > 0) await sleep(yieldMs);
+            if (!leaseBusy) await pace();
           }
           if (page.nextCursor === null) break;
           cursor = page.nextCursor;
@@ -396,7 +418,7 @@ export class UserMirror implements OnApplicationShutdown {
       }
       if (leaseBusy) continue; // the next pass starts the org over
       if (fullPass) {
-        changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations, yieldMs);
+        changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations, pace);
       }
     }
     return { scanned, changed };
@@ -471,28 +493,32 @@ export class UserMirror implements OnApplicationShutdown {
   ): Promise<{ row: UserRow; activated: boolean }> {
     const scope = await this.entityScope(invited.tenantId);
     try {
-      return await this.underLease(invited.tenantId, zitadelUserId, () =>
-        withTx(
-          this.db,
-          scope,
-          zitadelActor(),
-          async (tx) => {
-            await lockAccessRevision(tx, invited.tenantId);
-            await assertFounderLeaseHeld(tx);
-            const current = await this.store.findByZitadelId(tx, zitadelUserId, true);
-            if (!current) throw new Error('JIT activation left no row');
-            if (current.status !== 'invited' || current.identityReviewRequired === true) {
-              return { row: current, activated: false };
-            }
-            await this.store.updateUser(tx, current.id, {
-              email: current.email,
-              displayName: current.displayName,
-              status: 'active',
-            });
-            return { row: { ...current, status: 'active' as const }, activated: true };
-          },
-          LOCKS_USER_ROW,
-        ),
+      return await this.underLease(
+        invited.tenantId,
+        zitadelUserId,
+        () =>
+          withTx(
+            this.db,
+            scope,
+            zitadelActor(),
+            async (tx) => {
+              await lockAccessRevision(tx, invited.tenantId);
+              await assertFounderLeaseHeld(tx);
+              const current = await this.store.findByZitadelId(tx, zitadelUserId, true);
+              if (!current) throw new Error('JIT activation left no row');
+              if (current.status !== 'invited' || current.identityReviewRequired === true) {
+                return { row: current, activated: false };
+              }
+              await this.store.updateUser(tx, current.id, {
+                email: current.email,
+                displayName: current.displayName,
+                status: 'active',
+              });
+              return { row: { ...current, status: 'active' as const }, activated: true };
+            },
+            LOCKS_USER_ROW,
+          ),
+        RESOLVE_LEASE_WAIT_MS,
       );
     } catch (error) {
       if (error instanceof UserSyncContendedError) {
@@ -1006,7 +1032,7 @@ export class UserMirror implements OnApplicationShutdown {
     seen: ReadonlySet<string>,
     passStart: Date,
     max: number,
-    yieldMs: number,
+    pace: () => Promise<void>,
   ): Promise<number> {
     const locals = await this.store.notInactiveInIdpOrg(this.db, org);
     const missing = locals.filter((u) => !seen.has(u.zitadelUserId));
@@ -1043,7 +1069,7 @@ export class UserMirror implements OnApplicationShutdown {
         if (error instanceof LeaseBusyError) break;
         continue;
       }
-      if (yieldMs > 0) await sleep(yieldMs);
+      await pace();
     }
     return deactivated;
   }
