@@ -14,9 +14,14 @@ import { DetailsStep } from './convert-details-step';
 import { errorsOfStep, firstStepWithError, LAST_STEP, type ConvertStep } from './convert-model';
 import { OrganisationStep } from './convert-organisation-step';
 import { StepIndicator } from './convert-parts';
-import type { ChosenCustomer, StepContext } from './convert-types';
+import type { ChosenCustomer, ContactLookup, StepContext } from './convert-types';
 import { parseConvert } from './forms';
 import type { ConvertAction, ConvertState } from './types';
+
+const UNREADABLE =
+  'You cannot open this customer, so the lead cannot be converted into it. Unlink it, or choose another organisation.';
+const NO_EMAIL =
+  'This contact has no email, so quotations could not be sent to it. Choose another contact, or create one from the lead.';
 
 export interface ConvertLead {
   id: string;
@@ -77,9 +82,15 @@ export function ConvertDialog({
   lead,
   action,
   searchDelayMs,
+  unlinkAction,
 }: {
   lead: ConvertLead;
   action: ConvertAction;
+  /** Drops the lead's customer link and answers the lead's new version (R6T); without it there is no Unlink button. */
+  unlinkAction?: (
+    leadId: string,
+    version: number,
+  ) => Promise<{ ok: true; version: number } | { ok: false; error: string }>;
   /** How long typing must pause before a live search; tests pass 0. */
   searchDelayMs?: number;
 }) {
@@ -101,6 +112,12 @@ export function ConvertDialog({
   const dupes = state.duplicates ?? [];
 
   const [chosen, setChosen] = useState<ChosenCustomer | null>(null);
+  // A linked lead cannot create a new customer. Unlinking makes it an ordinary lead again, at its new version.
+  const [unlinked, setUnlinked] = useState<{ version: number } | null>(null);
+  const [unlinking, setUnlinking] = useState({ pending: false, error: '' });
+  const [lookup, setLookup] = useState<ContactLookup | null>(null);
+  const linked = Boolean(lead.customerId) && unlinked === null;
+  const version = unlinked?.version ?? lead.version;
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
   const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
@@ -170,7 +187,54 @@ export function ConvertDialog({
     err,
     searchDelayMs,
     onLookupError: (message) => toast.error(message),
+    linked,
+    lookup,
+    unlink:
+      linked && unlinkAction
+        ? {
+            pending: unlinking.pending,
+            error: unlinking.error,
+            run: () => {
+              setUnlinking({ pending: true, error: '' });
+              void unlinkAction(lead.id, version).then(
+                (result) => {
+                  if (result.ok) {
+                    setUnlinking({ pending: false, error: '' });
+                    setUnlinked({ version: result.version });
+                    setChosen(null);
+                    setLookup(null);
+                    patch({
+                      customerMode: 'create',
+                      customerId: '',
+                      contactMode: 'create',
+                      contactId: '',
+                    });
+                    toast.success('Customer unlinked. Create the organisation, or link another.');
+                  } else setUnlinking({ pending: false, error: result.error });
+                },
+                () => setUnlinking({ pending: false, error: 'Could not unlink. Try again.' }),
+              );
+            },
+          }
+        : undefined,
   };
+
+  /** Dead ends a button would only run into at the API: said here, with the way out beside it. */
+  function linkProblems(forStep: ConvertStep): Partial<Record<string, string>> {
+    const customerId = values['customerId'] ?? '';
+    if (lookup?.customerId !== customerId || customerId === '') return {};
+    if (forStep === 0 && values['customerMode'] === 'existing' && lookup.unreadable) {
+      return { customerId: UNREADABLE };
+    }
+    if (
+      forStep === 1 &&
+      values['contactMode'] === 'existing' &&
+      lookup.noEmailIds.includes(values['contactId'] ?? '')
+    ) {
+      return { contactId: NO_EMAIL };
+    }
+    return {};
+  }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     if (step === LAST_STEP) return;
@@ -185,7 +249,10 @@ export function ConvertDialog({
       return;
     }
     const parsed = parseConvert(new FormData(event.currentTarget));
-    const problems = parsed.ok ? {} : errorsOfStep(parsed.fieldErrors, step);
+    const problems = {
+      ...(parsed.ok ? {} : errorsOfStep(parsed.fieldErrors, step)),
+      ...linkProblems(step),
+    };
     if (Object.keys(problems).length > 0) {
       setLocal(problems);
       return;
@@ -240,7 +307,7 @@ export function ConvertDialog({
     >
       <form id={formId} ref={form} action={formAction} onSubmit={onSubmit} noValidate>
         <input type="hidden" name="leadId" value={lead.id} />
-        <input type="hidden" name="expectedVersion" value={lead.version} />
+        <input type="hidden" name="expectedVersion" value={version} />
         <input type="hidden" name="idempotencyKey" value={key} />
 
         <fieldset className={styles.convertFields} disabled={pending}>
@@ -307,7 +374,7 @@ export function ConvertDialog({
             <div {...panel(0)}>
               <OrganisationStep
                 lead={lead}
-                ctx={ctx}
+                ctx={{ ...ctx, err: { ...linkProblems(0), ...err } }}
                 dupes={dupes}
                 org={{ chosen, setChosen, panEdited, setPanEdited, customerCountry }}
               />
@@ -315,10 +382,11 @@ export function ConvertDialog({
             <div {...panel(1)}>
               <ContactStep
                 lead={lead}
-                ctx={ctx}
+                ctx={{ ...ctx, err: { ...linkProblems(1), ...err } }}
                 phones={phones}
                 setPhones={setPhones}
                 dupes={dupes}
+                onLookup={setLookup}
               />
             </div>
             <div {...panel(2)}>

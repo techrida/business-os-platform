@@ -40,7 +40,7 @@ export function OrganisationStep({
   dupes: readonly { kind: string; id: string; label: string }[];
 }) {
   const { values, set } = ctx;
-  const existing = values['customerMode'] === 'existing';
+  const existing = ctx.linked || values['customerMode'] === 'existing';
   return (
     <>
       <Panel title="Carried over from the lead" headingLevel={3} className={styles.dialogPanel}>
@@ -54,26 +54,32 @@ export function OrganisationStep({
       </Panel>
       <fieldset className={styles.conversionSection}>
         <legend className={styles.legend}>Organisation</legend>
-        <label className={styles.choice}>
-          <input
-            type="radio"
-            name="customerMode"
-            value="create"
-            checked={!existing}
-            onChange={set('customerMode')}
-          />
-          Create a new organisation
-        </label>
-        <label className={styles.choice}>
-          <input
-            type="radio"
-            name="customerMode"
-            value="existing"
-            checked={existing}
-            onChange={set('customerMode')}
-          />
-          Link to an existing organisation
-        </label>
+        {ctx.linked ? (
+          <input type="hidden" name="customerMode" value="existing" />
+        ) : (
+          <>
+            <label className={styles.choice}>
+              <input
+                type="radio"
+                name="customerMode"
+                value="create"
+                checked={!existing}
+                onChange={set('customerMode')}
+              />
+              Create a new organisation
+            </label>
+            <label className={styles.choice}>
+              <input
+                type="radio"
+                name="customerMode"
+                value="existing"
+                checked={existing}
+                onChange={set('customerMode')}
+              />
+              Link to an existing organisation
+            </label>
+          </>
+        )}
         {existing ? (
           <LinkExisting lead={lead} ctx={ctx} org={org} dupes={dupes} />
         ) : (
@@ -130,71 +136,99 @@ function LinkExisting({
     return [{ id: chosen.id, label: chosen.name, description }, ...found];
   }, [customers, customerId, org.chosen, dupes, lead.customerId, lead.companyName, text]);
   return (
-    <Field
-      label="Organisation"
-      error={err['customerId']}
-      hint={
-        customerId !== '' && customerId === lead.customerId
-          ? 'The customer picked on the lead.'
-          : undefined
-      }
-    >
-      {(c) => (
-        <Combobox
-          id={c.id}
-          name="customerId"
-          maxLength={100}
-          labelledBy={c['aria-labelledby']}
-          describedBy={c['aria-describedby']}
-          invalid={c['aria-invalid'] === true}
-          required
-          searchIcon
-          keepOrder
-          serverFiltered
-          showDescriptionWhenClosed
-          groupThreshold={Number.POSITIVE_INFINITY}
-          options={options}
-          value={customerId}
-          onInputChange={setText}
-          onChange={(id) => {
-            if (id === '') {
-              org.setChosen(null);
-              patch({ customerId: '', contactId: '' });
-              return;
-            }
-            const found = customers.find((m) => m.id === id);
-            if (found) org.setChosen(found);
-            setText('');
-            patch({ customerId: id, contactId: '' });
-          }}
-          open={open}
-          onOpenChange={(next) => {
-            setOpen(next);
-            // A closed box shows the chosen customer again, whatever was typed over it.
-            if (!next) setText('');
-          }}
-          addOption={{
-            always: true,
-            label: (typed) => `Create "${typed}"`,
-            // Create "<typed>" switches to the create form with the typed name filled in.
-            onAdd: (typed) => {
-              org.setChosen(null);
+    <>
+      <Field
+        label="Organisation"
+        error={err['customerId']}
+        hint={
+          customerId !== '' && customerId === lead.customerId
+            ? 'The customer picked on the lead.'
+            : undefined
+        }
+      >
+        {(c) => (
+          <Combobox
+            id={c.id}
+            name="customerId"
+            maxLength={100}
+            labelledBy={c['aria-labelledby']}
+            describedBy={c['aria-describedby']}
+            invalid={c['aria-invalid'] === true}
+            required
+            searchIcon
+            keepOrder
+            serverFiltered
+            showDescriptionWhenClosed
+            groupThreshold={Number.POSITIVE_INFINITY}
+            options={options}
+            value={customerId}
+            onInputChange={setText}
+            onChange={(id) => {
+              if (id === '') {
+                org.setChosen(null);
+                patch({ customerId: '', contactId: '' });
+                return;
+              }
+              const found = customers.find((m) => m.id === id);
+              if (found) org.setChosen(found);
               setText('');
-              patch({
-                customerMode: 'create',
-                customerId: '',
-                contactId: '',
-                contactMode: 'create',
-                legalName: typed,
-              });
-            },
-          }}
-          emptyText="Type a name, PAN/VAT or customer number."
-          noMatchText="No matching organisation."
-          placeholder="Search an organisation"
-        />
-      )}
-    </Field>
+              patch({ customerId: id, contactId: '' });
+            }}
+            open={open}
+            onOpenChange={(next) => {
+              setOpen(next);
+              // A closed box shows the chosen customer again, whatever was typed over it.
+              if (!next) setText('');
+            }}
+            {...(ctx.linked
+              ? {}
+              : {
+                  addOption: {
+                    always: true,
+                    label: (typed) => `Create "${typed}"`,
+                    // Create "<typed>" switches to the create form with the typed name filled in.
+                    onAdd: (typed) => {
+                      org.setChosen(null);
+                      setText('');
+                      patch({
+                        customerMode: 'create',
+                        customerId: '',
+                        contactId: '',
+                        contactMode: 'create',
+                        legalName: typed,
+                      });
+                    },
+                  },
+                })}
+            emptyText="Type a name, PAN/VAT or customer number."
+            noMatchText="No matching organisation."
+            placeholder="Search an organisation"
+          />
+        )}
+      </Field>
+      {ctx.unlink ? (
+        <div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="small"
+            disabled={ctx.unlink.pending}
+            onClick={ctx.unlink.run}
+          >
+            Unlink customer
+          </Button>
+          <span className={convert.hintLine}>
+            {' '}
+            Keeps the company name; you can then create a new organisation.
+          </span>
+        </div>
+      ) : null}
+      {ctx.unlink?.error ? (
+        <Alert tone="error" role="alert">
+          {ctx.unlink.error}
+        </Alert>
+      ) : null}
+    </>
   );
 }
 

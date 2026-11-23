@@ -1,11 +1,13 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { listContacts, listCustomers } from '@/components/p2/customers/api';
+import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
 
 import { loadConversionContacts, searchConversionCustomers } from './record-lookups';
 
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: vi.fn(), listContacts: vi.fn() }));
+vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
 const session = { accessToken: 'test-only-token' };
 const id = '11111111-1111-4111-8111-111111111111';
@@ -65,6 +67,7 @@ it('keeps contact reads scoped to the chosen customer and caller', async () => {
   expect(await loadConversionContacts(id)).toEqual({
     options: [{ id, label: 'Mina', disabled: false }],
     error: '',
+    unreadable: false,
   });
   expect(listContacts).toHaveBeenCalledWith(session, id);
   expect((await loadConversionContacts('../users')).error).not.toBe('');
@@ -78,6 +81,7 @@ it('shows a contact without an email but does not let it be chosen (its quotatio
   expect(await loadConversionContacts(id)).toEqual({
     options: [{ id, label: 'Ravi (no email address)', disabled: true }],
     error: '',
+    unreadable: false,
   });
 });
 it('reports denied or failed lookups without leaking API errors or granting access', async () => {
@@ -92,4 +96,12 @@ it('reports denied or failed lookups without leaking API errors or granting acce
     expect(result.error).not.toBe('');
     expect(result.error).not.toContain('secret');
   }
+});
+it('says a linked customer is unreadable only for 403 and 404, not for a failed server', async () => {
+  vi.mocked(listContacts).mockRejectedValueOnce(new ApiError(404, 'not found'));
+  expect((await loadConversionContacts(id)).unreadable).toBe(true);
+  vi.mocked(listContacts).mockRejectedValueOnce(new ApiError(403, 'forbidden'));
+  expect((await loadConversionContacts(id)).unreadable).toBe(true);
+  vi.mocked(listContacts).mockRejectedValueOnce(new ApiError(500, 'boom'));
+  expect((await loadConversionContacts(id)).unreadable).toBe(false);
 });
