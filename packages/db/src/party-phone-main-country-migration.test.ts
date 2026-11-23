@@ -1,6 +1,6 @@
 // Integration test for migration 0196 (R6A): a phone of a shared calling code is stored with the code's main country.
-//   * customer, vendor and lead phone rows whose country is a smaller country of the number's calling code (GG, VA, CA,
-//     KZ, ...) become the main country (GB, IT, US, RU); the number itself is not touched;
+//   * customer, vendor and lead phone rows whose country is a smaller country of the number's calling code (GG, VA,
+//     ...) become the main country (GB, IT); the number itself is not touched; +1 and +7 rows (CA, KZ) stay;
 //   * a row that already has the main country, a country of another calling code, or no shared code stays as it is;
 //   * the latest entity.profile gets a next version with the same change in its phones (older versions stay);
 //   * what it writes is audited as system:migration-0196, and a second run writes nothing.
@@ -77,8 +77,8 @@ const COUNTRIES: [string, string][] = [
   ['GG', '+447911123456'], // Guernsey pattern of +44 -> GB
   ['JE', '+447797123456'], // Jersey -> GB
   ['VA', '+390669812345'], // Vatican -> IT
-  ['CA', '+14165550100'], // +1 is shared by 25 countries; the main one is US
-  ['KZ', '+77012345678'], // +7 -> RU
+  ['CA', '+14165550100'], // +1 and +7 follow the number itself: stays
+  ['KZ', '+77012345678'], // stays
   ['GB', '+442071838750'], // already the main country: untouched
   ['NP', '+9779812345678'], // not a shared code: untouched
   ['IN', '+919812345678'], // not a shared code: untouched
@@ -242,8 +242,8 @@ const EXPECTED = [
   ['GB', '+447911123456'],
   ['GB', '+447797123456'],
   ['IT', '+390669812345'],
-  ['US', '+14165550100'],
-  ['RU', '+77012345678'],
+  ['CA', '+14165550100'],
+  ['KZ', '+77012345678'],
   ['GB', '+442071838750'],
   ['NP', '+9779812345678'],
   ['IN', '+919812345678'],
@@ -284,7 +284,7 @@ describe('0196 party phone main country', () => {
   });
 
   it('audits what it wrote as the migration actor and writes nothing the second time', async () => {
-    expect(Number(auditsAfterFirstRun)).toBeGreaterThanOrEqual(3 * 5);
+    expect(Number(auditsAfterFirstRun)).toBeGreaterThanOrEqual(3 * 3 + 1);
     await runAgain();
     expect(await migrationAudits()).toBe(auditsAfterFirstRun);
     const { rows } = await pool.query<{ n: string }>(
