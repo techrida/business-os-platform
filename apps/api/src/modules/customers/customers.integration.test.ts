@@ -40,7 +40,7 @@ import {
   type INestApplication,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -488,6 +488,28 @@ describe('create a customer and read it back', () => {
     });
     expect(byId.get(none.id)).toMatchObject({ primaryPhone: null });
     for (const item of items) expect(CustomerDtoSchema.parse(item)).toBeDefined();
+  });
+
+  it('leaves a stored number that no longer passes the phone check out of its row instead of failing the list (R6A)', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const bad = await createCustomer({
+      legalName: `Bad Phone ${tag} Pvt Ltd`,
+      contact: { ...firstContact(), phones: [{ ...npMobile, isPrimary: true }] },
+    });
+    // Valid E.164 shape for the database, but no US number has an exchange starting with 1.
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.customer_contact_phones SET country = 'US', e164 = '+14151234567'
+             WHERE tenant_id = ${a.tenantId}
+               AND contact_id IN (SELECT id FROM app.customer_contacts WHERE customer_id = ${bad.id})`,
+      ),
+    );
+    const res = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Bad Phone ${tag}` });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = (res.body as { items: Record<string, unknown>[] }).items;
+    expect(items.find((c) => c.id === bad.id)).toMatchObject({ primaryPhone: null });
   });
 
   it('is a 400 without an Idempotency-Key and for a body that breaks the contract', async () => {
