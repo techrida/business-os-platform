@@ -9,6 +9,9 @@
 // A cancelled revision gives the version it replaced back (R6D): an Approved or Sent version that a revise made
 // Superseded returns to that status and becomes current again, for a caller who may revise. The Lost cascade does not.
 //
+// The deal is locked before the quotation (Mark Lost's order). On a Lost or Won deal a cancelled revision restores
+// nothing, and a missing "-> superseded" history row also restores nothing (a warning is logged).
+//
 // Which versions: the current one, while it is Draft, Returned or Submitted (canCancelQuotation). A Submitted
 // version's open approval request is cancelled first, with the same reason, so it leaves every inbox. An Approved
 // or Sent version is not cancelled here: it has been, or may be, shown to the customer.
@@ -17,8 +20,8 @@
 // marks the deal Lost (QuotationLostHandler, the OpportunityLostHandler the module registers at start). It reuses the
 // same write as the route (applyCancel: approval request, version, quotation row, history, audit) but, being a
 // consequence of the loss and not a user's Cancel, it also ends an Approved or Sent version (the customer must stop
-// being able to accept; QUOTATION_TRANSITIONS `cancel_on_lost`). Accepted, rejected, expired, superseded and
-// already-cancelled versions are final and stay as they are. No record-level authz runs: the user's right to mark
+// being able to accept; QUOTATION_TRANSITIONS `cancel_on_lost`). Accepted, rejected, expired and already-cancelled
+// versions are final, and a superseded one stays as it is here (only the cancel route gives it back, above). No record-level authz runs: the user's right to mark
 // the deal Lost was checked by the opportunity route; the actor is that user. Any error rolls the loss back.
 //
 // Lock order: the tenant audit lock (withTx takes it first), then the quotation row, the approval request
@@ -34,6 +37,7 @@ import {
 } from '@bos/contracts';
 import {
   approvalRequests,
+  opportunities,
   outbox,
   quotationLines,
   quotations,
@@ -47,6 +51,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -79,6 +84,8 @@ const changed = () =>
 
 @Injectable()
 export class CancelService {
+  private readonly log = new Logger(CancelService.name);
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly approvals: ApprovalsService,
@@ -182,6 +189,9 @@ export class CancelService {
     body: CancelQuotationBody,
     now: Date,
   ): Promise<QuotationVersionDto> {
+    // The deal first, then the quotation: Mark Lost's order, so a cancel queued behind Mark Lost sees the committed
+    // stage and no lock cycle forms (the same order as ReviseService).
+    const dealStage = await this.lockDealStage(tx, scope, quotationId);
     const [quotation] = await tx
       .select()
       .from(quotations)
@@ -226,7 +236,7 @@ export class CancelService {
       now,
     );
     // A revision that is cancelled hands the quotation back to the version it replaced (R6D restore).
-    await this.restoreReplaced(tx, scope, actor, quotation, old, body.reason, now);
+    await this.restoreReplaced(tx, scope, actor, quotation, old, body.reason, now, dealStage);
 
     const lines = await tx
       .select()
@@ -370,6 +380,25 @@ export class CancelService {
    * Order matters: the cancelled draft has left the live set (one_live_version) before v1 re-enters it. The restored
    * version keeps its valid-until date, so one that is already past it expires normally in the next sweep.
    */
+  /** The quotation's deal stage, with the deal row locked first (see cancelInTx). Undefined for a missing quotation. */
+  private async lockDealStage(
+    tx: DbTransaction,
+    scope: TxScope,
+    quotationId: string,
+  ): Promise<string | undefined> {
+    const [peek] = await tx
+      .select({ opportunityId: quotations.opportunityId })
+      .from(quotations)
+      .where(scoped(scope).where(quotations, eq(quotations.id, quotationId)));
+    if (peek === undefined) return undefined;
+    const [deal] = await tx
+      .select({ stage: opportunities.stage })
+      .from(opportunities)
+      .where(scoped(scope).where(opportunities, eq(opportunities.id, peek.opportunityId)))
+      .for('update');
+    return deal?.stage;
+  }
+
   private async restoreReplaced(
     tx: DbTransaction,
     scope: TxScope,
@@ -378,8 +407,11 @@ export class CancelService {
     cancelledRevision: typeof quotationVersions.$inferSelect,
     reason: string,
     now: Date,
+    dealStage: string | undefined,
   ): Promise<void> {
     if (cancelledRevision.supersedesVersionId === null) return;
+    // A Lost or Won deal is over: nothing goes back in front of the customer, the revision just ends as before.
+    if (dealStage === 'lost' || dealStage === 'won') return;
     const [replaced] = await tx
       .select()
       .from(quotationVersions)
@@ -411,7 +443,13 @@ export class CancelService {
       .orderBy(desc(quotationStatusHistory.at), desc(quotationStatusHistory.id))
       .limit(1);
     const previous = superseding?.fromStatus;
-    if (previous !== 'approved' && previous !== 'sent') return;
+    if (previous !== 'approved' && previous !== 'sent') {
+      // Fail closed: without the row we cannot know what the customer was shown, so nothing is restored.
+      this.log.warn(
+        `quotation ${quotation.number}: revision ${cancelledRevision.revisionNo} cancelled but version ${replaced.id} has no usable "-> superseded" history row (${String(previous)}); not restored`,
+      );
+      return;
+    }
     // Putting an offer back in front of the customer is the undo of a revise, so it takes the same right: someone
     // who may only edit drafts cancels the revision as before (the quotation ends) and reopens nothing.
     try {
