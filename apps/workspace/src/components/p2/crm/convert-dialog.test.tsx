@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 
 import { click, fill, mountForm, settle, submit, typeKeys } from '@/test/form-interactions';
 import { ApiError } from '@/lib/api';
@@ -1021,4 +1022,43 @@ it('a linked contact without an email is explained, Next stops, and "create a co
   expect(dialog().textContent).not.toContain('This contact has no email');
   await submit(dialog());
   expect(stepOf()).toBe('Deal');
+});
+
+it('a lead unlinked on the page while the dialog was mounted starts over as an unlinked lead, at the page version', async () => {
+  api.listContacts.mockResolvedValue({ items: [] });
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const lead = (extra: Partial<ConvertLead>): ConvertLead => ({
+    id: LEAD,
+    version: 3,
+    number: 'LEAD-1',
+    title: 'Office supply',
+    companyName: 'Himal Supplies Pvt. Ltd.',
+    customerId: CUSTOMER,
+    contactName: 'Mina',
+    email: 'mina@himal.example',
+    country: 'NP',
+    phones: [],
+    ...extra,
+  });
+  const render = (l: ConvertLead) =>
+    act(() =>
+      Promise.resolve(
+        root.render(<ConvertDialog searchDelayMs={0} lead={l} action={convertLeadAction} />),
+      ),
+    );
+  await render(lead({}));
+  await click(container.querySelector('button'));
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
+    CUSTOMER,
+  );
+  await render(lead({ customerId: null, version: 4 }));
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')).toBeNull();
+  expect(box('Legal name').value).toBe('Himal Supplies Pvt. Ltd.');
+  expect(dialog().querySelector<HTMLInputElement>('input[name="expectedVersion"]')?.value).toBe(
+    '4',
+  );
+  await act(() => Promise.resolve(root.unmount()));
+  container.remove();
 });

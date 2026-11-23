@@ -117,7 +117,25 @@ export function ConvertDialog({
   const [unlinking, setUnlinking] = useState({ pending: false, error: '' });
   const [lookup, setLookup] = useState<ContactLookup | null>(null);
   const linked = Boolean(lead.customerId) && unlinked === null;
-  const version = unlinked?.version ?? lead.version;
+  // The lead was unlinked on the page while this dialog held its old link: start over as an unlinked lead, so it does
+  // not convert straight back into the customer just unlinked.
+  const [seenCustomerId, setSeenCustomerId] = useState(lead.customerId ?? null);
+  if ((lead.customerId ?? null) !== seenCustomerId) {
+    setSeenCustomerId(lead.customerId ?? null);
+    if (!lead.customerId && values['customerId'] === seenCustomerId) {
+      setValues((v) => ({
+        ...v,
+        customerMode: 'create',
+        customerId: '',
+        contactMode: 'create',
+        contactId: '',
+      }));
+      setChosen(null);
+      setLookup(null);
+    }
+  }
+  // The page may have moved on since (an owner or address edit): never convert at an older version.
+  const version = Math.max(lead.version, unlinked?.version ?? 0);
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
   const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
@@ -201,6 +219,7 @@ export function ConvertDialog({
                   if (result.ok) {
                     setUnlinking({ pending: false, error: '' });
                     setUnlinked({ version: result.version });
+                    setKey(crypto.randomUUID());
                     setChosen(null);
                     setLookup(null);
                     patch({
@@ -237,7 +256,16 @@ export function ConvertDialog({
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
-    if (step === LAST_STEP) return;
+    if (step === LAST_STEP) {
+      // A dead end found after the user moved on (the contacts answered late): say it on its own step.
+      const earlier = ([0, 1] as const).find((s) => Object.keys(linkProblems(s)).length > 0);
+      if (earlier !== undefined) {
+        event.preventDefault();
+        setLocal(linkProblems(earlier));
+        setStep(earlier);
+      }
+      return;
+    }
     // Enter and Next both submit: on the first two steps that means "go on". A box that stops a submit (a short
     // PAN, an unfinished phone) has already cancelled the event and shown its reason.
     const stopped = event.defaultPrevented;
