@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useRef, useState } from 'react';
+import { useActionState, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
@@ -192,13 +192,11 @@ export function CreateGroupForm() {
  * form reset React runs after an action cannot clear the picker's own state.
  */
 function useSuccessCount(state: { status: string }): number {
-  const seen = useRef(state);
-  const count = useRef(0);
-  if (seen.current !== state) {
-    seen.current = state;
-    if (state.status === 'ok') count.current += 1;
+  const [seen, setSeen] = useState({ state, count: 0 });
+  if (seen.state !== state) {
+    setSeen({ state, count: seen.count + (state.status === 'ok' ? 1 : 0) });
   }
-  return count.current;
+  return seen.count;
 }
 
 export function AddMemberForm({
