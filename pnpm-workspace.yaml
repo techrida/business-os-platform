@@ -136,4 +136,4 @@ catalog:
   # Document viewer (packages/pdf-viewer). Exact version, Apache-2.0. 4.5.136 (2024-07-27) is the newest
   # release whose legacy build has no ES2022 static blocks (Safari 16.4+), so iOS Safari 15 can parse the
   # main and worker bundles; it includes the CVE-2024-4367 fix (4.2.67). The worker and API must match.
-  pdfjs-dist: 4.5.136
+  pdfjs-dist: 6.5.438

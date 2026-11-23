@@ -166,8 +166,8 @@ catalogs:
       specifier: ^13.6.0
       version: 13.6.0
     pdfjs-dist:
-      specifier: 4.5.136
-      version: 4.5.136
+      specifier: 6.5.438
+      version: 6.5.438
     pdfkit:
       specifier: ^0.21.0
       version: 0.21.0
@@ -706,7 +706,7 @@ importers:
     dependencies:
       pdfjs-dist:
         specifier: 'catalog:'
-        version: 4.5.136
+        version: 6.5.438
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -5226,13 +5226,9 @@ packages:
   path-to-regexp@8.4.2:
     resolution: {integrity: sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==}
 
-  path2d@0.2.2:
-    resolution: {integrity: sha512-+vnG6S4dYcYxZd+CZxzXCNKdELYZSKfohrk98yajCo1PtRoDgCTrrwOvK1GT0UoAdVszagDVllQc0U1vaX4NUQ==}
-    engines: {node: '>=6'}
-
-  pdfjs-dist@4.5.136:
-    resolution: {integrity: sha512-V1BALcAN/FmxBEShLxoP73PlQZAZtzlaNfRbRhJrKvXzjLC5VaIlBAQUJuWP8iaYUmIdmdLHmt3E2TBglxOm3w==}
-    engines: {node: '>=18'}
+  pdfjs-dist@6.5.438:
+    resolution: {integrity: sha512-vg8Pw1x+AFKy4AMDvhuWl5cOYV8d698UoEANoFFhc79hqXDnZQqnOXoxw3HG907WHOg1JYOvLhP756boddFxpA==}
+    engines: {node: '>=22.13.0 || >=24'}
 
   pdfkit@0.21.0:
     resolution: {integrity: sha512-AMqXGfsLVac+x/OwXY7cGcRMbztphIYm1MZ4kIerVUKU9fja6pA2pxOm2bwKisutu7Gg/4YT2thz2OrNNFYmzg==}
@@ -10729,12 +10725,7 @@ snapshots:
 
   path-to-regexp@8.4.2: {}
 
-  path2d@0.2.2:
-    optional: true
-
-  pdfjs-dist@4.5.136:
-    optionalDependencies:
-      path2d: 0.2.2
+  pdfjs-dist@6.5.438: {}
 
   pdfkit@0.21.0:
     dependencies:
