@@ -3,6 +3,7 @@
    bordered-field treatment from number-input.module.css. */
 
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -132,4 +133,18 @@
   .box:focus-within {
     outline: 2px solid Highlight;
   }
+}
+
+/* Inside a Field the refusal, error and count take the field's one reserved message line (UIP-FORM-010) instead of
+   adding a second line; Field hides its own text while this is showing (field.module.css). */
+.metaInField {
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  margin-top: 8px;
+}
+
+.metaInField .status:not(:empty),
+.metaInField .count {
+  margin-top: 0;
 }

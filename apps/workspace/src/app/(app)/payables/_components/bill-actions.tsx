@@ -244,7 +244,8 @@ function ExceptionFields({
         kind="vendor-bill"
         ownerId={billId}
         name="evidenceDocumentId"
-        label="Evidence (optional)"
+        label="Evidence"
+        optional
         hint="A document supporting the exception, such as the vendor's agreement to the price."
         error={errors['evidenceDocumentId']}
         onBlockingChange={onBlockingChange}

@@ -112,7 +112,9 @@ describe('ExceptionDialog', () => {
   it('takes an optional evidence upload for this bill instead of a pasted document id', async () => {
     await openDialog();
     const dialog = document.querySelector('[role="dialog"]')!;
-    expect(dialog.textContent).toContain('Evidence (optional)');
+    expect(dialog.textContent).toContain('Evidence');
+    expect(dialog.textContent).toContain('Optional');
+    expect(dialog.textContent).not.toContain('(optional)');
     expect(dialog.textContent).not.toMatch(/document id/i);
     expect(dialog.querySelector('input[name="evidenceDocumentId"]')?.getAttribute('type')).toBe(
       'hidden',

@@ -38,6 +38,7 @@ import {
 import { dropdownPopoverProps, usePopoverContainer } from './popover-container';
 import { useFormReset } from './use-form-reset';
 import styles from './date-picker.module.css';
+import { useFieldSecondary, useInFieldScope } from '@/components/portal/field-scope';
 
 /** `YYYY-MM-DD` to a calendar date, or null for an empty or malformed value. */
 function toCalendarDate(iso: string | undefined | null): CalendarDate | null {
@@ -290,7 +291,11 @@ export function DatePicker({
   // React Aria resets the segments whenever it gets a new date object, so keep one per date.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `refills` forces a new object.
   const fedDate = useMemo(() => toCalendarDate(fed), [fed, refills]);
-  const bs = showBs ? bsLongOfDay(chosen) : null;
+  const bsText = showBs ? bsLongOfDay(chosen) : null;
+  // Inside a Field the BS date goes in the field's one message line (UIP-FORM-010); alone it prints its own.
+  const inField = useInFieldScope(id);
+  useFieldSecondary(id, bsText);
+  const bs = inField ? null : bsText;
   const unfinishedMessage = useUnfinishedMessage(unfinished);
   const describedBy =
     [

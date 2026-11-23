@@ -212,17 +212,24 @@ function AddTaxCodeDialog({ today, onClose }: { today: string; onClose: () => vo
       }
     >
       <form id="add-tax-code" className={tax.form} noValidate onSubmit={submit}>
-        <Field label="Name" hint="As documents show it, for example VAT 13%.">
+        <Field label="Name">
           {(c) => (
-            <Input {...c} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+            <Input
+              {...c}
+              value={name}
+              maxLength={80}
+              placeholder="VAT 13%"
+              onChange={(e) => setName(e.target.value)}
+            />
           )}
         </Field>
-        <Field label="Code" hint="1 to 20 capitals, digits, - or _.">
+        <Field label="Code">
           {(c) => (
             <Input
               {...c}
               value={code}
               maxLength={20}
+              placeholder="VAT-13"
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
@@ -245,16 +252,12 @@ function AddTaxCodeDialog({ today, onClose }: { today: string; onClose: () => vo
             </Select>
           )}
         </Field>
-        <Field
-          label="Rate"
-          hint={
-            zero ? 'Exempt and zero-rated codes are always 0%.' : '0.01 to 100, up to two decimals.'
-          }
-        >
+        <Field label="Rate" hint={zero ? 'Exempt and zero-rated codes are always 0%.' : undefined}>
           {(c) => (
             <PercentInput
               {...c}
               scale={RATE_SCALE}
+              placeholder="13"
               value={zero ? '0' : rate}
               disabled={zero}
               onValueChange={setRate}
@@ -353,16 +356,13 @@ function ChangeTaxCodeDialog({
         </Field>
         <Field
           label="Rate"
-          hint={
-            zero
-              ? `${KIND_LABEL[code.kind]} codes are always 0%.`
-              : '0.01 to 100, up to two decimals.'
-          }
+          hint={zero ? `${KIND_LABEL[code.kind]} codes are always 0%.` : undefined}
         >
           {(c) => (
             <PercentInput
               {...c}
               scale={RATE_SCALE}
+              placeholder="13"
               value={zero ? '0' : rate}
               disabled={zero}
               onValueChange={setRate}

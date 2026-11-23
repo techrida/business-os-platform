@@ -304,7 +304,8 @@ function AmendFields({
       ))}
       <Field
         label="Payment terms (days)"
-        hint="Optional. Sent only if you change it."
+        optional
+        hint="Sent only if you change it."
         error={errors['paymentTermsDays']}
       >
         {(control) => (

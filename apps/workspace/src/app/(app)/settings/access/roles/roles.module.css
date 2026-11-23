@@ -179,6 +179,8 @@
   align-items: center;
   gap: 8px;
   min-height: 44px;
+  /* The Field beside it ends in a reserved message line (UIP-FORM-010); lift the tick to the input box. */
+  margin-block-end: calc(var(--line-height-caption) + 8px);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
 }
