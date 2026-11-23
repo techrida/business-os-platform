@@ -93,7 +93,7 @@ describe('Company profile and Number format pages', () => {
     );
     // The logo card is the shared upload box for the organisation: no Save, no logo form.
     expect(html).toContain(IMAGE_HINT);
-    expect(html).toContain('aria-label="Company logo"');
+    expect(html).toContain('aria-label="Logo"');
     expect(html).toContain(
       'Printed at the top of your quotations, invoices, purchase orders and memos.',
     );
@@ -115,6 +115,61 @@ describe('Company profile and Number format pages', () => {
     // The document wins: the old data URL is neither drawn nor mentioned.
     expect(html).not.toContain(PNG);
     expect(html).not.toContain('still prints');
+  });
+
+  describe('the three logo slots', () => {
+    const DARK_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const LIGHT_ID = 'ffffffff-0000-4111-8222-333333333333';
+
+    it('has Logo, Logo for dark backgrounds and Logo for light backgrounds, the last two marked Optional', async () => {
+      getSession.mockResolvedValue(session(['founder']));
+      const html = render(await CompanyPage());
+      for (const title of ['Logo', 'Logo for dark backgrounds', 'Logo for light backgrounds']) {
+        expect(html).toContain(`aria-label="${title}"`);
+      }
+      // "Optional" is on the right end of the label row (UIP-FORM-008), for the two variants only.
+      expect((html.match(/>Optional</g) ?? []).length).toBe(2);
+    });
+
+    it('shows the Business OS example in every empty slot, labelled as an example and said to be empty', async () => {
+      getSession.mockResolvedValue(session(['founder']));
+      withProfile({ displayName: 'Acme', logoDocumentId: DOC_ID });
+      const html = render(await CompanyPage());
+      // The main logo is uploaded: its two variants are empty and each shows an example on its own background.
+      expect((html.match(/data-testid="logo-placeholder"/g) ?? []).length).toBe(2);
+      expect(html).toContain('data-stage="dark"');
+      expect(html).toContain('data-stage="light"');
+      expect(html).toContain('>Example<');
+      expect(html).toContain(
+        'Logo for dark backgrounds: nothing uploaded. The Business OS logo shown is only an example.',
+      );
+      expect(html).toContain(
+        'Logo for light backgrounds: nothing uploaded. The Business OS logo shown is only an example.',
+      );
+    });
+
+    it('waits for a main logo before the variants can be uploaded', async () => {
+      getSession.mockResolvedValue(session(['founder']));
+      const html = render(await CompanyPage());
+      expect(html).toContain('data-testid="logo-placeholder"');
+      expect((html.match(/Upload the main logo first\./g) ?? []).length).toBe(2);
+    });
+
+    it('shows an uploaded variant through the image route, on its own background, and drops its example', async () => {
+      getSession.mockResolvedValue(session(['founder']));
+      withProfile({
+        displayName: 'Acme',
+        logoDocumentId: DOC_ID,
+        logoOnDarkDocumentId: DARK_ID,
+        logoOnLightDocumentId: LIGHT_ID,
+      });
+      const html = render(await CompanyPage());
+      expect(html).toContain(`src="/api/images/${DARK_ID}"`);
+      expect(html).toContain(`src="/api/images/${LIGHT_ID}"`);
+      expect(html).toContain('aria-label="Remove Acme logo for dark backgrounds picture"');
+      expect(html).not.toContain('data-testid="logo-placeholder"');
+      expect(html).not.toContain('Upload the main logo first.');
+    });
   });
 
   it('shows a logo not yet moved as a preview-only picture, with a note in the card description', async () => {

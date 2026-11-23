@@ -841,6 +841,13 @@
       "when": 1783000000165,
       "tag": "0196_party_phone_main_country",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1783000000166,
+      "tag": "0218_logo_image_stats",
+      "breakpoints": true
     }
   ]
 }

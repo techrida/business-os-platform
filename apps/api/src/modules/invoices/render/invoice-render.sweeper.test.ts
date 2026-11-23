@@ -500,7 +500,11 @@ describe('InvoiceRenderSweeper: the company logo', () => {
     });
     await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
     expect(f.logos.forScope).toHaveBeenCalledWith(scope);
-    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A);
+    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A, {
+      colour: '#ffffff',
+      onDarkDocumentId: null,
+      onLightDocumentId: null,
+    });
     expect(htmlOf(f)).toContain(`<img class="logo" src="${LOGO_A}" alt="Techrida Pvt. Ltd.">`);
     expect(htmlOf(f)).toContain('img-src data:');
     expect(storedLogo(f)).toBe(LOGO_A);
@@ -522,7 +526,11 @@ describe('InvoiceRenderSweeper: the company logo', () => {
   it('falls back to the legacy logo when the document resolves to nothing', async () => {
     const f = fixture({ profile: profile({ logoDocumentId: DOC_A, legacyLogoDataUrl: LOGO_B }) });
     await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
-    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A);
+    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A, {
+      colour: '#ffffff',
+      onDarkDocumentId: null,
+      onLightDocumentId: null,
+    });
     expect(storedLogo(f)).toBe(LOGO_B);
     expect(htmlOf(f)).toContain(`src="${LOGO_B}"`);
   });
