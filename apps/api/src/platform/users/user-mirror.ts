@@ -20,12 +20,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  type OnApplicationShutdown,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Queue } from 'bullmq';
 
 import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { AuditService } from '../audit/audit.service';
+import { dbBusyKindOf } from '../db/busy';
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
@@ -38,6 +40,7 @@ import {
   isDefiniteRefusal,
   recordedFounderRemovalOf,
   recordFounderRemoval,
+  releaseHeldFounderLeases,
   type SettleOutstandingRemoval,
   withFounderRemovalLease,
 } from './identity-reconcile';
@@ -118,7 +121,18 @@ export interface NextState {
 export interface ReconcileLimits {
   maxPages?: number;
   maxDeactivations?: number;
+  /** Pause after each user's turn on the tenant lease; default RECONCILE_YIELD_MS. 0 turns the pause off (tests). */
+  yieldMs?: number;
 }
+
+/**
+ * Pause after each user of a reconcile pass has had the tenant lease. Another identity change polls for the lease every
+ * 150 ms (LEASE_POLL_MS); a pass that claims the next user's turn straight after releasing the last would win every
+ * time and starve it. One pause longer than the poll lets any waiter claim in between.
+ */
+const RECONCILE_YIELD_MS = 200;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function sameRoles(a: readonly string[], b: readonly string[]): boolean {
   const left = [...new Set(a)].sort();
@@ -175,7 +189,7 @@ export async function holdsFounder(
 }
 
 @Injectable()
-export class UserMirror {
+export class UserMirror implements OnApplicationShutdown {
   private readonly logger = new Logger(UserMirror.name);
   private readonly reconciler: IdentityReconciler;
 
@@ -186,6 +200,11 @@ export class UserMirror {
     @InjectQueue(USERS_QUEUE) private readonly queue: Queue<UsersSyncData>,
   ) {
     this.reconciler = new IdentityReconciler(db, store, zitadel, new AuditService(db));
+  }
+
+  /** Frees the tenant leases this process holds (see releaseHeldFounderLeases), so a restart does not wait out the TTL. */
+  async onApplicationShutdown(): Promise<void> {
+    await releaseHeldFounderLeases();
   }
 
   /**
@@ -263,6 +282,13 @@ export class UserMirror {
       );
     } catch (error) {
       if (error instanceof ConflictException) throw new LeaseBusyError(zitadelUserId);
+      // The access lock (or a row) was busy for longer than lock_timeout, or this write lost a deadlock: the same
+      // contention as a row that keeps changing, not a failure of the pass or a 500.
+      const busy = dbBusyKindOf(error);
+      if (busy !== undefined) {
+        this.logger.warn(`users.lock: ${zitadelUserId} not mirrored (database busy: ${busy})`);
+        throw new UserSyncContendedError(zitadelUserId);
+      }
       if (error instanceof ServiceUnavailableException) {
         this.logger.warn(`users.lease: ${zitadelUserId} not mirrored (${error.message})`);
         throw new UserSyncContendedError(zitadelUserId);
@@ -286,6 +312,7 @@ export class UserMirror {
   async reconcile(limits: ReconcileLimits = {}): Promise<{ scanned: number; changed: number }> {
     const maxPages = limits.maxPages ?? MAX_PAGES;
     const maxDeactivations = limits.maxDeactivations ?? MAX_DEACTIVATIONS_PER_PASS;
+    const yieldMs = limits.yieldMs ?? RECONCILE_YIELD_MS;
     let scanned = 0;
     let changed = 0;
     for (const org of await this.store.listStaffIdpOrgs()) {
@@ -337,6 +364,8 @@ export class UserMirror {
               // This user only: the pass goes on, and they are seen, so never deactivated as missing.
               this.logger.warn(`${error.message}; left for the next pass`);
             }
+            // The lease is free between users: let a waiting identity change claim it before the next turn.
+            if (!leaseBusy && yieldMs > 0) await sleep(yieldMs);
           }
           if (page.nextCursor === null) break;
           cursor = page.nextCursor;
@@ -366,7 +395,9 @@ export class UserMirror {
         continue;
       }
       if (leaseBusy) continue; // the next pass starts the org over
-      if (fullPass) changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations);
+      if (fullPass) {
+        changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations, yieldMs);
+      }
     }
     return { scanned, changed };
   }
@@ -414,21 +445,9 @@ export class UserMirror {
       row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
       if (!row) throw new Error('JIT user insert left no row');
     } else if (row.status === 'invited' && row.identityReviewRequired !== true) {
-      const invited = row;
-      await withTx(
-        this.db,
-        await this.entityScope(invited.tenantId),
-        zitadelActor(),
-        (tx) =>
-          this.store.updateUser(tx, invited.id, {
-            email: invited.email,
-            displayName: invited.displayName,
-            status: 'active',
-          }),
-        LOCKS_USER_ROW,
-      );
-      await this.enqueueSync(i.zitadelUserId);
-      row = { ...invited, status: 'active' };
+      const flipped = await this.activateInvited(row, i.zitadelUserId);
+      if (flipped.activated) await this.enqueueSync(i.zitadelUserId);
+      row = flipped.row;
     }
     return {
       userId: row.id,
@@ -437,6 +456,52 @@ export class UserMirror {
       status: row.status,
       memberships: await this.store.membershipsOf(this.db, row.tenantId, row.id),
     };
+  }
+
+  /**
+   * The invited-to-active flip of resolve, under the tenant's identity lease like every other write that changes who can
+   * sign in: an admin deactivate or lock of this person that is half done (ZITADEL changed, the database not yet) would
+   * otherwise be overtaken by this write and left disagreeing with ZITADEL. The row is read again under the lease and
+   * its row lock, and only a row still invited (and not flagged) is opened. A lease or database that stays busy is a
+   * 503 for this request: the person's next request tries again.
+   */
+  private async activateInvited(
+    invited: UserRow,
+    zitadelUserId: string,
+  ): Promise<{ row: UserRow; activated: boolean }> {
+    const scope = await this.entityScope(invited.tenantId);
+    try {
+      return await this.underLease(invited.tenantId, zitadelUserId, () =>
+        withTx(
+          this.db,
+          scope,
+          zitadelActor(),
+          async (tx) => {
+            await lockAccessRevision(tx, invited.tenantId);
+            await assertFounderLeaseHeld(tx);
+            const current = await this.store.findByZitadelId(tx, zitadelUserId, true);
+            if (!current) throw new Error('JIT activation left no row');
+            if (current.status !== 'invited' || current.identityReviewRequired === true) {
+              return { row: current, activated: false };
+            }
+            await this.store.updateUser(tx, current.id, {
+              email: current.email,
+              displayName: current.displayName,
+              status: 'active',
+            });
+            return { row: { ...current, status: 'active' as const }, activated: true };
+          },
+          LOCKS_USER_ROW,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof UserSyncContendedError) {
+        throw new ServiceUnavailableException(
+          'Your account is being updated. Try again in a moment.',
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -541,8 +606,8 @@ export class UserMirror {
 
   /** Settles a Founder removal inherited with the tenant's lease (see withFounderRemovalLease). */
   settleOutstandingRemoval(scope: TxScope, actor: Actor): SettleOutstandingRemoval {
-    return (removal, clearRecord) =>
-      this.reconciler.settleOutstandingRemoval(scope, actor, removal, clearRecord);
+    return (removal, clearRecord, origin) =>
+      this.reconciler.settleOutstandingRemoval(scope, actor, removal, clearRecord, origin);
   }
 
   private async setRolesOnce(
@@ -941,6 +1006,7 @@ export class UserMirror {
     seen: ReadonlySet<string>,
     passStart: Date,
     max: number,
+    yieldMs: number,
   ): Promise<number> {
     const locals = await this.store.notInactiveInIdpOrg(this.db, org);
     const missing = locals.filter((u) => !seen.has(u.zitadelUserId));
@@ -960,27 +1026,51 @@ export class UserMirror {
         );
         break;
       }
-      const remote = await this.confirm(local.zitadelUserId);
-      if (!remote) continue;
-      if (remote.createdAt && remote.createdAt >= passStart) continue; // newer than the pass
-      if (remote.status === null) {
-        this.logger.warn(
-          `users.reconcile: ${local.zitadelUserId} has an unknown state in ZITADEL; left unchanged`,
-        );
-        continue;
-      }
-      if (remote.status !== 'inactive') continue;
       try {
-        await this.underLease(org.tenantId, local.zitadelUserId, () => this.deactivate(local), 0);
+        // ZITADEL is asked, and the local row read again, under the tenant's lease: an answer read before it could be
+        // older than an admin change that finished meanwhile (a person reactivated or locked), and the write below
+        // must follow what ZITADEL says now.
+        const done = await this.underLease(
+          org.tenantId,
+          local.zitadelUserId,
+          () => this.deactivateIfStillMissing(org, local, passStart),
+          0,
+        );
+        if (done) deactivated += 1;
       } catch (error) {
         if (!(error instanceof UserSyncContendedError)) throw error;
         this.logger.warn(`${error.message}; left for the next pass`);
         if (error instanceof LeaseBusyError) break;
         continue;
       }
-      deactivated += 1;
+      if (yieldMs > 0) await sleep(yieldMs);
     }
     return deactivated;
+  }
+
+  /** Under the lease: whether ZITADEL still definitely says `local` is inactive; if so, deactivates them. */
+  private async deactivateIfStillMissing(
+    org: IdpOrgRow,
+    local: UserRow,
+    passStart: Date,
+  ): Promise<boolean> {
+    const remote = await this.confirm(local.zitadelUserId);
+    if (!remote) return false;
+    if (remote.createdAt && remote.createdAt >= passStart) return false; // newer than the pass
+    if (remote.status === null) {
+      this.logger.warn(
+        `users.reconcile: ${local.zitadelUserId} has an unknown state in ZITADEL; left unchanged`,
+      );
+      return false;
+    }
+    if (remote.status !== 'inactive') return false;
+    // The candidate list is from before the lease: the row may have been closed or removed since.
+    const current = await this.store.findByZitadelId(this.db, local.zitadelUserId);
+    if (!current || current.idpOrgId !== org.idpOrgId || current.status === 'inactive') {
+      return false;
+    }
+    await this.deactivate(current);
+    return true;
   }
 
   /** One candidate's own record, or null when it cannot be confirmed (not found or the call failed). */
