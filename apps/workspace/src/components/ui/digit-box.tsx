@@ -383,7 +383,7 @@ export function DigitBox({
       .filter(Boolean)
       .join(' ') || undefined;
   const posted = postedOf(text);
-  const inField = useInFieldScope();
+  const inField = useInFieldScope(id);
 
   return (
     <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(' ')}>

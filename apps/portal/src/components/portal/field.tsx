@@ -67,7 +67,7 @@ export function Field({
           </span>
         ) : null}
       </div>
-      <FieldScope hint={hint} error={error} hintId={hintId} errorId={errorId}>
+      <FieldScope hint={hint} error={error} hintId={hintId} errorId={errorId} controlId={base}>
         {children({
           id: base,
           'aria-describedby': describedBy,
