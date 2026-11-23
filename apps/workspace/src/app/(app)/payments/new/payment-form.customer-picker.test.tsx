@@ -170,6 +170,34 @@ describe('the customer picker', () => {
     }
   });
 
+  it('lists what the server matched even when the typed text is not in the name, and keeps the typed text', async () => {
+    const far: CustomerOption = {
+      id: FAR,
+      name: 'Far Away Traders',
+      number: 'CUS-0457',
+      panVatNo: '609999999',
+      defaultCurrency: 'NPR',
+    };
+    // The server matches "faraway" to "Far Away" (it normalises spaces); a substring filter here would drop it.
+    const search = vi.fn((_text: string, _signal: AbortSignal) => Promise.resolve([far]));
+    const mounted = await mount({ customersCutOff: true, search });
+    try {
+      const root = mounted.container;
+      await fill(customerBox(root), 'faraway');
+      await act(() => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+      expect(options()).toEqual(['Far Away TradersCUS-0457 · 609999999']);
+      expect(customerBox(root).value).toBe('faraway');
+      await click(option('Far Away'));
+      expect(posted(root, 'customerId')).toBe(FAR);
+      expect(customerBox(root).value).toBe('Far Away Traders');
+      // Editing the name after a pick means that customer is no longer the one named.
+      await fill(customerBox(root), 'Far Away Trader');
+      expect(posted(root, 'customerId')).toBe('');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   it('lists more than 20 customers flat, with no Unassigned header', async () => {
     const many: CustomerOption[] = Array.from({ length: 25 }, (_, i) => ({
       id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,

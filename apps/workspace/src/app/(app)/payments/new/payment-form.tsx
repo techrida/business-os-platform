@@ -22,6 +22,7 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
+import { type ComboboxOption, matchesQuery } from '@/components/ui/combobox-model';
 import { Field, Input, Select } from '@/components/ui/field';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog } from '@/components/ui/dialog';
@@ -72,6 +73,12 @@ const CUSTOMER_SEARCH_DELAY_MS = 250;
 /** The number and PAN/VAT under a customer's name in the list: what the search also matches on. */
 const customerDetail = (c: CustomerOption): string =>
   [c.number, c.panVatNo].filter(Boolean).join(' · ');
+
+const customerOption = (c: CustomerOption): ComboboxOption => ({
+  id: c.id,
+  label: c.name,
+  description: customerDetail(c),
+});
 
 /**
  * Where a form opened from an invoice starts (U16-Q8 a): the page read the invoice from the API, so the amount is the
@@ -217,7 +224,15 @@ export function PaymentForm({
   const [customerId, setCustomerId] = useState(initialCustomerId);
   // The customers the picker knows: the page's list plus whatever a search of a cut-off list has found since.
   const [searched, setSearched] = useState<readonly CustomerOption[]>([]);
-  const [customerText, setCustomerText] = useState('');
+  // The box's text. Only a cut-off list lets the form own it (the server's matches are not filtered again here), so it
+  // starts on the chosen customer's name; a complete list leaves the text to the combobox.
+  const [customerText, setCustomerText] = useState(
+    customersCutOff ? (customers.find((c) => c.id === initialCustomerId)?.name ?? '') : '',
+  );
+  // The server's answer for the text it was asked about, so a match it found by a fuzzier or normalised rule is listed.
+  const [found, setFound] = useState<{ query: string; items: readonly CustomerOption[] } | null>(
+    null,
+  );
   // The server search for the typed text did not load: say so instead of "No matching customer.".
   const [searchFailed, setSearchFailed] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -226,18 +241,29 @@ export function PaymentForm({
     for (const c of [...customers, ...searched]) if (!byId.has(c.id)) byId.set(c.id, c);
     return [...byId.values()];
   }, [customers, searched]);
-  const customerOptions = useMemo(
-    () => known.map((c) => ({ id: c.id, label: c.name, description: customerDetail(c) })),
-    [known],
-  );
+  const customerOptions = useMemo(() => {
+    if (!customersCutOff) return known.map(customerOption);
+    const query = customerText.trim();
+    if (query === '') return customers.map(customerOption);
+    // The answer for this very text as the server gave it; until it arrives, what is already known narrowed by the text.
+    if (found?.query === query) return found.items.map(customerOption);
+    return known.map(customerOption).filter((o) => matchesQuery(o, query));
+  }, [known, customers, customersCutOff, customerText, found]);
+  const customerNoMatchText = searchFailed
+    ? 'Search did not load. Try again.'
+    : 'No matching customer.';
+  const chosenName = known.find((c) => c.id === customerId)?.name;
   useEffect(() => {
     const text = customerText.trim();
-    if (!customersCutOff || text.length < 2) return;
+    // The name of the chosen customer is not a search.
+    if (!customersCutOff || text.length < 2 || text === chosenName) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       search(text, controller.signal).then(
-        (found) => {
-          if (!controller.signal.aborted) setSearched((old) => [...old, ...found]);
+        (items) => {
+          if (controller.signal.aborted) return;
+          setSearched((old) => [...old, ...items]);
+          setFound({ query: text, items });
         },
         () => {
           // The list stays as it is (the page's own customers can still be chosen); the empty state says so.
@@ -250,7 +276,7 @@ export function PaymentForm({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [customerText, customersCutOff, search]);
+  }, [customerText, customersCutOff, chosenName, search]);
   // An invoice's own currency is used as it is, even when switched off in Settings: a payment is still accepted in it.
   const [currency, setCurrency] = useState<string>(() =>
     prefill !== null
@@ -297,6 +323,7 @@ export function PaymentForm({
 
   function chooseCustomer(id: string) {
     setCustomerId(id);
+    if (customersCutOff && id !== '') setCustomerText(known.find((c) => c.id === id)?.name ?? '');
     const fallback = known.find((c) => c.id === id)?.defaultCurrency;
     if (!currencyChosen) setCurrency(startCurrency(fallback, enabledCurrencies));
     // The invoice's open amount belongs to its customer: drop it unless the person has typed their own.
@@ -638,15 +665,23 @@ export function PaymentForm({
                       setCustomerText(text);
                       // A new text is a new search: typing again is how a failed one is retried.
                       setSearchFailed(false);
+                      // Editing the name after a pick means that customer is no longer the one named.
+                      if (customersCutOff && customerId !== '' && text !== chosenName) {
+                        chooseCustomer('');
+                      }
                     }}
+                    {...(customersCutOff ? { serverFiltered: true, inputValue: customerText } : {})}
                     open={customerOpen}
                     onOpenChange={setCustomerOpen}
                     disabled={customerLocked}
                     placeholder="Search by name, number or PAN"
-                    emptyText="There are no customers to choose from."
-                    noMatchText={
-                      searchFailed ? 'Search did not load. Try again.' : 'No matching customer.'
+                    // A server-filtered list is empty when nothing matched, so the same words say both.
+                    emptyText={
+                      customersCutOff
+                        ? customerNoMatchText
+                        : 'There are no customers to choose from.'
                     }
+                    noMatchText={customerNoMatchText}
                   />
                 )}
               </Field>
