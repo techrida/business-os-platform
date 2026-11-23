@@ -160,7 +160,7 @@ function SearchingPick({
   }, [options, found, query]);
 
   const failed = found?.failed === true && found.query === query;
-  const noneText = failed ? SEARCH_FAILED_TEXT : shared.noMatchText;
+  const noneText = failed ? SEARCH_FAILED_TEXT : (shared.noMatchText ?? 'No matches.');
   const emptyShown = query === '' ? shared.emptyText : noneText;
   const emptyTextFor = emptyShown === undefined ? {} : { emptyText: emptyShown };
 
