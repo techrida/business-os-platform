@@ -51,7 +51,7 @@ vi.mock('@/lib/api-admin', () => ({
 }));
 
 const { default: TermsPage } = await import('./page');
-const { savePresetAction, removePresetAction } = await import('./actions');
+const { savePresetAction, removePresetAction, setDefaultPresetAction } = await import('./actions');
 const { resetSettingAction } = await import('../_components/actions');
 const { ApiError } = await import('@/lib/api');
 
@@ -116,6 +116,16 @@ describe('the Saved terms page', () => {
     expect(html).toContain('aria-label="Remove Standard build"');
     expect(html).toContain('Add term set');
     expect(html).not.toContain('Saved option');
+  });
+
+  it('marks the kind default and offers Make default on the others', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    const other: TermPreset = { ...preset, id: '22222222-2222-4222-8222-222222222222', name: 'Other' };
+    api.listTermPresets.mockResolvedValue([{ ...preset, isDefault: true }, other]);
+    const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(html.match(/>Default</g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Clear default Scope"');
+    expect(html).toContain('aria-label="Make Other the default Scope"');
   });
 
   it('labels only the app default sets, and leaves them editable', async () => {
@@ -345,5 +355,31 @@ describe('resetting every term set to the app defaults', () => {
     getSession.mockResolvedValue(session(['founder']));
     expect(await resetSettingAction('terms', 'tax.vat_rate', 3)).toMatchObject({ status: 'error' });
     expect(putSetting).not.toHaveBeenCalled();
+  });
+});
+
+describe('setDefaultPresetAction', () => {
+  it('refuses a person without the section permission before any call', async () => {
+    getSession.mockResolvedValue(session(['sales']));
+    await expect(setDefaultPresetAction(ID, true)).rejects.toThrow('REDIRECT:/settings/denied');
+    expect(api.updateTermPreset).not.toHaveBeenCalled();
+  });
+
+  it('sets and clears the default through the API and refreshes the list', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    api.updateTermPreset.mockResolvedValue(preset);
+    expect(await setDefaultPresetAction(ID, true)).toMatchObject({ status: 'ok' });
+    expect(api.updateTermPreset).toHaveBeenLastCalledWith(expect.anything(), ID, { isDefault: true });
+    expect(await setDefaultPresetAction(ID, false)).toMatchObject({ status: 'ok' });
+    expect(api.updateTermPreset).toHaveBeenLastCalledWith(expect.anything(), ID, {
+      isDefault: false,
+    });
+    expect(revalidatePath).toHaveBeenCalledWith('/settings/terms');
+  });
+
+  it('says so when the term set was removed meanwhile', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    api.updateTermPreset.mockRejectedValue(new ApiError(404, 'gone'));
+    expect(await setDefaultPresetAction(ID, true)).toMatchObject({ status: 'error' });
   });
 });
