@@ -101,7 +101,7 @@ export function Board({
   }
 
   return (
-    <div className={className}>
+    <div className={[styles.boardRoot, className].filter(Boolean).join(' ')}>
       <p className={styles.boardHint}>
         {noun === 'lead'
           ? 'Drag a card to a column, or open Move on a card to pick the stage, then confirm with Move. Moving a lead to Contacted asks you to log a call, email or meeting first.'
