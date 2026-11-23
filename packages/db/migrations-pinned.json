@@ -117,5 +117,7 @@
   "0193_party_phones_backfill.sql": "72aaaef837fb08732b08d2283756e4f407f9c01a9beb551a03c5418b730d75fb",
   "0194_drop_owner_phone_e164.sql": "5d15335d70a0031ad49c57f80a1b2553a3beb9352e598e37026598a6773d5d27",
   "0195_entity_settings_address_phones.sql": "8fab80a1ad92ea4a5c39f63c225270e1acf381ffb2357526b931106350c18ced",
-  "0199_lead_address.sql": "fcfa8d9bdc71604fa75c67c7def39240bbd04ab33baa35befff160b2a17e2e7c"
+  "0196_party_phone_main_country.sql": "647ba2754e2e06684c71a5ae573469d9d0d99b7e8d6b7a352bb20d0dff0a830c",
+  "0199_lead_address.sql": "fcfa8d9bdc71604fa75c67c7def39240bbd04ab33baa35befff160b2a17e2e7c",
+  "0218_logo_image_stats.sql": "0835c1c65a598f8932e7ab805e057e77bd996d47daf65263d4b4a61172f70b04"
 }
