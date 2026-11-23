@@ -120,7 +120,11 @@ describe('the Saved terms page', () => {
 
   it('marks the kind default and offers Make default on the others', async () => {
     getSession.mockResolvedValue(session(['founder']));
-    const other: TermPreset = { ...preset, id: '22222222-2222-4222-8222-222222222222', name: 'Other' };
+    const other: TermPreset = {
+      ...preset,
+      id: '22222222-2222-4222-8222-222222222222',
+      name: 'Other',
+    };
     api.listTermPresets.mockResolvedValue([{ ...preset, isDefault: true }, other]);
     const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
     expect(html.match(/>Default</g)).toHaveLength(1);
@@ -369,7 +373,9 @@ describe('setDefaultPresetAction', () => {
     getSession.mockResolvedValue(session(['founder']));
     api.updateTermPreset.mockResolvedValue(preset);
     expect(await setDefaultPresetAction(ID, true)).toMatchObject({ status: 'ok' });
-    expect(api.updateTermPreset).toHaveBeenLastCalledWith(expect.anything(), ID, { isDefault: true });
+    expect(api.updateTermPreset).toHaveBeenLastCalledWith(expect.anything(), ID, {
+      isDefault: true,
+    });
     expect(await setDefaultPresetAction(ID, false)).toMatchObject({ status: 'ok' });
     expect(api.updateTermPreset).toHaveBeenLastCalledWith(expect.anything(), ID, {
       isDefault: false,

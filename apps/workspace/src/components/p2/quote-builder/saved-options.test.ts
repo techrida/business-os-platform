@@ -122,7 +122,10 @@ describe('pickerState', () => {
   it('is empty for blank text, the preset for its words (markup and spacing aside), else custom', () => {
     expect(pickerState('', scope, null)).toEqual({ state: 'empty' });
     expect(pickerState('<p> </p>', scope, null)).toEqual({ state: 'empty' });
-    expect(pickerState('<p>We   build\nit.</p>', scope, null)).toEqual({ state: 'preset', preset: a });
+    expect(pickerState('<p>We   build\nit.</p>', scope, null)).toEqual({
+      state: 'preset',
+      preset: a,
+    });
     expect(pickerState('We build it. More.', scope, a.id)).toEqual({ state: 'custom' });
   });
   it('prefers the last applied one when two presets hold the same words', () => {
