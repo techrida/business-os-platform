@@ -7,6 +7,7 @@ import { expect, test, type BrowserContext, type Locator, type Page } from '@pla
 
 import { signInAs } from '../helpers/memo-flow';
 import { chooseOption, selectByName } from '../helpers/select';
+import { ensureLeadOwner } from '../helpers/lead-owner';
 
 /**
  * Browser acceptance for the server-rendered, URL-backed list filters: no Apply or Search button,
@@ -80,6 +81,7 @@ async function createLead(
     .getByRole('textbox', { name: 'Email', exact: true })
     .fill(`${randomUUID()}@example.test`);
   await expect(title).toHaveValue(lead.title);
+  await ensureLeadOwner(page);
   await page.getByRole('button', { name: 'Create lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name: lead.title })).toBeVisible();
 }

@@ -73,6 +73,9 @@ export async function createDraftMemo(
       name: approver ? 'Approved by' : `Recommended by ${i + 1}`,
       exact: true,
     });
+    // The approver rule may already have chosen the person (a head who cannot decide approvals falls back to the
+    // Founder, and the box opens filled). Keep that choice when it is the one asked for.
+    if (approver && (await box.inputValue()) === signers[i]) continue;
     await box.click();
     await box.fill(signers[i]!);
     // Match the option's own name line, whole. A prefix match also picks "Dev Management Two" when
