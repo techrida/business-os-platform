@@ -34,6 +34,8 @@ const ApprovalPeoplePageSchema = z.object({
       id: z.string(),
       displayName: z.string().nullable(),
       email: z.string().nullable(),
+      /** Job title and department: the muted role a member picker shows after the name (BOS-UI-001). */
+      role: z.string().nullable().optional(),
     }),
   ),
   nextAfter: z.string().nullable(),

@@ -12,7 +12,8 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Input, Textarea } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { toast } from '@/components/ui/toast';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
@@ -95,11 +96,9 @@ function FormAlert({ error }: { error: string | undefined }) {
   ) : null;
 }
 
-/** The people a follow-up can go to; `empty` adds a first choice that leaves it to the API. */
-function assigneeOptions(owners: readonly LeadOwnerOption[], empty?: string) {
-  const people = owners.map((o) => ({ value: o.userId, label: ownerOptionName(o) }));
-  return empty === undefined ? people : [{ value: '', label: empty }, ...people];
-}
+/** The people a follow-up can go to, as the one member picker takes them. */
+const assigneePeople = (owners: readonly LeadOwnerOption[]) =>
+  owners.map((o) => ({ id: o.userId, name: ownerOptionName(o), role: o.role ?? null }));
 
 const has = (owners: readonly LeadOwnerOption[], id: string | null | undefined) =>
   id !== null && id !== undefined && owners.some((o) => o.userId === id);
@@ -143,17 +142,15 @@ export function ScheduleFollowUpDialog({
 
   const ownerListed = has(owners, ownerUserId);
   const defaultAssignee = ownerListed ? (ownerUserId ?? '') : '';
-  // Left empty, the API picks the record's owner, or the person scheduling when it has none.
-  const options = assigneeOptions(
-    owners,
-    ownerListed
-      ? undefined
-      : ownerUserId === null
-        ? 'Me'
-        : subjectKind === 'leadId'
-          ? 'Lead owner'
-          : 'Opportunity owner',
-  );
+  // Left empty, the API picks the record's owner, or the person scheduling when it has none. When the owner is in
+  // the list the box starts on them by name; otherwise the empty box says who the API will pick.
+  const emptyHint = ownerListed
+    ? 'Search by name'
+    : ownerUserId === null
+      ? 'Me'
+      : subjectKind === 'leadId'
+        ? 'Lead owner'
+        : 'Opportunity owner';
   const shown = dialog.outcome.fieldErrors ?? {};
 
   return (
@@ -206,7 +203,15 @@ export function ScheduleFollowUpDialog({
         </Field>
         <Field label="Assigned to" error={shown['assigneeUserId']}>
           {(c) => (
-            <Select name="assigneeUserId" defaultValue={defaultAssignee} options={options} {...c} />
+            <MemberPicker
+              labelledBy={c['aria-labelledby']}
+              describedBy={c['aria-describedby']}
+              invalid={c['aria-invalid'] === true}
+              name="assigneeUserId"
+              people={assigneePeople(owners)}
+              defaultValue={defaultAssignee}
+              placeholder={emptyHint}
+            />
           )}
         </Field>
         <Field label="Note" optional error={shown['body']}>
@@ -243,7 +248,6 @@ export function RescheduleFollowUpDialog({
     'Follow-up rescheduled.',
   );
   const listed = has(owners, item.assigneeUserId);
-  const options = assigneeOptions(owners, listed ? undefined : 'Keep current assignee');
   const err = dialog.outcome.fieldErrors ?? {};
   // The server refreshes this record's page; it builds the path from the kind and id itself.
   const subject = subjectOf(item) ?? (leadId ? { kind: 'leadId' as const, id: leadId } : null);
@@ -287,11 +291,14 @@ export function RescheduleFollowUpDialog({
         </Field>
         <Field label="Assigned to" error={err['assigneeUserId']}>
           {(c) => (
-            <Select
+            <MemberPicker
+              labelledBy={c['aria-labelledby']}
+              describedBy={c['aria-describedby']}
+              invalid={c['aria-invalid'] === true}
               name="assigneeUserId"
+              people={assigneePeople(owners)}
               defaultValue={listed ? (item.assigneeUserId ?? '') : ''}
-              options={options}
-              {...c}
+              placeholder={listed ? 'Search by name' : 'Keep current assignee'}
             />
           )}
         </Field>

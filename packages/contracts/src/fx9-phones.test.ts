@@ -190,8 +190,16 @@ describe('phoneCountryFromE164', () => {
     ['+1 4155552671', 'US'],
     ['+7', 'RU'],
     // A shared calling code resolves to its main country, also for a complete number of a smaller region (R6A).
-    ['+77012345678', 'RU'],
+    // +1 and +7 keep the number's own country once the number is complete (R6A, Kuu).
+    ['+14165551234', 'CA'],
+    ['+18765551234', 'JM'],
+    ['+77012345678', 'KZ'],
+    ['+14', 'US'],
+    ['+1 4', 'US'],
+    ['+1416', 'US'],
+    ['+7701', 'RU'],
     ['+447911123456', 'GB'],
+    ['+44 7911 11', 'GB'],
     ['+441481123456', 'GB'],
     ['+390669812345', 'IT'],
     ['+4791234567', 'NO'],

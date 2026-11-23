@@ -11,5 +11,3 @@
 **/playwright-report
 **/test-results
 
-# Dev/test tooling: the manual-run browser driver never goes into an image.
-tools/manual-run

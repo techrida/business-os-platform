@@ -2,7 +2,7 @@ import type { CheckPersonAreaRow, CheckPersonReport } from '@bos/contracts';
 import Link from 'next/link';
 
 import { Alert } from '@/components/ui/alert';
-import type { ComboboxOption } from '@/components/ui/combobox-model';
+import type { MemberOption } from '@/components/ui/member-picker';
 import { Disclosure } from '@/components/ui/disclosure';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -57,20 +57,21 @@ async function loadReport(session: Session, personId: string): Promise<ReportRes
 function personOptions(
   people: readonly AccessPersonOption[],
   report: CheckPersonReport | null,
-): ComboboxOption[] {
-  const options: ComboboxOption[] = people.map((p) => ({
+): MemberOption[] {
+  const options: MemberOption[] = people.map((p) => ({
     id: p.id,
-    label: p.name,
-    description: p.email ?? undefined,
+    name: p.name,
+    role: p.departmentName,
     group: p.departmentName,
     searchText: p.email ?? undefined,
   }));
   if (report && !options.some((o) => o.id === report.person.id)) {
     options.push({
       id: report.person.id,
-      label: report.person.name,
-      description: report.person.email ?? undefined,
+      name: report.person.name,
+      role: report.person.department?.name ?? null,
       group: report.person.department?.name ?? null,
+      searchText: report.person.email ?? undefined,
     });
   }
   return options;

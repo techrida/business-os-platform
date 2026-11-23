@@ -9,14 +9,14 @@
 -- Data written (audited as system:migration-0196):
 --   * customer_contact_phones, vendor_contact_phones, lead_phones: `country` becomes the main country of the number's
 --     calling code when it is one of the smaller countries that share that code (the map below is libphonenumber-js
---     1.13.17's `country_calling_codes` order restricted to ISO 3166 countries: +1 US, +7 RU, +39 IT, +44 GB, +47 NO,
+--     1.13.17's `country_calling_codes` order restricted to ISO 3166 countries: +39 IT, +44 GB, +47 NO,
 --     +61 AU, +212 MA, +262 RE, +290 SH, +358 FI, +590 GP, +599 CW). A row whose country is the main country, or is
 --     not of the number's calling code, is not touched; the number itself never changes.
 --   * app.settings `entity.profile`: the same change to the objects in `phones`, as the next version of the latest
 --     one (written as SettingsService.set writes one: per-key advisory lock, version = max(version) + 1,
 --     created_by NULL). Older versions stay as history.
--- A pick the user made on purpose cannot be told from a detected country in stored data, so a Canadian or Jamaican
--- +1 number moves to US too; the next save of that contact can pick the country again.
+-- +1 and +7 are not in the map (Kuu, R6A): their countries (CA, JM and the other NANP countries; KZ) follow the number
+-- itself, as 0193 stored them, so those rows stay as they are.
 --
 -- Idempotent: a converted row needs no change, so a second run writes nothing. The tenant-level contact tables take
 -- each tenant's default entity as the acting entity (as 0193 does). Runs as bos_owner, in the migrator's one
@@ -36,31 +36,6 @@ SET LOCAL lock_timeout = '5s';
 CREATE TEMP TABLE r6a_main_country ("code" text NOT NULL, "main" char(2) NOT NULL, "other" char(2) NOT NULL) ON COMMIT DROP;
 --> statement-breakpoint
 INSERT INTO r6a_main_country ("code", "main", "other") VALUES
-		('1', 'US', 'AG'),
-		('1', 'US', 'AI'),
-		('1', 'US', 'AS'),
-		('1', 'US', 'BB'),
-		('1', 'US', 'BM'),
-		('1', 'US', 'BS'),
-		('1', 'US', 'CA'),
-		('1', 'US', 'DM'),
-		('1', 'US', 'DO'),
-		('1', 'US', 'GD'),
-		('1', 'US', 'GU'),
-		('1', 'US', 'JM'),
-		('1', 'US', 'KN'),
-		('1', 'US', 'KY'),
-		('1', 'US', 'LC'),
-		('1', 'US', 'MP'),
-		('1', 'US', 'MS'),
-		('1', 'US', 'PR'),
-		('1', 'US', 'SX'),
-		('1', 'US', 'TC'),
-		('1', 'US', 'TT'),
-		('1', 'US', 'VC'),
-		('1', 'US', 'VG'),
-		('1', 'US', 'VI'),
-		('7', 'RU', 'KZ'),
 		('39', 'IT', 'VA'),
 		('44', 'GB', 'GG'),
 		('44', 'GB', 'IM'),
