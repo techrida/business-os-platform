@@ -190,7 +190,7 @@ function ContactEditor({
             />
           )}
         </Field>
-        <Field label="Phone" hint="Pick each number's country, or type + and its code.">
+        <Field label="Phone" hint="Pick each number's country, or type its code.">
           {(c) => (
             <PhoneListInput
               name="phones"

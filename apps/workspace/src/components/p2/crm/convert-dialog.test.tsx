@@ -349,7 +349,7 @@ it('keeps a short new-contact phone blocked after switching to an existing conta
   await click(dialog().querySelector('input[name="contactMode"][value="create"]'));
   expect(
     dialog().querySelector<HTMLInputElement>('input[aria-label="Phone 1 number"]')?.value,
-  ).toBe('981234567');
+  ).toBe('+977 981234567');
   await submit(dialog());
   expect(submitted).toHaveLength(0);
   expect(api.convertLead).not.toHaveBeenCalled();

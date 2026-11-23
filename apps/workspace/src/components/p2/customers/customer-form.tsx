@@ -387,7 +387,7 @@ export function CustomerForm({
             </Field>
             <Field
               label="Phone"
-              hint="Optional. Pick each number's country, or type + and its code."
+              hint="Optional. Pick each number's country, or type its code."
               className={WIDE}
             >
               {(control) => (
