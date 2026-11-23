@@ -161,6 +161,8 @@ function SearchingPick({
 
   const failed = found?.failed === true && found.query === query;
   const noneText = failed ? SEARCH_FAILED_TEXT : shared.noMatchText;
+  const emptyShown = query === '' ? shared.emptyText : noneText;
+  const emptyTextFor = emptyShown === undefined ? {} : { emptyText: emptyShown };
 
   return (
     <>
@@ -169,7 +171,7 @@ function SearchingPick({
         noMatchText={noneText}
         // The Combobox says "empty" when it was handed no options at all, which is what a server answer with no
         // matches is: once something is typed, that is a no-match (or a failed search), not an empty list.
-        emptyText={query === '' ? shared.emptyText : noneText}
+        {...emptyTextFor}
         serverFiltered
         options={shown}
         value={value}
