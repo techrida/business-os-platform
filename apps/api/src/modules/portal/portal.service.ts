@@ -76,7 +76,7 @@ export function isPortalVisible(
  * A sent version the company has since closed: it was cancelled itself (a Lost deal), or it was replaced by a revision
  * that was then cancelled. Its mailed link, its row in the list and its PDF all say "no longer open" (R6D).
  */
-function isClosedToCustomer(v: {
+export function isClosedToCustomer(v: {
   status: PortalVersionHead['status'];
   sentAt: Date | null;
   quotationCancelled: boolean;
@@ -87,7 +87,7 @@ function isClosedToCustomer(v: {
   );
 }
 
-const quotationClosed = () =>
+export const quotationClosed = () =>
   new ConflictException({
     code: 'quotation_closed',
     message: 'This quotation is no longer open',
