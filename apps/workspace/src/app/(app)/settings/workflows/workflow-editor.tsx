@@ -458,10 +458,7 @@ export function WorkflowEditor({
                     />
                   )}
                 </Field>
-                <Field
-                  label="Key"
-                  hint="Lowercase letters, digits, _ . - ; cannot be changed later."
-                >
+                <Field label="Key" hint="Cannot be changed later.">
                   {(control) => (
                     <Input
                       {...control}
@@ -470,6 +467,7 @@ export function WorkflowEditor({
                       required
                       autoComplete="off"
                       pattern="[a-z][a-z0-9_.\-]{0,63}"
+                      placeholder="invoice-approval"
                       onChange={(e) => setKey(e.target.value)}
                     />
                   )}

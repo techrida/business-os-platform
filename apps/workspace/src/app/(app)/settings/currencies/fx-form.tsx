@@ -28,17 +28,14 @@ export function FxForm({ today }: { today: string }) {
             </Select>
           )}
         </Field>
-        <Field
-          error={state.fieldErrors?.rateNpr}
-          label="Rate (NPR for 1 unit)"
-          hint="Up to 6 decimals."
-        >
+        <Field error={state.fieldErrors?.rateNpr} label="Rate (NPR for 1 unit)">
           {(control) => (
             <DecimalInput
               {...control}
               name="rateNpr"
               intDigits={RATE_LIMITS.intDigits}
               scale={RATE_LIMITS.scale}
+              placeholder="132.45"
               required
               defaultValue={kept.rateNpr ?? ''}
             />

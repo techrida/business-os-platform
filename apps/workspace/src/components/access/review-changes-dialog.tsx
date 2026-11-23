@@ -14,7 +14,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog } from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/field';
+import { Field, Textarea } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 
@@ -385,23 +385,24 @@ function OpenReview({
                 </section>
               ) : null}
 
-              <div className={styles.block}>
-                <label htmlFor={noteId} className={styles.noteLabel}>
-                  Why are you changing this? (optional)
-                </label>
-                <Textarea
-                  id={noteId}
-                  value={note}
-                  maxLength={NOTE_LIMIT}
-                  rows={2}
-                  disabled={saving}
-                  aria-describedby={`${noteId}-count`}
-                  onChange={(event) => setNote(event.currentTarget.value)}
-                />
-                <span id={`${noteId}-count`} className={styles.count}>
-                  {note.length} of {NOTE_LIMIT} characters
-                </span>
-              </div>
+              <Field label="Why are you changing this?" optional>
+                {(control) => (
+                  <>
+                    <Textarea
+                      {...control}
+                      value={note}
+                      maxLength={NOTE_LIMIT}
+                      rows={2}
+                      disabled={saving}
+                      aria-describedby={`${control.id}-count`}
+                      onChange={(event) => setNote(event.currentTarget.value)}
+                    />
+                    <span id={`${control.id}-count`} className={styles.count}>
+                      {note.length} of {NOTE_LIMIT} characters
+                    </span>
+                  </>
+                )}
+              </Field>
 
               {problem ? (
                 <Alert tone="error" role="alert">
