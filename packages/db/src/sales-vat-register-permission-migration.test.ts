@@ -85,9 +85,6 @@ beforeAll(async () => {
   testDb = await createTestDatabase({ migrated: false });
   url = testDb.ownerUrl;
   pool = new Pool({ connectionString: url, max: 2 });
-  // Without a listener, Postgres closing an idle connection while the database is dropped (code 57P01) is an
-  // unhandled 'error' event, which fails the whole vitest run even though every test passed (GitHub run 45135113457).
-  pool.on('error', () => undefined);
 
   const journal = JSON.parse(
     await readFile(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
