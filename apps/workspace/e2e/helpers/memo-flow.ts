@@ -73,13 +73,11 @@ export async function createDraftMemo(
       name: approver ? 'Approved by' : `Recommended by ${i + 1}`,
       exact: true,
     });
-    // The approver rule may already have chosen the person (a head who cannot decide approvals falls back to the
-    // Founder, and the box opens filled). Keep that choice when it is the one asked for.
-    // The rule arrives after the form, so wait a moment for it before choosing by hand.
+    // The rule arrives after the form and may already have chosen the person: the live preview then names them under
+    // "Approved by" while the box itself stays empty. Wait a moment for that before choosing by hand.
     if (approver) {
-      const prefilled = await expect
-        .poll(() => box.inputValue(), { timeout: 5_000 })
-        .toBe(signers[i])
+      const prefilled = await expect(page.getByLabel('Memo preview'))
+        .toContainText(signers[i]!, { timeout: 5_000 })
         .then(
           () => true,
           () => false,
