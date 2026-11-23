@@ -25,6 +25,7 @@ import { contrastWords, normalizeHex } from './colour-math';
 import { ColourPicker } from './colour-picker';
 import styles from './document-style-form.module.css';
 import { LayoutThumbnail } from './layout-thumbnail';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export interface DocumentStyleFormProps {
   /** What is saved now. Read once; after a save the form tracks its own baseline. */
@@ -107,17 +108,18 @@ function ColourDot({
 }) {
   const { onPrimary } = deriveBrandPalette(hex);
   return (
-    <button
-      type="button"
-      className={styles.dot}
-      aria-pressed={selected}
-      aria-label={`${label}, ${hex}`}
-      title={label}
-      style={{ background: hex, color: onPrimary }}
-      onClick={onSelect}
-    >
-      {selected ? <CheckMark size={16} /> : null}
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        className={styles.dot}
+        aria-pressed={selected}
+        aria-label={`${label}, ${hex}`}
+        style={{ background: hex, color: onPrimary }}
+        onClick={onSelect}
+      >
+        {selected ? <CheckMark size={16} /> : null}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -281,20 +283,21 @@ export function DocumentStyleForm({
             ))}
             <Popover.Root>
               <Popover.Trigger asChild>
-                <button
-                  type="button"
-                  className={`${styles.dot} ${styles.customDot}`}
-                  aria-pressed={custom}
-                  aria-label={custom ? `Custom colour, ${colour}` : 'Custom colour'}
-                  title="Custom colour"
-                  style={{
-                    ...(custom ? { '--custom-colour': colour } : {}),
-                    color: custom ? deriveBrandPalette(colour).onPrimary : '#ffffff',
-                  }}
-                  data-custom={custom}
-                >
-                  {custom ? <CheckMark size={16} /> : null}
-                </button>
+                <Tooltip content="Custom colour">
+                  <button
+                    type="button"
+                    className={`${styles.dot} ${styles.customDot}`}
+                    aria-pressed={custom}
+                    aria-label={custom ? `Custom colour, ${colour}` : 'Custom colour'}
+                    style={{
+                      ...(custom ? { '--custom-colour': colour } : {}),
+                      color: custom ? deriveBrandPalette(colour).onPrimary : '#ffffff',
+                    }}
+                    data-custom={custom}
+                  >
+                    {custom ? <CheckMark size={16} /> : null}
+                  </button>
+                </Tooltip>
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content

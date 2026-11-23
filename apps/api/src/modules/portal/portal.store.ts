@@ -20,7 +20,7 @@ import {
   salesOrders,
 } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, exists, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
@@ -37,8 +37,10 @@ export type PortalVersionHead = Pick<
   versionId: string;
   quotationId: string;
   number: string;
-  /** When the version was sent to the customer; null if never. Read by the respond path only. */
-  sentAt?: Date | null;
+  /** When the version was sent to the customer; null if never. A never-sent version is never visible once superseded or expired. */
+  sentAt: Date | null;
+  /** True when the quotation's newest version is cancelled (a Lost deal or a cancel): its older sent versions are closed. */
+  quotationCancelled: boolean;
 };
 
 /**
@@ -72,6 +74,8 @@ export type PortalDocumentHead = Pick<
   VersionRow,
   'status' | 'rejectionSource' | 'renderState' | 'renderAttempts'
 > & {
+  sentAt: Date | null;
+  quotationCancelled: boolean;
   tenantId: string;
   organizationId: string;
   renderedDocumentId: string | null;
@@ -131,6 +135,13 @@ const versionOfQuotation = and(
   eq(quotations.id, quotationVersions.quotationId),
 );
 
+/** True when the quotation's newest version is cancelled. A correlated read, so a list or a link costs no extra query. */
+const quotationCancelledSql = sql<boolean>`exists (
+  select 1 from app.quotation_versions cv
+   where cv.tenant_id = ${quotations.tenantId}
+     and cv.id = ${quotations.currentVersionId}
+     and cv.status = 'cancelled')`.mapWith(Boolean);
+
 /** Versions of a quotation `p` may read, as heads; shared by the list and the respond read. */
 const headColumns = {
   versionId: quotationVersions.id,
@@ -144,6 +155,7 @@ const headColumns = {
   currency: quotationVersions.currency,
   total: quotationVersions.total,
   sentAt: quotationVersions.sentAt,
+  quotationCancelled: quotationCancelledSql,
 };
 
 @Injectable()
@@ -190,6 +202,8 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         renderState: quotationVersions.renderState,
         renderAttempts: quotationVersions.renderAttempts,
         renderedDocumentId: quotationVersions.renderedDocumentId,
+        sentAt: quotationVersions.sentAt,
+        quotationCancelled: quotationCancelledSql,
       })
       .from(quotationVersions)
       .innerJoin(quotations, versionOfQuotation)

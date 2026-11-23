@@ -506,6 +506,180 @@ describe('edit', () => {
   });
 });
 
+describe('D10: the kind and country of a vendor can be edited', () => {
+  const patchVendor = (id: string, body: Record<string, unknown>) =>
+    api().patch(`/v1/vendors/${id}`).send(body);
+  const auditOf = (id: string) =>
+    rowOf<{ before: Record<string, unknown>; after: Record<string, unknown> }>(
+      `SELECT before, after FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_id = $2 AND action = 'vendor.kind_country_changed' ORDER BY id`,
+      [tenantId, id],
+    );
+
+  it('moves a Nepal company to a foreign vendor, keeps its PAN, and audits the old and new kind and country', async () => {
+    const v = await newVendor();
+    const res = await patchVendor(v.id, {
+      expectedVersion: v.version,
+      kind: 'foreign',
+      country: 'IN',
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(VendorDtoSchema.parse(res.body)).toMatchObject({
+      kind: 'foreign',
+      country: 'IN',
+      pan: v.pan,
+      version: v.version + 1,
+    });
+    const [row] = await rowOf<{ kind: string; country: string }>(
+      'SELECT kind, country FROM app.vendors WHERE id = $1',
+      [v.id],
+    );
+    expect(row).toEqual({ kind: 'foreign', country: 'IN' });
+    expect(await auditOf(v.id)).toEqual([
+      { before: { kind: 'company', country: 'NP' }, after: { kind: 'foreign', country: 'IN' } },
+    ]);
+  });
+
+  it('switching a foreign vendor to Nepal asks for a PAN: 400, nothing changed, then 200 with one', async () => {
+    const foreign = await createVendor({ kind: 'foreign', country: 'DE', pan: undefined });
+    expect(foreign.status, JSON.stringify(foreign.body)).toBe(201);
+    const { id, version } = foreign.body as VendorDto;
+    const noPan = await patchVendor(id, {
+      expectedVersion: version,
+      kind: 'company',
+      country: 'NP',
+    });
+    expect(noPan.status, JSON.stringify(noPan.body)).toBe(400);
+    expect(noPan.body.error.message).toMatch(/PAN is required/);
+    const shortPan = await patchVendor(id, {
+      expectedVersion: version,
+      kind: 'company',
+      country: 'NP',
+      pan: '12345',
+    });
+    expect(shortPan.status).toBe(400);
+    expect(shortPan.body.error.message).toMatch(/9 digits/);
+    const [untouched] = await rowOf<{ kind: string; country: string; version: number }>(
+      'SELECT kind, country, version FROM app.vendors WHERE id = $1',
+      [id],
+    );
+    expect(untouched).toEqual({ kind: 'foreign', country: 'DE', version });
+    expect(await auditOf(id)).toEqual([]);
+
+    const pan = nextPan();
+    const ok = await patchVendor(id, {
+      expectedVersion: version,
+      kind: 'company',
+      country: 'NP',
+      pan,
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body).toMatchObject({ kind: 'company', country: 'NP', pan });
+    expect(await auditOf(id)).toEqual([
+      {
+        before: { kind: 'foreign', country: 'DE', pan: null },
+        after: { kind: 'company', country: 'NP', pan },
+      },
+    ]);
+  });
+
+  it('a stored loose foreign tax id is not a Nepal PAN: switching to Nepal without a new PAN is refused', async () => {
+    const foreign = await createVendor({ kind: 'foreign', country: 'DE', pan: 'DE-70000001' });
+    const { id, version } = foreign.body as VendorDto;
+    const res = await patchVendor(id, {
+      expectedVersion: version,
+      kind: 'individual',
+      country: 'NP',
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(res.body.error.message).toMatch(/9 digits/);
+  });
+
+  it('refuses a pair the foreign rule forbids, whatever half was sent', async () => {
+    const v = await newVendor();
+    const kindOnly = await patchVendor(v.id, { expectedVersion: v.version, kind: 'foreign' });
+    expect(kindOnly.status, JSON.stringify(kindOnly.body)).toBe(400);
+    expect(kindOnly.body.error.message).toMatch(/foreign vendor cannot have country NP/);
+    const countryOnly = await patchVendor(v.id, { expectedVersion: v.version, country: 'IN' });
+    expect(countryOnly.status).toBe(400);
+    expect(countryOnly.body.error.message).toMatch(/must have kind foreign/);
+    const wrongPair = await patchVendor(v.id, {
+      expectedVersion: v.version,
+      kind: 'company',
+      country: 'IN',
+    });
+    expect(wrongPair.status).toBe(400);
+  });
+
+  it('changes between Nepal kinds (company to sole proprietor) with the PAN it has', async () => {
+    const v = await newVendor();
+    const res = await patchVendor(v.id, { expectedVersion: v.version, kind: 'sole_proprietor' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ kind: 'sole_proprietor', country: 'NP', pan: v.pan });
+    expect(await auditOf(v.id)).toEqual([
+      {
+        before: { kind: 'company', country: 'NP' },
+        after: { kind: 'sole_proprietor', country: 'NP' },
+      },
+    ]);
+  });
+
+  it('sending the kind and country it already has changes and audits nothing about them', async () => {
+    const v = await newVendor();
+    const res = await patchVendor(v.id, {
+      expectedVersion: v.version,
+      kind: 'company',
+      country: 'NP',
+      vatRegistered: false,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await auditOf(v.id)).toEqual([]);
+  });
+
+  it('answers 409 for a PAN another vendor holds when the switch brings one', async () => {
+    const other = await newVendor();
+    const foreign = await createVendor({ kind: 'foreign', country: 'DE', pan: undefined });
+    const { id, version } = foreign.body as VendorDto;
+    const res = await patchVendor(id, {
+      expectedVersion: version,
+      kind: 'company',
+      country: 'NP',
+      pan: other.pan,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+  });
+
+  it('is open while the vendor is in KYB review, and locked once it is approved (new KYB review needed)', async () => {
+    const v = await newVendor();
+    await toUnderReview(v);
+    const inReview = await patchVendor(v.id, {
+      expectedVersion: (await api().get(`/v1/vendors/${v.id}`)).body.version,
+      kind: 'foreign',
+      country: 'IN',
+    });
+    expect(inReview.status, JSON.stringify(inReview.body)).toBe(200);
+    expect(inReview.body.status).toBe('under_review');
+    await setCase(v.id, 'approved');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(200);
+    const version = (await api().get(`/v1/vendors/${v.id}`)).body.version as number;
+    const locked = await patchVendor(v.id, {
+      expectedVersion: version,
+      kind: 'foreign',
+      country: 'US',
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(409);
+    expect(locked.body.error.code).toBe('vendor_identity_locked');
+    // The kind and country it already has are not a change, so an approved vendor's other edits still work.
+    const same = await patchVendor(v.id, {
+      expectedVersion: version,
+      kind: 'foreign',
+      country: 'IN',
+      vatRegistered: false,
+    });
+    expect(same.status, JSON.stringify(same.body)).toBe(200);
+  });
+});
+
 describe('the vendor KYB case through the registered adapter', () => {
   it('opens for a vendor with vendor.write, is refused without it, and is 404 for a customer party', async () => {
     const v = await newVendor();

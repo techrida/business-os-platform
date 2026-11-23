@@ -344,25 +344,36 @@ it('offers Lock, Deactivate, Unlock and Reactivate to a company-wide admin, neve
     expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
     expect(html).toContain('aria-label="Lock Asha · asha@example.test"');
     expect(html).toContain('aria-label="Reactivate Bikash · bikash@example.test"');
-    expect(html).not.toMatch(/(Lock|Unlock) Bikash/);
-    expect(html).not.toMatch(/(Deactivate|Lock) Founder/);
-    expect(html).not.toMatch(/(Deactivate|Reactivate|Lock|Unlock) Chandra/);
+    expect(html).not.toContain('aria-label="Lock Bikash · bikash@example.test"');
+    expect(html).not.toContain('aria-label="Unlock Bikash · bikash@example.test"');
+    // Their own row and an invite keep every slot, muted with the reason, and offer nothing live.
+    expect(html).not.toMatch(
+      /aria-label="(Deactivate|Lock|Keep locked) (Founder|Chandra) · [^"]*@example\.test"/,
+    );
+    expect(html).not.toMatch(
+      /aria-label="(Deactivate|Reactivate|Lock|Unlock) Chandra · [^"]*@example\.test"/,
+    );
+    expect(html).toContain('aria-label="Lock Founder · founder@example.test (unavailable)"');
+    expect(html).toContain('aria-label="Lock Chandra · chandra@example.test (unavailable)"');
     expect(html).toContain('>Deactivated<');
     // A locked person is unlocked, never reactivated; a timed lock shows when it ends.
     expect(html).toContain('aria-label="Unlock Dipesh · dipesh@example.test"');
     expect(html).toContain('aria-label="Unlock Esha · esha@example.test"');
-    expect(html).not.toMatch(/(Reactivate|Lock) (Dipesh|Esha)/);
+    expect(html).not.toMatch(/aria-label="(Reactivate|Lock) (Dipesh|Esha) · [^"]*@example\.test"/);
     // A locked person can be deactivated (P2-2); a timed lock can be kept for good, an admin lock needs nothing more.
     expect(html).toContain('aria-label="Deactivate Dipesh · dipesh@example.test"');
     expect(html).toContain('aria-label="Deactivate Esha · esha@example.test"');
     expect(html).toContain('aria-label="Keep locked Dipesh · dipesh@example.test"');
-    expect(html).not.toContain('Keep locked Esha');
+    expect(html).not.toContain('aria-label="Keep locked Esha · esha@example.test"');
     expect(html.match(/>Locked</g)).toHaveLength(2);
     expect(html).toContain('dateTime="2026-11-20T10:15:00.000Z"');
 
     canChange = false;
     const plain = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
     expect(plain).not.toMatch(/aria-label="(Deactivate|Reactivate|Lock|Keep locked|Unlock) /);
+    // No status grant: nothing about those actions shows (no muted hint either), but their slots stay reserved.
+    expect(plain).not.toContain('data-tooltip');
+    expect(plain.match(/data-slot="toggle"/g)).toHaveLength(6);
   } finally {
     request.mockRestore();
   }
