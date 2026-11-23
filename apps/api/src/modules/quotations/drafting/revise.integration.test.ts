@@ -566,6 +566,35 @@ async function queuedBehindLock(pending: Promise<unknown>): Promise<void> {
   }
 }
 
+/**
+ * Runs `whileHeld` with a transaction open that has locked the deal row and set it to Lost, then commits it. It uses
+ * the admin connection with `session_replication_role = replica` (no audit trigger), so it does not hold the tenant
+ * audit advisory lock that every service write queues on: a call that waits while this is open waits on the row lock.
+ */
+async function holdingMarkLost(dealId: string, whileHeld: () => Promise<void>): Promise<void> {
+  const adminPool = new Pool({ connectionString: testDb.adminUrl, max: 1 });
+  const client = await adminPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL session_replication_role = replica');
+    await client.query('SELECT id FROM app.opportunities WHERE id = $1 FOR UPDATE', [dealId]);
+    await client.query(
+      `UPDATE app.opportunities
+          SET stage = 'lost', stage_reason = 'Price', stage_note = 'Went elsewhere', version = version + 1
+        WHERE id = $1`,
+      [dealId],
+    );
+    await whileHeld();
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+    await adminPool.end();
+  }
+}
+
 describe('ReviseService.revise on a Lost deal', () => {
   /**
    * A quotation on its own deal whose Sent version has Expired: the Lost cascade cancels only live versions, so an
@@ -656,9 +685,10 @@ describe('ReviseService.revise on a Lost deal', () => {
   it('refuses a revise queued behind Mark Lost once Mark Lost commits', async () => {
     const { q, dealId, version } = await expiredOnOwnDeal();
     let revise!: Promise<unknown>;
-    await withTx(db, scopeA, systemActor('test'), async (tx) => {
-      await tx.execute(sql`SELECT id FROM app.opportunities WHERE id = ${dealId} FOR UPDATE`);
-      await tx.execute(markLostSql(dealId));
+    // The blocker runs on the admin connection with triggers off, so its write takes no tenant audit lock: the only
+    // thing the revise can wait on is the deal row. Without lockDealStage's FOR UPDATE it would read the stage as it
+    // was and add a revision on a Lost deal.
+    await holdingMarkLost(dealId, async () => {
       revise = service.revise(
         q.id,
         { reason: REASON, expectedVersion: version },
