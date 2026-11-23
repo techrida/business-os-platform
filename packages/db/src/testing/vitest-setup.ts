@@ -7,7 +7,10 @@ import pg from 'pg';
  * whole run although every test passed (GitHub runs 45135113457 and 45145601781, a different file each time).
  * Only that code, only on a pool nobody listens to, is dropped; any other pool error still surfaces.
  */
-const emit = pg.Pool.prototype.emit;
+const originalEmit = Reflect.get(pg.Pool.prototype, 'emit') as (
+  this: unknown,
+  ...args: unknown[]
+) => boolean;
 pg.Pool.prototype.emit = function patchedEmit(
   this: InstanceType<typeof pg.Pool>,
   event: string | symbol,
@@ -17,5 +20,5 @@ pg.Pool.prototype.emit = function patchedEmit(
     const error = args[0] as { code?: string } | undefined;
     if (error?.code === '57P01') return false;
   }
-  return emit.call(this, event, ...args);
-} as typeof emit;
+  return originalEmit.call(this, event, ...args);
+} as typeof pg.Pool.prototype.emit;
