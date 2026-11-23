@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { when } from '@/lib/kernel-format';
 
 import styles from './leads.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * The lead's owner with initials. The name is the display name the API joins onto the lead (D46), so every
@@ -41,9 +42,9 @@ export function OwnerCell({
 export function NextFollowUpCell({ at, now = new Date() }: { at: string | null; now?: Date }) {
   if (!at) return <span className={styles.quiet}>None planned</span>;
   const date = (
-    <time dateTime={at} title={when(at)}>
-      {when(at, 'date')}
-    </time>
+    <Tooltip content={when(at)}>
+      <time dateTime={at}>{when(at, 'date')}</time>
+    </Tooltip>
   );
   if (!isPastDue(at, now)) return date;
   return (
