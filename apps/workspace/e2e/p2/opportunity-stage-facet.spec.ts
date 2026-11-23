@@ -78,8 +78,11 @@ async function createOpportunity(page: Page, name: string) {
   const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });
   await dialog.getByLabel('Address', { exact: true }).fill('Main Road');
   await dialog.getByLabel('City', { exact: true }).fill('Kathmandu');
+  // Three steps: organisation, contact, deal.
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click();
   // A conversion always names a contact with an email (there is no "No contact" any more).
   await dialog.getByLabel('Email', { exact: true }).fill(`${randomUUID()}@example.test`);
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click();
   await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
   await expect(page).toHaveURL(/\/opportunities\/[\da-f-]+$/);
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();

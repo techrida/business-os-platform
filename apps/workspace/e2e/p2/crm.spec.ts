@@ -142,7 +142,10 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await expect(dialog.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue(
         'Nepal',
       );
+      // The dialog has three steps (organisation, contact, deal): Next twice, then Convert.
+      await dialog.getByRole('button', { name: 'Next', exact: true }).click();
       await expect(dialog.getByLabel('Email', { exact: true })).toHaveValue(email);
+      await dialog.getByRole('button', { name: 'Next', exact: true }).click();
       await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
       await page.waitForURL(/\/opportunities\/[0-9a-f-]{36}$/, { timeout: 30_000 });
     });
