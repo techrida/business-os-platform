@@ -56,4 +56,18 @@ describe('language switcher', () => {
     await vi.waitFor(() => expect(setLanguageCookie).toHaveBeenCalledWith('de'));
     expect(refresh).toHaveBeenCalled();
   });
+
+  it('keeps the chosen language ticked after a refresh hands it fresh objects', async () => {
+    const { rerender } = render(<LanguageSwitcher languages={languages} />);
+    fireEvent.click(screen.getByRole('button', { name: /language/i }));
+    fireEvent.click((await screen.findAllByRole('option'))[1]!);
+    await vi.waitFor(() => expect(setLanguageCookie).toHaveBeenCalledWith('de'));
+
+    rerender(<LanguageSwitcher languages={languages.map((l) => ({ ...l }))} />);
+    const trigger = screen.getByRole('button', { name: /language/i });
+    expect(trigger.getAttribute('aria-label')).toContain('Deutsch');
+    if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger);
+    const options = await screen.findAllByRole('option');
+    expect(options.map((o) => o.getAttribute('aria-selected'))).toEqual(['false', 'true']);
+  });
 });

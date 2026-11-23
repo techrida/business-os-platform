@@ -1869,7 +1869,7 @@
 
 .bos-lang__trigger[data-open] {
   border-color: var(--select-focus-border);
-  box-shadow: var(--bos-field-focus-shadow);
+  box-shadow: inset 0 0 0 1px var(--select-focus-border);
 }
 
 .bos-lang__trigger[data-focus] {
@@ -1898,12 +1898,12 @@
 
 .bos-lang__list {
   z-index: 110;
-  font-family: inherit;
+  font-family: var(--font-family-primary);
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: max(var(--button-width), 160px);
-  max-height: min(280px, var(--available-height, 280px));
+  --anchor-max-height: 280px;
   padding: 8px;
   overflow-y: auto;
   border: var(--border-width-thin, 1px) solid var(--dropdown-border);
