@@ -381,6 +381,50 @@ describe('PUT /v1/images/user_avatar/:userId', () => {
     expect(served.body.equals(PNG)).toBe(true);
   });
 
+  it('is 409 for a picture whose write failed (quarantined, no sha256), and takes it once the bytes are recorded (EF3)', async () => {
+    const me = staff(a);
+    const created = await asCaller(me, () => {
+      const { scope, actor } = requestTx();
+      return withTx(db, scope, actor, (tx) =>
+        documents.create(tx, {
+          ownerType: 'user_avatar',
+          ownerId: a.userId,
+          filename: 'picture.png',
+          declaredMime: 'image/png',
+          sizeBytes: PNG.length,
+        }),
+      );
+    });
+    // A failed write leaves the version quarantined without the sha256 that receiving the bytes records.
+    await withTx(
+      db,
+      { tenantId: a.tenantId, organizationId: a.organizationId },
+      systemActor('test'),
+      (tx) =>
+        tx.execute(
+          sql`UPDATE app.document_versions SET status = 'quarantined', sha256 = NULL WHERE id = ${created.versionId}`,
+        ),
+    );
+    expect(
+      await statusOf(putAs(me, 'user_avatar', a.userId, { documentId: created.documentId })),
+    ).toBe(409);
+    expect(await avatarOf(a.userId)).not.toBe(created.documentId);
+
+    await withTx(
+      db,
+      { tenantId: a.tenantId, organizationId: a.organizationId },
+      systemActor('test'),
+      (tx) =>
+        tx.execute(
+          sql`UPDATE app.document_versions SET sha256 = decode(repeat('ab', 32), 'hex') WHERE id = ${created.versionId}`,
+        ),
+    );
+    await expect(
+      putAs(me, 'user_avatar', a.userId, { documentId: created.documentId }),
+    ).resolves.toEqual({ documentId: created.documentId });
+    expect(await avatarOf(a.userId)).toBe(created.documentId);
+  });
+
   it('two concurrent PUTs for one owner never deadlock: the replacement is 200, the other 200 or 404, never 500', async () => {
     // The cycle the lock order prevents: PUT{current} would lock the current picture and then wait for the owner,
     // while PUT{next} holds the owner and then locks the current picture to remove it.

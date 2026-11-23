@@ -29,6 +29,7 @@ import {
 } from './setting-fields';
 import { SettingsForm, useSettingsFormContext, type SaveSettingsPageAction } from './settings-form';
 import styles from './settings.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * Whole digits for a whole-number setting the contracts give no upper bound (`z.number().int()`,
@@ -125,32 +126,34 @@ function FieldActions({
   return (
     <span className={[styles.fieldActions, className].filter(Boolean).join(' ')} data-field-actions>
       {dirty ? (
-        <button
-          type="button"
-          className={styles.iconButton}
-          aria-label={`Undo change to ${spec.label}`}
-          title="Undo change"
-          onClick={(event) => {
-            focusSettingControl(event.currentTarget);
-            onUndo();
-          }}
-        >
-          <Icon name="undo-2" size={16} />
-        </button>
+        <Tooltip content="Undo change">
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Undo change to ${spec.label}`}
+            onClick={(event) => {
+              focusSettingControl(event.currentTarget);
+              onUndo();
+            }}
+          >
+            <Icon name="undo-2" size={16} />
+          </button>
+        </Tooltip>
       ) : null}
       {!atDefault ? (
-        <button
-          type="button"
-          className={styles.iconButton}
-          aria-label={`Reset ${spec.label} to default`}
-          title={`Back to default (${spec.defaultText})`}
-          onClick={(event) => {
-            focusSettingControl(event.currentTarget);
-            onResetToDefault();
-          }}
-        >
-          <ResetDefaultIcon />
-        </button>
+        <Tooltip content={`Back to default (${spec.defaultText})`}>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Reset ${spec.label} to default`}
+            onClick={(event) => {
+              focusSettingControl(event.currentTarget);
+              onResetToDefault();
+            }}
+          >
+            <ResetDefaultIcon />
+          </button>
+        </Tooltip>
       ) : null}
     </span>
   );

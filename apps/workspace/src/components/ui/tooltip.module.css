@@ -1,0 +1,32 @@
+/* One bubble for every hover hint. Colours come from the tooltip tokens (Figma "Tooltip"); the radius,
+   shadow and type size match the other floating panels (row menu, dropdowns). No arrow: those have none. */
+.content {
+  z-index: 120; /* above dialogs and dropdowns (110) */
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 6px 10px;
+  border: var(--border-width-thin) solid var(--tooltip-border);
+  border-radius: var(--radius-md);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  box-shadow: var(--shadow-section);
+  font-size: var(--font-size-caption);
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .content[data-state='delayed-open'],
+  .content[data-state='instant-open'] {
+    animation: tooltip-in 120ms ease-out;
+  }
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

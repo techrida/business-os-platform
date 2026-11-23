@@ -39,6 +39,7 @@ export function ReviewDialogs({ paymentId, version, number, actions, keys }: Rev
           initial={{ key: keys.verify }}
           action={verifyAction}
           reloadHref={reloadHref}
+          focusHeadingOnDone
         >
           {() => fields}
         </TransactionFormDialog>
@@ -54,6 +55,7 @@ export function ReviewDialogs({ paymentId, version, number, actions, keys }: Rev
           initial={{ key: keys.reject }}
           action={rejectAction}
           reloadHref={reloadHref}
+          focusHeadingOnDone
         >
           {(state) => (
             <>
@@ -79,6 +81,7 @@ export function ReviewDialogs({ paymentId, version, number, actions, keys }: Rev
           initial={{ key: keys.reverse }}
           action={reverseAction}
           reloadHref={reloadHref}
+          focusHeadingOnDone
         >
           {(state) => (
             <>

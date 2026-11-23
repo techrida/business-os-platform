@@ -48,6 +48,7 @@ import { NextFollowUpCell, OwnerCell } from './lead-cells';
 import { LeadFilters } from './lead-filters';
 import styles from './leads.module.css';
 import { QualifyLead } from './qualify-lead';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = { title: 'Leads · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -293,9 +294,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                           <CellTitle title={<Link href={leadHref}>{lead.title}</Link>} />
                           <span className={styles.recordNumber}>{lead.number}</span>
                           {value && (
-                            <span className={styles.quiet} title="Expected value">
-                              {value}
-                            </span>
+                            <Tooltip content="Expected value">
+                              <span className={styles.quiet}>{value}</span>
+                            </Tooltip>
                           )}
                         </div>
                       </Td>

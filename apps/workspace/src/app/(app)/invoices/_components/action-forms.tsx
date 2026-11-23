@@ -30,6 +30,7 @@ import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 import dialogStyles from '@/components/p3/transaction-form-dialog.module.css';
 
 import styles from './action-forms.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export interface InvoiceActionProps {
   invoiceId: string;
@@ -228,22 +229,16 @@ function ActionBlocked({
   reason: string;
   primary?: boolean;
 }) {
-  const reasonId = useId();
   return (
-    <div className={styles.blocked}>
+    <Tooltip content={reason}>
       <Button
         variant={primary ? 'primary' : 'secondary'}
         aria-disabled="true"
-        aria-describedby={reasonId}
-        title={reason}
         onClick={(e) => e.preventDefault()}
       >
         {label}
       </Button>
-      <p id={reasonId} className={styles.blockedReason}>
-        {reason}
-      </p>
-    </div>
+    </Tooltip>
   );
 }
 
