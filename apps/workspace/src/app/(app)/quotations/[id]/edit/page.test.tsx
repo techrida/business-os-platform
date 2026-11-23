@@ -9,6 +9,10 @@ import EditQuotationPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
+// The page asks what the user may do (to offer Create contact); every grant is on here.
+vi.mock('@/lib/live-permissions', () => ({
+  getPermissionCheck: () => Promise.resolve(() => true),
+}));
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
