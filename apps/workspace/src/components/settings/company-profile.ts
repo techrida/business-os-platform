@@ -195,7 +195,11 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: FieldError
 export type ProfilePatch = Partial<
   Omit<
     CompanyProfile,
-    'panVatNo' | 'logoDocumentId' | 'logoOnDarkDocumentId' | 'logoOnLightDocumentId' | 'legacyLogoDataUrl'
+    | 'panVatNo'
+    | 'logoDocumentId'
+    | 'logoOnDarkDocumentId'
+    | 'logoOnLightDocumentId'
+    | 'legacyLogoDataUrl'
   >
 >;
 

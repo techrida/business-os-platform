@@ -27,14 +27,7 @@ import {
   type EntityLogoOwnerType,
   type ImageOwnerType,
 } from '@bos/contracts';
-import {
-  customers,
-  documents,
-  documentVersions,
-  logoImageStats,
-  users,
-  vendors,
-} from '@bos/db';
+import { customers, documents, documentVersions, logoImageStats, users, vendors } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,

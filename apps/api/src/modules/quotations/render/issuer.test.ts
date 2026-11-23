@@ -200,26 +200,29 @@ describe('buildDocumentStyleSnapshot', () => {
       ['ledger', DEFAULT_BRAND_COLOUR, '#ffffff'],
       ['duo-cards', DEFAULT_BRAND_COLOUR, '#ffffff'],
       ['side-labels', DEFAULT_BRAND_COLOUR, '#ffffff'],
-    ])('asks for the logo for the %s layout\'s own header colour, and passes both variants', async (layout, primaryColour, colour) => {
-      const ON_DARK = '11111111-1111-4111-8111-111111111111';
-      const ON_LIGHT = '22222222-2222-4222-8222-222222222222';
-      const { settings } = settingsOf({
-        'document.style': { layout, primaryColour },
-        'entity.profile': {
-          ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
-          logoDocumentId: DOC_ID,
-          logoOnDarkDocumentId: ON_DARK,
-          logoOnLightDocumentId: ON_LIGHT,
-        },
-      });
-      const resolveLogo = vi.fn(() => Promise.resolve(RESOLVED));
-      await buildDocumentStyleSnapshot(settings, scope, at, resolveLogo);
-      expect(resolveLogo).toHaveBeenCalledWith(DOC_ID, {
-        colour,
-        onDarkDocumentId: ON_DARK,
-        onLightDocumentId: ON_LIGHT,
-      });
-    });
+    ])(
+      "asks for the logo for the %s layout's own header colour, and passes both variants",
+      async (layout, primaryColour, colour) => {
+        const ON_DARK = '11111111-1111-4111-8111-111111111111';
+        const ON_LIGHT = '22222222-2222-4222-8222-222222222222';
+        const { settings } = settingsOf({
+          'document.style': { layout, primaryColour },
+          'entity.profile': {
+            ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+            logoDocumentId: DOC_ID,
+            logoOnDarkDocumentId: ON_DARK,
+            logoOnLightDocumentId: ON_LIGHT,
+          },
+        });
+        const resolveLogo = vi.fn(() => Promise.resolve(RESOLVED));
+        await buildDocumentStyleSnapshot(settings, scope, at, resolveLogo);
+        expect(resolveLogo).toHaveBeenCalledWith(DOC_ID, {
+          colour,
+          onDarkDocumentId: ON_DARK,
+          onLightDocumentId: ON_LIGHT,
+        });
+      },
+    );
 
     it('falls back to the legacy logo when the resolver finds nothing', async () => {
       const { settings } = profileWith({ logoDocumentId: DOC_ID, legacyLogoDataUrl: LEGACY });

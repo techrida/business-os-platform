@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { relativeLuminance } from './document-style';
+import { relativeLuminance } from './document-style.js';
 import {
   backgroundKind,
   chooseLogo,
@@ -8,7 +8,7 @@ import {
   MIN_LOGO_CONTRAST,
   type LogoSet,
   type LogoStats,
-} from './logo-contrast';
+} from './logo-contrast.js';
 
 const dark: LogoStats = { luminance: 0.01, hasTransparency: true };
 const light: LogoStats = { luminance: 0.95, hasTransparency: true };
@@ -51,7 +51,10 @@ describe('chooseLogo', () => {
   });
 
   it('makes a black copy of a transparent light primary on white when no variant exists', () => {
-    expect(chooseLogo({ primary: light, ...none }, WHITE)).toEqual({ use: 'mono', colour: 'black' });
+    expect(chooseLogo({ primary: light, ...none }, WHITE)).toEqual({
+      use: 'mono',
+      colour: 'black',
+    });
   });
 
   it('ignores a variant that is itself unreadable (uploaded the wrong way round)', () => {

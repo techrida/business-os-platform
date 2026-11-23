@@ -22,7 +22,9 @@ const scope = { tenantId: TENANT, organizationId: ORG };
 const LOGO = randomUUID();
 
 async function darkMark(): Promise<Buffer> {
-  const square = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#111111' } })
+  const square = await sharp({
+    create: { width: 20, height: 20, channels: 3, background: '#111111' },
+  })
     .png()
     .toBuffer();
   return await sharp({

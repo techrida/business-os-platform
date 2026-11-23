@@ -179,7 +179,10 @@ export const LOGO_STATS_LOOKUP = Symbol('LOGO_STATS_LOOKUP');
 export function drizzleLogoStatsLookup(db: Db): LogoStatsLookup {
   return async (scope, documentId) => {
     const [row] = await db
-      .select({ luminance: logoImageStats.luminance, hasTransparency: logoImageStats.hasTransparency })
+      .select({
+        luminance: logoImageStats.luminance,
+        hasTransparency: logoImageStats.hasTransparency,
+      })
       .from(logoImageStats)
       .where(
         and(
@@ -301,9 +304,7 @@ export class DocumentLogoResolverFactory {
             ) ?? asIs()
           );
         case 'plate':
-          return (
-            this.toDataUrl('image/png', await platedLogo(primary.bytes), documentId) ?? asIs()
-          );
+          return this.toDataUrl('image/png', await platedLogo(primary.bytes), documentId) ?? asIs();
       }
     } catch {
       // The recolour failed (bytes sharp cannot decode): the logo as uploaded beats no logo.

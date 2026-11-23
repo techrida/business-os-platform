@@ -29,7 +29,9 @@ describe('the background a quotation layout draws behind the logo', () => {
     'banded: the band is the colour the logo is chosen against (%s)',
     (primary) => {
       const band = /\.band \{[^}]*background: (#[0-9a-f]{6})/i.exec(html('banded', primary));
-      expect(band?.[1]?.toLowerCase()).toBe(logoBackgroundHex({ layout: 'banded', primaryColour: primary }));
+      expect(band?.[1]?.toLowerCase()).toBe(
+        logoBackgroundHex({ layout: 'banded', primaryColour: primary }),
+      );
     },
   );
 
@@ -39,7 +41,9 @@ describe('the background a quotation layout draws behind the logo', () => {
 
   it('tinted: the band is the tint the logo is chosen against', () => {
     const band = /\.band \{[^}]*background: (#[0-9a-f]{6})/i.exec(html('tinted', '#1d4ed8'));
-    expect(band?.[1]?.toLowerCase()).toBe(logoBackgroundHex({ layout: 'tinted', primaryColour: '#1d4ed8' }));
+    expect(band?.[1]?.toLowerCase()).toBe(
+      logoBackgroundHex({ layout: 'tinted', primaryColour: '#1d4ed8' }),
+    );
   });
 
   it.each(DOCUMENT_LAYOUTS.filter((l) => l !== 'banded' && l !== 'tinted'))(

@@ -206,7 +206,10 @@ export const logoImageStats = appSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t): PgTableExtraConfigValue[] => [
-    primaryKey({ name: 'logo_image_stats_pk', columns: [t.tenantId, t.organizationId, t.documentId] }),
+    primaryKey({
+      name: 'logo_image_stats_pk',
+      columns: [t.tenantId, t.organizationId, t.documentId],
+    }),
     foreignKey({
       name: 'logo_image_stats_tenant_org_fk',
       columns: [t.tenantId, t.organizationId],
@@ -217,7 +220,10 @@ export const logoImageStats = appSchema.table(
       columns: [t.tenantId, t.organizationId, t.documentId],
       foreignColumns: [documents.tenantId, documents.organizationId, documents.id],
     }),
-    check('logo_image_stats_variant_check', sql`${t.variant} IN ('primary', 'on_dark', 'on_light')`),
+    check(
+      'logo_image_stats_variant_check',
+      sql`${t.variant} IN ('primary', 'on_dark', 'on_light')`,
+    ),
     check('logo_image_stats_luminance_check', sql`${t.luminance} >= 0 AND ${t.luminance} <= 1`),
   ],
 );
