@@ -612,6 +612,7 @@ export class VerificationService implements OnModuleInit {
       );
     if (existing === undefined) return false;
     const l = await this.lock(tx, scope.tenantId, existing.id);
+    if (l.row.partyKind !== 'vendor') return false;
     if (l.row.status !== 'submitted' && l.row.status !== 'approved') return false;
     await this.preserveLegacyDecision(tx, l.row);
     const emptied = checklistOf(l.row).map((i) => ({
