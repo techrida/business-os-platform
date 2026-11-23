@@ -437,8 +437,10 @@ function MemoFormInner({
                     type="button"
                     className={templateStyles.iconAction}
                     aria-label="Download preview as PDF"
-                    disabled={pdf.busy}
-                    onClick={() => void pdf.download()}
+                    aria-disabled={pdf.busy || undefined}
+                    onClick={() => {
+                      if (!pdf.busy) void pdf.download();
+                    }}
                   >
                     <DownloadIcon size={18} />
                   </button>

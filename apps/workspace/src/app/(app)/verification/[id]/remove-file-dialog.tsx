@@ -71,9 +71,13 @@ export function RemoveFileDialog({
           <Button
             size="small"
             variant="ghost"
-            disabled={disabled}
+            aria-disabled={disabled || undefined}
             className={styles.remove}
             aria-label={`Remove ${filename}`}
+            // Still focusable so the tooltip reads; a click on it must not open the dialog.
+            onClick={(event) => {
+              if (disabled) event.preventDefault();
+            }}
           >
             <svg
               aria-hidden="true"
