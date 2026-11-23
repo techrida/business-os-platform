@@ -556,12 +556,10 @@ export class VendorsService {
         return toVendorDto(row, principal);
       }
       // A change of the tax identity (legal name, PAN, kind, country) before approval voids what the KYB case holds:
-      // the vendor goes back to pending_kyc and the case to draft with an empty checklist, so the documents are
-      // uploaded again. Only the statuses where the case is in review or awaiting activation reset; a draft vendor has
-      // no case worth voiding.
+      // a submitted or approved case (whatever the vendor's status: a draft vendor can hold one) returns to draft with
+      // an empty checklist, so the documents are uploaded again, and a vendor under review goes back to pending_kyc.
       const identityTouched = legalNameChanged || panChanged || identityChanged;
-      const resetsKyb =
-        identityTouched && (row.status === 'pending_kyc' || row.status === 'under_review');
+      const resetsKyb = identityTouched;
       try {
         const updated = await updateVersioned(tx, vendors, id, expectedVersion, {
           ...(fields.legalName !== undefined && { legalName: fields.legalName }),

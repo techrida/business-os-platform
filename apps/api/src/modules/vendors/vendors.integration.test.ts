@@ -762,6 +762,20 @@ describe('R6AA: an identity edit before approval voids the KYB case; a foreign v
     expect(await resetAudit(v.id)).toHaveLength(0);
   });
 
+  it('a draft vendor holding an approved case loses it on an identity edit', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    expect((await api().post('/v1/verification-cases').send({ partyId: v.id })).status).toBe(201);
+    await setCase(v.id, 'approved');
+    const res = await patchVendor(v.id, {
+      expectedVersion: (await current(v.id)).version,
+      pan: nextPan(),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('draft');
+    expect((await caseRow(v.id))?.status).toBe('draft');
+  });
+
   it('an identity edit on a draft vendor opens no KYB case', async () => {
     const v = await newVendor();
     const res = await patchVendor(v.id, {
