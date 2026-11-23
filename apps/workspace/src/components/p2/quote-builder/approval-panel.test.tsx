@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { click, mountForm } from '@/test/form-interactions';
-import { ApprovalPanel, approverOptionLabel } from './approval-panel';
+import { ApprovalPanel, approverOptionRole } from './approval-panel';
 
 const ACC = '11111111-1111-4111-8111-111111111111';
 const MATE = '22222222-2222-4222-8222-222222222222';
@@ -74,17 +74,16 @@ describe('ApprovalPanel approver picker', () => {
     try {
       const { container } = mounted;
       expect(container.textContent).toContain('Approver for step 1');
-      const trigger = container.querySelector<HTMLElement>('button[aria-haspopup="listbox"]')!;
-      // Nobody is chosen: the picker reads "anyone eligible".
-      expect(trigger.textContent).toContain('Any accountant (anyone eligible)');
-      await click(trigger);
+      const box = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+      // Nobody is chosen: the empty box says "anyone eligible".
+      expect(box.value).toBe('');
+      expect(box.placeholder).toBe('Any accountant (anyone eligible)');
+      await click(box);
       const options = Array.from(document.querySelectorAll('[role="option"]'));
       expect(options.map((o) => o.textContent?.trim())).toEqual([
-        'Any accountant (anyone eligible)',
-        'Sita Sharma · Accountant',
-        'Mina Rai · Sales · no email',
+        'Mina RaiSales · no email',
+        'Sita SharmaAccountant',
       ]);
-      expect(options[0]!.getAttribute('aria-selected')).toBe('true');
       expect(container.textContent).not.toContain('No email');
     } finally {
       await mounted.unmount();
@@ -98,9 +97,21 @@ describe('ApprovalPanel approver picker', () => {
     expect(html).toContain('They get a bell notice and the Inbox item, not an email.');
   });
 
-  it('labels an option in words', () => {
-    expect(approverOptionLabel(preview.approverChoice!.options[0]!)).toBe(
-      'Sita Sharma · Accountant',
+  it('words the muted role of an option', () => {
+    expect(approverOptionRole(preview.approverChoice!.options[0]!)).toBe('Accountant');
+    expect(approverOptionRole(preview.approverChoice!.options[1]!)).toBe('Sales · no email');
+  });
+
+  it('shows the chosen approver as name and role', async () => {
+    const mounted = await mountForm(
+      <ApprovalPanel state="ready" preview={preview} approver={MATE} onApproverChange={vi.fn()} />,
     );
+    try {
+      expect(
+        mounted.container.querySelector<HTMLInputElement>('input[role="combobox"]')!.value,
+      ).toBe('Mina Rai Sales · no email');
+    } finally {
+      await mounted.unmount();
+    }
   });
 });
