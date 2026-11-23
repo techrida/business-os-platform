@@ -2728,5 +2728,91 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
         expect(await store.rolesOf(db, f.scope.tenantId, row.id)).toEqual([]);
       }
     }, 60_000);
+
+    describe('createHuman answers with no id', () => {
+      const input = {
+        email: 'lost@techrida.test',
+        givenName: 'Lost',
+        familyName: 'Id',
+        roles: ['sales' as RoleKey],
+      };
+      /** ZITADEL makes the person, then the answer is lost (a timeout). */
+      const lostAnswer = (zitadel: RecordingZitadel) => {
+        const real = zitadel.createHuman.bind(zitadel);
+        vi.spyOn(zitadel, 'createHuman').mockImplementationOnce(async (...args) => {
+          await real(...args);
+          throw new ZitadelHttpError('/v2/users/new', 503, 'unavailable');
+        });
+      };
+
+      it('finds the identity by email and finishes the invite', async () => {
+        const f = await fixture('active');
+        const zitadel = new RecordingZitadel();
+        lostAnswer(zitadel);
+        const { users } = services(zitadel);
+
+        const invited = await users.invite(f.scope, adminActor(f.adminId), input);
+        const zId = `z-new-${f.zitadelOrgId}-1`;
+        expect(invited).toMatchObject({ zitadelUserId: zId });
+        expect(zitadel.grants.get(zId)).toEqual(['sales']);
+        expect(await store.findByZitadelId(db, zId)).toMatchObject({ status: 'invited' });
+      }, 60_000);
+
+      it('flags the person when a step after the lost answer fails', async () => {
+        const f = await fixture('active');
+        const zitadel = new RecordingZitadel();
+        lostAnswer(zitadel);
+        vi.spyOn(zitadel, 'sendInviteCode').mockRejectedValueOnce(
+          new ZitadelHttpError('/v2/users/invite', 503, 'unavailable'),
+        );
+        const { users } = services(zitadel);
+
+        await expect(users.invite(f.scope, adminActor(f.adminId), input)).rejects.toBeInstanceOf(
+          ZitadelHttpError,
+        );
+        const row = await store.findByZitadelId(db, `z-new-${f.zitadelOrgId}-1`);
+        expect(row).toMatchObject({ identityReviewRequired: true });
+      }, 60_000);
+
+      it('rethrows the original error when ZITADEL shows no such person, and when the lookup fails', async () => {
+        const f = await fixture('active');
+        const none = new RecordingZitadel();
+        vi.spyOn(none, 'createHuman').mockRejectedValueOnce(
+          new ZitadelHttpError('/v2/users/new', 503, 'unavailable'),
+        );
+        await expect(
+          services(none).users.invite(f.scope, adminActor(f.adminId), input),
+        ).rejects.toMatchObject({ status: 503 });
+        expect(
+          await adminPool.query(`SELECT 1 FROM app.users WHERE email = $1 AND tenant_id = $2`, [
+            input.email,
+            f.scope.tenantId,
+          ]),
+        ).toMatchObject({ rowCount: 0 });
+
+        const blind = new RecordingZitadel();
+        lostAnswer(blind);
+        vi.spyOn(blind, 'listUsers').mockRejectedValue(new Error('ZITADEL down'));
+        await expect(
+          services(blind).users.invite(f.scope, adminActor(f.adminId), input),
+        ).rejects.toMatchObject({ status: 503 });
+      }, 60_000);
+
+      it('a retry of the same invite after an unreadable lookup finds the identity through the open-invite path', async () => {
+        const f = await fixture('active');
+        const zitadel = new RecordingZitadel();
+        lostAnswer(zitadel);
+        const list = vi
+          .spyOn(zitadel, 'listUsers')
+          .mockRejectedValueOnce(new Error('ZITADEL down'));
+        const { users } = services(zitadel);
+        await expect(users.invite(f.scope, adminActor(f.adminId), input)).rejects.toBeInstanceOf(
+          ZitadelHttpError,
+        );
+        list.mockRestore();
+        const retry = await users.invite(f.scope, adminActor(f.adminId), input);
+        expect(retry).toMatchObject({ zitadelUserId: `z-new-${f.zitadelOrgId}-1`, created: false });
+      }, 60_000);
+    });
   });
 });

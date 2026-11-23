@@ -24,6 +24,7 @@ import {
   assertFounderLeaseHeld,
   assertWithinOperationDeadline,
   IDENTITY_REVIEW_RESOLVED,
+  isDefiniteRefusal,
   withFounderRemovalLease,
 } from './identity-reconcile';
 import { type IdpOrgRow, type ListedUsers, UsersStore } from './users.store';
@@ -400,15 +401,25 @@ export class UsersService extends UserDirectory {
     b: InviteInput,
   ): Promise<{ zitadelUserId: string; created: boolean }> {
     let zitadelUserId: string | null = null;
+    let recovered = false;
+    assertWithinOperationDeadline();
     try {
-      assertWithinOperationDeadline();
       zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
     } catch (error) {
-      if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
+      if (error instanceof ZitadelHttpError && error.status === 409) {
+        // Walks the org below for the open invite.
+      } else if (isDefiniteRefusal(error)) {
+        throw error;
+      } else {
+        // A timeout or a 5xx: ZITADEL may have made the person, and no id came back. Look them up by email now, so the
+        // steps that follow can finish (and, if they fail, flag) the person the call may have created.
+        zitadelUserId = await this.recoverCreatedIdentity(org, b, error);
+        recovered = true;
+      }
     }
     if (zitadelUserId !== null) {
       await this.finishInviteSteps(scope, actor, org, b, zitadelUserId);
-      return { zitadelUserId, created: true };
+      return { zitadelUserId, created: !recovered };
     }
 
     const conflict = new ConflictException('A user with this email already exists');
@@ -421,6 +432,29 @@ export class UsersService extends UserDirectory {
     // set, and sendInviteCode resends the invite link.
     await this.finishInviteSteps(scope, actor, org, b, open.id);
     return { zitadelUserId: open.id, created: false };
+  }
+
+  /**
+   * After a createHuman that failed without a definite answer: the open invite for `b.email`, which that call made, or
+   * the original error when ZITADEL shows none (or cannot be read now). A later retry of the same invite finds an
+   * identity that was made after all through the 409 path in prepareInviteInZitadel.
+   */
+  private async recoverCreatedIdentity(
+    org: IdpOrgRow,
+    b: InviteInput,
+    original: unknown,
+  ): Promise<string> {
+    let open: ZitadelUser | null;
+    try {
+      open = await this.findOpenInvite(org.zitadelOrgId, b.email);
+    } catch {
+      throw original;
+    }
+    if (!open) throw original;
+    this.logger.warn(
+      'users.invite: createHuman gave no answer, but the identity exists; finishing it',
+    );
+    return open.id;
   }
 
   /**
