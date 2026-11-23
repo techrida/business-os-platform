@@ -250,6 +250,8 @@ export function QuoteBuilder({
 
   const keyCounter = useRef(1000);
   const leaving = useRef(false);
+  // The link the user clicked while edits are unsaved; set while the leave-without-saving dialog is open.
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
   const latest = useRef(values);
   useEffect(() => {
     latest.current = values;
@@ -455,12 +457,10 @@ export function QuoteBuilder({
       if (!a || a.getAttribute('target') === '_blank' || a.getAttribute('href')?.startsWith('#')) {
         return;
       }
-      if (!window.confirm('You have unsaved changes to this quotation. Leave without saving?')) {
-        e.preventDefault();
-        e.stopPropagation();
-      } else {
-        leaving.current = true;
-      }
+      // Hold the click and ask in the design-system dialog; confirming then follows the link.
+      e.preventDefault();
+      e.stopPropagation();
+      setLeaveHref((a as HTMLAnchorElement).href);
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     document.addEventListener('click', onClick, true);
@@ -590,8 +590,30 @@ export function QuoteBuilder({
     }
   }
 
+  function leaveTo(href: string) {
+    leaving.current = true;
+    const url = new URL(href, window.location.href);
+    if (url.origin === window.location.origin)
+      router.push(`${url.pathname}${url.search}${url.hash}`);
+    else window.location.assign(url.href);
+  }
+
   return (
     <div className={styles.layout}>
+      <ConfirmDialog
+        open={leaveHref !== null}
+        onOpenChange={(next) => {
+          if (!next) setLeaveHref(null);
+        }}
+        title="Leave without saving?"
+        description="You have unsaved changes to this quotation. They will be lost if you leave."
+        confirmLabel="Leave"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          if (leaveHref !== null) leaveTo(leaveHref);
+        }}
+      />
       <div className={styles.heading}>
         <PageHeader
           title={title}
