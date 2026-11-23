@@ -106,6 +106,9 @@ test('a vendor goes from draft to KYB review, and its maker-checker refusals rea
 
     await test.step('the KYB review starts and the status moves', async () => {
       await page.getByRole('button', { name: 'Start KYB review' }).click();
+      // The button opens a "Start KYB review?" confirm; the same words label its confirm button.
+      const confirm = page.getByRole('dialog', { name: 'Start KYB review?' });
+      await confirm.getByRole('button', { name: 'Start KYB review', exact: true }).click();
       await expect(page.getByText('KYB review started.')).toBeVisible();
     });
   } finally {
