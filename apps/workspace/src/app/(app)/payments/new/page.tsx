@@ -1,17 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import type { CustomerDto } from '@bos/contracts';
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { isPayableSettlement } from '@/app/(app)/invoices/_lib/gates';
 import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { getCustomer, listCustomers } from '@/components/p2/customers/api';
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { SearchInput } from '@/components/ui/search-input';
-import { Field } from '@/components/ui/field';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { getInvoice } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
@@ -20,30 +16,18 @@ import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { getPermissionCheck } from '@/lib/live-permissions';
 import type { Session } from '@/lib/session';
 
-import {
-  type CustomerOption,
-  type FixedCustomer,
-  PaymentForm,
-  type PaymentPrefill,
-} from './payment-form';
-import styles from './payment-form.module.css';
+import { type CustomerOption, toCustomerOption } from './customer-option';
+import { type FixedCustomer, PaymentForm, type PaymentPrefill } from './payment-form';
 
 export const metadata: Metadata = { title: 'Record payment · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** The most customers one page of the picker lists; past it the person narrows the search. */
+/** The most customers the page hands the picker; past it the picker searches the server as the person types. */
 const PICKER_LIMIT = 100;
 
 const first = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
-
-const toOption = (c: CustomerDto): CustomerOption => ({
-  id: c.id,
-  name: c.legalName,
-  number: c.number,
-  defaultCurrency: c.defaultCurrency,
-});
 
 /**
  * What a form opened from an invoice's Record payment starts on (U16-Q8 a): the invoice's currency and the open amount
@@ -102,7 +86,6 @@ export default async function NewPaymentPage({
   searchParams: Promise<{
     customerId?: string | string[];
     invoiceId?: string | string[];
-    q?: string | string[];
   }>;
 }) {
   const query = await searchParams;
@@ -111,11 +94,9 @@ export default async function NewPaymentPage({
   const rawInvoice = first(query.invoiceId);
   const invoiceId =
     customerId !== '' && rawInvoice !== undefined && UUID.test(rawInvoice) ? rawInvoice : '';
-  const q = (first(query.q) ?? '').trim().slice(0, 100);
   const params = new URLSearchParams();
   if (customerId !== '') params.set('customerId', customerId);
   if (invoiceId !== '') params.set('invoiceId', invoiceId);
-  if (q !== '') params.set('q', q);
   const here = params.size > 0 ? `/payments/new?${params.toString()}` : '/payments/new';
   const session = await requireStaffSession(here);
 
@@ -161,57 +142,26 @@ export default async function NewPaymentPage({
   let truncated = false;
   let problem: { message: string; status: number } | null = null;
   try {
-    const listing = await listCustomers(session, { q, limit: PICKER_LIMIT });
+    const listing = await listCustomers(session, { limit: PICKER_LIMIT });
     // A merged customer is not live: the record it was merged into is the one to pay.
-    customers = listing.items.filter((c) => c.mergedIntoId === null).map(toOption);
+    customers = listing.items.filter((c) => c.mergedIntoId === null).map(toCustomerOption);
     truncated = listing.items.length >= PICKER_LIMIT || (listing.total ?? 0) > listing.items.length;
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
 
-  // A customer named in the link stays choosable even when the search has pushed them off the list.
+  // A customer named in the link stays choosable even when the list is cut off before them.
   if (problem === null && customerId !== '' && !customers.some((c) => c.id === customerId)) {
     try {
       const named = await getCustomer(session, customerId);
-      if (named.mergedIntoId === null) customers = [toOption(named), ...customers];
+      if (named.mergedIntoId === null) customers = [toCustomerOption(named), ...customers];
     } catch {
       // Not found or not readable: the picker simply starts empty.
     }
   }
 
   const initialCustomerId = customers.some((c) => c.id === customerId) ? customerId : '';
-
-  const showSearch = q !== '' || truncated;
-
-  const search = showSearch ? (
-    <form method="get" action="/payments/new" className={styles.search}>
-      <div className={styles.searchField}>
-        <Field
-          label="Find a customer"
-          hint={
-            truncated
-              ? `Showing the first ${PICKER_LIMIT}. Search by name or number to narrow the list. Searching resets the form.`
-              : 'Searching resets the form.'
-          }
-        >
-          {(control) => (
-            <SearchInput
-              name="q"
-              defaultValue={q}
-              maxLength={100}
-              autoComplete="off"
-              {...control}
-            />
-          )}
-        </Field>
-      </div>
-      <Button type="submit" variant="secondary">
-        Search
-      </Button>
-      {q !== '' ? <Link href="/payments/new">Clear search</Link> : null}
-    </form>
-  ) : null;
 
   return (
     <Page>
@@ -236,40 +186,28 @@ export default async function NewPaymentPage({
       ) : (
         <>
           {customers.length === 0 ? (
-            <>
-              {search}
-              <EmptyState
-                icon="users"
-                title={q !== '' ? 'No customers match that search.' : 'There are no customers yet.'}
-                action={
-                  q !== '' ? (
-                    <LinkButton href="/payments/new" variant="secondary">
-                      Clear search
-                    </LinkButton>
-                  ) : (
-                    <LinkButton href="/customers/new" variant="secondary">
-                      Add a customer
-                    </LinkButton>
-                  )
-                }
-              >
-                {q !== ''
-                  ? 'Try part of the name or the customer number.'
-                  : 'A payment is recorded against a customer. Add the customer first.'}
-              </EmptyState>
-            </>
+            <EmptyState
+              icon="users"
+              title="There are no customers yet."
+              action={
+                <LinkButton href="/customers/new" variant="secondary">
+                  Add a customer
+                </LinkButton>
+              }
+            >
+              A payment is recorded against a customer. Add the customer first.
+            </EmptyState>
           ) : (
             <PaymentForm
               // One key per render of this page: a double click or a retry records the payment once.
               idempotencyKey={randomUUID()}
               today={todayInKathmandu()}
               customers={customers}
+              customersCutOff={truncated}
               enabledCurrencies={await enabledCurrencies}
               initialCustomerId={initialCustomerId}
               reloadHref={here}
-            >
-              {search}
-            </PaymentForm>
+            />
           )}
         </>
       )}

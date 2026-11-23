@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   getInvoice: vi.fn(),
   apiFetch: vi.fn(),
   getMe: vi.fn(),
+  formProps: vi.fn<(props: { customers: { name: string }[]; customersCutOff?: boolean }) => void>(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/customers/api', () => ({
@@ -36,6 +37,17 @@ vi.mock('@/lib/api', async (original) => ({
   apiFetch: mocks.apiFetch,
   getMe: mocks.getMe,
 }));
+// The real form, with what the page handed it recorded: the picker's options are only in the markup while it is open.
+vi.mock('./payment-form', async (original) => {
+  const actual = await original<typeof import('./payment-form')>();
+  return {
+    ...actual,
+    PaymentForm: (props: Parameters<typeof actual.PaymentForm>[0]) => {
+      mocks.formProps(props);
+      return actual.PaymentForm(props);
+    },
+  };
+});
 // The form's action is a server action; the page test never submits it.
 vi.mock('./actions', () => ({ recordPaymentAction: vi.fn() }));
 
@@ -103,7 +115,12 @@ describe('record payment page', () => {
   it('shows the form with customers, the fields, proof and a hidden idempotency key', async () => {
     const html = await render();
     expect(html).toContain('Record payment');
-    expect(html).toContain('Himalayan Traders Pvt. Ltd. (CUS-0001)');
+    // One search-as-you-type box (UIP-FORM-009), no Find box or Search button; the chosen customer is its text.
+    expect(html).toContain('role="combobox"');
+    expect(html).not.toContain('>Search</button>');
+    expect(await render({ customerId: CUSTOMER_ID })).toMatch(
+      /<input[^>]*role="combobox"[^>]*value="Himalayan Traders Pvt\. Ltd\."/,
+    );
     for (const label of [
       'Customer',
       'Currency',
@@ -146,13 +163,20 @@ describe('record payment page', () => {
 
   it('adds a linked customer the list did not return, and ignores one that is merged or unreadable', async () => {
     mocks.getCustomer.mockResolvedValue(customer({ id: OTHER_ID, legalName: 'Linked Co' }));
-    expect(await render({ customerId: OTHER_ID })).toContain('Linked Co (CUS-0001)');
+    expect(await render({ customerId: OTHER_ID })).toContain('value="Linked Co"');
+    expect(mocks.formProps.mock.calls.at(-1)?.[0].customers.map((c) => c.name)).toEqual([
+      'Linked Co',
+      'Himalayan Traders Pvt. Ltd.',
+    ]);
     mocks.getCustomer.mockResolvedValue(
       customer({ id: OTHER_ID, legalName: 'Merged Co', mergedIntoId: CUSTOMER_ID }),
     );
     expect(await render({ customerId: OTHER_ID })).not.toContain('Merged Co');
     mocks.getCustomer.mockRejectedValue(new ApiError(500, 'x'));
-    expect(await render({ customerId: OTHER_ID })).toContain('Himalayan Traders');
+    await render({ customerId: OTHER_ID });
+    expect(mocks.formProps.mock.calls.at(-1)?.[0].customers.map((c) => c.name)).toEqual([
+      'Himalayan Traders Pvt. Ltd.',
+    ]);
   });
 
   it('leaves merged customers out of the picker', async () => {
@@ -163,10 +187,13 @@ describe('record payment page', () => {
       ],
       total: 2,
     });
-    expect(await render()).not.toContain('Old Co');
+    await render();
+    expect(mocks.formProps.mock.calls.at(-1)?.[0].customers.map((c) => c.name)).toEqual([
+      'Himalayan Traders Pvt. Ltd.',
+    ]);
   });
 
-  it('offers a search when the list is cut off, and passes the search text on', async () => {
+  it('searches the server as the person types when the list is cut off, with no Find a customer box', async () => {
     mocks.listCustomers.mockResolvedValue({
       items: Array.from({ length: 100 }, (_, i) =>
         customer({ id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` }),
@@ -174,24 +201,25 @@ describe('record payment page', () => {
       total: 240,
     });
     const html = await render();
-    expect(html).toContain('Find a customer');
-    expect(html).toContain('Showing the first 100');
+    expect(mocks.formProps.mock.calls.at(-1)?.[0].customersCutOff).toBe(true);
+    expect(html).not.toContain('Find a customer');
+    expect(html).not.toContain('>Search</button>');
+    // A q in an old link is ignored: the list is never narrowed by the page any more.
     await render({ q: ' Himal ' });
-    expect(mocks.listCustomers).toHaveBeenLastCalledWith(expect.anything(), {
-      q: 'Himal',
-      limit: 100,
-    });
+    expect(mocks.listCustomers).toHaveBeenLastCalledWith(expect.anything(), { limit: 100 });
   });
 
-  it('has an empty state, and a different one when a search finds nothing', async () => {
+  it('searches in the browser when the whole list was sent', async () => {
+    await render();
+    expect(mocks.formProps.mock.calls.at(-1)?.[0].customersCutOff).toBe(false);
+  });
+
+  it('has an empty state with a way to add a customer', async () => {
     mocks.listCustomers.mockResolvedValue({ items: [], total: 0 });
     const none = await render();
     expect(none).toContain('There are no customers yet.');
     expect(none).toContain('href="/customers/new"');
     expect(none).not.toContain('Record payment</button>');
-    const searched = await render({ q: 'zzz' });
-    expect(searched).toContain('No customers match that search.');
-    expect(searched).toContain('Clear search');
   });
 
   it('says the roles lack customers on a 403, and offers a reload on another error', async () => {
@@ -224,12 +252,12 @@ describe('record payment page', () => {
     expect(await render()).toContain('Your roles do not include recording payments');
   });
 
-  it('keeps a very long customer name in the option text', async () => {
+  it('keeps a very long customer name whole in the picker', async () => {
     mocks.listCustomers.mockResolvedValue({
       items: [customer({ legalName: 'N'.repeat(400) })],
       total: 1,
     });
-    expect(await render()).toContain('N'.repeat(400));
+    expect(await render({ customerId: CUSTOMER_ID })).toContain('N'.repeat(400));
   });
 
   it('returns here after sign-in, with the customer kept', async () => {
@@ -392,7 +420,8 @@ describe('record payment page', () => {
       ]) {
         const html = await render(query);
         expect(amountInput(html)).toContain('value=""');
-        expect(html).toContain('The cash that arrived, for example 20,18,180.00.');
+        expect(amountInput(html)).toContain('placeholder="25,000.00"');
+        expect(html).not.toContain('The cash that arrived');
       }
       expect(mocks.getInvoice).not.toHaveBeenCalled();
     });
@@ -475,7 +504,7 @@ describe('record payment page', () => {
         arrange();
         const html = await render({ customerId: CUSTOMER_ID, invoiceId: INVOICE_ID });
         expect(html).toContain('>Proof is stored against this customer.</span>');
-        expect(html).toContain('Himalayan Traders Pvt. Ltd. (CUS-0001)');
+        expect(html).toContain('value="Himalayan Traders Pvt. Ltd."');
         expect(html).not.toContain('name="invoiceId"');
         expect(amountInput(html)).toContain('value=""');
       }
@@ -521,24 +550,21 @@ describe('record payment page', () => {
       const box = mounted.container;
       const currency = () =>
         box.querySelector<HTMLInputElement>('input[type="hidden"][name="currency"]')?.value;
-      const customerTrigger = box.querySelector<HTMLButtonElement>(
-        `button#${CSS.escape(box.querySelector('label[for]')!.getAttribute('for')!)}`,
+      // The customer box is a combobox: clicking it lists the customers, each with its number under the name.
+      const customerBox = box.querySelector<HTMLInputElement>(
+        `input#${CSS.escape(box.querySelector('label[for]')!.getAttribute('for')!)}`,
       );
+      const customerOption = (name: string) =>
+        Array.from(document.querySelectorAll('[role="option"]')).find((o) =>
+          o.textContent?.startsWith(name),
+        ) ?? null;
 
-      await click(customerTrigger);
-      await click(
-        Array.from(document.querySelectorAll('[role="option"]')).find(
-          (o) => o.textContent?.trim() === 'Rupee Co (CUS-0001)',
-        ) ?? null,
-      );
+      await click(customerBox);
+      await click(customerOption('Rupee Co'));
       expect(currency()).toBe('INR');
 
-      await click(customerTrigger);
-      await click(
-        Array.from(document.querySelectorAll('[role="option"]')).find(
-          (o) => o.textContent?.trim() === 'Dollar Co (CUS-0002)',
-        ) ?? null,
-      );
+      await click(customerBox);
+      await click(customerOption('Dollar Co'));
       // Old code moved the payment to NPR without asking.
       expect(currency()).toBe('');
       expect(box.textContent).toContain(
