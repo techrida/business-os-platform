@@ -19,6 +19,22 @@
   letter-spacing: var(--letter-spacing-medium);
 }
 
+/* Label left, a muted "Optional" right: the same look as the label row of a Field. */
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.optional {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
 .hint {
   color: var(--text-secondary);
   overflow-wrap: anywhere;

@@ -1,5 +1,7 @@
 .field {
   display: grid;
+  /* A taller neighbour must not stretch this field's rows and move its box (UIP-FORM-010). */
+  align-content: start;
   gap: 8px;
   min-width: 0;
 }
@@ -12,7 +14,27 @@
   letter-spacing: var(--letter-spacing-medium);
 }
 
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  min-height: var(--line-height-body-small);
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Right end of the label row; muted so it reads as a note, not as part of the label. */
+.optional {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.message,
 .hint {
+  /* The reserved message line (UIP-FORM-010): one line high even when empty. */
+  min-height: var(--line-height-caption);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
   font-size: var(--font-size-caption);
@@ -20,6 +42,7 @@
 }
 
 .error {
+  min-height: var(--line-height-caption);
   color: var(--status-error);
   overflow-wrap: anywhere;
   font-size: var(--font-size-caption);
@@ -72,4 +95,9 @@
   .control {
     font-size: max(16px, var(--font-size-body-small));
   }
+}
+
+/* A control that prints its own message (the digits boxes) takes the line; the field's text steps aside. */
+.field:has([data-field-override]) > [data-message] {
+  visibility: hidden;
 }

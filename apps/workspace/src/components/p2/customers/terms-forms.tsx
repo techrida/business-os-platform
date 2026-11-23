@@ -313,7 +313,7 @@ function LimitFields({
       {noLimit ? null : (
         <Field
           label="Credit limit (NPR)"
-          hint="Up to two decimals, for example 1,00,000.00. 0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
+          hint="0.00 is a real limit: it holds any order unless the customer has enough credit on account to cover it."
           error={error}
         >
           {(c) => (
@@ -321,7 +321,7 @@ function LimitFields({
               name="creditLimit"
               currency="NPR"
               showWords
-              placeholder="0.00"
+              placeholder="1,00,000.00"
               value={amount}
               onValueChange={setAmount}
               {...c}

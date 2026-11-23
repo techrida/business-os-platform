@@ -127,4 +127,21 @@ describe('Approved by follows the Memo approver rule (F1-Q9)', () => {
     );
     expect(html).toContain('The head of Operations approves this memo.');
   });
+
+  it('marks Recommended by Optional beside its label, not in its hint (UIP-FORM-008)', () => {
+    const html = renderToStaticMarkup(
+      <SignerSection
+        people={people}
+        currentUserId={ME}
+        recommenders={['', '']}
+        onRecommenders={() => undefined}
+        approvedBy={HEAD}
+        onApprovedBy={() => undefined}
+        approverRule={headRule}
+      />,
+    );
+    expect(html).toMatch(/Recommended by<\/span><span[^>]*>Optional<\/span>/);
+    expect(html).not.toContain('Optional. Only people');
+    expect(html).toContain('Only people who can decide approvals are listed.');
+  });
 });

@@ -59,7 +59,8 @@ async function mount(initial: VendorValues) {
   const roundTrip = async () => {
     await choose(container, 'kind', 'Foreign vendor (outside Nepal)');
     // The nine-digit PAN box gives way to the foreign vendor's optional Tax ID.
-    expect(container.textContent).toContain('Tax ID (optional)');
+    expect(container.textContent).toContain('Tax ID');
+    expect(container.textContent).toContain('Optional');
     await choose(container, 'kind', 'Company (registered, with a PAN)');
   };
   return { container, reached, panBox, roundTrip };

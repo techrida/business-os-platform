@@ -41,7 +41,7 @@ it('locks the legal name, PAN and country of a verified customer, and says why i
   expect(container.querySelector<HTMLInputElement>('input[name="legalName"]')!.readOnly).toBe(true);
   const panField = [...container.querySelectorAll('label')]
     .find((l) => l.textContent?.includes('PAN or VAT number'))!
-    .closest('div')!;
+    .closest('[class*="field"]')!;
   const panBoxes = [...panField.querySelectorAll<HTMLInputElement>('input:not([type="hidden"])')];
   expect(panBoxes.length).toBeGreaterThan(0);
   expect(panBoxes.every((box) => box.readOnly)).toBe(true);

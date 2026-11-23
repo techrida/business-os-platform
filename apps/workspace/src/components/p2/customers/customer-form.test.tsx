@@ -43,13 +43,13 @@ describe('customer form', () => {
     expect(inputTag(html, 'contactName')).toContain('required=""');
     expect(inputTag(html, 'contactEmail')).toContain('type="email"');
     expect(inputTag(html, 'contactEmail')).toContain('required=""');
-    // The phones are a PhoneListInput: each row has its own country, +977 shown as a fixed prefix
-    // for Nepal, and E.164 posted by a hidden input per row.
+    // The phones are a PhoneListInput: one box per row with the flag inside and an example number as the
+    // placeholder, and E.164 posted by a hidden input per row.
     expect(inputTag(html, 'contactPhones\\.0\\.number')).toContain('type="hidden"');
     expect(inputTag(html, 'contactPhones\\.0\\.country')).toContain('value="NP"');
     expect(html).toContain('aria-label="Phone 1 number"');
     expect(html).toContain('aria-label="Phone 1 country"');
-    expect(html).toContain('>+977<');
+    expect(html).toContain('placeholder="+977 9812345678"');
     expect(html).not.toContain('name="contactPhone"');
     // The contact's own country starts from the address country.
     expect(inputTag(html, 'contactCountry')).toContain('value="NP"');

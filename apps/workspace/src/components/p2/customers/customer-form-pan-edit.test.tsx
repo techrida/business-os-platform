@@ -138,15 +138,22 @@ it("keeps the typed PAN when the country changes and switches to that country's 
   // Nepal: the nine-digit PAN box, which takes digits only.
   await typeKeys(panBox(), '3012A');
   expect(panBox().value).toBe('3012');
-  expect(container.textContent).toContain('Optional. Nine digits.');
+  // UIP-FORM-008: the format shows as an example, "Optional" sits beside the label, no hint under the box.
+  expect(panBox().getAttribute('placeholder')).toBe('123456789');
+  expect(container.textContent).not.toContain('Nine digits.');
+  expect(container.textContent).not.toContain('Optional.');
+  const panLabel = Array.from(container.querySelectorAll('label')).find(
+    (l) => l.textContent === 'PAN or VAT number',
+  )!;
+  expect(panLabel.parentElement!.textContent).toBe('PAN or VAT numberOptional');
 
   // Abroad: the same text, in a box that also takes letters and hyphens.
   await pickCountry(container, 'united states');
   expect(panBox().value).toBe('3012');
   await typeKeys(panBox(), '-AB');
   expect(panBox().value).toBe('3012-AB');
-  expect(container.textContent).toContain('Letters, digits and hyphens');
-  expect(container.textContent).not.toContain('Nine digits.');
+  expect(panBox().getAttribute('placeholder')).toBe('VAT-1234567');
+  expect(container.textContent).not.toContain('Letters, digits and hyphens');
   expect(container.querySelector<HTMLInputElement>('input[name="panVatNo"]')!.value).toBe(
     '3012-AB',
   );

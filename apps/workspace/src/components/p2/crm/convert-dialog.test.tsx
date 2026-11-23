@@ -450,7 +450,7 @@ it('keeps a short new-contact phone blocked after switching to an existing conta
   await fill(phone(), '981234567');
   await click(radio('contactMode', 'existing'));
   await click(radio('contactMode', 'create'));
-  expect(phone()?.value).toBe('981234567');
+  expect(phone()?.value).toBe('+977 981234567');
   await convert();
   expect(submitted).toHaveLength(0);
   expect(api.convertLead).not.toHaveBeenCalled();
@@ -790,8 +790,8 @@ it('the PAN box has no helper line and no "n of 9" count, a muted Optional on th
   const legal = box('Legal name').closest('[class*="field"]')!;
   expect(dialog().textContent).not.toContain('Nine digits');
   expect(dialog().textContent).not.toMatch(/\d of 9/);
-  expect(field.querySelector('[id$="-hint"]')).toBeNull();
-  expect(field.querySelector('label')?.textContent).toBe('PAN or VAT numberOptional');
+  expect(field.querySelector('label')?.textContent).toBe('PAN or VAT number');
+  expect(field.querySelector('[id$="-optional"]')?.textContent).toBe('Optional');
   expect(pan.placeholder).toBe('601234567');
   // Two fields in a row hold the same parts, so neither pushes the other's box out of line.
   expect([...field.children].map((c) => c.tagName)).toEqual(

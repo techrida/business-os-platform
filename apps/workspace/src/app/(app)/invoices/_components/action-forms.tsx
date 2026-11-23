@@ -285,7 +285,7 @@ export function EditDueDateDialog({
       pendingWords="Saving"
       fields={(state) => (
         <div ref={connect}>
-          <Field label="New due date" hint="Today or later." error={state.errors?.dueDate}>
+          <Field label="New due date" error={state.errors?.dueDate}>
             {(control) => (
               <DatePicker
                 name="dueDate"

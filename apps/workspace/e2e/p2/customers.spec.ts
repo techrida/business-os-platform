@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { pickCountry } from '../helpers/country';
+import { pickCountry, pickPhoneCountry } from '../helpers/country';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { searchBox } from '../helpers/multi-select';
 
@@ -87,20 +87,18 @@ test('a US customer without a PAN keeps its country and a contact number typed w
       contact.getByRole('combobox', { name: 'Contact country', exact: true }),
     ).toHaveValue('United States');
 
-    // Typing + and the code switches the row's country: the box remounts and keeps the focus.
+    // Typing + and the code switches the row's country: the flag follows and the focus stays in the box.
     const first = contact.getByLabel('Phone 1 number', { exact: true });
     await first.click();
     await page.keyboard.type('+');
     await expect(first).toBeFocused();
     await page.keyboard.type('1 4155552671');
-    await expect(
-      contact.getByRole('combobox', { name: 'Phone 1 country', exact: true }),
-    ).toHaveValue('+1');
+    await expect(first).toHaveValue('+1 415 555 2671');
+    await expect(contact.locator('input[name="contactPhones.0.country"]')).toHaveValue('US');
 
     await contact.getByRole('button', { name: 'Add phone number' }).click();
-    await pickCountry(
+    await pickPhoneCountry(
       contact.getByRole('combobox', { name: 'Phone 2 country', exact: true }),
-      '+977',
       '+977',
     );
     const second = contact.getByLabel('Phone 2 number', { exact: true });

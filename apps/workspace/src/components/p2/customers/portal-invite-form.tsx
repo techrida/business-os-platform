@@ -5,9 +5,10 @@ import { useActionState, useEffect, useId, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Select } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
+import { ContactPicker, type ContactCreate } from './contact-picker';
 import type { PortalInviteState } from './form-state';
 import styles from './customer-form.module.css';
 
@@ -15,6 +16,9 @@ import styles from './customer-form.module.css';
 export interface PortalContactOption {
   id: string;
   label: string;
+  /** The contact's name and what else a search matches (title, email); `label` is used when missing. */
+  name?: string;
+  detail?: string | undefined;
   /** A contact without an email cannot receive the invite, so it is listed but cannot be chosen. */
   hasEmail: boolean;
 }
@@ -28,12 +32,15 @@ export function PortalInviteForm({
   action,
   customerId,
   contacts,
+  createContact,
   idempotencyKey,
   first,
 }: {
   action: (prev: PortalInviteState, form: FormData) => Promise<PortalInviteState>;
   customerId: string;
   contacts: PortalContactOption[];
+  /** When set, the picker's last row adds a contact to this customer and chooses it. */
+  createContact?: ContactCreate | null;
   /** A UUID the server made for this render. */
   idempotencyKey: string;
   /** No portal user yet: this invite makes the first portal admin. */
@@ -95,23 +102,21 @@ export function PortalInviteForm({
           error={state.errors.contactId}
         >
           {(c) => (
-            <Select
+            <ContactPicker
+              control={c}
               name="contactId"
+              options={contacts.map((o) => ({
+                id: o.id,
+                name: o.name ?? o.label,
+                detail: o.detail ?? undefined,
+                disabledReason: o.hasEmail ? undefined : 'No email address',
+              }))}
               value={contactId}
-              onChange={(e) =>
-                setChoice({ savedCount: state.savedCount, contactId: e.target.value })
-              }
+              onChange={(id) => setChoice({ savedCount: state.savedCount, contactId: id })}
+              create={createContact ? { ...createContact, requireEmail: true } : null}
+              placeholder="Search a contact"
               required
-              {...c}
-            >
-              <option value="">Choose a contact</option>
-              {contacts.map((o) => (
-                <option key={o.id} value={o.id} disabled={!o.hasEmail}>
-                  {o.label}
-                  {o.hasEmail ? '' : ' (no email)'}
-                </option>
-              ))}
-            </Select>
+            />
           )}
         </Field>
       </form>
