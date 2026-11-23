@@ -110,13 +110,22 @@ export function useFocusOnProblem(
   summaryRef: RefObject<HTMLElement | null>,
 ): void {
   useEffect(() => {
-    if (state.error) summaryRef.current?.focus();
-    else if (state.errors && Object.keys(state.errors).length > 0) {
-      wrapRef.current
-        ?.querySelector<HTMLElement>('[aria-invalid="true"], fieldset[data-invalid] input')
-        ?.focus();
-    }
+    focusProblem(state, wrapRef.current, summaryRef.current);
   }, [state, wrapRef, summaryRef]);
+}
+
+/** The focus move of `useFocusOnProblem`, for a caller that must repeat it on its own event. */
+export function focusProblem(
+  state: { error?: string | undefined; errors?: object | undefined },
+  wrap: HTMLElement | null,
+  summary: HTMLElement | null,
+): void {
+  if (state.error) summary?.focus();
+  else if (state.errors && Object.keys(state.errors).length > 0) {
+    wrap
+      ?.querySelector<HTMLElement>('[aria-invalid="true"], fieldset[data-invalid] input')
+      ?.focus();
+  }
 }
 
 /** Announces the pending request while the footer actions are disabled. */

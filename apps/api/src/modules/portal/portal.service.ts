@@ -66,6 +66,20 @@ export function isPortalVisible(v: Pick<PortalVersionHead, 'status' | 'rejection
   );
 }
 
+/**
+ * A sent version the company has since closed: it was cancelled itself (a Lost deal), or it was replaced by a revision
+ * that was then cancelled. The mailed link then says "no longer open" instead of "not found" (R6D, EF2 Q2/Q3).
+ */
+function isClosedToCustomer(source: {
+  version: { status: PortalVersionHead['status'] };
+  quotationCancelled: boolean;
+}): boolean {
+  return (
+    source.version.status === 'cancelled' ||
+    (source.version.status === 'superseded' && source.quotationCancelled)
+  );
+}
+
 const notFound = () => new NotFoundException('Quotation not found');
 /** The PDF of a visible version is still being prepared (rendered soon, or its file awaits the scan). */
 const pdfNotReady = () =>
@@ -201,7 +215,7 @@ export class PortalService {
     assertCustomerCaller(p);
     const source = await this.store.loadView(p, versionId);
     // Decide visibility before any further read, so a hidden version costs no document or settings lookup.
-    if (source !== undefined && source.version.status === 'cancelled' && source.sentAt !== null) {
+    if (source !== undefined && source.sentAt !== null && isClosedToCustomer(source)) {
       // The customer was sent this version (the mail link names it), so its existence is no secret: say it is closed.
       throw new ConflictException({
         code: 'quotation_closed',
@@ -234,6 +248,7 @@ export class PortalService {
       documentStyle: _documentStyle,
       renderAttempts,
       sentAt: _sentAt,
+      quotationCancelled: _quotationCancelled,
       ...input
     } = source;
     const afterAcceptance =

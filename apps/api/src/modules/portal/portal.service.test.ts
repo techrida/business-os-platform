@@ -70,6 +70,8 @@ interface Seed {
   evidenceConfirmed?: boolean;
   /** When it was sent; absent means sent for a status only a sent version reaches, never sent otherwise. */
   sentAt?: Date | null;
+  /** The quotation's newest version is cancelled (a Lost deal). */
+  quotationCancelled?: boolean;
 }
 
 /** A whole internal source; internal columns ride along so a leak shows up in the output. */
@@ -127,6 +129,7 @@ function sourceOf(s: Seed): PortalViewSource {
     issuerLegalName: 'Techrida Pvt. Ltd.',
     documentStyle: s.documentStyle ?? null,
     renderAttempts: 0,
+    quotationCancelled: s.quotationCancelled ?? false,
     sentAt:
       s.sentAt !== undefined
         ? s.sentAt
@@ -506,6 +509,35 @@ describe('PortalService.get', () => {
     for (const id of [vid(6), vid(10)]) {
       await expect(service.get(id), id).rejects.toBeInstanceOf(NotFoundException);
     }
+  });
+
+  it('answers 409 quotation_closed for a mailed superseded version whose quotation was then cancelled (R6D)', async () => {
+    const sent = new Date('2026-11-08T10:00:00Z');
+    const { service } = setup([
+      {
+        versionId: vid(8),
+        quotationId: qid(7),
+        number: 'QT-7',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: sent,
+        quotationCancelled: true,
+      },
+      {
+        versionId: vid(11),
+        quotationId: qid(9),
+        number: 'QT-9',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: sent,
+        quotationCancelled: false,
+      },
+    ]);
+    const error = await service.get(vid(8)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'quotation_closed' });
+    // A revision still open keeps showing the superseded page.
+    await expect(service.get(vid(11))).resolves.toMatchObject({ status: 'superseded' });
   });
 
   it('after a revise with the new draft unsent, shows the last sent version and 404s the draft', async () => {
