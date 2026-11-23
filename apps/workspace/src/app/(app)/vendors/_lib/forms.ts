@@ -62,7 +62,7 @@ export interface VendorValues {
   kind: string;
   pan: string;
   vatRegistered: boolean;
-  /** ISO 3166-1 alpha-2. Fixed once the vendor is added; it is also the address's country. */
+  /** ISO 3166-1 alpha-2; it is also the address's country. Editable until the vendor is approved (D10). */
   country: string;
   /** The street lines and city: both or neither (the address is optional). */
   addressLine: string;
@@ -85,7 +85,7 @@ export const VENDOR_FIELDS = Object.keys(EMPTY_VENDOR_VALUES) as VendorField[];
 
 /**
  * The name each value posts under. The address posts through `AddressFields` named `address`, whose Country is the
- * vendor's country (shown once, on create; edit shows it as fixed text and posts none).
+ * vendor's country (asked once; a locked edit form posts none).
  */
 export const VENDOR_POSTED_NAME: Readonly<Record<VendorField, string>> = {
   legalName: 'legalName',
