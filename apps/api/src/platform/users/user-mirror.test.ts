@@ -916,7 +916,7 @@ describe('R6C1: identity lease follow-ups', () => {
   const busy = (code: '55P03' | '40P01') => Object.assign(new Error('busy'), { code });
 
   it('(a, f) trusts ZITADEL as untouched only after a TTL takeover, and audits the decision', async () => {
-    const record = vi.spyOn(AuditService.prototype, 'record').mockResolvedValue(undefined as never);
+    const record = vi.spyOn(AuditService.prototype, 'record').mockResolvedValue(undefined);
     zitadel.users.set('z1', zUser('z1'));
     zitadel.users.set('z2', zUser('z2'));
     await mirror.syncUser('z1');
@@ -968,9 +968,9 @@ describe('R6C1: identity lease follow-ups', () => {
     await mirror.onApplicationShutdown();
 
     expect(store.founderLeases.has(TENANT)).toBe(false);
-    await expect(withFounderRemovalLease(store, TENANT, async () => 1)).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    await expect(
+      withFounderRemovalLease(store, TENANT, () => Promise.resolve(1)),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
     release();
     expect(await running).toBe('finished');
   });
