@@ -35,7 +35,7 @@ import {
 } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -573,8 +573,9 @@ async function queuedBehindLock(pending: Promise<unknown>): Promise<void> {
  */
 async function holdingMarkLost(dealId: string, whileHeld: () => Promise<void>): Promise<void> {
   const adminPool = new Pool({ connectionString: testDb.adminUrl, max: 1 });
-  const client = await adminPool.connect();
+  let client: PoolClient | undefined;
   try {
+    client = await adminPool.connect();
     await client.query('BEGIN');
     await client.query('SET LOCAL session_replication_role = replica');
     await client.query('SELECT id FROM app.opportunities WHERE id = $1 FOR UPDATE', [dealId]);
@@ -587,10 +588,10 @@ async function holdingMarkLost(dealId: string, whileHeld: () => Promise<void>): 
     await whileHeld();
     await client.query('COMMIT');
   } catch (e) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    await client?.query('ROLLBACK').catch(() => undefined);
     throw e;
   } finally {
-    client.release();
+    client?.release();
     await adminPool.end();
   }
 }
