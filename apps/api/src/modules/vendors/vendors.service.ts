@@ -594,7 +594,7 @@ export class VendorsService {
           });
         }
         if (resetsKyb) {
-          const caseReset = await this.verification.returnToDraftInTx(
+          const caseReset = await this.verification.resetForIdentityChangeInTx(
             tx,
             scope,
             id,
