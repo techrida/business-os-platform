@@ -2698,6 +2698,24 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
       await expect(mirror.syncUser(f.zitadelUserId)).resolves.toBeTypeOf('boolean');
     }, 60_000);
 
+    it('D4: a reconcile pass over a held lease claims once, leaves the org for the next pass and deactivates nobody', async () => {
+      const f = await fixture('active');
+      const zitadel = zitadelFor(f, 'active');
+      for (const n of [1, 2, 3]) {
+        zitadel.users.set(
+          `extra-${n}-${f.scope.tenantId}`,
+          zUser(`extra-${n}-${f.scope.tenantId}`, { orgId: f.zitadelOrgId, status: 'active' }),
+        );
+      }
+      const { mirror } = services(zitadel);
+      expect(await store.claimFounderLease(f.scope.tenantId, 'live-holder', 300, 1000)).toBe(true);
+      const started = Date.now();
+      await expect(mirror.reconcile()).resolves.toMatchObject({ changed: 0 });
+      // One short claim, not a 3 s wait for each of the four users.
+      expect(Date.now() - started).toBeLessThan(2_500);
+      expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'active' });
+    }, 60_000);
+
     it('D4: an invite whose lease was taken over before its final write leaves only a closed, flagged row with no roles (503)', async () => {
       const f = await fixture('active');
       const zitadel = new RecordingZitadel();
@@ -2772,6 +2790,39 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
         );
         const row = await store.findByZitadelId(db, `z-new-${f.zitadelOrgId}-1`);
         expect(row).toMatchObject({ identityReviewRequired: true });
+      }, 60_000);
+
+      it('does not finish an invite for an identity whose row is already closed and flagged', async () => {
+        const f = await fixture('active');
+        const zitadel = new RecordingZitadel();
+        const zId = `z-existing-${f.scope.tenantId}`;
+        zitadel.users.set(zId, {
+          id: zId,
+          orgId: f.zitadelOrgId,
+          email: input.email,
+          displayName: 'Lost Id',
+          status: 'invited',
+          createdAt: new Date(),
+        });
+        await withTx(db, f.scope, systemActor('test'), async (tx) => {
+          const id = await store.insertUser(tx, f.scope, {
+            zitadelUserId: zId,
+            idpOrgId: f.idpOrgId,
+            email: input.email,
+            displayName: 'Lost Id',
+            status: 'active',
+          });
+          await store.ensureDefaultMembership(tx, f.scope.tenantId, f.scope.organizationId, id);
+        });
+        vi.spyOn(zitadel, 'createHuman').mockRejectedValueOnce(
+          new ZitadelHttpError('/v2/users/new', 503, 'unavailable'),
+        );
+        await expect(
+          services(zitadel).users.invite(f.scope, adminActor(f.adminId), input),
+        ).rejects.toMatchObject({ status: 503 });
+        expect(
+          zitadel.calls.some((c) => c.startsWith('setGrants') || c.startsWith('sendInviteCode')),
+        ).toBe(false);
       }, 60_000);
 
       it('rethrows the original error when ZITADEL shows no such person, and when the lookup fails', async () => {

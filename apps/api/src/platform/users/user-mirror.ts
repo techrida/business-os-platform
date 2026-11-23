@@ -102,6 +102,12 @@ export class UserSyncContendedError extends Error {
   }
 }
 
+/**
+ * The tenant's identity lease could not be had in time. A UserSyncContendedError too, but reconcile also stops trying
+ * the rest of that org for the pass, so a held lease costs one claim, not one wait per user.
+ */
+export class LeaseBusyError extends UserSyncContendedError {}
+
 /** What apply writes for one ZITADEL user: the user as read, the status to store and the lock (undefined keeps it). */
 export interface NextState {
   user: ZitadelUser;
@@ -243,6 +249,7 @@ export class UserMirror {
     tenantId: string,
     zitadelUserId: string,
     fn: () => Promise<T>,
+    waitMs?: number,
   ): Promise<T> {
     const scope = await this.entityScope(tenantId);
     try {
@@ -252,9 +259,12 @@ export class UserMirror {
         fn,
         undefined,
         this.settleOutstandingRemoval(scope, zitadelActor()),
+        waitMs,
       );
     } catch (error) {
-      if (error instanceof ConflictException || error instanceof ServiceUnavailableException) {
+      if (error instanceof ConflictException) throw new LeaseBusyError(zitadelUserId);
+      if (error instanceof ServiceUnavailableException) {
+        this.logger.warn(`users.lease: ${zitadelUserId} not mirrored (${error.message})`);
         throw new UserSyncContendedError(zitadelUserId);
       }
       throw error;
@@ -290,6 +300,8 @@ export class UserMirror {
       let previousIds = new Set<string>();
       let total: number | null = null;
       let abort: string | null = null;
+      // Set once the tenant's identity lease could not be had: the rest of this org is left for the next pass.
+      let leaseBusy = false;
       try {
         for (;;) {
           if (pages >= maxPages) {
@@ -307,14 +319,21 @@ export class UserMirror {
           for (const user of page.users) {
             scanned += 1;
             seen.add(user.id);
+            if (leaseBusy) continue;
             try {
-              const didChange = await this.underLease(org.tenantId, user.id, async () => {
-                const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
-                return this.apply(org, user, roles);
-              });
+              const didChange = await this.underLease(
+                org.tenantId,
+                user.id,
+                async () => {
+                  const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
+                  return this.apply(org, user, roles);
+                },
+                0,
+              );
               if (didChange) changed += 1;
             } catch (error) {
               if (!(error instanceof UserSyncContendedError)) throw error;
+              if (error instanceof LeaseBusyError) leaseBusy = true;
               // This user only: the pass goes on, and they are seen, so never deactivated as missing.
               this.logger.warn(`${error.message}; left for the next pass`);
             }
@@ -346,6 +365,7 @@ export class UserMirror {
         );
         continue;
       }
+      if (leaseBusy) continue; // the next pass starts the org over
       if (fullPass) changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations);
     }
     return { scanned, changed };
@@ -951,10 +971,11 @@ export class UserMirror {
       }
       if (remote.status !== 'inactive') continue;
       try {
-        await this.underLease(org.tenantId, local.zitadelUserId, () => this.deactivate(local));
+        await this.underLease(org.tenantId, local.zitadelUserId, () => this.deactivate(local), 0);
       } catch (error) {
         if (!(error instanceof UserSyncContendedError)) throw error;
         this.logger.warn(`${error.message}; left for the next pass`);
+        if (error instanceof LeaseBusyError) break;
         continue;
       }
       deactivated += 1;
