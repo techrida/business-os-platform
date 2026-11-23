@@ -96,3 +96,20 @@ export async function removePresetAction(id: string): Promise<ActionState> {
   revalidatePath(PATH);
   return ok('Term set removed.');
 }
+
+/** Makes a term set the default of its kind (new quotations start with it), or clears it. At most one per kind: the API moves it. */
+export async function setDefaultPresetAction(id: string, isDefault: boolean): Promise<ActionState> {
+  const session = await requireSection('terms');
+  if (!Id.safeParse(id).success) return fail('That term set no longer exists.');
+  try {
+    await updateTermPreset(session, id, { isDefault });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      revalidatePath(PATH);
+      return fail('That term set was removed by someone else. The list is up to date now.');
+    }
+    return fail(describeError(error, 'change term sets'));
+  }
+  revalidatePath(PATH);
+  return ok(isDefault ? 'Default term set chosen.' : 'Default cleared.');
+}

@@ -415,6 +415,33 @@ describe('POST / PATCH / DELETE term presets', () => {
     expect(state.list.find((p) => p.id === ID_B)?.name).toBe('Other');
   });
 
+  it('patch isDefault: makes the preset the only default of its kind and leaves other kinds alone', async () => {
+    const OTHER_KIND = '6f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
+    const { documentSettings, state } = build([
+      preset({ isDefault: true }),
+      preset({ id: ID_B, name: 'Other' }),
+      preset({ id: OTHER_KIND, kind: 'scope', name: 'Scope default', isDefault: true }),
+    ]);
+    await documentSettings.update(ID_B, { isDefault: true });
+    expect(state.list.find((p) => p.id === ID_B)?.isDefault).toBe(true);
+    expect(state.list.find((p) => p.id === ID_A)?.isDefault).toBeUndefined();
+    expect(state.list.find((p) => p.id === OTHER_KIND)?.isDefault).toBe(true);
+  });
+
+  it('patch isDefault false clears the default; create with isDefault takes it from the old one', async () => {
+    const { documentSettings, state } = build([preset({ isDefault: true })]);
+    await documentSettings.update(ID_A, { isDefault: false });
+    expect(state.list[0]?.isDefault).toBeUndefined();
+    await documentSettings.update(ID_A, { isDefault: true });
+    const created = await documentSettings.create({
+      kind: 'terms_conditions',
+      name: 'Newer',
+      body: 'x',
+      isDefault: true,
+    });
+    expect(state.list.filter((p) => p.isDefault === true).map((p) => p.id)).toEqual([created.id]);
+  });
+
   it('patch: body only', async () => {
     const { documentSettings, state } = build([preset()]);
     await documentSettings.update(ID_A, { body: 'Only the body' });
@@ -797,7 +824,10 @@ describe('POST admin/settings/documents/preview', () => {
       expect(html).toContain(UPLOADED);
       expect(html).not.toContain(LEGACY);
       expect(logos.forScope).toHaveBeenCalledWith(scope);
-      expect(logos.resolve).toHaveBeenCalledWith(LOGO_DOC);
+      expect(logos.resolve).toHaveBeenCalledWith(
+        LOGO_DOC,
+        expect.objectContaining({ onDarkDocumentId: null, onLightDocumentId: null }),
+      );
     });
 
     it('falls back to the legacy logo when the document gives none', async () => {

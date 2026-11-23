@@ -3,9 +3,8 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
-import { Combobox } from '@/components/ui/combobox';
-import type { ComboboxOption } from '@/components/ui/combobox-model';
 import { Field } from '@/components/ui/field';
+import { MemberPicker, type MemberOption } from '@/components/ui/member-picker';
 
 import { checkHref } from './check-model';
 import styles from './check.module.css';
@@ -18,7 +17,7 @@ export function PersonPicker({
   options,
   value,
 }: {
-  options: readonly ComboboxOption[];
+  options: readonly MemberOption[];
   value: string;
 }) {
   const router = useRouter();
@@ -26,10 +25,10 @@ export function PersonPicker({
   return (
     <Field label="Person" className={styles.picker ?? ''}>
       {(control) => (
-        <Combobox
+        <MemberPicker
           labelledBy={control['aria-labelledby']}
           describedBy={control['aria-describedby']}
-          options={options}
+          people={options}
           value={value}
           open={open}
           onOpenChange={setOpen}

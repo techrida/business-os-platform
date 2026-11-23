@@ -19,6 +19,7 @@ import {
   type VendorCapabilities,
   type VendorContactBody,
   type VendorDto,
+  type VendorKind,
   type VendorStatus,
 } from '@bos/contracts';
 import {
@@ -480,34 +481,95 @@ export class VendorsService {
           message: `A ${row.status} vendor cannot be edited`,
         });
       }
+      // D10: the kind and country may change after create. What counts is a real change; the form sends both.
+      const kindAfter: VendorKind = fields.kind ?? kindFromRow(row.kind);
+      const countryAfter = fields.country ?? rowCountry(row.country);
+      const identityChanged =
+        kindToRow(kindAfter) !== row.kind || countryAfter !== rowCountry(row.country);
       if (
-        (fields.legalName !== undefined || fields.pan !== undefined) &&
+        (fields.legalName !== undefined || fields.pan !== undefined || identityChanged) &&
         (row.status === 'approved' || row.status === 'suspended')
       ) {
         throw new ConflictException({
           code: 'vendor_identity_locked',
-          message: 'The legal name and PAN of an approved vendor change through a new KYB review',
+          message:
+            'The legal name, PAN, kind and country of an approved or suspended vendor cannot be edited',
         });
       }
+      const clearsPan = fields.pan === null;
       const pan = fields.pan?.toUpperCase();
+      // The pair the vendor will have, the PAN it will have (sent, else stored) and whether that PAN is allowed: the
+      // table's checks (vendors_foreign_country_check, vendors_pan_check) as answers a person can act on.
+      const panAfter = clearsPan ? null : (pan ?? row.pan);
+      const pairProblem = identityChanged ? kindCountryProblem(kindAfter, countryAfter) : undefined;
+      const panProblem =
+        pan !== undefined || clearsPan || identityChanged
+          ? (vendorPanProblem(countryAfter, panAfter) ??
+            (kindAfter !== 'foreign' && panAfter === null
+              ? 'a PAN is required unless the vendor is foreign'
+              : undefined))
+          : undefined;
+      if (pairProblem !== undefined) {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: pairProblem,
+        });
+      }
+      if (panProblem !== undefined) {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: panProblem,
+        });
+      }
       if (pan !== undefined) {
-        // A Nepal vendor's PAN is nine digits; a foreign vendor's tax id keeps the loose shape (FX9).
-        const panProblem = vendorPanProblem(row.country, pan);
-        if (panProblem !== undefined) {
-          throw new BadRequestException({ code: 'bad_request', message: panProblem });
-        }
         await this.assertPanFree(tx, scope.tenantId, pan, id);
       }
       if (fields.ownerUserId !== undefined) {
         await this.assertUser(tx, scope.tenantId, fields.ownerUserId);
       }
+      // What really changes. A PATCH that repeats the stored values writes nothing, so it keeps the version.
+      const legalNameChanged = fields.legalName !== undefined && fields.legalName !== row.legalName;
+      const panChanged = clearsPan ? row.pan !== null : pan !== undefined && pan !== row.pan;
+      const addressChanged =
+        fields.address !== undefined &&
+        (() => {
+          const next = addressColumns(fields.address);
+          return next.addressLine !== row.addressLine || next.addressCity !== row.addressCity;
+        })();
+      const vatChanged =
+        fields.vatRegistered !== undefined && fields.vatRegistered !== row.vatRegistered;
+      const ownerChanged =
+        fields.ownerUserId !== undefined && fields.ownerUserId !== row.ownerUserId;
+      if (
+        !legalNameChanged &&
+        !panChanged &&
+        !identityChanged &&
+        !addressChanged &&
+        !vatChanged &&
+        !ownerChanged
+      ) {
+        if (row.version !== expectedVersion) {
+          throw new ConflictException(
+            'This record was changed by someone else; reload it and try again',
+          );
+        }
+        return toVendorDto(row, principal);
+      }
+      // A change of the tax identity (legal name, PAN, kind, country) before approval voids what the KYB case holds:
+      // a submitted or approved case (whatever the vendor's status: a draft vendor can hold one) returns to draft with
+      // an empty checklist, so the documents are uploaded again, and a vendor under review goes back to pending_kyc.
+      const identityTouched = legalNameChanged || panChanged || identityChanged;
+      const resetsKyb = identityTouched;
       try {
         const updated = await updateVersioned(tx, vendors, id, expectedVersion, {
           ...(fields.legalName !== undefined && { legalName: fields.legalName }),
+          ...(clearsPan && { pan: null }),
           ...(pan !== undefined && { pan }),
+          ...(identityChanged && { kind: kindToRow(kindAfter), country: countryAfter }),
           ...(fields.address !== undefined && addressColumns(fields.address)),
           ...(fields.vatRegistered !== undefined && { vatRegistered: fields.vatRegistered }),
           ...(fields.ownerUserId !== undefined && { ownerUserId: fields.ownerUserId }),
+          ...(resetsKyb && row.status === 'under_review' && { status: 'pending_kyc' as const }),
           updatedAt: now,
         });
         if (fields.legalName !== undefined) {
@@ -515,6 +577,49 @@ export class VendorsService {
             .update(parties)
             .set({ name: fields.legalName, updatedAt: now })
             .where(and(eq(parties.tenantId, scope.tenantId), eq(parties.id, id)));
+        }
+        if (identityChanged) {
+          // The trigger audit already holds the row's before and after; this names the decision, with the values a
+          // reviewer looks for (D10). The PAN is listed when the same edit changed it, so a switch to Nepal reads whole.
+          await this.audit.record(tx, {
+            action: 'vendor.kind_country_changed',
+            entityType: 'vendor',
+            entityId: id,
+            before: {
+              kind: kindFromRow(row.kind),
+              country: row.country,
+              ...(panChanged && { pan: row.pan }),
+            },
+            after: { kind: kindAfter, country: countryAfter, ...(panChanged && { pan: panAfter }) },
+          });
+        }
+        if (resetsKyb) {
+          const caseReset = await this.verification.returnToDraftInTx(
+            tx,
+            scope,
+            id,
+            'The vendor’s legal name, PAN, kind or country changed; upload the KYB documents again.',
+          );
+          await this.audit.record(tx, {
+            action: 'vendor.kyb_reset',
+            entityType: 'vendor',
+            entityId: id,
+            before: {
+              status: row.status,
+              legalName: row.legalName,
+              pan: row.pan,
+              kind: kindFromRow(row.kind),
+              country: row.country,
+            },
+            after: {
+              status: updated.status,
+              legalName: updated.legalName,
+              pan: updated.pan,
+              kind: kindFromRow(updated.kind),
+              country: updated.country,
+            },
+            meta: { caseReset },
+          });
         }
         return toVendorDto(updated, principal);
       } catch (error) {

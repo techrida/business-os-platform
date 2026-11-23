@@ -120,6 +120,9 @@ export const PartyPhonesSchema = z
   });
 export type PartyPhones = z.infer<typeof PartyPhonesSchema>;
 
+/** Calling codes whose countries are big and distinct enough that a complete number keeps its own country. */
+const NUMBER_BASED_CALLING_CODES: ReadonlySet<string> = new Set(['1', '7']);
+
 /** The main country of a calling code (`'1'` is US, `'7'` RU, `'44'` GB), from libphonenumber's metadata order. */
 function mainCountryOfCallingCode(code: string): CountryCode | null {
   const main = metadata.country_calling_codes[code]?.find((country) => isCountryCode(country));
@@ -128,16 +131,29 @@ function mainCountryOfCallingCode(code: string): CountryCode | null {
 
 /**
  * The country a typed number most likely belongs to, or null. Works on a partial number too, so a phone field can
- * switch its country as the user types `+1 4…` (US) or `+977 98…` (NP). A complete number of a shared calling code
- * resolves to its own country (`+77012345678` is KZ); an incomplete one to the code's main country.
+ * switch its country as the user types `+1 4…` (US) or `+977 98…` (NP). A calling code several countries share
+ * (+44, +39, +1, +7, +61, +47, +590 and a few more) resolves to its main country (GB, IT, US, RU, AU, NO, GP), also
+ * for a complete number that libphonenumber's own patterns would place in a smaller region (`+447911123456` is GB,
+ * not GG; `+390612345678` is IT, not VA): people expect the main country (R6A, Kuu 2026-11-23). A half-typed number shows the
+ * main country. The exception is +1 and +7, where a complete number resolves to its own country (+1 416 CA, +1 876 JM,
+ * +7 701 KZ). A deliberate country pick is never overridden here.
  */
 export function phoneCountryFromE164(e164: string): CountryCode | null {
   if (!e164.startsWith('+')) return null;
   const digits = e164.slice(1).replace(/\D/g, '');
   if (digits === '') return null;
   if (digits.startsWith(NEPAL_CODE.slice(1))) return 'NP';
+  // +1 and +7 are the exception (Kuu, R6A): a complete number there resolves to its own country by libphonenumber's
+  // number-based lookup (+1 416 is CA, +1 876 JM, +7 701 KZ). Until it is complete the main country shows.
   const parsed = parsePhoneNumberFromString(`+${digits}`);
-  if (parsed?.country !== undefined && isCountryCode(parsed.country)) return parsed.country;
+  if (
+    parsed !== undefined &&
+    NUMBER_BASED_CALLING_CODES.has(parsed.countryCallingCode) &&
+    parsed.isValid() &&
+    parsed.country !== undefined &&
+    isCountryCode(parsed.country)
+  )
+    return parsed.country;
   // Calling codes are prefix-free, so the first prefix that is one is the only one.
   for (let length = 1; length <= 3 && length <= digits.length; length += 1) {
     const prefix = digits.slice(0, length);

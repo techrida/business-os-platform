@@ -21,6 +21,7 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { DecimalInput, MoneyInput } from '@/components/ui/number-input';
 import { SuggestInput } from '@/components/ui/suggest-input';
 
@@ -43,7 +44,7 @@ import {
   type StepForm,
   type ThresholdOp,
 } from './spec-form';
-import type { UserOption } from './user-field';
+import { memberOptions, type UserOption } from './user-field';
 
 type SlaDefaults = Parameters<typeof emptySpecForm>[1];
 
@@ -317,21 +318,20 @@ export function WorkflowEditor({
               ))}
             </Select>
           ) : step.kind === 'user' ? (
-            <Select
-              {...control}
+            <MemberPicker
+              labelledBy={control['aria-labelledby']}
+              describedBy={control['aria-describedby']}
+              people={memberOptions(users ?? [])}
               value={step.target}
-              onChange={(e) => change({ target: e.target.value })}
-            >
-              <option value="">Choose a person</option>
-              {step.target !== '' && !(users ?? []).some((u) => u.id === step.target) ? (
-                <option value={step.target}>Current person (name unavailable)</option>
-              ) : null}
-              {(users ?? []).map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.label}
-                </option>
-              ))}
-            </Select>
+              onChange={(target) => change({ target })}
+              current={
+                step.target !== '' && !(users ?? []).some((u) => u.id === step.target)
+                  ? { id: step.target, name: 'Current person (name unavailable)' }
+                  : undefined
+              }
+              placeholder="Choose a person"
+              disabled={users === null && step.target === ''}
+            />
           ) : (
             <SuggestInput
               {...control}

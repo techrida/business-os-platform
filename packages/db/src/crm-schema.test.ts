@@ -299,6 +299,12 @@ describe('0015_crm and src/schema/crm.ts', () => {
     readFileSync(new URL('../migrations/0194_drop_owner_phone_e164.sql', import.meta.url), 'utf8'),
     vendorTables,
   );
+  // D9: 0199 adds leads.address_line and address_city with leads_address_check.
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0199_lead_address.sql', import.meta.url), 'utf8'),
+    vendorTables,
+  );
   const opportunityShape = parsed.get('opportunities');
   const sqlOnlyFks = opportunityShape?.names.foreignKey.filter((e) => e === overrideVersionFk);
   if (opportunityShape) {

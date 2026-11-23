@@ -44,6 +44,7 @@ vi.mock('../actions', () => ({
   moveLeadStageAction: vi.fn(),
   createLeadAction: vi.fn(),
   convertLeadAction: vi.fn(),
+  unlinkLeadCustomerAction: vi.fn(),
   scheduleFollowUpAction: vi.fn(),
   completeFollowUpAction: vi.fn(),
   rescheduleFollowUpAction: vi.fn(),
@@ -85,6 +86,7 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto => ({
   contactName: 'Sunita Shrestha',
   email: null,
   country: 'NP',
+  address: null,
   phones: [],
   customerId: null,
   contactId: null,
@@ -243,6 +245,31 @@ describe('lead country and phones (FX9)', () => {
     const handed = vi.mocked(ConvertDialog).mock.calls.at(-1)?.[0].lead;
     expect(handed).toMatchObject({ country: 'US', phones: PHONES });
     expect(handed).not.toHaveProperty('phone');
+  });
+});
+
+describe('lead address (D9)', () => {
+  it('shows the address on the overview, or Not set, with an editor for an editor', async () => {
+    mocks.getLead.mockResolvedValue(
+      lead({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } }),
+    );
+    const overview = card(await render(), 'Lead overview').textContent ?? '';
+    expect(overview).toContain('12 Lazimpat Road, Kathmandu');
+    expect(overview).toContain('Edit address');
+    mocks.getLead.mockResolvedValue(lead({ address: null, canEdit: false, allowedMoves: [] }));
+    const readOnly = card(await render(), 'Lead overview').textContent ?? '';
+    expect(readOnly).toContain('Address');
+    expect(readOnly).not.toContain('Add address');
+  });
+
+  it("hands the convert dialog the lead's address", async () => {
+    const { ConvertDialog } = await import('@/components/p2/crm/convert-dialog');
+    const address = { line: '12 Lazimpat Road', city: 'Kathmandu' };
+    mocks.getLead.mockResolvedValue(
+      lead({ stage: 'qualified', allowedMoves: ['on_hold', 'lost'], address }),
+    );
+    await render();
+    expect(vi.mocked(ConvertDialog).mock.calls.at(-1)?.[0].lead).toMatchObject({ address });
   });
 });
 

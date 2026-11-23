@@ -12,7 +12,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Combobox } from '@/components/ui/combobox';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { Dialog } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/panel';
@@ -73,7 +73,7 @@ export type ReviewRunCheck = (input: {
 export interface ReviewPerson {
   id: string;
   name: string;
-  /** Shown after the name in the picker: a department or an email. */
+  /** Shown muted after the name in the picker, as the person's role: a department or a job title. */
   description?: string | undefined;
 }
 
@@ -518,9 +518,9 @@ function CheckWithChanges({
         <span id={labelId} className={styles.noteLabel}>
           Person
         </span>
-        <Combobox
+        <MemberPicker
           labelledBy={labelId}
-          options={people.map((p) => ({ id: p.id, label: p.name, description: p.description }))}
+          people={people.map((p) => ({ id: p.id, name: p.name, role: p.description }))}
           value={person}
           onChange={(id) => void pick(id)}
           open={open}

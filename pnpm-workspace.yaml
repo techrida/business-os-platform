@@ -38,8 +38,10 @@ catalog:
   '@types/node': ^24.19.2
   zod: ^4.6.7
   libphonenumber-js: 1.13.17
+  sharp: 0.35.5
 
   # Test and lint tooling
+  vite: ^8.3.6
   vitest: ^5.1.0
   '@vitest/coverage-v8': ^5.1.0
   eslint: ^9.39.5

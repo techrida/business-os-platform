@@ -2,6 +2,7 @@ import 'server-only';
 
 import {
   type AddressLines,
+  type CountryCode,
   CountryCodeSchema,
   type CreateVendorBody,
   type DocumentVersionDto,
@@ -16,6 +17,7 @@ import {
   type VendorContactBody,
   type VendorDto,
   VendorDtoSchema,
+  type VendorKind,
   type VendorStatus,
   VendorStatusSchema,
   type VerifyBankAccountBody,
@@ -84,8 +86,12 @@ export type CreateVendorContact = VendorContactBody;
 export interface UpdateVendorFields {
   expectedVersion: number;
   legalName?: string | undefined;
-  pan?: string | undefined;
-  /** Replaces the street lines and city; `null` clears them. The country is fixed at create. */
+  /** D10: the kind and country change together (a foreign vendor is outside Nepal) until the vendor is approved. */
+  kind?: VendorKind | undefined;
+  country?: CountryCode | undefined;
+  /** `null` clears the tax id of a foreign vendor. */
+  pan?: string | null | undefined;
+  /** Replaces the street lines and city; `null` clears them. */
   address?: AddressLines | null | undefined;
   vatRegistered?: boolean | undefined;
 }

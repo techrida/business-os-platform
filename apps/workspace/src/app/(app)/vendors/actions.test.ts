@@ -190,6 +190,7 @@ describe('createVendorAction', () => {
 describe('updateVendorAction', () => {
   const original = {
     legalName: 'Himal Traders Pvt. Ltd.',
+    kind: 'company',
     pan: '301234567',
     vatRegistered: false,
     status: 'draft',
@@ -210,6 +211,35 @@ describe('updateVendorAction', () => {
     });
   });
 
+  it('D10: sends the kind and country together, and the new PAN a switch to Nepal needs', async () => {
+    api.getVendor.mockResolvedValue({ ...original, kind: 'foreign', country: 'IN', pan: null });
+    api.updateVendor.mockResolvedValue({});
+    const posted = {
+      ...fields,
+      kind: 'company',
+      pan: '301234568',
+      'address.country': 'NP',
+      vatRegistered: '',
+    };
+    await expect(updateVendorAction(start, form(posted))).rejects.toThrow('redirect');
+    expect(api.updateVendor).toHaveBeenCalledWith(expect.anything(), ID, {
+      expectedVersion: 3,
+      kind: 'company',
+      country: 'NP',
+      pan: '301234568',
+    });
+  });
+
+  it('D10: a switch to Nepal without a PAN stops before the API and names the PAN', async () => {
+    api.getVendor.mockResolvedValue({ ...original, kind: 'foreign', country: 'IN', pan: null });
+    const r = await updateVendorAction(
+      start,
+      form({ ...fields, kind: 'company', pan: '', 'address.country': 'NP', vatRegistered: '' }),
+    );
+    expect(api.updateVendor).not.toHaveBeenCalled();
+    expect(r.errors.pan).toMatch(/PAN is required/);
+  });
+
   it('a stale version (409) asks for a reload', async () => {
     api.getVendor.mockResolvedValue(original);
     api.updateVendor.mockRejectedValue(apiError(409, 'conflict'));
@@ -222,7 +252,7 @@ describe('updateVendorAction', () => {
     api.getVendor.mockResolvedValue(original);
     api.updateVendor.mockRejectedValue(apiError(409, 'vendor_identity_locked'));
     const r = await updateVendorAction(start, form(fields));
-    expect(r.error).toMatch(/KYB review/);
+    expect(r.error).toMatch(/cannot be edited/);
     expect(r.reload).toBeUndefined();
   });
 });

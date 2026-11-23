@@ -10,9 +10,10 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
 import { Panel } from '@/components/ui/panel';
+import { SearchInput } from '@/components/ui/search-input';
 import { Select } from '@/components/ui/select';
 
 import { previewAccessAction, saveAccessAction } from '../actions';
@@ -237,9 +238,8 @@ export function RoleEditor({ role, roles, groups, edited, canWrite, revision }: 
       <div className={styles.tools}>
         <Field label="Find a permission" className={styles.find ?? ''}>
           {(control) => (
-            <Input
+            <SearchInput
               {...control}
-              type="search"
               value={query}
               autoComplete="off"
               onChange={(event) => setQuery(event.target.value)}
