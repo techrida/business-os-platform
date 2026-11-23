@@ -240,6 +240,14 @@ describe('updateVendorAction', () => {
     expect(r.errors.pan).toMatch(/PAN is required/);
   });
 
+  it('a save with nothing changed is a neutral notice, not an error (R6Q4)', async () => {
+    api.getVendor.mockResolvedValue({ ...original, vatRegistered: true });
+    const r = await updateVendorAction(start, form(fields));
+    expect(api.updateVendor).not.toHaveBeenCalled();
+    expect(r.error).toBeUndefined();
+    expect(r.notice).toBe('Nothing changed, so there is nothing to save.');
+  });
+
   it('a stale version (409) asks for a reload', async () => {
     api.getVendor.mockResolvedValue(original);
     api.updateVendor.mockRejectedValue(apiError(409, 'conflict'));
