@@ -536,6 +536,13 @@ All shared components live in `apps/workspace/src/components/ui/` and `apps/work
 | Open `ConfirmDialog` for confirmations (`UIP-FEED-002`) and keep dialog actions pinned in a fixed footer while the body scrolls (`UIP-DLG-001`).                                                                                                                                    | Expand confirmation prompts inline inside cards or let dialog submit buttons scroll out of sight.                                                           |
 | Capture before-and-after browser screenshots or video recordings for every UI or design change shown during review (`UIP-PROC-001`).                                                                                                                                                | Present visual changes in text alone without rendered proof.                                                                                                |
 
+### Project Interaction Rules (Business OS)
+
+Project-only rules Kuu set for this product. Emil's `learn-taste` skill maintains this section; general and domain rules live in Kuu's `UIP-*` preferences in life-kb and are only cited here.
+
+- `BOS-UI-001` (2026-11-23; this product's application of `UIP-FORM-006`): Whenever a user picks a member of the organisation (lead owner, prepared by, signer, approver, assignee, salesperson, default owner in Settings), use the one shared member picker: a search-in-the-field combobox whose chosen value shows **name followed by role** (role muted), exactly as its list rows do. Never show a placeholder such as `Default owner` or `You` where a real person is meant; resolve the person and say where the default comes from in a hint under the field. Enforced by a test that fails when a person list renders through the plain `Select`.
+- `BOS-UI-002` (2026-11-23): A field that names a company or contact that may or may not exist yet is a search-and-create combobox. Typing searches records the user may read; picking one fills the field and links the record; the last option is `Create "<typed text>"`, selected by default, so submitting without picking keeps the typed text as a new name. Leads stay quick to create: nothing is verified at creation. On New lead, a picked customer is linked (Convert then uses it), matching open leads show in their own `Already a lead` group that opens the lead, and Contact person searches the linked customer's contacts. This replaces the separate "A similar lead or customer exists" box.
+
 ### Index of Kuu's UI Preferences Cited
 
 Source: `/home/crestia/.agents/knowledge/ui-product-preferences.md` and sibling files (`forms-and-inputs.md`, `feedback-and-dialogs.md`, `data-display.md`, `ui-review-process.md`, `cases/business-os-memo-attachments.md`).
@@ -547,6 +554,9 @@ Source: `/home/crestia/.agents/knowledge/ui-product-preferences.md` and sibling 
 - `UIP-FEED-001`: Short-lived feedback in the top-right toast stack (`WorkspaceToaster`); persistent business items in `NotificationsBell`; blocking form errors inline on fields.
 - `UIP-FEED-002`: Confirmations open a dialog (`ConfirmDialog`), never expand inline.
 - `UIP-DLG-001`: Dialog actions stay pinned in a fixed footer while the body scrolls.
+- `UIP-BUILD-002`: No browser-default UI (native `title` tooltips, select chevrons, date/file inputs, validation bubbles, default scrollbars and focus rings); every small control uses the design system.
+- `UIP-FORM-006`: People pickers search in the field and show name + role; never a placeholder where a real person is meant.
+- `UIP-DATA-004`: Row actions keep fixed slots; an action that does not apply is muted and disabled with a tooltip saying why.
 - `UIP-BUILD-001`: Adopt proven open-source components and style them to system tokens instead of hand-rolling.
 - `UIP-DATA-001`: Status labels stay to one or two words max with no filler.
 - `UIP-DATA-002`: Visual cues and icons with accessible names over prose when faster; boolean table columns use check mark for true and blank for false.

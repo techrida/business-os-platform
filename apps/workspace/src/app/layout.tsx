@@ -10,6 +10,7 @@ import '@fontsource-variable/outfit';
 import '@/styles/globals.css';
 
 import { WorkspaceToaster } from '@/components/ui/toast';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = {
   title: 'Business OS',
@@ -21,7 +22,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme={BOS_LIGHT_ONLY ? 'light' : undefined}>
       <body>
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
         <WorkspaceToaster />
       </body>
     </html>

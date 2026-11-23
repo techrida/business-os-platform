@@ -54,6 +54,7 @@ const lead = (over: Partial<LeadDto> = {}): LeadDto =>
     contactName: 'Sunita Shrestha',
     email: null,
     country: 'NP',
+    address: null,
     phones: [],
     customerId: null,
     contactId: null,
