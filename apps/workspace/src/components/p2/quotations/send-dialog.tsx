@@ -4,7 +4,9 @@ import { useActionState, useId, useRef, useState } from 'react';
 
 import { sendAction, type ActionState } from '@/app/(app)/quotations/[id]/actions';
 import { Button } from '@/components/ui/button';
-import { Field, Select, Textarea } from '@/components/ui/field';
+import { Field, Textarea } from '@/components/ui/field';
+
+import { ContactPicker, type ContactCreate } from '../customers/contact-picker';
 
 import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './action-dialog';
 import styles from './actions.module.css';
@@ -23,6 +25,8 @@ export interface SendDialogProps {
   version: number;
   number: string;
   contacts: readonly SendContact[];
+  /** When set, the picker's last row adds a contact to this customer and chooses it. */
+  createContact?: ContactCreate | null;
   /** The version's own contact when it can receive email, otherwise empty. */
   defaultContactId: string;
   /** A UUID the server generated for this render. */
@@ -61,6 +65,7 @@ function SendForm({
   version,
   number,
   contacts,
+  createContact,
   defaultContactId,
   idempotencyKey,
   reloadHref,
@@ -112,31 +117,22 @@ function SendForm({
               summaryRef={summaryRef}
             />
 
-            <Field
-              label="Send to"
-              hint="Only contacts with an email address can be chosen."
-              error={state.errors?.recipient}
-            >
+            <Field label="Send to" error={state.errors?.recipient}>
               {(control) => (
-                <Select
+                <ContactPicker
+                  control={control}
                   name="recipientContactId"
+                  options={contacts.map((c) => ({
+                    id: c.id,
+                    name: c.name,
+                    detail: hasEmail(c) ? (c.email ?? undefined) : undefined,
+                    disabledReason: hasEmail(c) ? undefined : 'No email address',
+                  }))}
                   value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
-                  {...control}
-                >
-                  <option value="">Choose a contact</option>
-                  {contacts.map((c) =>
-                    hasEmail(c) ? (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.email})
-                      </option>
-                    ) : (
-                      <option key={c.id} value={c.id} disabled>
-                        {c.name} (no email address)
-                      </option>
-                    ),
-                  )}
-                </Select>
+                  onChange={setRecipient}
+                  create={createContact ? { ...createContact, requireEmail: true } : null}
+                  placeholder="Search a contact"
+                />
               )}
             </Field>
 

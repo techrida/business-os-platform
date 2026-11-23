@@ -9,11 +9,12 @@ import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, mountForm } from '@/test/form-interactions';
+import { fill, mountForm } from '@/test/form-interactions';
 import { DetailActions } from './detail-actions';
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  Element.prototype.scrollIntoView = () => {};
   globalThis.ResizeObserver ??= class {
     observe() {}
     unobserve() {}
@@ -104,9 +105,10 @@ async function mountSend(over: Partial<QuotationVersionDto> = {}) {
   );
 }
 
-async function openContactList(container: HTMLElement): Promise<HTMLElement[]> {
+/** Types in the Send-to box (it searches as you type) and returns the rows it lists. */
+async function searchContacts(container: HTMLElement, text: string): Promise<HTMLElement[]> {
   const field = container.querySelector('input[name="recipientContactId"]');
-  await click(field?.parentElement?.querySelector('button') ?? null);
+  await fill(field?.parentElement?.querySelector('input[role="combobox"]') ?? null, text);
   return Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
 }
 
@@ -277,18 +279,26 @@ describe('Send', () => {
     expect(html).toMatch(
       new RegExp(`<input type="hidden" name="recipientContactId" value="${ADA}"`),
     );
-    expect(html).toContain('Ada Lovelace (ada@example.com)');
-    // The list can only be opened on a mounted page: Bob is listed but cannot be picked.
+    expect(html).toContain('Ada Lovelace');
+    expect(html).toContain('ada@example.com');
+    // The list can only be searched on a mounted page: Bob is listed but cannot be picked.
     const { container, unmount } = await mountSend();
     try {
-      const options = await openContactList(container);
+      // One box that filters as you type (no Search button); a row shows the email the search matched on.
+      expect(
+        Array.from(container.querySelectorAll('button')).some((b) =>
+          /search/i.test(b.textContent ?? ''),
+        ),
+      ).toBe(false);
+      const options = await searchContacts(container, 'a');
       expect(options.map((o) => o.textContent?.trim())).toEqual([
-        'Choose a contact',
-        'Ada Lovelace (ada@example.com)',
-        'Bob NoMail (no email address)',
+        'Ada Lovelaceada@example.com',
+        'Bob NoMailNo email address',
       ]);
-      expect(options[1]!.getAttribute('aria-disabled')).toBeNull();
-      expect(options[2]!.getAttribute('aria-disabled')).toBe('true');
+      expect(options[0]!.getAttribute('aria-disabled')).toBeNull();
+      expect(options[1]!.getAttribute('aria-disabled')).toBe('true');
+      const byEmail = await searchContacts(container, 'ada@ex');
+      expect(byEmail.map((o) => o.textContent?.trim())).toEqual(['Ada Lovelaceada@example.com']);
     } finally {
       await unmount();
     }
@@ -298,12 +308,11 @@ describe('Send', () => {
     const { container, unmount } = await mountSend({ contactId: BOB });
     try {
       const field = container.querySelector<HTMLInputElement>('input[name="recipientContactId"]')!;
-      // The empty value is submitted and the trigger shows "Choose a contact", not Bob or Ada.
+      // The empty value is submitted and the box is blank, not Bob or Ada.
       expect(field.value).toBe('');
-      const label = field.parentElement!.querySelector('button')!.textContent;
-      expect(label).toContain('Choose a contact');
-      expect(label).not.toContain('Bob');
-      expect(label).not.toContain('Ada');
+      expect(
+        field.parentElement!.querySelector<HTMLInputElement>('input[role="combobox"]')!.value,
+      ).toBe('');
     } finally {
       await unmount();
     }
