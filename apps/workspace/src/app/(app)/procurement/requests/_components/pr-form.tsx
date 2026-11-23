@@ -287,10 +287,11 @@ export function PrForm({
               </Select>
             )}
           </Field>
-          <Field label="Delivery location" hint="Optional." error={err.deliveryLocation}>
+          <Field label="Delivery location" optional error={err.deliveryLocation}>
             {(control) => (
               <Input
                 name="deliveryLocation"
+                placeholder="Head office, Kathmandu"
                 value={values.deliveryLocation}
                 onChange={set('deliveryLocation')}
                 maxLength={200}
@@ -298,14 +299,11 @@ export function PrForm({
               />
             )}
           </Field>
-          <Field
-            label="Project"
-            hint="Optional. Enter the project reference, or leave blank."
-            error={err.projectId}
-          >
+          <Field label="Project" optional error={err.projectId}>
             {(control) => (
               <Input
                 name="projectId"
+                placeholder="PRJ-014"
                 value={values.projectId}
                 onChange={set('projectId')}
                 autoComplete="off"
@@ -411,7 +409,7 @@ export function PrForm({
                         />
                       )}
                     </Field>
-                    <Field label="Specification (optional)" error={err[`lines.${i}.specification`]}>
+                    <Field label="Specification" optional error={err[`lines.${i}.specification`]}>
                       {(control) => (
                         <Textarea
                           name={`lines.${i}.specification`}
