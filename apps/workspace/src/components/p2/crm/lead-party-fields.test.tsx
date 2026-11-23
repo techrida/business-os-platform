@@ -50,7 +50,12 @@ afterEach(() => {
 });
 
 async function mountLead(
-  opts: { matches?: LeadDuplicateMatch[]; contacts?: LeadContactOption[] } = {},
+  opts: {
+    matches?: LeadDuplicateMatch[];
+    contacts?: LeadContactOption[];
+    /** Type a title, a source and an email first (the default); false leaves the form untouched. */
+    typed?: boolean;
+  } = {},
 ) {
   const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
   const search = vi.fn(() => Promise.resolve(opts.matches ?? MATCHES));
@@ -70,9 +75,11 @@ async function mountLead(
     />,
   );
   const { container } = mounted;
-  await fill(container.querySelector('[name="title"]'), 'Racks');
-  await choose(container, 'source', 'Referral');
-  await fill(container.querySelector('[name="email"]'), 'buyer@himalayan.example');
+  if (opts.typed !== false) {
+    await fill(container.querySelector('[name="title"]'), 'Racks');
+    await choose(container, 'source', 'Referral');
+    await fill(container.querySelector('[name="email"]'), 'buyer@himalayan.example');
+  }
   const company = () => container.querySelector<HTMLInputElement>('input[name="companyName"]')!;
   const contact = () => container.querySelector<HTMLInputElement>('input[name="contactName"]')!;
   const settleSearch = async () => {
@@ -210,7 +217,7 @@ it('unlinks the customer when the text is edited or cleared', async () => {
 });
 
 it('opens a lead from "Already a lead" without filling or linking anything', async () => {
-  const t = await mountLead();
+  const t = await mountLead({ typed: false });
   await fill(t.company(), 'Himal');
   await t.settleSearch();
   const lead = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) =>
@@ -320,5 +327,36 @@ it('drops the customer and contact link when Create "<text>" is chosen on a link
   );
   await click(createCompany ?? null);
   expect(form.querySelector('input[name="customerId"]')).toBeNull();
+  await t.unmount();
+});
+
+it('asks to discard typed data before opening a picked lead, and opens it on confirm', async () => {
+  const t = await mountLead();
+  await fill(t.company(), 'Himal');
+  await t.settleSearch();
+  const lead = () =>
+    Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) =>
+      o.textContent?.includes('LD-2083/84-00001'),
+    ) ?? null;
+  // The helper already typed a title and an email, so the form holds typed data.
+  await click(lead());
+  expect(t.onOpenLead).not.toHaveBeenCalled();
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+  expect(dialog?.textContent).toContain('Leave this form?');
+  const keep = Array.from(dialog!.querySelectorAll('button')).find(
+    (b) => b.textContent === 'Keep editing',
+  );
+  await click(keep ?? null);
+  expect(t.onOpenLead).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+  await fill(t.company(), 'Himal2');
+  await t.settleSearch();
+  await click(lead());
+  const confirm = Array.from(document.querySelectorAll('[role="dialog"] button')).find(
+    (b) => b.textContent === 'Discard and open lead',
+  );
+  await click(confirm ?? null);
+  expect(t.onOpenLead).toHaveBeenCalledWith(LEAD);
   await t.unmount();
 });
