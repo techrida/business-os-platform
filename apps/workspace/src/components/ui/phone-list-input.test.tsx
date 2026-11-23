@@ -150,6 +150,20 @@ describe('PhoneListInput, digits typed one at a time with no plus', () => {
     expect(nepal.posted('0.country')).toBe('NP');
   });
 
+  it('keeps typing the own code in front of a number: 91 98765 43210 in India, 977… in a picked Nepal', async () => {
+    const india = await mount({ defaultCountry: 'IN' });
+    await typeKeys(india.number(1), '919876543210');
+    expect(india.posted('0.number')).toBe('+919876543210');
+    expect(india.number(1).value).toBe('+91 98765 43210');
+    await mounted!.unmount();
+
+    const nepal = await mount();
+    await pickCountry(nepal.country(1), 'nepal');
+    await typeKeys(nepal.number(1), '9779812345678');
+    expect(nepal.posted('0.number')).toBe('+9779812345678');
+    expect(nepal.number(1).value).toBe('+977 9812345678');
+  });
+
   it('does not switch the country the user picked, however the digits start', async () => {
     const list = await mount();
     await pickCountry(list.country(1), 'united states');
@@ -180,6 +194,27 @@ describe('PhoneListInput, digits typed one at a time with no plus', () => {
     list.number(1).setSelectionRange(8, 8);
     await typeKeys(list.number(1), '{Backspace}');
     expect(list.number(1).value).toBe('+1 415 552 671');
+  });
+});
+
+describe('PhoneListInput, deleting over the formatting', () => {
+  it('Delete over a space removes the digit after it, and Backspace over the space after the code removes nothing', async () => {
+    const list = await mount({
+      defaultValue: [{ country: 'GB', e164: '+442079460958', isPrimary: true }],
+    });
+    expect(list.number(1).value).toBe('+44 20 7946 0958');
+    list.number(1).setSelectionRange(6, 6);
+    await typeKeys(list.number(1), '{Delete}');
+    expect(list.number(1).value).toBe('+44 20 9460 958');
+    await mounted!.unmount();
+
+    const us = await mount({
+      defaultValue: [{ country: 'US', e164: '+14155552671', isPrimary: true }],
+    });
+    us.number(1).setSelectionRange(3, 3);
+    await typeKeys(us.number(1), '{Backspace}');
+    expect(us.number(1).value).toBe('+1 415 555 2671');
+    expect(us.posted('0.country')).toBe('US');
   });
 });
 
