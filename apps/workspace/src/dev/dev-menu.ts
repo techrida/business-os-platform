@@ -7,6 +7,10 @@ import { formatWhoami, parseState, serializeState, type DevMenuState } from './d
 const STORAGE_KEY = 'bos.dev.menu';
 const WHOAMI_URL = '/dev/api/whoami';
 const DISPOSE_KEY = Symbol.for('bos.dev.menu.dispose');
+// An open modal (Radix dialogs carry role=dialog and data-state=open; a native <dialog> has [open]).
+// The chip floats above the page, so it would sit on the dialog's own buttons.
+const MODAL_SELECTOR =
+  '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], dialog[open]';
 
 const STYLES = `
 :host { all: initial; }
@@ -294,8 +298,10 @@ function mount(): () => void {
     }
   }
 
+  let modalOpen = false;
+
   function render(): void {
-    root.hidden = false;
+    root.hidden = modalOpen;
     pill.hidden = state.hidden;
     dot.hidden = !state.hidden;
     panel.hidden = state.hidden;
@@ -328,6 +334,26 @@ function mount(): () => void {
   });
 
   const abort = new AbortController();
+  // Hide the whole widget while a modal is open and bring it back when the last one closes. Mutations
+  // come in bursts, so the check runs once per frame.
+  let modalCheck = 0;
+  const checkModal = (): void => {
+    modalCheck = 0;
+    const open = document.querySelector(MODAL_SELECTOR) !== null;
+    if (open === modalOpen) return;
+    modalOpen = open;
+    render();
+  };
+  const modalObserver = new MutationObserver(() => {
+    if (modalCheck === 0) modalCheck = requestAnimationFrame(checkModal);
+  });
+  modalObserver.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['data-state', 'open', 'role'],
+  });
+  checkModal();
   document.addEventListener(
     'keydown',
     (event) => {
@@ -349,6 +375,8 @@ function mount(): () => void {
 
   return () => {
     abort.abort();
+    modalObserver.disconnect();
+    if (modalCheck !== 0) cancelAnimationFrame(modalCheck);
     host.remove();
   };
 }
