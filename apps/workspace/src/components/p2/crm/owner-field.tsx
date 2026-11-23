@@ -5,7 +5,8 @@ import { useState, useTransition, type FormEvent } from 'react';
 
 import { OwnerCell } from '@/app/(app)/leads/lead-cells';
 import { Button } from '@/components/ui/button';
-import { Field, Select } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { Stack } from '@/components/ui/stack';
 import { toast } from '@/components/ui/toast';
 
@@ -98,10 +99,11 @@ function OwnerEditor({
   const [pending, startTransition] = useTransition();
   const unchanged = chosen === '' || chosen === ownerUserId;
 
-  const options = [
-    ...(listed ? [] : [{ value: '', label: 'Choose a new owner' }]),
-    ...owners.map((o) => ({ value: o.userId, label: ownerOptionName(o) })),
-  ];
+  const people = owners.map((o) => ({
+    id: o.userId,
+    name: ownerOptionName(o),
+    role: o.role ?? null,
+  }));
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,16 +141,19 @@ function OwnerEditor({
       <Stack gap="small">
         <Field label="Change owner" hint={hint} error={error}>
           {(c) => (
-            <Select
+            <MemberPicker
+              labelledBy={c['aria-labelledby']}
+              describedBy={c['aria-describedby']}
+              invalid={c['aria-invalid'] === true}
               name="ownerUserId"
+              people={people}
               value={chosen}
-              onChange={(e) => {
-                setChosen(e.target.value);
+              onChange={(id) => {
+                setChosen(id);
                 setError(undefined);
               }}
-              options={options}
+              placeholder={listed ? 'Search by name' : 'Choose a new owner'}
               disabled={pending}
-              {...c}
             />
           )}
         </Field>
