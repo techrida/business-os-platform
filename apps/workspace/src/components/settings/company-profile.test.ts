@@ -388,3 +388,21 @@ describe('undo icons (D32)', () => {
     expect(isCardEmpty('signatory', onlyLogo)).toBe(true);
   });
 });
+
+describe('logoSource (the letterhead preview sheet is white)', () => {
+  const MAIN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const LIGHT = 'ffffffff-0000-4111-8222-333333333333';
+  const base = { documentId: MAIN, legacyDataUrl: null, onDarkDocumentId: null, onLightDocumentId: null };
+
+  it('draws the main logo when there is no logo for light backgrounds', () => {
+    expect(logoSource(base)).toBe(`/api/images/${MAIN}`);
+  });
+
+  it('draws the logo for light backgrounds when there is one', () => {
+    expect(logoSource({ ...base, onLightDocumentId: LIGHT })).toBe(`/api/images/${LIGHT}`);
+  });
+
+  it('draws nothing for variants alone: without a main logo no logo prints', () => {
+    expect(logoSource({ ...base, documentId: null, onLightDocumentId: LIGHT })).toBeNull();
+  });
+});
