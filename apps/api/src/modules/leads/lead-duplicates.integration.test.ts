@@ -274,6 +274,7 @@ describe('GET /v1/leads/duplicates', () => {
       kind: 'customer',
       id: seeded.customerOfSalesB,
       label: 'Everest Hiddenmark Ltd.',
+      country: 'NP',
       matchedOn: ['phone'],
     });
     expectNoLeak(byPhone.text);
@@ -300,9 +301,28 @@ describe('GET /v1/leads/duplicates', () => {
       kind: 'customer',
       id: seeded.customerSecondPhone,
       label: 'Annapurna Fittings Ltd.',
+      country: 'NP',
       matchedOn: ['phone'],
     });
     expectNoLeak(text);
+  });
+
+  it('lists open leads only: a converted or lost lead is not offered as "Already a lead" (R6O)', async () => {
+    const stageOf = (stage: string) =>
+      withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        tx.execute(
+          sql`UPDATE app.leads SET stage = ${stage}, stage_reason = ${stage === 'lost' ? 'Went elsewhere' : null}, stage_note = ${stage === 'lost' ? 'Test' : null} WHERE tenant_id = ${h.tenantId} AND company_name = 'Kanchan Suppliers'`,
+        ),
+      );
+    const before = await lookup({ company: 'Kanchan Suppliers' });
+    expect(before.matches.map((m) => m.id)).toContain(seeded.secondPhoneLead);
+    await stageOf('lost');
+    try {
+      const after = await lookup({ company: 'Kanchan Suppliers' });
+      expect(after.matches.map((m) => m.id)).not.toContain(seeded.secondPhoneLead);
+    } finally {
+      await stageOf('new');
+    }
   });
 
   it('matches a misspelt company by trigram similarity', async () => {

@@ -29,7 +29,7 @@ import {
   scoped,
 } from '@bos/db';
 import { HttpException, Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
@@ -179,7 +179,12 @@ export class LeadDuplicatesService {
       .where(
         scoped(scope).where(
           leads,
-          and(scopeWhereFor(principal, leads, 'crm.lead.read'), or(company, name, email, phone)),
+          and(
+            scopeWhereFor(principal, leads, 'crm.lead.read'),
+            // Open leads only: a converted lead is its customer now, a lost one is over (R6O, "Already a lead").
+            notInArray(leads.stage, ['converted', 'lost']),
+            or(company, name, email, phone),
+          ),
         ),
       )
       // Strongest first (an exact email or phone over a similar name), so the cap never drops a sure match; then an
@@ -226,6 +231,7 @@ export class LeadDuplicatesService {
         tenantId: customers.tenantId,
         ownerUserId: customers.ownerUserId,
         legalName: customers.legalName,
+        country: customers.country,
         company: sql<boolean>`bool_or(${company})`,
         name: sql<boolean>`bool_or(${name})`,
         email: sql<boolean>`bool_or(${email})`,
@@ -265,6 +271,7 @@ export class LeadDuplicatesService {
         kind: 'customer' as const,
         id: r.id,
         label: r.legalName,
+        country: r.country,
         matchedOn: fieldsOf(r),
       }));
   }

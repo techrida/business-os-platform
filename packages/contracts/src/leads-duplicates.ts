@@ -1,6 +1,7 @@
 // The duplicate hint of the new-lead form (F1-Q54 a): while a lead's company, person, email or phone is typed, the
 // workspace asks GET /v1/leads/duplicates for leads and customers that look like the same party. A hint only: it
-// never blocks a save. The API answers only records the caller may read (an out-of-scope record is not even
+// never blocks a save. Since R6O it is also the data source of the company combobox (BOS-UI-002): customers and
+// OPEN leads (not converted, not lost) that look like the text typed. The API answers only records the caller may read (an out-of-scope record is not even
 // counted), so a kind the caller cannot read is simply absent.
 import { z } from 'zod';
 
@@ -31,6 +32,8 @@ export const LeadDuplicateMatchSchema = z.object({
   kind: z.enum(['lead', 'customer']),
   id: z.guid(),
   label: z.string(),
+  /** A customer's country (ISO 3166-1 alpha-2): picking it in the company field fills the lead's country (R6O). */
+  country: z.string().length(2).optional(),
   matchedOn: z.array(LeadDuplicateFieldSchema).min(1),
 });
 export type LeadDuplicateMatch = z.infer<typeof LeadDuplicateMatchSchema>;
