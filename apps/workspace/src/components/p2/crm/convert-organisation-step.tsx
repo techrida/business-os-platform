@@ -13,6 +13,7 @@ import type { ComboboxOption } from '@/components/ui/combobox-model';
 import { Field, Input } from '@/components/ui/field';
 import { FactList, Panel } from '@/components/ui/panel';
 import { PanInput } from '@/components/ui/pan-input';
+import { Radio, RadioGroup } from '@/components/ui/checkbox';
 
 import type { ConvertLead } from './convert-dialog';
 import { customerDescription, panToLookUp } from './convert-model';
@@ -57,26 +58,21 @@ export function OrganisationStep({
           <input type="hidden" name="customerMode" value="existing" />
         ) : (
           <>
-            <label className={styles.choice}>
-              <input
-                type="radio"
-                name="customerMode"
-                value="create"
-                checked={!existing}
-                onChange={set('customerMode')}
-              />
-              Create a new organisation
-            </label>
-            <label className={styles.choice}>
-              <input
-                type="radio"
-                name="customerMode"
-                value="existing"
-                checked={existing}
-                onChange={set('customerMode')}
-              />
-              Link to an existing organisation
-            </label>
+            <RadioGroup
+              neutral
+              name="customerMode"
+              value={existing ? 'existing' : 'create'}
+              onValueChange={(next) => set('customerMode')({ target: { value: next } })}
+            >
+              <label className={styles.choice}>
+                <Radio value="create" />
+                Create a new organisation
+              </label>
+              <label className={styles.choice}>
+                <Radio value="existing" />
+                Link to an existing organisation
+              </label>
+            </RadioGroup>
           </>
         )}
         {existing ? (

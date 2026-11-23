@@ -29,6 +29,7 @@ import {
   warningKey,
 } from './review-model';
 import styles from './review-changes-dialog.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 export type ReviewPreviewResult =
   | { ok: true; preview: AccessPreviewResponse }
@@ -359,11 +360,10 @@ function OpenReview({
                         return (
                           <li key={key} className={styles.warning}>
                             <label className={styles.confirm}>
-                              <input
-                                type="checkbox"
+                              <Checkbox
                                 checked={ticked.has(key)}
                                 disabled={saving}
-                                onChange={(event) => toggle(key, event.currentTarget.checked)}
+                                onCheckedChange={(nextChecked) => toggle(key, nextChecked)}
                               />
                               <span>I understand: {warning.message}</span>
                             </label>

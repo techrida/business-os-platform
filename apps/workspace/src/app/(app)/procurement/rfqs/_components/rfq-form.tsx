@@ -12,6 +12,7 @@ import { ProcurementFormActions } from '../../form-actions';
 import styles from '../../requests/requests.module.css';
 import type { RfqFormState } from '../_lib/state';
 import rows from './line-rows.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const WIDE = styles.wide ?? '';
 
@@ -156,12 +157,11 @@ export function RfqForm({
           <legend>Invited vendors ({chosen.size} chosen)</legend>
           {vendors.map((v) => (
             <label key={v.id} className={styles.check}>
-              <input
-                type="checkbox"
+              <Checkbox
                 name="vendorIds"
                 value={v.id}
                 checked={chosen.has(v.id)}
-                onChange={(e) => toggle(v.id, e.target.checked)}
+                onCheckedChange={(nextChecked) => toggle(v.id, nextChecked)}
               />
               <span className={styles.long}>{v.name}</span>
             </label>

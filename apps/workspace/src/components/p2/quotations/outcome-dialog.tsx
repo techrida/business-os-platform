@@ -9,6 +9,7 @@ import { Field, Textarea } from '@/components/ui/field';
 import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './action-dialog';
 import styles from './actions.module.css';
 import { EVIDENCE_LABELS, EVIDENCE_ORDER } from './eligibility';
+import { Checkbox, Radio, RadioGroup } from '@/components/ui/checkbox';
 
 export interface OutcomeDialogProps {
   quotationId: string;
@@ -32,23 +33,28 @@ export interface OutcomeDialogProps {
 
 type Outcome = '' | 'accepted' | 'rejected';
 
-/** A fieldset of native radios or checkboxes, with the hint and error lines Field gives a single control. */
+/**
+ * A fieldset of radios or checkboxes, with the hint and error lines Field gives a single control.
+ * Pass `radios` when the choices are `Radio`s: the fieldset then becomes their `RadioGroup`.
+ */
 export function Choices({
   legend,
   hint,
   error,
   children,
+  radios,
 }: {
   legend: string;
   hint?: string | undefined;
   error?: string | undefined;
   children: ReactNode;
+  radios?: { name: string; value: string; onValueChange: (value: string) => void };
 }) {
   const base = useId();
   const describedBy = [hint ? `${base}-hint` : '', error ? `${base}-error` : '']
     .filter(Boolean)
     .join(' ');
-  return (
+  const fieldset = (
     <fieldset
       className={styles.choices}
       aria-describedby={describedBy || undefined}
@@ -67,6 +73,13 @@ export function Choices({
         </span>
       ) : null}
     </fieldset>
+  );
+  return radios ? (
+    <RadioGroup asChild {...radios}>
+      {fieldset}
+    </RadioGroup>
+  ) : (
+    fieldset
   );
 }
 
@@ -140,19 +153,18 @@ export function OutcomeDialog({
               legend="What did the customer say?"
               hint={acceptBlocker ?? undefined}
               error={state.errors?.outcome}
+              radios={{
+                name: 'outcome',
+                value: outcome,
+                onValueChange: (next) => setOutcome(next as Outcome),
+              }}
             >
               {(acceptBlocker === null
                 ? (['accepted', 'rejected'] as const)
                 : (['rejected'] as const)
               ).map((value) => (
                 <label key={value} className={styles.choice}>
-                  <input
-                    type="radio"
-                    name="outcome"
-                    value={value}
-                    checked={outcome === value}
-                    onChange={() => setOutcome(value)}
-                  />
+                  <Radio value={value} />
                   {value === 'accepted' ? 'Accepted' : 'Rejected'}
                 </label>
               ))}
@@ -183,14 +195,13 @@ export function OutcomeDialog({
             >
               {EVIDENCE_ORDER.map((kind) => (
                 <label key={kind} className={styles.choice}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     name="evidenceKinds"
                     value={kind}
                     checked={evidence.includes(kind)}
-                    onChange={(e) =>
+                    onCheckedChange={(nextChecked) =>
                       setEvidence((prev) =>
-                        e.target.checked ? [...prev, kind] : prev.filter((k) => k !== kind),
+                        nextChecked ? [...prev, kind] : prev.filter((k) => k !== kind),
                       )
                     }
                   />

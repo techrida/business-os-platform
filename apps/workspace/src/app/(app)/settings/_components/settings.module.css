@@ -304,13 +304,6 @@
   line-height: var(--line-height-body);
 }
 
-.checkbox {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--action-primary);
-}
-
 .fieldError {
   margin: 0;
   color: var(--status-error);

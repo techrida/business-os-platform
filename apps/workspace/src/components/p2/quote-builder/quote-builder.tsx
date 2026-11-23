@@ -30,6 +30,7 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './actions';
 import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
+import { leaveAction } from './leave-link';
 import { LinesSection } from './lines-section';
 import {
   currencyChoiceText,
@@ -258,6 +259,8 @@ export function QuoteBuilder({
 
   const keyCounter = useRef(1000);
   const leaving = useRef(false);
+  // The link the user clicked while edits are unsaved; set while the leave-without-saving dialog is open.
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
   const latest = useRef(values);
   useEffect(() => {
     latest.current = values;
@@ -460,15 +463,18 @@ export function QuoteBuilder({
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
       const a = (e.target as Element | null)?.closest?.('a[href]');
-      if (!a || a.getAttribute('target') === '_blank' || a.getAttribute('href')?.startsWith('#')) {
+      if (
+        !a ||
+        a.getAttribute('target') === '_blank' ||
+        a.hasAttribute('download') ||
+        a.getAttribute('href')?.startsWith('#')
+      ) {
         return;
       }
-      if (!window.confirm('You have unsaved changes to this quotation. Leave without saving?')) {
-        e.preventDefault();
-        e.stopPropagation();
-      } else {
-        leaving.current = true;
-      }
+      // Hold the click and ask in the design-system dialog; confirming then follows the link.
+      e.preventDefault();
+      e.stopPropagation();
+      setLeaveHref((a as HTMLAnchorElement).href);
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     document.addEventListener('click', onClick, true);
@@ -598,8 +604,29 @@ export function QuoteBuilder({
     }
   }
 
+  function leaveTo(href: string) {
+    leaving.current = true;
+    const action = leaveAction(href, window.location.href);
+    if (action.kind === 'push') router.push(action.path);
+    else window.location.assign(action.href);
+  }
+
   return (
     <div className={styles.layout}>
+      <ConfirmDialog
+        open={leaveHref !== null}
+        onOpenChange={(next) => {
+          if (!next) setLeaveHref(null);
+        }}
+        title="Leave without saving?"
+        description="You have unsaved changes to this quotation. They will be lost if you leave."
+        confirmLabel="Leave"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          if (leaveHref !== null) leaveTo(leaveHref);
+        }}
+      />
       <div className={styles.heading}>
         <PageHeader
           title={title}

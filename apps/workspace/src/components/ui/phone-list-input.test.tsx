@@ -43,7 +43,7 @@ async function mount(props: PhoneListInputProps = {}) {
     seen,
     number: (n: number) => q<HTMLInputElement>(`input[aria-label="Phone ${n} number"]`)!,
     country: (n: number) => q<HTMLInputElement>(`input[aria-label="Phone ${n} country"]`)!,
-    primary: (n: number) => q<HTMLInputElement>(`input[aria-label="Phone ${n} primary"]`)!,
+    primary: (n: number) => q<HTMLButtonElement>(`button[aria-label="Phone ${n} primary"]`)!,
     button: (label: string) => q<HTMLButtonElement>(`button[aria-label="${label}"]`),
     add: () => q<HTMLButtonElement>('button[data-action="add"]')!,
     rows: () => container.querySelectorAll('li[data-row]').length,
@@ -257,10 +257,10 @@ describe('PhoneListInput, rows', () => {
         { country: 'US', e164: '+14155552671', isPrimary: false },
       ],
     });
-    expect(list.primary(1).checked).toBe(true);
+    expect(list.primary(1).getAttribute('aria-checked')).toBe('true');
     await click(list.primary(2));
-    expect(list.primary(1).checked).toBe(false);
-    expect(list.primary(2).checked).toBe(true);
+    expect(list.primary(1).getAttribute('aria-checked')).toBe('false');
+    expect(list.primary(2).getAttribute('aria-checked')).toBe('true');
     expect(list.posted('1.isPrimary')).toBe('true');
     expect(list.last()!.filter((phone) => phone.isPrimary)).toEqual([
       expect.objectContaining({ e164: '+14155552671' }),
@@ -277,7 +277,7 @@ describe('PhoneListInput, rows', () => {
     });
     await click(list.button('Remove phone 2'));
     expect(list.rows()).toBe(1);
-    expect(list.primary(1).checked).toBe(true);
+    expect(list.primary(1).getAttribute('aria-checked')).toBe('true');
     expect(list.last()).toEqual([
       { country: 'NP', e164: '+9779812345678', label: null, isPrimary: true },
     ]);

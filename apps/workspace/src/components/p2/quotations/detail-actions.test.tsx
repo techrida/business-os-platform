@@ -358,8 +358,8 @@ describe('Record outcome', () => {
   it('asks for the answer, the date (today, no later), evidence and a comment', () => {
     const out = html();
     expect(out).toContain('What did the customer say?');
-    expect(out).toMatch(/type="radio" name="outcome" value="accepted"/);
-    expect(out).toMatch(/type="radio" name="outcome" value="rejected"/);
+    expect(out).toMatch(/role="radio"[^>]*value="accepted"/);
+    expect(out).toMatch(/role="radio"[^>]*value="rejected"/);
     // The shared date picker (React Aria) takes `max` as its maxValue, so later days are blocked in
     // its calendar rather than by a native `max` attribute; the server refuses a future date too
     // (forms.test.ts).
@@ -367,7 +367,7 @@ describe('Record outcome', () => {
     expect(out).toContain('aria-label="Calendar"');
     expect(out).toContain(`name="decidedOn" value="${TODAY}"`);
     for (const kind of ['signed_quote', 'purchase_order', 'contract']) {
-      expect(out).toContain(`type="checkbox" name="evidenceKinds" value="${kind}"`);
+      expect(out).toMatch(new RegExp(`role="checkbox"[^>]*value="${kind}"`));
     }
     expect(out).toContain('Required to record an accepted quotation.');
     expect(out).toContain('Required when the customer rejected.');

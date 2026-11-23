@@ -15,6 +15,7 @@ import type { VendorField, VendorValues } from '../_lib/forms';
 import { VENDOR_STATUS_LABEL } from '../_lib/model';
 import type { VendorFormState } from '../_lib/state';
 import styles from '../vendors.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const KIND_LABEL: Record<VendorKind, string> = {
   company: 'Company (registered, with a PAN)',
@@ -188,11 +189,10 @@ export function VendorForm({
 
   const vat = (
     <label className={styles.check}>
-      <input
-        type="checkbox"
+      <Checkbox
         name="vatRegistered"
         checked={values.vatRegistered}
-        onChange={(e) => setValues((v) => ({ ...v, vatRegistered: e.target.checked }))}
+        onCheckedChange={(nextChecked) => setValues((v) => ({ ...v, vatRegistered: nextChecked }))}
       />
       Registered for VAT
     </label>
@@ -305,11 +305,7 @@ export function VendorForm({
             ))}
           </ul>
           <label className={styles.check}>
-            <input
-              type="checkbox"
-              name="sameNameConfirmed"
-              value={state.sameName.map((m) => m.id).join(',')}
-            />
+            <Checkbox name="sameNameConfirmed" value={state.sameName.map((m) => m.id).join(',')} />
             This is a different vendor. Add it anyway.
           </label>
         </Alert>

@@ -19,6 +19,7 @@ import type { PrFormState } from '../_lib/state';
 import { ProcurementFormActions } from '../../form-actions';
 import styles from '../requests.module.css';
 import lines from './pr-lines.module.css';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const WIDE = styles.wide ?? '';
 const MAX_LINES = 200;
@@ -332,11 +333,12 @@ export function PrForm({
           </Field>
           <div className={WIDE}>
             <label className={styles.check}>
-              <input
-                type="checkbox"
+              <Checkbox
                 name="isEmergency"
                 checked={values.isEmergency}
-                onChange={(e) => setValues((v) => ({ ...v, isEmergency: e.target.checked }))}
+                onCheckedChange={(nextChecked) =>
+                  setValues((v) => ({ ...v, isEmergency: nextChecked }))
+                }
               />
               This is an emergency purchase
             </label>
@@ -466,12 +468,10 @@ export function PrForm({
                     </Field>
                     {values.requestType === 'goods' ? (
                       <label className={`${styles.check} ${lines.serials}`}>
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           name={`lines.${i}.requiresSerials`}
                           checked={row.line.requiresSerials ?? false}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
+                          onCheckedChange={(checked) => {
                             setRows((rs) =>
                               rs.map((r) =>
                                 r.uid === row.uid

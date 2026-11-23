@@ -215,15 +215,6 @@
   background: var(--interactive-hover);
 }
 
-.checkbox {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  accent-color: var(--action-primary);
-  cursor: pointer;
-}
-
 .activation {
   display: flex;
   align-items: flex-start;

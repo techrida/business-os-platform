@@ -236,18 +236,6 @@
   margin-top: -12px;
 }
 
-.choice input {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  accent-color: var(--action-primary);
-}
-
-.choice input:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-
 .conversionFacts.conversionFacts {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

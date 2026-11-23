@@ -21,6 +21,7 @@ import { storedNumberText } from '@bos/locale';
 import styles from '../orders.module.css';
 
 import { ProcurementActionDialog } from '../../action-dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface Common {
   purchaseOrderId: string;
@@ -184,11 +185,10 @@ function VatAcknowledge({ message }: { message: string }) {
         {message}
       </Alert>
       <label>
-        <input
-          type="checkbox"
+        <Checkbox
           name="acknowledgeVatWarning"
           checked={ticked}
-          onChange={(e) => setTicked(e.target.checked)}
+          onCheckedChange={(nextChecked) => setTicked(nextChecked)}
         />{' '}
         I understand, change the vendor anyway
       </label>
