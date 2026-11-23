@@ -12,9 +12,12 @@ on:
   push:
     branches:
       - main
+      - p4-main
       - 'p*/**'
       - 'p[1-4]-main'
+      - 'r6/**'
   pull_request:
+  workflow_dispatch:
 
 # The least privilege that lets the jobs read the code. No job here writes to the repo,
 # the registry or pull requests.
@@ -159,6 +162,17 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # `@bos/workspace...` = the app plus the workspace packages it depends on.
+      # Next's compiler cache: unchanged files are not recompiled.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            apps/workspace/.next/cache
+            apps/portal/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/workspace/src/**', 'apps/portal/src/**', 'packages/*/src/**') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            next-${{ runner.os }}-
+
       - name: Build the workspace app (production)
         env:
           BOS_BUILD_PROFILE: production

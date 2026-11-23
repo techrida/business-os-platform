@@ -11,6 +11,7 @@ import { toast } from '@/components/ui/toast';
 
 import { removeDocumentAction, type CaseFormState } from '../case-actions';
 import styles from '../verification.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export function RemoveFileDialog({
   caseId,
@@ -66,28 +67,29 @@ export function RemoveFileDialog({
   return (
     <ConfirmDialog
       trigger={
-        <Button
-          size="small"
-          variant="ghost"
-          disabled={disabled}
-          className={styles.remove}
-          aria-label={`Remove ${filename}`}
-          title={`Remove ${filename}`}
-        >
-          <svg
-            aria-hidden="true"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        <Tooltip content={`Remove ${filename}`}>
+          <Button
+            size="small"
+            variant="ghost"
+            disabled={disabled}
+            className={styles.remove}
+            aria-label={`Remove ${filename}`}
           >
-            <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6" />
-          </svg>
-        </Button>
+            <svg
+              aria-hidden="true"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6" />
+            </svg>
+          </Button>
+        </Tooltip>
       }
       open={request !== null}
       onOpenChange={(next) =>

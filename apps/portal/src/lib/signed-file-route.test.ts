@@ -114,6 +114,38 @@ describe('handleSignedFile', () => {
     }
   });
 
+  it('answers 410 when the signed link ran out or the file is gone, 404 when it is missing, 503 when busy (R6D)', async () => {
+    for (const mode of ['download', 'preview'] as const) {
+      for (const [status, expected] of [
+        [401, 410],
+        [410, 410],
+        [404, 404],
+        [503, 503],
+      ] as const) {
+        openFile.mockRejectedValueOnce(new ApiError(status, 'x'));
+        const res = await run(mode);
+        expect(res.status, `${mode} ${status}`).toBe(expected);
+        if (expected === 410) expect(await res.text()).toContain('expired');
+      }
+    }
+    // A 401 from the link request itself still means "sign in".
+    getLink.mockRejectedValueOnce(new ApiError(401, 'x'));
+    expect((await run('download')).status).toBe(401);
+  });
+
+  it('tells the customer a closed quotation is no longer open, not that the PDF will be ready soon (R6D)', async () => {
+    for (const mode of ['download', 'preview'] as const) {
+      getLink.mockRejectedValueOnce(
+        new ApiError(409, 'x', { error: { code: 'quotation_closed' } }),
+      );
+      const res = await run(mode);
+      expect(res.status).toBe(410);
+      const text = await res.text();
+      expect(text).toContain('no longer open');
+      expect(text).not.toContain('try again');
+    }
+  });
+
   it('answers a customer 424 (failed or refused PDF) as 424 with the delayed sentence, in both modes', async () => {
     for (const mode of ['download', 'preview'] as const) {
       getLink.mockRejectedValueOnce(new ApiError(424, 'x', { code: 'document_render_failed' }));

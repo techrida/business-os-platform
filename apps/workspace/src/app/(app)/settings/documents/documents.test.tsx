@@ -107,7 +107,8 @@ describe('the Document templates page', () => {
   it('offers the undo icon for a style that differs from the default, naming the default', async () => {
     const html = renderToStaticMarkup((await DocumentsPage()) as ReactElement);
     expect(html).toContain('aria-label="Reset Document style to default"');
-    expect(html).toContain('title="Reset to default (Banded, Ocean)"');
+    // The default shows in the design-system Tooltip (opens on hover or focus), never as a native title bubble.
+    expect(html).not.toMatch(/<button[^>]* title=/);
   });
 
   it('shows no undo icon while the saved style is the default', async () => {

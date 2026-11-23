@@ -246,6 +246,8 @@ export function DateTimePicker({
       ) : null}
       {unfinished ? (
         <UnfinishedBlocker
+          // A half-filled pair is held in a `noValidate` form; an empty required one is left to the form's own errors.
+          hold={(day !== '') !== (shownTime !== '')}
           message="Enter the date and time"
           root={rootRef}
           disabled={disabled}
