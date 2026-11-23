@@ -18,6 +18,9 @@ it('makes the scrolling table wrapper the containing block for hidden cells', ()
 // A clipped last column (the RFQ Quotations table's Score at 834px) must show that the table scrolls:
 // overlay scrollbars stay hidden until touched, a styled one is always drawn.
 it('draws a visible scrollbar on the table wrapper', () => {
-  expect(css).toMatch(/\.wrap::-webkit-scrollbar \{[^}]*height: \d+px;/);
-  expect(css).toMatch(/\.wrap::-webkit-scrollbar-thumb \{/);
+  // Standard properties: Chrome ignores ::-webkit-scrollbar once globals.css sets scrollbar-color.
+  expect(css).toMatch(
+    /\.wrap \{[^}]*scrollbar-color: var\(--border-strong\) var\(--surface-muted\);/,
+  );
+  expect(css).not.toMatch(/::-webkit-scrollbar/);
 });
