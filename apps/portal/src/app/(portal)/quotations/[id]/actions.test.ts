@@ -128,7 +128,10 @@ describe('acceptAction', () => {
 
   it('sends the customer to the "no longer open" page when the deal was lost while the page was open (R6D)', async () => {
     const closed = () =>
-      json({ error: { code: 'quotation_closed', message: 'This quotation is no longer open' } }, 409);
+      json(
+        { error: { code: 'quotation_closed', message: 'This quotation is no longer open' } },
+        409,
+      );
     fetchMock.mockResolvedValueOnce(closed());
     expect(
       await redirectOf(acceptAction({ key: IDEM }, form({ acceptedByName: 'J', confirm: 'on' }))),

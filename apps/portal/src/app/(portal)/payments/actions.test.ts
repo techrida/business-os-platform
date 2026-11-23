@@ -95,7 +95,10 @@ describe('submitPaymentAction validation', () => {
     // With tax withheld the code still goes along.
     fetchMock.mockClear();
     await redirectOf(
-      submitPaymentAction({ key: IDEM }, form({ tdsWithheld: '1,000.00', withholdingCode: 'TDS-1' })),
+      submitPaymentAction(
+        { key: IDEM },
+        form({ tdsWithheld: '1,000.00', withholdingCode: 'TDS-1' }),
+      ),
     );
     expect(JSON.parse(callOf(fetchMock).init.body as string)).toMatchObject({
       tdsWithheld: '1000',
