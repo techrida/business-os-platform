@@ -192,3 +192,63 @@ it('does not offer approval of a file that expires today in Kathmandu while UTC 
   expect(current).toMatch(/aria-label="Approve [^"]*" aria-disabled="false"/);
   expect(current).not.toContain('Approval requires a clean, unexpired file.');
 });
+
+// R6AE: a case reset by a change of the party's identity says so, and keeps the earlier files as history.
+async function renderReset(partyKind: 'vendor' | 'customer') {
+  const oldDocumentId = '00000000-0000-4000-8000-0000000000aa';
+  mocks.getVerificationCase.mockResolvedValue({
+    id,
+    partyKind,
+    partyId: id,
+    status: 'draft',
+    checklist: [],
+    reviewedBy: null,
+    decidedAt: null,
+    decisionNote: null,
+    version: 3,
+    identityReset: { at: '2026-11-23T04:00:00.000Z', by: id, byName: 'Sita Founder' },
+    beforeChangeDocumentIds: [oldDocumentId],
+    looseEvidence: [
+      {
+        id: '00000000-0000-4000-8000-0000000000ab',
+        documentId: oldDocumentId,
+        version: 1,
+        filename: 'old-registration.pdf',
+        declaredMime: 'application/pdf',
+        detectedMime: 'application/pdf',
+        sizeBytes: 10,
+        sha256: 'a'.repeat(64),
+        status: 'clean',
+        scanSignature: null,
+        scannedAt: '2026-11-20T04:00:00.000Z',
+        uploadedBy: null,
+        createdAt: '2026-11-20T04:00:00.000Z',
+      },
+    ],
+    can: { review: false, edit: true, attach: true, remove: true },
+  } satisfies VerificationCaseDto);
+  return renderToStaticMarkup(
+    await VerificationCasePage({
+      params: Promise.resolve({ id }),
+      searchParams: Promise.resolve({}),
+    }),
+  );
+}
+
+it.each(['vendor', 'customer'] as const)(
+  'shows who changed the %s details, and marks the earlier files "Before the change"',
+  async (kind) => {
+    const html = await renderReset(kind);
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    expect(text).toMatch(/Details changed on .* by Sita Founder ; upload the documents again\./);
+    expect(text).toContain('old-registration.pdf');
+    expect(text).toContain('Before the change');
+    // A vendor case has no loose-file removal; a customer's keeps it.
+    // Files from before the change stay as history: no remove control for either kind.
+    expect(html.includes('Remove old-registration.pdf')).toBe(false);
+  },
+);
+
+it('shows no reset note for a case that was never reset', async () => {
+  expect(await render('customer')).not.toContain('Details changed');
+});
