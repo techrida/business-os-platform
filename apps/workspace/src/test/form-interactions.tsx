@@ -154,11 +154,18 @@ export async function paste(element: Element | null, text: string) {
  */
 export async function choose(container: HTMLElement, name: string, label: string) {
   const field = container.querySelector(`input[type="hidden"][name="${name}"]`);
-  const trigger = field?.parentElement?.querySelector('button');
+  // A member picker (BOS-UI-001) is a search-in-the-input combobox: click the box to open the list, then click the
+  // person. Its option reads "Name" then the muted role, so `label` matches the name or the whole row.
+  const combobox = field?.parentElement?.querySelector('input[role="combobox"]');
+  const trigger = combobox ?? field?.parentElement?.querySelector('button');
   if (!trigger) throw new Error(`No Select named ${name}`);
   await click(trigger);
   const option = Array.from(document.querySelectorAll('[role="option"]')).find(
-    (el) => el.textContent?.trim() === label,
+    (el) =>
+      el.textContent?.trim() === label ||
+      (combobox !== undefined &&
+        combobox !== null &&
+        el.querySelector('span > span:first-child')?.textContent?.trim() === label),
   );
   if (!option) throw new Error(`No option "${label}" in ${name}`);
   await click(option);
