@@ -103,6 +103,7 @@ export function InvoiceReplacement({
 
   return (
     <form
+      noValidate
       onSubmit={(event) => {
         void upload(event);
       }}

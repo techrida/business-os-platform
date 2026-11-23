@@ -132,6 +132,7 @@ export function FilterBar({ search, preserve, children, className }: FilterBarPr
   return (
     <FilterNavigationContext.Provider value={navigation}>
       <form
+        noValidate
         method="get"
         role="search"
         action={pathname}

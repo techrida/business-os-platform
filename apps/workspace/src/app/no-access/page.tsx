@@ -24,7 +24,7 @@ export default async function NoAccessPage() {
         footerLinks={getFooterLinks()}
         title="You don't have access yet"
         actions={
-          <form method="post" action="/auth/logout">
+          <form noValidate method="post" action="/auth/logout">
             <Button type="submit">Sign out</Button>
           </form>
         }

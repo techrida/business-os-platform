@@ -168,7 +168,7 @@ export function PaymentForm({
   const busy = pending || uploading > 0;
 
   return (
-    <form action={formAction} className={quotation.form}>
+    <form noValidate action={formAction} className={quotation.form}>
       <input type="hidden" name="idempotencyKey" value={state.key} />
       {invoice ? <input type="hidden" name="invoice" value={invoice.id} /> : null}
       {proofs.map((p) => (

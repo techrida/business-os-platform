@@ -119,7 +119,7 @@ export function TransactionFormDialog<State extends TransactionState>({
         </>
       }
     >
-      <form id={formId} ref={formRef} action={dispatch} className={styles.form}>
+      <form noValidate id={formId} ref={formRef} action={dispatch} className={styles.form}>
         <input type="hidden" name="idempotencyKey" value={state.key} />
         {state.error && (
           <Alert

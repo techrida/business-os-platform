@@ -23,7 +23,7 @@ export default async function UseWorkspacePage() {
         actions={
           <>
             {workspaceUrl ? <LinkButton href={workspaceUrl}>Open the Workspace</LinkButton> : null}
-            <form method="post" action="/auth/logout">
+            <form noValidate method="post" action="/auth/logout">
               <Button type="submit" variant={workspaceUrl ? 'secondary' : 'primary'}>
                 Sign out
               </Button>

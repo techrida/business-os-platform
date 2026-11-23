@@ -127,7 +127,7 @@ function AcceptForm({
   }, [state]);
 
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <input type="hidden" name="quotationId" value={quotationId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <ErrorSummary state={state} reloadHref={reloadHref} />
@@ -204,7 +204,7 @@ function RejectForm({
   }, [state]);
 
   return (
-    <form action={formAction} className={styles.form}>
+    <form noValidate action={formAction} className={styles.form}>
       <input type="hidden" name="quotationId" value={quotationId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <ErrorSummary state={state} reloadHref={reloadHref} />
