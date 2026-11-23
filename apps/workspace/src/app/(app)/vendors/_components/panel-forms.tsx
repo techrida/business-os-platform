@@ -233,9 +233,12 @@ function ContactFields({
           )}
         </Field>
         <div className={styles.wide}>
-          <span id={phonesLabel} className={fieldStyles.label}>
-            Phone numbers (optional)
-          </span>
+          <div className={fieldStyles.labelRow}>
+            <span id={phonesLabel} className={fieldStyles.label}>
+              Phone numbers
+            </span>
+            <span className={fieldStyles.optional}>Optional</span>
+          </div>
           <PhoneListInput
             name="phones"
             aria-labelledby={phonesLabel}
