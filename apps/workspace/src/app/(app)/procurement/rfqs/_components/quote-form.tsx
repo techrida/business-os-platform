@@ -14,6 +14,7 @@ import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ProcurementFormActions } from '../../form-actions';
+import { PickExisting } from '../../pick-existing';
 import styles from '../../requests/requests.module.css';
 import {
   emptyQuoteValues,
@@ -211,20 +212,17 @@ export function QuoteForm({
             <>
               <Field label="Vendor" hint="Only invited vendors." error={err.vendorId}>
                 {(control) => (
-                  <Select
+                  <PickExisting
+                    control={control}
                     name="vendorId"
+                    options={vendors.map((v) => ({ id: v.id, label: v.name }))}
                     value={values.vendorId}
-                    onChange={set('vendorId')}
+                    onChange={(id) => set('vendorId')({ target: { value: id } })}
                     required
-                    {...control}
-                  >
-                    <option value="">Choose a vendor</option>
-                    {vendors.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name}
-                      </option>
-                    ))}
-                  </Select>
+                    placeholder="Search an invited vendor"
+                    emptyText="No vendor has been invited to this RFQ."
+                    noMatchText="No invited vendor matches."
+                  />
                 )}
               </Field>
               <EvidenceUpload
