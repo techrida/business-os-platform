@@ -23,7 +23,11 @@ for (const route of BOARDS) {
     baseURL,
   }) => {
     test.setTimeout(180_000);
-    const { context, page } = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
+    const { context, page } = await signInAs(
+      browser,
+      baseURL ?? 'https://app.localhost',
+      'founder',
+    );
     try {
       await page.goto('/leads/new');
       await page
