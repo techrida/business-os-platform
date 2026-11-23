@@ -189,7 +189,13 @@ describe('phoneCountryFromE164', () => {
     ['+14155552671', 'US'],
     ['+1 4155552671', 'US'],
     ['+7', 'RU'],
-    ['+77012345678', 'KZ'],
+    // A shared calling code resolves to its main country, also for a complete number of a smaller region (R6A).
+    ['+77012345678', 'RU'],
+    ['+447911123456', 'GB'],
+    ['+441481123456', 'GB'],
+    ['+390669812345', 'IT'],
+    ['+4791234567', 'NO'],
+    ['+61412345678', 'AU'],
     ['+44', 'GB'],
     ['+91', 'IN'],
   ])('%s is %s', (typed, country) => {
