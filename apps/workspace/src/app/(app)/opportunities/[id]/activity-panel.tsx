@@ -4,7 +4,10 @@ import type { LeadOwnerOption } from '@bos/contracts';
 import { useId, useState, type ReactNode } from 'react';
 
 import { ActivityForm } from '@/components/p2/crm/activity-form';
-import { ScheduleFollowUpDialog } from '@/components/p2/crm/schedule-follow-up-dialog';
+import {
+  ScheduleFollowUpDialog,
+  type NamedPerson,
+} from '@/components/p2/crm/schedule-follow-up-dialog';
 import { Button } from '@/components/ui/button';
 import { Panel } from '@/components/ui/panel';
 
@@ -21,6 +24,8 @@ export function OpportunityActivities({
   opportunityId,
   canEdit = true,
   ownerUserId,
+  ownerName,
+  me,
   owners,
   planned,
   children,
@@ -29,6 +34,10 @@ export function OpportunityActivities({
   canEdit?: boolean;
   /** The deal's owner, the default assignee of a new follow-up. */
   ownerUserId: string | null;
+  /** The owner's name from the record, shown when they are not in `owners`. */
+  ownerName?: string | null;
+  /** The signed-in user, named when the deal has no owner. */
+  me?: NamedPerson | null;
   /** People a follow-up may go to (`GET /v1/opportunities/follow-up-assignees`); empty leaves it to the API. */
   owners: readonly LeadOwnerOption[];
   /** The planned follow-ups, or why they did not load. */
@@ -52,6 +61,8 @@ export function OpportunityActivities({
               subjectKind="opportunityId"
               subjectId={opportunityId}
               ownerUserId={ownerUserId}
+              ownerName={ownerName}
+              me={me}
               owners={owners}
               trigger={
                 <Button variant="secondary" size="small">

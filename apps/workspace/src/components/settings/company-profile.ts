@@ -38,6 +38,9 @@ import { rawPhoneRows } from '@/components/ui/phone-rows';
 export interface CompanyLogo {
   documentId: string | null;
   legacyDataUrl: string | null;
+  /** The optional logo for dark backgrounds (the reversed or light version), and for light backgrounds. */
+  onDarkDocumentId: string | null;
+  onLightDocumentId: string | null;
 }
 
 export function companyLogo(profile: CompanyProfile): CompanyLogo {
@@ -45,12 +48,22 @@ export function companyLogo(profile: CompanyProfile): CompanyLogo {
   return {
     documentId,
     legacyDataUrl: documentId === null ? (profile.legacyLogoDataUrl ?? null) : null,
+    onDarkDocumentId: profile.logoOnDarkDocumentId,
+    onLightDocumentId: profile.logoOnLightDocumentId,
   };
 }
 
-/** Where the logo picture is read from: the image route, the not-yet-moved data URL, or nothing. */
-export const logoSource = (logo: CompanyLogo): string | null =>
-  logo.documentId !== null ? imagePath(logo.documentId) : logo.legacyDataUrl;
+/**
+ * Where the letterhead preview reads the logo from: the image route, the not-yet-moved data URL, or nothing. The
+ * preview sheet is white, so the logo made for light backgrounds is drawn when the company uploaded one (the same
+ * choice the printed documents make for a white header; the server decides there from measured contrast).
+ */
+export const logoSource = (logo: CompanyLogo): string | null => {
+  if (logo.documentId !== null) {
+    return imagePath(logo.onLightDocumentId ?? logo.documentId);
+  }
+  return logo.legacyDataUrl;
+};
 
 // ---------------------------------------------------------------------------------------------
 // Phones
@@ -180,7 +193,14 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: FieldError
  * only by the image upload, so no card save can drop or replace the logo.
  */
 export type ProfilePatch = Partial<
-  Omit<CompanyProfile, 'panVatNo' | 'logoDocumentId' | 'legacyLogoDataUrl'>
+  Omit<
+    CompanyProfile,
+    | 'panVatNo'
+    | 'logoDocumentId'
+    | 'logoOnDarkDocumentId'
+    | 'logoOnLightDocumentId'
+    | 'legacyLogoDataUrl'
+  >
 >;
 
 const blank = (value: string): string | null => {

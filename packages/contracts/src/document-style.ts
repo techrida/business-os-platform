@@ -234,6 +234,9 @@ export const CompanyProfileSchema = z.strictObject({
   signatoryName: text(120).nullable(),
   signatoryTitle: text(120).nullable(),
   logoDocumentId: z.guid().nullable().default(null),
+  /** Optional logo for dark backgrounds (the reversed or light version), and for light backgrounds (the dark one). */
+  logoOnDarkDocumentId: z.guid().nullable().default(null),
+  logoOnLightDocumentId: z.guid().nullable().default(null),
   legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
 });
 export type CompanyProfile = z.infer<typeof CompanyProfileSchema>;
@@ -241,6 +244,8 @@ export type CompanyProfile = z.infer<typeof CompanyProfileSchema>;
 export const EMPTY_COMPANY_PROFILE: CompanyProfile = {
   displayName: null,
   logoDocumentId: null,
+  logoOnDarkDocumentId: null,
+  logoOnLightDocumentId: null,
   phones: [],
   email: null,
   website: null,
@@ -307,6 +312,21 @@ export const DEFAULT_DOCUMENT_STYLE: DocumentStyle = {
 };
 
 /**
+ * The colour of the area a quotation layout prints the logo on (R6AC), from the palette the layout itself draws with:
+ * the banded layout's solid band, the tinted layout's tint band, and white paper for every other layout. The logo
+ * choice (chooseLogo) is made against this colour; a test holds each layout's CSS to it.
+ */
+export function logoBackgroundHex(style: DocumentStyle): string {
+  const palette = deriveBrandPalette(style.primaryColour);
+  if (style.layout === 'banded') return palette.primary;
+  if (style.layout === 'tinted') return palette.tint;
+  return '#ffffff';
+}
+
+/** Paper: the background of an invoice, a purchase order and the settings letterhead preview. */
+export const PAPER_LOGO_BACKGROUND = '#ffffff';
+
+/**
  * Everything the renderer needs that is not the document's own data. Frozen onto a quotation version when
  * its PDF is rendered, so changing a setting later never alters a sent document.
  */
@@ -319,6 +339,12 @@ export const DocumentStyleSnapshotSchema = z
     numberSystems: NumberSystemsSchema.optional(),
     /** Absent on snapshots taken before the date format existed: they print the default. */
     dateFormat: DateFormatSchema.optional(),
+    /**
+     * The colour the frozen logo was chosen against (R6AC), set when the logo came from an uploaded document. A
+     * snapshot without it (an older one, a legacy logo) was not chosen for any background, so the banded layout keeps
+     * the white plate behind it.
+     */
+    logoForBackground: HexColourSchema.optional(),
     capturedAt: z.iso.datetime(),
   })
   .refine((v) => v.numberSystem !== undefined || v.numberSystems !== undefined, {

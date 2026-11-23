@@ -32,6 +32,14 @@ async function blur(element: HTMLElement) {
 }
 
 describe('PanInput', () => {
+  it('hideCount drops the "n of 9" line but still reports a wrong value (UIP-FORM-008)', async () => {
+    const pan = await mount(<PanInput aria-label="PAN" name="pan" hideCount />);
+    await typeKeys(pan.box, '123');
+    expect(pan.count()).toBeUndefined();
+    await blur(pan.box);
+    expect(pan.status()).toBe('A PAN is 9 digits; this has 3.');
+  });
+
   it('refuses a letter and says so in the status line', async () => {
     const pan = await mount(<PanInput aria-label="PAN" name="pan" />);
     await typeKeys(pan.box, '123');

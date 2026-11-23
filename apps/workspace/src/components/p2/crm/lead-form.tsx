@@ -24,6 +24,7 @@ import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
+import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { MemberPicker } from '@/components/ui/member-picker';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
@@ -204,6 +205,8 @@ export function LeadForm({
   // when null, exactly as before; picking links, editing the text unlinks.
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [contactId, setContactId] = useState<string | null>(null);
+  // A lead picked from "Already a lead" leaves this page: when other fields hold typed data, ask first.
+  const [leaveFor, setLeaveFor] = useState<string | null>(null);
   // The complete, valid numbers as the list last reported them, and its primary. They are also what
   // the list restores when React resets the form after a refused save, so the typed numbers stay.
   const startPhones = (key: typeof phonesKey) => ({
@@ -225,6 +228,15 @@ export function LeadForm({
   const set = (name: string) => (e: { target: { value: string } }) => update(name, e.target.value);
   const formId = useId();
   const err = { ...state.fieldErrors, ...clientErrors };
+  // Typed work that leaving would lose. The company text is the search itself and the defaults (currency, owner,
+  // the follow-up type buttons) are not typed work, so none of them count.
+  const hasTypedData =
+    Object.entries(values).some(
+      ([name, value]) =>
+        !['companyName', 'currency', 'ownerUserId'].includes(name) && value.trim() !== '',
+    ) ||
+    phones.saved.length > 0 ||
+    customerId !== null;
   const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
   // The chosen value stays listed even if it is not in the enabled list, so the select never blanks.
   const currencies = currencyChoices(enabledCurrencies, values['currency']);
@@ -413,7 +425,11 @@ export function LeadForm({
                   }}
                   search={companySearch}
                   delayMs={companySearchDelayMs}
-                  onOpenLead={onOpenLead}
+                  onOpenLead={
+                    onOpenLead === undefined
+                      ? undefined
+                      : (leadId) => (hasTypedData ? setLeaveFor(leadId) : onOpenLead(leadId))
+                  }
                 />
               )}
             </Field>
@@ -644,6 +660,20 @@ export function LeadForm({
           </Field>
         </Panel>
       </form>
+      <ConfirmDialog
+        open={leaveFor !== null}
+        onOpenChange={(next) => {
+          if (!next) setLeaveFor(null);
+        }}
+        title="Leave this form?"
+        description="What you typed here is not saved. Open the lead and discard it, or stay and keep editing."
+        confirmLabel="Discard and open lead"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          if (leaveFor !== null) onOpenLead?.(leaveFor);
+        }}
+      />
     </>
   );
 }
