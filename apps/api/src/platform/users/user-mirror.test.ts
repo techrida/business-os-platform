@@ -975,6 +975,14 @@ describe('R6C1: identity lease follow-ups', () => {
     expect(await running).toBe('finished');
   });
 
+  it('(b) a reconcile pass that meets a shutdown takes no further lease turns', async () => {
+    for (const id of ['a', 'b']) zitadel.users.set(id, zUser(id));
+    await mirror.onApplicationShutdown();
+    expect(await mirror.reconcile({ yieldMs: 0 })).toEqual({ scanned: 2, changed: 0 });
+    expect(store.users).toEqual([]);
+    expect(store.claims).toEqual([]);
+  });
+
   it('(c) reconcile gives a waiting identity change the lease between users', async () => {
     for (const id of ['a', 'b', 'c']) zitadel.users.set(id, zUser(id));
     const pass = async (yieldMs: number) => {
@@ -990,7 +998,7 @@ describe('R6C1: identity lease follow-ups', () => {
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
       })();
-      await mirror.reconcile({ yieldMs });
+      await mirror.reconcile({ yieldMs, yieldAfterMs: 0 });
       stop = true;
       await waiter;
       return won;
