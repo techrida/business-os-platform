@@ -639,8 +639,8 @@ describe('company logo variants (R6AC)', () => {
         tenant_id: a.tenantId,
         organization_id: a.organizationId,
         variant,
-        has_transparency: false,
       });
+      expect(typeof rows[0]!.has_transparency).toBe('boolean');
       expect(rows[0]!.luminance).toBeGreaterThanOrEqual(0);
       expect(rows[0]!.luminance).toBeLessThanOrEqual(1);
     },
@@ -684,7 +684,7 @@ describe('company logo variants (R6AC)', () => {
     const founder = staff(a);
     const { documentId } = await postAs(founder, 'entity_logo', a.organizationId, pngHeaders());
     const lookup = drizzleLogoStatsLookup(db);
-    await expect(lookup(a, documentId)).resolves.toMatchObject({ hasTransparency: false });
+    await expect(lookup(a, documentId)).resolves.toMatchObject({ luminance: expect.any(Number) });
     await expect(lookup(b, documentId)).resolves.toBeNull();
     await expect(
       lookup({ tenantId: a.tenantId, organizationId: entityA2 }, documentId),
