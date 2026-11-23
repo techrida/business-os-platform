@@ -102,6 +102,12 @@ export class UserSyncContendedError extends Error {
   }
 }
 
+/**
+ * The tenant's identity lease could not be had in time. A UserSyncContendedError too, but reconcile also stops trying
+ * the rest of that org for the pass, so a held lease costs one claim, not one wait per user.
+ */
+export class LeaseBusyError extends UserSyncContendedError {}
+
 /** What apply writes for one ZITADEL user: the user as read, the status to store and the lock (undefined keeps it). */
 export interface NextState {
   user: ZitadelUser;
@@ -194,20 +200,75 @@ export class UserMirror {
    * Throws UserSyncContendedError when the row kept changing under every try, so the job is retried.
    */
   async syncUser(zitadelUserId: string): Promise<boolean> {
-    const user = await this.zitadel.getUser(zitadelUserId);
-    if (!user) {
-      this.logger.warn(`users.sync: ZITADEL did not return ${zitadelUserId}; left unchanged`);
-      return false;
+    // A person the mirror already has is read under the tenant's identity lease, so an admin change that is half done
+    // (ZITADEL changed, the database not yet) is never read and written over. A person it has not seen yet has no admin
+    // change in flight to wait for (an invite that has not committed is skipped by apply), so ZITADEL is read first to
+    // learn their tenant.
+    const local = await this.store.findByZitadelId(this.db, zitadelUserId);
+    let first: ZitadelUser | null = null;
+    let tenantId: string;
+    if (local) {
+      tenantId = local.tenantId;
+    } else {
+      first = await this.zitadel.getUser(zitadelUserId);
+      if (!first) {
+        this.logger.warn(`users.sync: ZITADEL did not return ${zitadelUserId}; left unchanged`);
+        return false;
+      }
+      const known = await this.store.idpOrgByZitadelId(first.orgId);
+      if (!known) {
+        // P2 adds org sync; until then a user of an unknown org has nowhere to live.
+        this.logger.warn(`users.sync skipped ${zitadelUserId}: its org has no app.idp_orgs row`);
+        return false;
+      }
+      tenantId = known.tenantId;
     }
+    return this.underLease(tenantId, zitadelUserId, async () => {
+      const user = first ?? (await this.zitadel.getUser(zitadelUserId));
+      if (!user) {
+        this.logger.warn(`users.sync: ZITADEL did not return ${zitadelUserId}; left unchanged`);
+        return false;
+      }
+      const org = await this.store.idpOrgByZitadelId(user.orgId);
+      if (!org || org.tenantId !== tenantId) {
+        this.logger.warn(`users.sync skipped ${zitadelUserId}: its org has no app.idp_orgs row`);
+        return false;
+      }
+      const roles = await this.zitadel.listGrants(zitadelUserId, org.zitadelOrgId);
+      return this.apply(org, user, roles);
+    });
+  }
 
-    const org = await this.store.idpOrgByZitadelId(user.orgId);
-    if (!org) {
-      // P2 adds org sync; until then a user of an unknown org has nowhere to live.
-      this.logger.warn(`users.sync skipped ${zitadelUserId}: its org has no app.idp_orgs row`);
-      return false;
+  /**
+   * Runs a mirror write that must not interleave with an admin identity change (deactivate, lock, role set, invite,
+   * resolve): under the tenant's identity lease, the same one those take. A lease that cannot be had in time (another
+   * change in progress, a takeover) counts as contention, like a row that keeps changing: the sync job is retried and a
+   * reconcile pass leaves the user for the next pass.
+   */
+  private async underLease<T>(
+    tenantId: string,
+    zitadelUserId: string,
+    fn: () => Promise<T>,
+    waitMs?: number,
+  ): Promise<T> {
+    const scope = await this.entityScope(tenantId);
+    try {
+      return await withFounderRemovalLease(
+        this.store,
+        tenantId,
+        fn,
+        undefined,
+        this.settleOutstandingRemoval(scope, zitadelActor()),
+        waitMs,
+      );
+    } catch (error) {
+      if (error instanceof ConflictException) throw new LeaseBusyError(zitadelUserId);
+      if (error instanceof ServiceUnavailableException) {
+        this.logger.warn(`users.lease: ${zitadelUserId} not mirrored (${error.message})`);
+        throw new UserSyncContendedError(zitadelUserId);
+      }
+      throw error;
     }
-    const roles = await this.zitadel.listGrants(zitadelUserId, org.zitadelOrgId);
-    return this.apply(org, user, roles);
   }
 
   /**
@@ -239,6 +300,8 @@ export class UserMirror {
       let previousIds = new Set<string>();
       let total: number | null = null;
       let abort: string | null = null;
+      // Set once the tenant's identity lease could not be had: the rest of this org is left for the next pass.
+      let leaseBusy = false;
       try {
         for (;;) {
           if (pages >= maxPages) {
@@ -256,11 +319,21 @@ export class UserMirror {
           for (const user of page.users) {
             scanned += 1;
             seen.add(user.id);
-            const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
+            if (leaseBusy) continue;
             try {
-              if (await this.apply(org, user, roles)) changed += 1;
+              const didChange = await this.underLease(
+                org.tenantId,
+                user.id,
+                async () => {
+                  const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
+                  return this.apply(org, user, roles);
+                },
+                0,
+              );
+              if (didChange) changed += 1;
             } catch (error) {
               if (!(error instanceof UserSyncContendedError)) throw error;
+              if (error instanceof LeaseBusyError) leaseBusy = true;
               // This user only: the pass goes on, and they are seen, so never deactivated as missing.
               this.logger.warn(`${error.message}; left for the next pass`);
             }
@@ -292,6 +365,7 @@ export class UserMirror {
         );
         continue;
       }
+      if (leaseBusy) continue; // the next pass starts the org over
       if (fullPass) changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations);
     }
     return { scanned, changed };
@@ -690,6 +764,10 @@ export class UserMirror {
         scope,
         zitadelActor(),
         async (tx) => {
+          // Under the tenant's identity lease (see underLease): in the order every access write takes, the access
+          // lock first, then the lease row; a holder that was taken over writes nothing.
+          await lockAccessRevision(tx, org.tenantId);
+          await assertFounderLeaseHeld(tx);
           const existing = await this.store.findByZitadelId(tx, read.id, true);
           if ((existing?.version ?? null) !== (seen?.version ?? null)) return null;
           return this.write(tx, org, scope, existing, next, roles);
@@ -892,7 +970,14 @@ export class UserMirror {
         continue;
       }
       if (remote.status !== 'inactive') continue;
-      await this.deactivate(local);
+      try {
+        await this.underLease(org.tenantId, local.zitadelUserId, () => this.deactivate(local), 0);
+      } catch (error) {
+        if (!(error instanceof UserSyncContendedError)) throw error;
+        this.logger.warn(`${error.message}; left for the next pass`);
+        if (error instanceof LeaseBusyError) break;
+        continue;
+      }
       deactivated += 1;
     }
     return deactivated;
@@ -923,6 +1008,8 @@ export class UserMirror {
       scope,
       zitadelActor(),
       async (tx) => {
+        await lockAccessRevision(tx, user.tenantId);
+        await assertFounderLeaseHeld(tx);
         await this.store.updateUser(tx, user.id, {
           email: user.email,
           displayName: user.displayName,

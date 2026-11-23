@@ -6,7 +6,7 @@ import nextVitals from 'eslint-config-next/core-web-vitals';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-import { NATIVE_TITLE_RULE } from './tools/eslint/native-title-rule.mjs';
+import { RESTRICTED_SYNTAX } from './tools/eslint/native-title-rule.mjs';
 
 const WORKSPACE_FILES = [
   'apps/workspace/**/*.{js,jsx,mjs,ts,tsx}',
@@ -132,11 +132,11 @@ export default defineConfig([
     settings: { next: { rootDir: ['apps/workspace/', 'apps/portal/'] } },
   },
 
-  // UIP-BUILD-002: no browser-default hover tooltips (rule and reasons in tools/eslint/native-title-rule.mjs).
+  // UIP-BUILD-002: no browser-default hover tooltips (rules and reasons in tools/eslint/native-title-rule.mjs; header-action.tsx links its sr-only description on purpose).
   {
     files: WORKSPACE_FILES,
-    ignores: ['**/*.test.{ts,tsx}'],
-    rules: { 'no-restricted-syntax': NATIVE_TITLE_RULE },
+    ignores: ['**/*.test.{ts,tsx}', 'apps/workspace/src/components/ui/header-action.tsx'],
+    rules: { 'no-restricted-syntax': RESTRICTED_SYNTAX },
   },
 
   // k6 scripts run inside k6's own JS runtime, which provides these globals.

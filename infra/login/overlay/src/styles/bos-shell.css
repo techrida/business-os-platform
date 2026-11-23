@@ -102,10 +102,11 @@
 
 .bos-brand-mark {
   display: grid;
-  flex: none;
+  flex: 0 0 32px;
   place-items: center;
-  width: 26.83px;
+  width: 32px;
   height: 32px;
+  aspect-ratio: 1;
   border-radius: var(--radius-md);
   background: var(--surface-inverse);
   color: var(--text-inverse);
@@ -228,9 +229,11 @@
 
 .bos-aside-monogram {
   display: grid;
+  flex: none;
   place-items: center;
-  width: 48.6px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
+  aspect-ratio: 1;
   border-radius: 8.6px;
   background: var(--surface-inverse);
   color: var(--text-inverse);
