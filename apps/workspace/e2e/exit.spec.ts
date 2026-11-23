@@ -193,20 +193,20 @@ test('memo exit: a memo goes through the two approvals its author named, with em
       await finance.goto(`/memos/${memoId}`);
       const timeline = finance.getByRole('region', { name: 'Audit timeline' });
       await expect(timeline).toBeVisible();
-      // Labels are the audit action names made readable (`approvals.approve` -> "Approvals approve").
-      // P3's memo page shows the historical `test_memos.*` actions under the product name
-      // (`test_memos.insert` -> "Memo insert"); see auditLabel in memos/[id]/page.tsx.
+      // Labels are the audit action names in plain language (kernel-ui.ts: `approvals.approve` -> "Approved").
+      // The memo page shows the historical `test_memos.*` actions under the product name
+      // (`test_memos.insert` -> "Memo created").
       // The memo page lists events for the memo itself and for its approval request.
-      await expect(timeline.getByText('Memo insert', { exact: true })).toHaveCount(1);
-      await expect(timeline.getByText('Approvals submit', { exact: true })).toHaveCount(1);
-      await expect(timeline.getByText('Approvals approve', { exact: true })).toHaveCount(2);
+      await expect(timeline.getByText('Memo created', { exact: true })).toHaveCount(1);
+      await expect(timeline.getByText('Submitted for approval', { exact: true })).toHaveCount(1);
+      await expect(timeline.getByText('Approved', { exact: true })).toHaveCount(2);
       // Created -> submitted -> approved on the memo, so at least two updates.
       expect(
-        await timeline.getByText('Memo update', { exact: true }).count(),
+        await timeline.getByText('Memo updated', { exact: true }).count(),
         'memo status changes in the trail',
       ).toBeGreaterThanOrEqual(2);
       expect(
-        await timeline.getByText('Approval requests update', { exact: true }).count(),
+        await timeline.getByText('Approval request updated', { exact: true }).count(),
         'request status changes in the trail',
       ).toBeGreaterThanOrEqual(1);
 
