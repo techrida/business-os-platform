@@ -133,6 +133,14 @@ export class PortalRespondService {
         },
         async () => {
           const head = await this.store.findHead(tx, p, versionId);
+          // A sent version the company cancelled (a Lost deal) is no secret to the customer who holds its link: the page
+          // they left open says "no longer open", like the page itself does (R6D, EF2 Q2).
+          if (head?.status === 'cancelled' && head.sentAt != null) {
+            throw new ConflictException({
+              code: 'quotation_closed',
+              message: 'This quotation is no longer open',
+            });
+          }
           // Visibility first, so a hidden version answers exactly like an unknown one.
           if (head === undefined || !isPortalVisible(head)) throw notFound();
           if (head.status !== 'sent') throw notAnswerable(head.status);

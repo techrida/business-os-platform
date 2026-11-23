@@ -12,6 +12,7 @@ import {
   RejectQuotationBodySchema,
   rejectPortalQuotation,
 } from '@/lib/api';
+import { isQuotationClosed } from '@/components/portal/quotation-closed';
 import { getSession } from '@/lib/session';
 
 /**
@@ -73,6 +74,11 @@ async function prepare(
 function failed(err: unknown, key: string, id: string): RespondState {
   const status = err instanceof ApiError ? err.status : 0;
   if (status === 401) redirect(`/auth/login?returnTo=${encodeURIComponent(`/quotations/${id}`)}`);
+  // The company closed it (a Lost deal) while this page sat open: show the "no longer open" page, not an error.
+  if (isQuotationClosed(err)) {
+    revalidatePath(`/quotations/${id}`);
+    redirect(`/quotations/${id}`);
+  }
   if (status === 409) {
     return {
       key: randomUUID(),

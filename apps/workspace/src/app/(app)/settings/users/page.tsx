@@ -17,7 +17,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listUsers, summarizeUsers } from '@/lib/api-admin';
+import { listFlaggedUsers, listUsers, summarizeUsers } from '@/lib/api-admin';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -116,6 +116,11 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   // F1-Q5: account actions need the company-wide grant (the summary says so); never on the caller's own row, and
   // only when the caller's own row is known, since the API refuses it anyway.
   const canChangeStatus = summary.ok && summary.data.canChangeStatus === true && Boolean(me?.id);
+  // FU8: the link to the flagged people shows only to a caller who can resolve them, with how many wait.
+  const flagged = canChangeStatus
+    ? await section('view flagged users', () => listFlaggedUsers(session))
+    : null;
+  const flaggedCount = flagged?.ok ? flagged.data.items.length : 0;
   const items = users.ok ? users.data.items : [];
   const next = users.ok ? users.data.nextPage : null;
   const departments = summary.ok ? summary.data.departments : [];
@@ -140,6 +145,11 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
     total === null
       ? []
       : pageNumbers(page, Math.ceil(total / limit)).map((n) => ({ page: n, href: href(n) }));
+  const review = canChangeStatus && flagged?.ok && (
+    <LinkButton href="/settings/users/flagged" variant="secondary" size="large">
+      Flagged users{flaggedCount > 0 ? ` (${flaggedCount})` : ''}
+    </LinkButton>
+  );
   const add = (
     <LinkButton href="/settings/users/new" size="large">
       <span aria-hidden="true">＋</span>Add user
@@ -152,7 +162,12 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
       <PageHeader
         title="Users"
         description="Invite colleagues and manage their access."
-        actions={add}
+        actions={
+          <>
+            {review}
+            {add}
+          </>
+        }
       />
       {!users.ok ? (
         <SectionError message={users.message} />

@@ -89,3 +89,18 @@ export const AdminUsersSummarySchema = z.object({
   canChangeStatus: z.boolean().optional(),
 });
 export type AdminUsersSummary = z.infer<typeof AdminUsersSummarySchema>;
+
+/** A person a failed or unsure write to the identity provider left flagged for review (FU8). */
+export const FlaggedUserSchema = z.object({
+  id: z.guid(),
+  email: z.string().nullable(),
+  displayName: z.string().nullable(),
+  status: UserStatusSchema,
+  /** When BOS set the flag; null only for a row flagged before the time was kept. */
+  flaggedAt: z.iso.datetime().nullable(),
+  /** The audit reason of the flag, such as `users.deactivate:timeout`; null when its audit row was never written. */
+  reason: z.string().nullable(),
+});
+export type FlaggedUser = z.infer<typeof FlaggedUserSchema>;
+
+export const FlaggedUsersSchema = z.object({ items: z.array(FlaggedUserSchema) });

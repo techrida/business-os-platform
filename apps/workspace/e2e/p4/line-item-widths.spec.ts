@@ -14,12 +14,31 @@ import { signInAs } from '../helpers/memo-flow';
 const MIN_CONTROL_WIDTH = 60;
 const WIDTHS = [390, 834, 1100, 1280, 1440] as const;
 
-// Forms whose line items show on the bare route. Others need a record id or a query (receipts need a
-// purchase order, quotations an opportunity) or have no editable line items (a new RFQ), so they are
-// not measured here.
+// Forms whose line items show on the bare route. A new RFQ has no editable line items, and the quotation
+// builder edits a line in a dialog, so neither is measured here.
 const FORMS = [
   { persona: 'procurement', route: '/procurement/requests/new' },
   { persona: 'finance', route: '/invoices/new' },
+  { persona: 'finance', route: '/payables/bills/new' },
+] as const;
+
+// Forms that need a record: the route is the first link of that shape on a list page, so the specs follow
+// whatever the seed holds. A form with no record to open is a failure, not a skip: the seed must carry one.
+const LINKED_FORMS = [
+  {
+    persona: 'procurement',
+    name: 'receipt',
+    list: '/procurement/orders',
+    link: /^\/procurement\/receipts\/new\?po=/,
+    open: /^\/procurement\/orders\/[0-9a-f-]{36}$/,
+  },
+  {
+    persona: 'procurement',
+    name: 'RFQ quotation entry',
+    list: '/procurement/rfqs',
+    link: /^\/procurement\/rfqs\/[0-9a-f-]{36}\/quotations\/new/,
+    open: /^\/procurement\/rfqs\/[0-9a-f-]{36}$/,
+  },
 ] as const;
 
 interface Measure {
@@ -55,6 +74,60 @@ async function measure(page: Page): Promise<Measure> {
       overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
   }, MIN_CONTROL_WIDTH);
+}
+
+/** Opens each record of a list until one shows the link to the form, and returns that link. */
+async function findFormRoute(
+  page: Page,
+  form: (typeof LINKED_FORMS)[number],
+): Promise<string | null> {
+  await page.goto(form.list);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  const records = await page
+    .locator('main a[href]')
+    .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
+  const candidates = [...new Set(records.filter((href) => form.open.test(href)))].slice(0, 12);
+  for (const record of candidates) {
+    await page.goto(record);
+    const hrefs = await page
+      .locator('main a[href]')
+      .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
+    const found = hrefs.find((href) => form.link.test(href));
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+for (const form of LINKED_FORMS) {
+  test(`${form.name}: every line-item control is usable from 390 to 1440 px`, async ({
+    browser,
+    baseURL,
+  }) => {
+    test.setTimeout(180_000);
+    const signed = await signInAs(browser, baseURL ?? 'https://app.localhost', form.persona);
+    try {
+      const { page } = signed;
+      const route = await findFormRoute(page, form);
+      expect(route, `a record on ${form.list} that links to the ${form.name} form`).not.toBeNull();
+      for (const width of WIDTHS) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(route!);
+        await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+        await page.waitForTimeout(1_500);
+        const result = await measure(page);
+        expect(
+          result.numberBoxes,
+          `${form.name} shows its line items at ${width}px`,
+        ).toBeGreaterThanOrEqual(1);
+        expect(result.narrow, `${form.name} at ${width}px`).toEqual([]);
+        expect(result.overflow, `${form.name} scrolls sideways at ${width}px`).toBeLessThanOrEqual(
+          0,
+        );
+      }
+    } finally {
+      await signed.context.close();
+    }
+  });
 }
 
 for (const form of FORMS) {
