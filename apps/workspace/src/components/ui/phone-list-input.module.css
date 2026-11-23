@@ -1,4 +1,4 @@
-/* PhoneListInput. Each row: country (flag, ISO code, calling code), the number box, then the label, the primary
+/* PhoneListInput. Each row: the one-box number field (flag inside, number with its code), then the label, the primary
    radio and the row actions. Wide containers keep a row on one line; narrow ones (a phone, a small dialog) put the
    label, primary and actions on a second line under the number. Queried on the list's own width, so it adapts
    inside a dialog as well as a page. */
@@ -23,16 +23,12 @@
 .row {
   display: grid;
   grid-template-areas:
-    'country number'
-    'extras extras';
-  grid-template-columns: auto minmax(0, 1fr);
+    'number'
+    'extras';
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: start;
   min-width: 0;
-}
-
-.country {
-  grid-area: country;
 }
 
 .number {
@@ -51,8 +47,8 @@
 
 @container (min-width: 40rem) {
   .row {
-    grid-template-areas: 'country number extras';
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'number extras';
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   /* Line the extras up with the 42px controls, not with the count line under the number. */
