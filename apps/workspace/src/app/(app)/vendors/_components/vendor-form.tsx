@@ -1,12 +1,12 @@
 'use client';
 
-import { countryName, VENDOR_KINDS, type CountryCode, type VendorKind } from '@bos/contracts';
+import { VENDOR_KINDS, type CountryCode, type VendorKind } from '@bos/contracts';
 import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
 
 import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 import { PanInput } from '@/components/ui/pan-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -43,13 +43,13 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
  * the server action passed in decides what happens on submit. Inputs are controlled so a refusal
  * does not wipe what was typed (React 19 resets uncontrolled fields after every action).
  *
- * Create asks for the kind and country, which are fixed afterwards. Edit locks the legal name and
- * PAN of an approved or suspended vendor (`lockIdentity`): those change through a new KYB review.
- * A foreign vendor has no Nepali PAN: it gets an optional Tax ID in the loose shape instead.
+ * Create and edit both ask for the kind and country (D10). Edit locks the legal name, PAN, kind and
+ * country of an approved or suspended vendor (`lockIdentity`).
+ * A foreign vendor has no Nepali PAN: it gets an optional Tax ID in the loose shape instead, so
+ * switching a foreign vendor to a Nepal kind shows the PAN box, which must be filled.
  *
  * The address is optional (street and city together, or neither). Its country is the vendor's
- * country, so the country is asked once, as the address's Country (create), and shown as fixed
- * text on edit.
+ * country, so the country is asked once, as the address's Country.
  *
  * The page header is part of the form, so Cancel and the submit button sit at its top right (Figma
  * "Add Organization" 449:15784); a narrow screen gets them under the form instead.
@@ -125,11 +125,7 @@ export function VendorForm({
   const legalName = (
     <Field
       label="Legal name"
-      hint={
-        lockIdentity
-          ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
-          : undefined
-      }
+      hint={lockIdentity ? 'Locked once the vendor is approved.' : undefined}
       error={err.legalName}
     >
       {(control) => (
@@ -207,49 +203,60 @@ export function VendorForm({
     </label>
   );
 
+  // Choosing a country outside Nepal makes the vendor foreign, and choosing Nepal for a foreign one makes it a company
+  // (the person can pick another kind), so the pair the API requires is the one they see.
   const setAddress = (next: { line: string; city: string; country: CountryCode }): void =>
     setValues((v) => ({
       ...v,
       addressLine: next.line,
       addressCity: next.city,
       country: next.country,
+      kind:
+        next.country === v.country
+          ? v.kind
+          : next.country !== 'NP'
+            ? 'foreign'
+            : v.kind === 'foreign'
+              ? 'company'
+              : v.kind,
     }));
 
-  // Edit: the country is fixed, so Address and City are built here with the names AddressFields posts.
-  const editAddress = (
-    <div className={styles.grid}>
-      <Field label="Address (optional)" error={err.addressLine} className={WIDE}>
-        {(control) => (
-          <Textarea
-            {...control}
-            name="address.line"
-            rows={2}
-            maxLength={500}
-            autoComplete="street-address"
-            value={values.addressLine}
-            onChange={set('addressLine')}
-          />
-        )}
-      </Field>
-      <Field label="City (optional)" error={err.addressCity}>
-        {(control) => (
-          <Input
-            {...control}
-            name="address.city"
-            maxLength={100}
-            autoComplete="address-level2"
-            value={values.addressCity}
-            onChange={set('addressCity')}
-          />
-        )}
-      </Field>
-      <Field label="Country" hint="Fixed once the vendor is added.">
-        {(control) => (
-          <Input {...control} value={countryName(values.country as CountryCode)} readOnly />
-        )}
-      </Field>
-    </div>
+  const kindField = (
+    <Field
+      label="Kind"
+      hint={
+        lockIdentity
+          ? 'Locked once the vendor is approved.'
+          : mode === 'edit'
+            ? 'A foreign vendor is outside Nepal. Any other kind is in Nepal and needs a PAN.'
+            : undefined
+      }
+      error={err.kind}
+      className={WIDE}
+    >
+      {(control) => (
+        <Select
+          name="kind"
+          value={values.kind}
+          onChange={set('kind')}
+          disabled={lockIdentity}
+          {...control}
+        >
+          {VENDOR_KINDS.map((k) => (
+            <option key={k} value={k}>
+              {KIND_LABEL[k]}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
   );
+
+  const countryHint = lockIdentity
+    ? 'Locked once the vendor is approved.'
+    : foreign
+      ? 'The vendor’s own country, outside Nepal.'
+      : 'Vendors in Nepal use Nepal.';
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
@@ -319,12 +326,24 @@ export function VendorForm({
           <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
             <div className={styles.grid}>
               {legalName}
+              {kindField}
               {pan}
             </div>
             {vat}
           </Panel>
           <Panel title={<SectionTitle eyebrow="02 · Address">Address</SectionTitle>}>
-            {editAddress}
+            <AddressFields
+              name="address"
+              value={{
+                line: values.addressLine,
+                city: values.addressCity,
+                country: values.country as CountryCode,
+              }}
+              onChange={setAddress}
+              countryDisabled={lockIdentity}
+              errors={{ line: err.addressLine, city: err.addressCity, country: err.country }}
+              hints={{ country: countryHint }}
+            />
           </Panel>
         </>
       ) : (
@@ -347,22 +366,7 @@ export function VendorForm({
                   />
                 )}
               </Field>
-              <Field
-                label="Kind"
-                hint="Fixed once the vendor is added."
-                error={err.kind}
-                className={WIDE}
-              >
-                {(control) => (
-                  <Select name="kind" value={values.kind} onChange={set('kind')} {...control}>
-                    {VENDOR_KINDS.map((k) => (
-                      <option key={k} value={k}>
-                        {KIND_LABEL[k]}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
+              {kindField}
             </div>
           </Panel>
           <Panel
@@ -381,11 +385,7 @@ export function VendorForm({
               }}
               onChange={setAddress}
               errors={{ line: err.addressLine, city: err.addressCity, country: err.country }}
-              hints={{
-                country: foreign
-                  ? 'The vendor’s own country, outside Nepal. Fixed once the vendor is added.'
-                  : 'Vendors in Nepal use Nepal. Fixed once the vendor is added.',
-              }}
+              hints={{ country: countryHint }}
             />
           </Panel>
         </>

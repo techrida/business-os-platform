@@ -9,7 +9,13 @@
 // - a profile picture needs `profile.avatar.write` against a ref whose owner is the pictured user, so scope `own`
 //   (every staff role) is "my own picture" and scope `all` (founder, user managers) is "anyone's picture".
 // ImagesModule registers them through ImageOwnerRegistrar (images.registrar.ts).
-import { IMAGE_MAX_BYTES, IMAGE_MIME, type ImageOwnerType, type Permission } from '@bos/contracts';
+import {
+  IMAGE_MAX_BYTES,
+  IMAGE_MIME,
+  type EntityLogoOwnerType,
+  type ImageOwnerType,
+  type Permission,
+} from '@bos/contracts';
 import { customers, users, vendors } from '@bos/db';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -22,6 +28,8 @@ import type { DocumentOwnerPolicy } from '../../platform/documents/documents.por
 /** The grant that uploads each kind of image (staff path). */
 export const IMAGE_UPLOAD_PERMISSIONS = {
   entity_logo: 'admin.settings.write',
+  entity_logo_on_dark: 'admin.settings.write',
+  entity_logo_on_light: 'admin.settings.write',
   user_avatar: 'profile.avatar.write',
   customer_logo: 'customer.write',
   vendor_logo: 'vendor.write',
@@ -57,16 +65,19 @@ const Guid = z.guid();
 const isGuid = (value: string): boolean => Guid.safeParse(value).success;
 
 /**
- * The logo of the acting entity: owner id = the entity (organization) id, and only the scope's own entity. Changing
+ * The logo of the acting entity, in any of its three slots (the primary and the optional ones for dark and for light
+ * backgrounds; each slot is its own owner type): owner id = the entity (organization) id, and only the scope's own entity. Changing
  * it is a settings change (`admin.settings.write`). The system actor may add it too: the boot-time migrator moves
  * each stored data-URL logo into the documents pipeline (still type-checked and scanned).
  */
-export function entityLogoOwnerPolicy(): DocumentOwnerPolicy {
+export function entityLogoOwnerPolicy(
+  ownerType: EntityLogoOwnerType = 'entity_logo',
+): DocumentOwnerPolicy {
   const isOwnEntity = (scope: TxScope, ownerId: string) =>
     ownerId.length > 0 && ownerId === scope.organizationId;
   return {
-    ownerType: 'entity_logo',
-    uploadPermission: IMAGE_UPLOAD_PERMISSIONS.entity_logo,
+    ownerType,
+    uploadPermission: IMAGE_UPLOAD_PERMISSIONS[ownerType],
     ...IMAGE_LIMITS,
     resource: (scope, ownerId) =>
       Promise.resolve(
@@ -144,10 +155,12 @@ export function vendorLogoOwnerPolicy(loadVendor: ImageOwnerLoader): DocumentOwn
   };
 }
 
-/** The four policies, in IMAGE_OWNER_TYPES order. */
+/** The policies, in IMAGE_OWNER_TYPES order. */
 export function imageOwnerPolicies(loaders: ImageOwnerLoaders): DocumentOwnerPolicy[] {
   return [
-    entityLogoOwnerPolicy(),
+    entityLogoOwnerPolicy('entity_logo'),
+    entityLogoOwnerPolicy('entity_logo_on_dark'),
+    entityLogoOwnerPolicy('entity_logo_on_light'),
     userAvatarOwnerPolicy(loaders.user),
     customerLogoOwnerPolicy(loaders.customer),
     vendorLogoOwnerPolicy(loaders.vendor),

@@ -20,7 +20,7 @@ import {
   salesOrders,
 } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, exists, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
@@ -33,7 +33,15 @@ type VersionRow = typeof quotationVersions.$inferSelect;
 export type PortalVersionHead = Pick<
   VersionRow,
   'revisionNo' | 'status' | 'rejectionSource' | 'issueDate' | 'validUntil' | 'currency' | 'total'
-> & { versionId: string; quotationId: string; number: string };
+> & {
+  versionId: string;
+  quotationId: string;
+  number: string;
+  /** When the version was sent to the customer; null if never. A never-sent version is never visible once superseded or expired. */
+  sentAt: Date | null;
+  /** True when the quotation's newest version is cancelled (a Lost deal or a cancel): its older sent versions are closed. */
+  quotationCancelled: boolean;
+};
 
 /**
  * Everything the customer view is built from, except the issuer block (read from settings), the PDF state flags and the
@@ -50,6 +58,11 @@ export type PortalViewSource = Omit<
   renderAttempts: number;
   /** When the version was sent to the customer; null if never. A cancelled version that was sent shows "no longer open". */
   sentAt: Date | null;
+  /**
+   * True when the quotation's newest version is cancelled (a Lost deal or a cancel). A mailed link to an older, sent
+   * version of such a quotation shows "no longer open", not "not found" (R6D).
+   */
+  quotationCancelled: boolean;
 };
 
 /**
@@ -61,6 +74,8 @@ export type PortalDocumentHead = Pick<
   VersionRow,
   'status' | 'rejectionSource' | 'renderState' | 'renderAttempts'
 > & {
+  sentAt: Date | null;
+  quotationCancelled: boolean;
   tenantId: string;
   organizationId: string;
   renderedDocumentId: string | null;
@@ -120,6 +135,13 @@ const versionOfQuotation = and(
   eq(quotations.id, quotationVersions.quotationId),
 );
 
+/** True when the quotation's newest version is cancelled. A correlated read, so a list or a link costs no extra query. */
+const quotationCancelledSql = sql<boolean>`exists (
+  select 1 from app.quotation_versions cv
+   where cv.tenant_id = ${quotations.tenantId}
+     and cv.id = ${quotations.currentVersionId}
+     and cv.status = 'cancelled')`.mapWith(Boolean);
+
 /** Versions of a quotation `p` may read, as heads; shared by the list and the respond read. */
 const headColumns = {
   versionId: quotationVersions.id,
@@ -132,6 +154,8 @@ const headColumns = {
   validUntil: quotationVersions.validUntil,
   currency: quotationVersions.currency,
   total: quotationVersions.total,
+  sentAt: quotationVersions.sentAt,
+  quotationCancelled: quotationCancelledSql,
 };
 
 @Injectable()
@@ -178,6 +202,8 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         renderState: quotationVersions.renderState,
         renderAttempts: quotationVersions.renderAttempts,
         renderedDocumentId: quotationVersions.renderedDocumentId,
+        sentAt: quotationVersions.sentAt,
+        quotationCancelled: quotationCancelledSql,
       })
       .from(quotationVersions)
       .innerJoin(quotations, versionOfQuotation)
@@ -273,6 +299,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
         organizationId: quotationVersions.organizationId,
         number: quotations.number,
         customerPartyId: quotations.customerPartyId,
+        currentVersionId: quotations.currentVersionId,
       })
       .from(quotationVersions)
       .innerJoin(quotations, versionOfQuotation)
@@ -280,6 +307,22 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       .limit(1);
     if (head === undefined || head.customerPartyId === null) return undefined;
     const { tenantId, organizationId, customerPartyId } = head;
+
+    // Only an older version needs this: the newest version's own status already says it.
+    let quotationCancelled = false;
+    if (head.currentVersionId !== null && head.currentVersionId !== versionId) {
+      const [current] = await this.db
+        .select({ status: quotationVersions.status })
+        .from(quotationVersions)
+        .where(
+          and(
+            eq(quotationVersions.tenantId, tenantId),
+            eq(quotationVersions.id, head.currentVersionId),
+          ),
+        )
+        .limit(1);
+      quotationCancelled = current?.status === 'cancelled';
+    }
 
     const [customer] = await this.db
       .select({
@@ -367,6 +410,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
       documentStyle: head.documentStyle,
       renderAttempts: head.renderAttempts,
       sentAt: head.sentAt,
+      quotationCancelled,
     };
   }
 }

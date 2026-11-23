@@ -1,3 +1,4 @@
+import type { VendorKind } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -149,7 +150,8 @@ describe('readVendorValues', () => {
 describe('parseUpdateVendor', () => {
   const original = {
     legalName: 'Himal Traders Pvt. Ltd.',
-    pan: '301234567',
+    kind: 'company' as VendorKind,
+    pan: '301234567' as string | null,
     vatRegistered: false,
     status: 'draft' as const,
     country: 'NP',
@@ -188,11 +190,83 @@ describe('parseUpdateVendor', () => {
   });
 
   it('holds a foreign vendor to the loose tax-id shape, by its stored country', () => {
-    const foreign = { ...original, country: 'US', pan: null };
-    const ok = parseUpdateVendor(values({ pan: 'EIN-1234567' }), foreign, 3);
+    const foreign = { ...original, kind: 'foreign' as VendorKind, country: 'US', pan: null };
+    const asForeign = (over: Partial<VendorValues>) =>
+      values({ kind: 'foreign', country: 'US', ...over });
+    const ok = parseUpdateVendor(asForeign({ pan: 'EIN-1234567' }), foreign, 3);
     expect(ok).toEqual({ ok: true, data: { expectedVersion: 3, pan: 'EIN-1234567' } });
-    const cleared = parseUpdateVendor(values({ pan: '' }), { ...foreign, pan: 'EIN-1234567' }, 3);
-    expect(cleared.ok).toBe(false);
+    const cleared = parseUpdateVendor(
+      asForeign({ pan: '' }),
+      { ...foreign, pan: 'EIN-1234567' },
+      3,
+    );
+    // R6AA: an unapproved foreign vendor may clear its tax id; the API takes null.
+    expect(cleared).toEqual({ ok: true, data: { expectedVersion: 3, pan: null } });
+  });
+
+  describe('D10: the kind and country', () => {
+    const foreign = { ...original, kind: 'foreign' as VendorKind, country: 'DE', pan: null };
+    const asForeign = (over: Partial<VendorValues>) =>
+      values({ kind: 'foreign', country: 'DE', ...over });
+    const errorsOf = (r: ReturnType<typeof parseUpdateVendor>) =>
+      !r.ok && 'errors' in r ? r.errors : {};
+
+    it('sends the kind and country together when either changed, and keeps the PAN it has', () => {
+      const r = parseUpdateVendor(values({ kind: 'foreign', country: 'IN' }), original, 6);
+      expect(r).toEqual({ ok: true, data: { expectedVersion: 6, kind: 'foreign', country: 'IN' } });
+      const kinds = parseUpdateVendor(values({ kind: 'sole_proprietor' }), original, 6);
+      expect(kinds).toEqual({
+        ok: true,
+        data: { expectedVersion: 6, kind: 'sole_proprietor', country: 'NP' },
+      });
+    });
+
+    it('stops a switch to Nepal with no PAN, or with the foreign tax id left in the box', () => {
+      const none = parseUpdateVendor(
+        asForeign({ kind: 'company', country: 'NP', pan: '' }),
+        foreign,
+        2,
+      );
+      expect(errorsOf(none).pan).toMatch(/PAN is required/);
+      const loose = parseUpdateVendor(
+        values({ kind: 'company', country: 'NP', pan: 'DE-81234567' }),
+        { ...foreign, pan: 'DE-81234567' },
+        2,
+      );
+      expect(errorsOf(loose).pan).toMatch(/9 digits/);
+      const ok = parseUpdateVendor(
+        values({ kind: 'company', country: 'NP', pan: '301234568' }),
+        foreign,
+        2,
+      );
+      expect(ok).toEqual({
+        ok: true,
+        data: { expectedVersion: 2, kind: 'company', country: 'NP', pan: '301234568' },
+      });
+    });
+
+    it('refuses a kind and country that contradict, on the country', () => {
+      const r = parseUpdateVendor(values({ kind: 'foreign', country: 'NP' }), original, 2);
+      expect(errorsOf(r).country).toMatch(/foreign vendor is outside Nepal/);
+      const other = parseUpdateVendor(values({ kind: 'company', country: 'IN' }), original, 2);
+      expect(errorsOf(other).country).toMatch(/must be a foreign vendor/);
+    });
+
+    it('ignores a posted kind and country on an approved vendor (the API would answer 409)', () => {
+      const r = parseUpdateVendor(
+        values({ kind: 'foreign', country: 'IN', vatRegistered: true }),
+        { ...original, status: 'approved' },
+        2,
+      );
+      expect(r).toEqual({ ok: true, data: { expectedVersion: 2, vatRegistered: true } });
+      // A locked form posts neither: the empty values are not read as a change.
+      const locked = parseUpdateVendor(
+        values({ kind: '', country: '', vatRegistered: true }),
+        { ...original, status: 'suspended' },
+        2,
+      );
+      expect(locked).toEqual({ ok: true, data: { expectedVersion: 2, vatRegistered: true } });
+    });
   });
 
   it('sends a new address, and null when it is cleared', () => {

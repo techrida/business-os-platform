@@ -65,9 +65,17 @@ async function settle() {
   for (let i = 0; i < 3; i += 1) await act(() => Promise.resolve());
 }
 
-async function openSchedule(ownerUserId: string | null = OWNER) {
+async function openSchedule(
+  ownerUserId: string | null = OWNER,
+  extra: { ownerName?: string; me?: { userId: string; name: string } } = {},
+) {
   const mounted = await mountForm(
-    <ScheduleFollowUpDialog subjectId={LEAD} ownerUserId={ownerUserId} owners={owners} />,
+    <ScheduleFollowUpDialog
+      subjectId={LEAD}
+      ownerUserId={ownerUserId}
+      owners={owners}
+      {...extra}
+    />,
   );
   await click(mounted.container.querySelector('button'));
   return mounted;
@@ -121,7 +129,12 @@ it('sends the chosen assignee, subject and note', async () => {
 
 it('leaves the assignee to the API when the owner is not someone the caller can pick', async () => {
   mocks.createActivity.mockResolvedValue({ id: ACTIVITY });
-  const mounted = await openSchedule(STRANGER);
+  const mounted = await openSchedule(STRANGER, { ownerName: 'Kiran Gurung' });
+  // The box names the record's owner (UIP-FORM-006), with a hint that they cannot be assigned from here.
+  expect((inDialog('input[role="combobox"]') as HTMLInputElement).value).toBe('Kiran Gurung');
+  expect(dialog()?.textContent).toContain(
+    'Kiran Gurung owns this lead but is not someone you can assign to',
+  );
   await pickDate(dialog()!, 'dueAt', '2026-11-20T10:30');
   await click(footerButton('Schedule'));
   await settle();
@@ -137,12 +150,13 @@ it('plans a follow-up on an opportunity, leaving it to the deal owner when they 
       subjectKind="opportunityId"
       subjectId={DEAL}
       ownerUserId={STRANGER}
+      ownerName="Kiran Gurung"
       owners={owners.map((o) => ({ ...o, email: '' }))}
     />,
   );
   await click(mounted.container.querySelector('button'));
-  expect(dialog()?.textContent).toContain('Opportunity owner');
-  expect(dialog()?.textContent).not.toContain('Lead owner');
+  // The owner is not a choice, so the box still names them from the record; the form posts nothing.
+  expect((inDialog('input[role="combobox"]') as HTMLInputElement).value).toBe('Kiran Gurung');
   await pickDate(dialog()!, 'dueAt', '2026-11-22T09:00');
   await click(footerButton('Schedule'));
   await settle();
@@ -155,18 +169,34 @@ it('plans a follow-up on an opportunity, leaving it to the deal owner when they 
   await mounted.unmount();
 });
 
-it('says the follow-up goes to the person scheduling it when the record has no owner', async () => {
+it('names the signed-in user, with their role, when the record has no owner', async () => {
   const mounted = await mountForm(
     <ScheduleFollowUpDialog
       subjectKind="opportunityId"
       subjectId={LEAD}
       ownerUserId={null}
-      owners={owners}
+      me={{ userId: OTHER, name: 'Ram Thapa' }}
+      owners={owners.map((o) => ({ ...o, role: 'Sales' }))}
     />,
   );
   await click(mounted.container.querySelector('button'));
-  expect(dialog()?.textContent).toContain('Me');
-  expect(dialog()?.textContent).not.toContain('Opportunity owner');
+  // Me is assignable, so the box names them; not "Me".
+  expect((inDialog('input[role="combobox"]') as HTMLInputElement).value).toBe('Ram Thapa Sales');
+  expect(dialog()?.textContent).toContain('has no owner, so the follow-up is yours');
+  await mounted.unmount();
+});
+
+it('names the signed-in user even when they are not in the assignable list', async () => {
+  const mounted = await openSchedule(null, { me: { userId: STRANGER, name: 'Kiran Gurung' } });
+  expect((inDialog('input[role="combobox"]') as HTMLInputElement).value).toBe('Kiran Gurung');
+  await mounted.unmount();
+});
+
+it('shows an empty prompt only for an ownerless record whose caller is unknown', async () => {
+  const mounted = await openSchedule(null);
+  const box = inDialog('input[role="combobox"]') as HTMLInputElement;
+  expect(box.value).toBe('');
+  expect(box.placeholder).toBe('Choose a person');
   await mounted.unmount();
 });
 
@@ -215,12 +245,16 @@ it('reschedules from the current Kathmandu time and keeps an unlisted assignee u
         subject: 'Call back',
         dueAt: '2026-11-20T04:45:00.000Z',
         assigneeUserId: STRANGER,
+        assigneeName: 'Kiran Gurung',
         version: 3,
       }}
       trigger={<button type="button">Reschedule</button>}
     />,
   );
   await click(mounted.container.querySelector('button'));
+  // The current assignee is named, not "Keep current assignee".
+  expect((inDialog('input[role="combobox"]') as HTMLInputElement).value).toBe('Kiran Gurung');
+  expect(dialog()?.textContent).toContain('Kiran Gurung cannot be assigned by you');
   const due = inDialog('input[name="dueAt"]') as HTMLInputElement;
   expect(due.value).toBe('2026-11-20T10:30');
 

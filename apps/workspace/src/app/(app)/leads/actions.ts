@@ -39,6 +39,7 @@ import {
   parseCompleteActivity,
   parseConvert,
   parseLead,
+  parseLeadAddress,
   parseLeadUpdate,
   parseRescheduleActivity,
   parseScheduleFollowUp,
@@ -287,6 +288,63 @@ export async function updateLeadOwnerAction(
   } catch (err) {
     const refused = assignmentRefusalText(err);
     if (refused) return { fieldErrors: { ownerUserId: refused } };
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  return { ok: true };
+}
+
+/** What unlinking answers: the new version (the dialog keeps converting with it), or why not. */
+export type UnlinkLeadState =
+  { ok: true; version: number } | { ok: false; error: string; reload?: boolean };
+
+/**
+ * Drop the lead's link to the customer (and contact) picked in its company field (`PATCH /v1/leads/:id` with
+ * `customerId: null` and the version the page showed). The company name and person stay as typed. Needs no read of the
+ * customer: the reason to unlink may be that the caller cannot open it. A stale version (409) asks for a reload.
+ */
+export async function unlinkLeadCustomerAction(
+  leadId: string,
+  expectedVersion: number,
+): Promise<UnlinkLeadState> {
+  if (!UUID.test(leadId) || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    return { ok: false, error: INCOMPLETE, reload: true };
+  }
+  const session = await requireStaffSession(`/leads/${leadId}`);
+  try {
+    const lead = await updateLead(session, leadId, { customerId: null, expectedVersion });
+    revalidatePath(`/leads/${leadId}`);
+    revalidatePath('/leads');
+    return { ok: true, version: lead.version };
+  } catch (err) {
+    const f = failureOf(err);
+    return { ok: false, error: f.message, reload: f.reload };
+  }
+}
+
+/**
+ * Change the lead's optional address (`PATCH /v1/leads/:id` with `address`, `null` to clear it, and the version the
+ * page showed). Half an address comes back under the field it lacks; a stale version (409) as the reload message.
+ */
+export async function updateLeadAddressAction(
+  _prev: LeadContactState,
+  form: FormData,
+): Promise<LeadContactState> {
+  const leadValue = form.get('leadId');
+  const leadId = typeof leadValue === 'string' ? leadValue : '';
+  if (!UUID.test(leadId)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/leads/${leadId}`);
+  const parsed = parseLeadAddress(form);
+  if (!parsed.ok) {
+    const { expectedVersion, ...fieldErrors } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    return { fieldErrors };
+  }
+  try {
+    await updateLead(session, leadId, parsed.data);
+  } catch (err) {
     const f = failureOf(err);
     return { error: f.message, reload: f.reload };
   }

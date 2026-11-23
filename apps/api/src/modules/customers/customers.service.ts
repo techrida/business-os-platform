@@ -66,9 +66,10 @@ import { READ_ONLY, withTx, type Actor, type TxScope } from '../../platform/db/t
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personLabel, personNameMap, personNames } from '../../platform/users/person-names';
+import { roleLines } from '../../platform/users/person-role';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
-import { loadContactPhones, replaceContactPhones } from './contact-phones';
+import { loadContactPhones, loadPrimaryPhones, replaceContactPhones } from './contact-phones';
 import { customerVisibleWhere } from './customer-read-scope';
 import { CustomersCaller } from './customers.caller';
 import {
@@ -346,8 +347,18 @@ export class CustomersService {
       scope.tenantId,
       rows.map((r) => r.ownerUserId),
     );
+    // R6A (D8): the primary contact's primary number, one query for the page.
+    const phones = await loadPrimaryPhones(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.id),
+    );
     return {
-      items: rows.map((r) => ({ ...toCustomerDto(r), ownerName: nameIn(names, r.ownerUserId) })),
+      items: rows.map((r) => ({
+        ...toCustomerDto(r),
+        ownerName: nameIn(names, r.ownerUserId),
+        primaryPhone: phones.get(r.id) ?? null,
+      })),
       total,
     };
   }
@@ -421,6 +432,13 @@ export class CustomersService {
       person.roles.push(r.roleKey as RoleKey);
       people.set(r.userId, person);
     }
+    const roles = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => roleLines(tx, scope, [...people.keys()]),
+      READ_ONLY,
+    );
     const out: CustomerOwnerOption[] = [];
     for (const [userId, person] of people) {
       if (
@@ -431,7 +449,11 @@ export class CustomersService {
           'customer.write',
         )
       ) {
-        out.push({ userId, displayName: personLabel(person.displayName) });
+        out.push({
+          userId,
+          displayName: personLabel(person.displayName),
+          role: roles.get(userId) ?? null,
+        });
       }
     }
     return out.sort(

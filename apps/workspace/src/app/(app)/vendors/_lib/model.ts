@@ -55,7 +55,7 @@ export function isEditable(status: VendorStatus): boolean {
   return status !== 'blocked' && status !== 'archived';
 }
 
-/** Once approved, the legal name and PAN change through a new KYB review, not an edit. */
+/** Once approved, the legal name, PAN, kind and country can no longer be edited. */
 export function identityLocked(status: VendorStatus): boolean {
   return status === 'approved' || status === 'suspended';
 }
