@@ -5,6 +5,24 @@
 	tls {$CADDY_TLS:internal}
 }
 
+# Upstream connection reuse for the Node servers (workspace, portal, API, Login V2 UI).
+# Why: Node closes an idle keep-alive connection after 5 s (http.Server keepAliveTimeout, also Next.js), while Caddy
+# keeps an idle upstream connection for 2 min by default. A request that Caddy sends down a connection Node closed a
+# moment earlier fails with EOF and the browser gets a 502 (seen on bos-testrun, behind a socat relay that also drops
+# idle connections). Two settings fix it together:
+#   - keepalive 3s: Caddy closes its idle upstream connections after 3 s, always before the upstream's 5 s, so it
+#     rarely reuses a connection the upstream is about to drop.
+#   - lb_retries 1 / lb_try_duration 3s: when that race is lost anyway, Caddy dials a fresh connection and retries the
+#     request once instead of answering 502. A single upstream is enough; there is no second backend to fall to.
+# Keep keepalive below the upstream's idle timeout if that is ever raised.
+(node_upstream) {
+	lb_retries 1
+	lb_try_duration 3s
+	transport http {
+		keepalive 3s
+	}
+}
+
 # ZITADEL: API (gRPC, Connect, OIDC) on h2c plus the Login V2 UI, same routing as ZITADEL's official compose.
 {$AUTH_HOST:auth.localhost} {
 	import site_tls
@@ -20,7 +38,9 @@
 
 	@login path /ui/v2/login /ui/v2/login/*
 	handle @login {
-		reverse_proxy zitadel-login:3000
+		reverse_proxy zitadel-login:3000 {
+			import node_upstream
+		}
 	}
 
 	# convenience alias: /api/<path> reaches the API as /<path>
@@ -40,14 +60,18 @@
 # Workspace (Next.js staff app)
 {$APP_HOST:app.localhost} {
 	import site_tls
-	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000}
+	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000} {
+		import node_upstream
+	}
 }
 
 # Customer portal (Next.js, apps/portal). Same shape as the workspace site: security headers (CSP, nosniff,
 # frame-deny) come from the app's own next.config.ts, and the login limiter is in the app too.
 {$PORTAL_HOST:portal.localhost} {
 	import site_tls
-	reverse_proxy {$PORTAL_UPSTREAM:portal:3000}
+	reverse_proxy {$PORTAL_UPSTREAM:portal:3000} {
+		import node_upstream
+	}
 }
 
 # API. /metrics is never served here (metrics live on an internal port).
@@ -62,6 +86,7 @@
 	handle {
 		reverse_proxy {$API_UPSTREAM:api:3001} {
 			header_up X-Request-Id {http.request.uuid}
+			import node_upstream
 		}
 	}
 }
