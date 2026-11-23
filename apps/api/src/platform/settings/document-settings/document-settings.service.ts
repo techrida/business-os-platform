@@ -190,6 +190,10 @@ export class DocumentSettingsService {
       snapshot: {
         style: { layout: body.layout, primaryColour: body.primaryColour },
         profile: snapshotProfileFrom(profile, logo),
+        // A logo of the uploaded document was chosen for this layout's colour: no plate behind it.
+        ...(logo !== null && logo !== (profile.legacyLogoDataUrl ?? null)
+          ? { logoForBackground: logoBackgroundHex(style) }
+          : {}),
         numberSystems,
         dateFormat,
         capturedAt: new Date().toISOString(),

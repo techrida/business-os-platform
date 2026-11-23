@@ -538,7 +538,8 @@ export class ImagesService {
       // Locks the setting key: a concurrent profile save waits, then appends after this one.
       const { value } = await this.settings.getLocked(tx, 'entity.profile');
       return {
-        documentId: value[ENTITY_LOGO_FIELD[ownerType]],
+        // A profile saved before the variants existed has no such field: read it as unset.
+        documentId: value[ENTITY_LOGO_FIELD[ownerType]] ?? null,
         // Only the primary slot replaces the pre-documents logo.
         hasLegacy:
           ownerType === 'entity_logo' &&
