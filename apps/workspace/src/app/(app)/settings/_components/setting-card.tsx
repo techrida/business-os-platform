@@ -13,13 +13,13 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, type FieldControlProps } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { DecimalInput, PercentInput } from '@/components/ui/number-input';
 import { Panel } from '@/components/ui/panel';
 import type { SettingsSectionId } from '@/lib/settings-nav';
 
 import { roleLabel } from '../users/role-checkboxes';
 import {
-  PERSON_DEFAULT_OPTION,
   TRIGGER_OPTIONS,
   scheduleSummary,
   type FieldSpec,
@@ -29,6 +29,7 @@ import {
 } from './setting-fields';
 import { SettingsForm, useSettingsFormContext, type SaveSettingsPageAction } from './settings-form';
 import styles from './settings.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * Whole digits for a whole-number setting the contracts give no upper bound (`z.number().int()`,
@@ -125,32 +126,34 @@ function FieldActions({
   return (
     <span className={[styles.fieldActions, className].filter(Boolean).join(' ')} data-field-actions>
       {dirty ? (
-        <button
-          type="button"
-          className={styles.iconButton}
-          aria-label={`Undo change to ${spec.label}`}
-          title="Undo change"
-          onClick={(event) => {
-            focusSettingControl(event.currentTarget);
-            onUndo();
-          }}
-        >
-          <Icon name="undo-2" size={16} />
-        </button>
+        <Tooltip content="Undo change">
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Undo change to ${spec.label}`}
+            onClick={(event) => {
+              focusSettingControl(event.currentTarget);
+              onUndo();
+            }}
+          >
+            <Icon name="undo-2" size={16} />
+          </button>
+        </Tooltip>
       ) : null}
       {!atDefault ? (
-        <button
-          type="button"
-          className={styles.iconButton}
-          aria-label={`Reset ${spec.label} to default`}
-          title={`Back to default (${spec.defaultText})`}
-          onClick={(event) => {
-            focusSettingControl(event.currentTarget);
-            onResetToDefault();
-          }}
-        >
-          <ResetDefaultIcon />
-        </button>
+        <Tooltip content={`Back to default (${spec.defaultText})`}>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Reset ${spec.label} to default`}
+            onClick={(event) => {
+              focusSettingControl(event.currentTarget);
+              onResetToDefault();
+            }}
+          >
+            <ResetDefaultIcon />
+          </button>
+        </Tooltip>
       ) : null}
     </span>
   );
@@ -306,22 +309,33 @@ function Control({
     }
     case 'person': {
       const textValue = value.kind === 'text' ? value.value : '';
+      // Empty stores null and the Sales head owns such leads: show that person, and say so under the field.
+      const hint = [
+        spec.help,
+        textValue === ''
+          ? spec.salesHeadId
+            ? 'Nobody chosen, so the Sales head, shown here, gets them. Clear the box to follow the Sales head again.'
+            : 'Nobody chosen and no Sales head is set up yet. Choose a person.'
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' ');
       return (
-        <Field label={spec.label} hint={spec.help} error={error}>
+        <Field label={spec.label} hint={hint} error={error}>
           {(control) => (
-            <Select
+            <MemberPicker
+              labelledBy={control['aria-labelledby']}
+              describedBy={control['aria-describedby']}
+              invalid={control['aria-invalid'] === true}
               name={`v:${spec.key}`}
+              people={spec.people ?? []}
               value={textValue}
-              onChange={(e) => onChange({ kind: 'text', value: e.currentTarget.value })}
-              {...control}
-            >
-              <option value="">{PERSON_DEFAULT_OPTION}</option>
-              {(spec.options ?? []).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+              onChange={(id) => onChange({ kind: 'text', value: id })}
+              emptyStandsFor={spec.salesHeadId}
+              current={spec.unavailablePerson}
+              placeholder="Search by name"
+              emptyText="No one can be given new leads yet."
+            />
           )}
         </Field>
       );

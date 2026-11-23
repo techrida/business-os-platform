@@ -55,3 +55,8 @@ if (typeof Text !== 'undefined') {
     proto.getBoundingClientRect = emptyRect;
   }
 }
+
+// jsdom has no scrollIntoView; the member and option lists call it to keep the highlighted row visible.
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => undefined;
+}

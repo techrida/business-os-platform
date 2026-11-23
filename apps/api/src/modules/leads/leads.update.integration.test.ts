@@ -326,6 +326,74 @@ describe('PATCH /v1/leads/:id', () => {
   });
 });
 
+describe('D9: the optional address of a lead', () => {
+  it('stores none by default, takes street lines and city on create, and reads them back as an address', async () => {
+    const plain = await seed();
+    expect(plain.address).toBeNull();
+    const withAddress = await seed({ address: { line: ' 12 Lazimpat Road ', city: 'Kathmandu' } });
+    expect(withAddress.address).toEqual({ line: '12 Lazimpat Road', city: 'Kathmandu' });
+    expect(withAddress.country).toBe('NP');
+    const read = dto((await request(baseUrl).get(`/v1/leads/${withAddress.id}`)).body);
+    expect(read.address).toEqual({ line: '12 Lazimpat Road', city: 'Kathmandu' });
+    const row = await rowOf(withAddress.id);
+    expect([row.addressLine, row.addressCity]).toEqual(['12 Lazimpat Road', 'Kathmandu']);
+  });
+
+  it('refuses half an address (a line without a city, or a city without a line) with 400', async () => {
+    const noCity = await request(baseUrl)
+      .post('/v1/leads')
+      .send({ ...BODY, address: { line: '12 Lazimpat Road' } });
+    expect(noCity.status).toBe(400);
+    const noLine = await request(baseUrl)
+      .post('/v1/leads')
+      .send({ ...BODY, address: { city: 'Kathmandu' } });
+    expect(noLine.status).toBe(400);
+  });
+
+  it('edits the address, audits the old and new one, clears it with null, and leaves it alone when not sent', async () => {
+    const lead = await seed({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } });
+    const moved = await patch(lead.id, {
+      address: { line: 'Ward 4, Lakeside', city: 'Pokhara' },
+      expectedVersion: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    expect(dto(moved.body).address).toEqual({ line: 'Ward 4, Lakeside', city: 'Pokhara' });
+    const { rows } = await h.ownerPool.query(
+      `SELECT before, after FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_id = $2 AND action = 'lead.updated'`,
+      [h.tenantId, lead.id],
+    );
+    expect(rows).toEqual([
+      {
+        before: { address: { line: '12 Lazimpat Road', city: 'Kathmandu' } },
+        after: { address: { line: 'Ward 4, Lakeside', city: 'Pokhara' } },
+      },
+    ]);
+    // An edit that does not mention the address keeps it.
+    const titled = await patch(lead.id, { title: 'Another title', expectedVersion: 2 });
+    expect(dto(titled.body).address).toEqual({ line: 'Ward 4, Lakeside', city: 'Pokhara' });
+    // The same address again changes nothing.
+    const same = await patch(lead.id, {
+      address: { line: 'Ward 4, Lakeside', city: 'Pokhara' },
+      expectedVersion: 3,
+    });
+    expect(same.status).toBe(400);
+    // null clears both columns.
+    const cleared = await patch(lead.id, { address: null, expectedVersion: 3 });
+    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
+    expect(dto(cleared.body).address).toBeNull();
+    const row = await rowOf(lead.id);
+    expect([row.addressLine, row.addressCity]).toEqual([null, null]);
+  });
+
+  it('the database holds the two columns together (leads_address_check)', async () => {
+    const lead = await seed();
+    await expect(
+      h.ownerPool.query(`UPDATE app.leads SET address_line = 'x' WHERE id = $1`, [lead.id]),
+    ).rejects.toMatchObject({ constraint: 'leads_address_check' });
+  });
+});
+
 describe('GET /v1/leads/owners', () => {
   it('offers a salesperson with no department only themselves', async () => {
     const list = await owners();
@@ -716,6 +784,44 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
       await setDefault(salesPeer);
       await h.actAs(salesStaff);
       expect((await seed()).ownerUserId).toBe(salesStaff);
+    } finally {
+      await setDefault(null);
+    }
+  });
+
+  it('marks in the create owner list the person an ownerless lead goes to, with their role (BOS-UI-001)', async () => {
+    const settings = new SettingsService(h.db);
+    const setDefault = (value: string | null) =>
+      withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        settings.set(tx, 'crm.default_lead_owner', value),
+      );
+    const createList = async () => {
+      const res = await request(baseUrl).get('/v1/leads/owners?context=create');
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return LeadOwnerOptionSchema.array().parse(res.body);
+    };
+    try {
+      await h.actAs(finance);
+      // Nothing set: the Sales head, and the list says so.
+      let list = await createList();
+      expect(list.filter((o) => o.defaultOwner !== undefined)).toEqual([
+        expect.objectContaining({ userId: salesHead, defaultOwner: 'sales_head' }),
+      ]);
+      expect((await seed()).ownerUserId).toBe(salesHead);
+      // Job title and department read as the memo people list words them.
+      expect(list.find((o) => o.userId === salesHead)?.role).toBe('Sales');
+
+      // The configured person wins, and the mark follows it: the same person the lead then gets.
+      await setDefault(salesPeer);
+      list = await createList();
+      expect(list.filter((o) => o.defaultOwner !== undefined)).toEqual([
+        expect.objectContaining({ userId: salesPeer, defaultOwner: 'settings' }),
+      ]);
+      expect((await seed()).ownerUserId).toBe(salesPeer);
+
+      // A caller who keeps the lead themselves gets no mark: nothing is being defaulted for them.
+      await h.actAs(salesStaff);
+      expect((await createList()).some((o) => o.defaultOwner !== undefined)).toBe(false);
     } finally {
       await setDefault(null);
     }

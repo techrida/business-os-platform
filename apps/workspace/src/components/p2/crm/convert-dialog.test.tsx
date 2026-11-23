@@ -247,6 +247,54 @@ it('searches a different legal name and links the selected customer without dupl
   expect(dialog().textContent).not.toContain(CUSTOMER);
 });
 
+it('starts a lead linked to a customer and contact on converting into them, with no search or duplicate step (R6O)', async () => {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  api.listContacts.mockResolvedValue({
+    items: [{ id: CONTACT, fullName: 'Mina', email: 'mina@himal.example' }],
+  });
+  mounted = await mountForm(
+    <ConvertDialog
+      lead={{
+        id: LEAD,
+        version: 1,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'Himal Supplies Pvt. Ltd.',
+        customerId: CUSTOMER,
+        contactId: CONTACT,
+        contactName: 'Mina',
+        email: '',
+        country: 'NP',
+        phones: [],
+      }}
+      action={async (prev, form) => {
+        submitted.push(form);
+        return convertLeadAction(prev, form);
+      }}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  const customerMode = dialog().querySelector<HTMLInputElement>(
+    'input[name="customerMode"][value="existing"]',
+  );
+  expect(customerMode?.checked).toBe(true);
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
+    CUSTOMER,
+  );
+  expect(dialog().textContent).toContain('Himal Supplies Pvt. Ltd.');
+  expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
+  await submit(dialog());
+  expect(api.convertLead).toHaveBeenCalledWith(
+    expect.anything(),
+    LEAD,
+    expect.objectContaining({
+      customer: { mode: 'existing', customerId: CUSTOMER },
+      contact: { mode: 'existing', contactId: CONTACT },
+    }),
+    expect.any(String),
+  );
+});
+
 it('keeps refused customer searches empty and does not issue blank or oversized reads', async () => {
   api.listCustomers.mockRejectedValue(new ApiError(403, 'forbidden'));
   const result = await searchConversionCustomers('Mountain');
@@ -462,4 +510,58 @@ it('creates a new customer and contact through the real action', async () => {
       contact: { fullName: 'Mina', email: 'mina@newsupplies.example', isPrimary: true },
     },
   });
+});
+
+async function mountWithoutTyping(lead: Partial<ConvertLead>) {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  mounted = await mountForm(
+    <ConvertDialog
+      lead={{
+        id: LEAD,
+        version: 1,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'New Supplies',
+        contactName: 'Mina',
+        email: 'mina@newsupplies.example',
+        country: 'NP',
+        phones: [],
+        ...lead,
+      }}
+      action={convertLeadAction}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+}
+
+it("D9: prefills the new customer's Address and City from the lead's address, and sends them unchanged", async () => {
+  await mountWithoutTyping({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } });
+  expect(dialog().querySelector<HTMLTextAreaElement>('[name="address.line"]')?.value).toBe(
+    '12 Lazimpat Road',
+  );
+  expect(dialog().querySelector<HTMLInputElement>('[name="address.city"]')?.value).toBe(
+    'Kathmandu',
+  );
+  await submit(dialog());
+  expect(api.convertLead).toHaveBeenCalledTimes(1);
+  expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({
+    customer: {
+      mode: 'create',
+      customer: { country: 'NP', address: { line: '12 Lazimpat Road', city: 'Kathmandu' } },
+    },
+  });
+});
+
+it('D9: the prefilled address stays editable, and a lead without one starts empty', async () => {
+  await mountWithoutTyping({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } });
+  await fillAddress('Ward 4, Lakeside', 'Pokhara');
+  await submit(dialog());
+  expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({
+    customer: { customer: { address: { line: 'Ward 4, Lakeside', city: 'Pokhara' } } },
+  });
+  await mounted.unmount();
+  vi.clearAllMocks();
+  await mountWithoutTyping({ address: null });
+  expect(dialog().querySelector<HTMLTextAreaElement>('[name="address.line"]')?.value).toBe('');
+  expect(dialog().querySelector<HTMLInputElement>('[name="address.city"]')?.value).toBe('');
 });

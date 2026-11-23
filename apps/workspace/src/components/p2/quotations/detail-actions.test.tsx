@@ -322,13 +322,11 @@ describe('Send', () => {
     ['a file not yet clean', { renderedScanStatus: 'quarantined' as const }, /still being scanned/],
     ['a past validity date', { validUntil: '2026-11-07' }, /has expired/],
     ['the expired status', { status: 'expired' as const }, /has expired/],
-  ])('is off for %s, with the reason linked by aria-describedby', (_name, over, words) => {
+  ])('is off for %s, with no caption beside it', (_name, over, words) => {
     const html = render(over);
-    const described = /<button[^>]*aria-describedby="([^"]+)"[^>]*>Send to customer/.exec(html);
-    expect(described?.[1]).toBeTruthy();
-    expect(html).toMatch(new RegExp(`aria-disabled="true"`));
-    const reason = new RegExp(`<p id="${described?.[1]}"[^>]*>([^<]+)</p>`).exec(html);
-    expect(reason?.[1]).toMatch(words);
+    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Send to customer<\/button>/);
+    // UIP-FORM-011: the reason is the Tooltip's (blocked-action-tooltips.test.tsx), not a caption.
+    expect(html).not.toMatch(words);
     // Off means no form to submit: the dialog and its fields are not in the page.
     expect(html).not.toContain('name="recipientContactId"');
   });
@@ -336,7 +334,7 @@ describe('Send', () => {
   it('is off, with one line of words, when no contact has an email', () => {
     const html = render({}, [{ id: BOB, name: 'Bob NoMail', email: null }]);
     expect(html).toContain('aria-disabled="true"');
-    expect(html).toContain('No contact for this customer has an email address');
+    expect(html).not.toContain('No contact for this customer has an email address');
   });
 
   it('keeps a very long contact name as text', () => {
@@ -385,6 +383,8 @@ describe('Revise', () => {
   });
 });
 
+const V_EARLIER = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
 describe('Cancel quotation (F1-Q27: Cancel only)', () => {
   const cancelTriggers = (html: string): number =>
     [...html.matchAll(/<button[^>]*>Cancel quotation<\/button>/g)].length;
@@ -421,6 +421,23 @@ describe('Cancel quotation (F1-Q27: Cancel only)', () => {
       'Cancelling ends this quotation and its approval request',
     );
     expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('approval request');
+  });
+
+  it('tells the person that cancelling a revision gives the earlier sent or approved one back (R6D)', () => {
+    const html = renderToStaticMarkup(
+      <DetailActions
+        quotationId={Q}
+        number="QT-2082-0042"
+        current={{ ...current({ status: 'draft' }), supersedesVersionId: V_EARLIER }}
+        contacts={contacts}
+        capabilities={{ ...ALLOWED, canCancel: true }}
+        reloadHref={`/quotations/${Q}`}
+        today={TODAY}
+      />,
+    );
+    expect(html).toContain('becomes the live quotation again');
+    expect(html).not.toContain('it stays in the list as Cancelled');
+    expect(renderWith('draft', ALLOWED, { canCancel: true })).not.toContain('live quotation again');
   });
 
   it.each(['approved', 'sent', 'accepted', 'rejected', 'expired', 'cancelled'] as const)(

@@ -126,6 +126,22 @@ describe('acceptAction', () => {
     expect(down.error).toBeTruthy();
   });
 
+  it('sends the customer to the "no longer open" page when the deal was lost while the page was open (R6D)', async () => {
+    const closed = () =>
+      json(
+        { error: { code: 'quotation_closed', message: 'This quotation is no longer open' } },
+        409,
+      );
+    fetchMock.mockResolvedValueOnce(closed());
+    expect(
+      await redirectOf(acceptAction({ key: IDEM }, form({ acceptedByName: 'J', confirm: 'on' }))),
+    ).toBe(`/quotations/${ID}`);
+    fetchMock.mockResolvedValueOnce(closed());
+    expect(await redirectOf(rejectAction({ key: IDEM }, form({ comment: 'No' })))).toBe(
+      `/quotations/${ID}`,
+    );
+  });
+
   it('never answers an acceptance with "contact us": the API records it whatever the evidence policy (F1-Q28)', async () => {
     fetchMock.mockResolvedValueOnce(
       json(

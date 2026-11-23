@@ -79,9 +79,11 @@ export function layoutOptions(
     const label = option.group?.trim() ? option.group.trim() : ungroupedLabel;
     byGroup.set(label, [...(byGroup.get(label) ?? []), option]);
   }
+  // A list with its own order (the caller's relevance order) also keeps its groups in the order they first appear;
+  // the ungrouped options (such as the Create row) always come last.
   const groups = [...byGroup.entries()]
     .sort(([a], [b]) =>
-      a === ungroupedLabel ? 1 : b === ungroupedLabel ? -1 : collator.compare(a, b),
+      a === ungroupedLabel ? 1 : b === ungroupedLabel ? -1 : keepOrder ? 0 : collator.compare(a, b),
     )
     .map(([label, members]) => ({ key: label, label, options: members }));
   return { grouped, groups, flat: groups.flatMap((g) => g.options) };
@@ -93,16 +95,18 @@ export const ADD_OPTION_ID = '__add__';
 /**
  * The row that offers to add what was typed: null while the box is empty or an option already has exactly those
  * words (trimmed, case-insensitive), so the same text is never offered as new next to the option it duplicates.
+ * `always` keeps the row even then (a company field where the typed name may match a customer and still be new).
  */
 export function addOptionFor(
   options: readonly ComboboxOption[],
   query: string,
   makeLabel: (text: string) => string,
+  always = false,
 ): ComboboxOption | null {
   const text = query.trim();
   if (text === '') return null;
   const wanted = fold(text);
-  if (options.some((o) => fold(o.label.trim()) === wanted)) return null;
+  if (!always && options.some((o) => fold(o.label.trim()) === wanted)) return null;
   return { id: ADD_OPTION_ID, label: makeLabel(text), searchText: text };
 }
 

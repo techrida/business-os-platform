@@ -15,6 +15,7 @@ import {
   type DepartmentRecord,
   type StaffChoice,
 } from './record-dialogs';
+import { Tooltip } from '@/components/ui/tooltip';
 
 type Open = null | 'rename' | 'retire' | 'restore';
 
@@ -106,27 +107,29 @@ export function DepartmentActions({
         <span className={styles.wide}>
           <span className={styles.rowActions}>
             {active && (
+              <Tooltip content={`Rename ${name}`}>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  className={styles.iconButton}
+                  aria-label={`Rename ${name}`}
+                  onClick={opener('rename')}
+                >
+                  <PencilGlyph />
+                </Button>
+              </Tooltip>
+            )}
+            <Tooltip content={active ? `Retire ${name}` : `Restore ${name}`}>
               <Button
                 variant="ghost"
                 size="small"
                 className={styles.iconButton}
-                aria-label={`Rename ${name}`}
-                title={`Rename ${name}`}
-                onClick={opener('rename')}
+                aria-label={active ? `Retire ${name}` : `Restore ${name}`}
+                onClick={opener(active ? 'retire' : 'restore')}
               >
-                <PencilGlyph />
+                {active ? <ArchiveGlyph /> : <RestoreGlyph />}
               </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="small"
-              className={styles.iconButton}
-              aria-label={active ? `Retire ${name}` : `Restore ${name}`}
-              title={active ? `Retire ${name}` : `Restore ${name}`}
-              onClick={opener(active ? 'retire' : 'restore')}
-            >
-              {active ? <ArchiveGlyph /> : <RestoreGlyph />}
-            </Button>
+            </Tooltip>
           </span>
         </span>
         <span className={styles.narrow}>
