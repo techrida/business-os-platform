@@ -34,7 +34,7 @@ export function Field({
   label: ReactNode;
   /**
    * Marks a field that may be left empty with a muted "Optional" at the right end of the label row (UIP-FORM-008).
-   * Never write "(optional)" in the label or "Optional." in the hint.
+   * The label and the hint do not repeat it.
    */
   optional?: boolean;
   hint?: ReactNode;
