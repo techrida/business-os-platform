@@ -164,7 +164,7 @@ export function CreateGroupForm() {
             />
           )}
         </Field>
-        <Field label="Key" hint="Lowercase letters, digits, _ . - ; used by workflow steps.">
+        <Field label="Key">
           {(control) => (
             <Input
               {...control}
@@ -172,6 +172,7 @@ export function CreateGroupForm() {
               required
               autoComplete="off"
               pattern="[a-z][a-z0-9_.\-]{0,63}"
+              placeholder="finance-approvers"
               defaultValue={kept.key ?? ''}
             />
           )}
@@ -287,7 +288,7 @@ export function DelegationForm({
             />
           )}
         </Field>
-        <Field label="Document type (optional)">
+        <Field label="Document type" optional>
           {(control) => (
             <SuggestInput
               {...control}

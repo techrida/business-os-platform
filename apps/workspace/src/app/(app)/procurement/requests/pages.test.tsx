@@ -598,7 +598,9 @@ it('uses named departments and allows editing cost centre and project references
   expect(out).toContain(`name="projectId"`);
   expect(out).not.toContain('type="hidden" name="projectId"');
   expect(out).not.toContain('Cost centre name unavailable');
-  expect(out).toContain('Optional. Enter the project reference, or leave blank.');
+  // Optional sits beside the label (UIP-FORM-008); the hint and the "(optional)" label text are gone.
+  expect(out).not.toContain('Optional. Enter the project reference');
+  expect(out).toMatch(/Project<\/label><span[^>]*>Optional<\/span>/);
   // The department is chosen by name; no raw-ID text input is offered.
   expect(out).not.toMatch(/<input(?![^>]*type="hidden")[^>]+name="departmentId"/);
   expect(out).not.toContain(`>${DEPT}<`);

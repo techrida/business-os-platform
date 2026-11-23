@@ -197,7 +197,7 @@ export function MarkContactedDialog({
             : {})}
           disabled={pending}
         />
-        <Field label="Subject" hint="Optional." error={fieldErrors['contactSubject']}>
+        <Field label="Subject" optional error={fieldErrors['contactSubject']}>
           {(control) => <Input name="contactSubject" maxLength={200} {...control} />}
         </Field>
         <Field label="Note" error={fieldErrors['contactBody']}>

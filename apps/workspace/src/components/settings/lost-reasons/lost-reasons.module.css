@@ -90,6 +90,11 @@
   flex: 1 1 240px;
 }
 
+/* Each Field ends in a reserved message line (UIP-FORM-010); lift the buttons to the input box. */
+.edit > .actions {
+  margin-block-end: calc(var(--line-height-caption) + 8px);
+}
+
 .add {
   display: flex;
   flex-wrap: wrap;
@@ -103,7 +108,8 @@
 
 .add > button {
   min-block-size: 44px;
-  margin-block-start: 22px;
+  /* Below the Field's label row and its gap, so the button sits level with the box. */
+  margin-block-start: calc(var(--line-height-body-small) + 8px);
 }
 
 @media (max-width: 479px) {

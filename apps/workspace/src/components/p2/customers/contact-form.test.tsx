@@ -140,6 +140,25 @@ describe('the email of a new contact', () => {
     expect(email.required).toBe(false);
     expect(root.querySelector('input[name="requireEmail"]')).toBeNull();
   });
+
+  it('shows "Optional" beside the label of each field that may stay empty, never as a hint (UIP-FORM-008)', async () => {
+    const root = await mount({ requireEmail: false });
+    const row = (text: string) =>
+      [...root.querySelectorAll('label')].find((l) => l.textContent === text)?.parentElement
+        ?.textContent;
+    expect(row('Job title')).toBe('Job titleOptional');
+    expect(row('Email')).toBe('EmailOptional');
+    expect(row('Phone')).toBe('PhoneOptional');
+    expect(row('Full name')).toBe('Full name');
+    expect(root.textContent).not.toContain('Optional.');
+    expect(root.textContent).not.toContain("Pick each number's country");
+  });
+
+  it('keeps no "Optional" marker on the email when it is required', async () => {
+    const root = await mount({ requireEmail: true });
+    const label = [...root.querySelectorAll('label')].find((l) => l.textContent === 'Email');
+    expect(label?.parentElement?.textContent).toBe('Email');
+  });
 });
 
 describe('the phones and country of a new contact (FX9)', () => {

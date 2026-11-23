@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaymentRequestItem } from '@/lib/api-payables';
 import { choose, click, fill, mountForm, typeKeys } from '@/test/form-interactions';
 
+import { pickByTyping } from '../../procurement/pick-existing.test-helpers';
+
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('./actions', () => ({
   createPaymentRequestAction: vi.fn(),
@@ -64,7 +66,7 @@ async function currencyOptions() {
 
 it('offers every vendor bill currency, NPR first, including one switched off in Settings (D56 U16-Q1)', async () => {
   mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
-  await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+  await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
   expect(currencyField().value).toBe('NPR');
   expect(mounted.container.textContent).not.toContain('switched off');
   // Old code offered "INR, switched off" as a disabled option.
@@ -80,7 +82,7 @@ it('offers every vendor bill currency, NPR first, including one switched off in 
 
 it('starts on the switched-off currency when it is the only one the vendor bills are in', async () => {
   mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
-  await choose(mounted.container, 'vendorPartyId', 'Terai Traders');
+  await pickByTyping(mounted.container, 'vendorPartyId', 'Terai Traders', 'Terai Traders');
   // Old code left the currency empty, so nothing could be requested.
   expect(currencyField().value).toBe('INR');
   expect(mounted.container.textContent).not.toContain('switched off');
@@ -94,7 +96,7 @@ describe('the amount per bill', () => {
 
   it('groups the amount as it is typed and posts the plain digits', async () => {
     mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     const box = amountBox();
     // The visible box is named by its label; the hidden input carries the posted name.
     expect(box.getAttribute('name')).toBeNull();
@@ -109,7 +111,7 @@ describe('the amount per bill', () => {
 
   it('refuses a space inside the amount and says to remove it', async () => {
     mounted = await mountForm(<PaymentRequestEntry idempotencyKey="key" items={items} />);
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     const box = amountBox();
     await typeKeys(box, '10 ');
     // Old code took the space as typed and said nothing.
@@ -167,7 +169,7 @@ const entry = (extra: { bankAccountsHref?: string } = {}) => (
 describe('the pay-from bank account picker', () => {
   it('is a labelled combobox offering only active accounts in the request currency', async () => {
     mounted = await mountForm(entry());
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     const input = bankInput();
     // Named by its visible label, not a typed id (old code: "Paying entity bank account ID").
     const labelId = input.getAttribute('aria-labelledby');
@@ -183,7 +185,7 @@ describe('the pay-from bank account picker', () => {
 
   it('filters by bank name and last four, and submits the chosen id from the keyboard', async () => {
     mounted = await mountForm(entry());
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     const input = bankInput();
     input.focus();
     await fill(input, 'nabil');
@@ -198,7 +200,7 @@ describe('the pay-from bank account picker', () => {
 
   it('clears the chosen account when the currency changes to one it does not hold', async () => {
     mounted = await mountForm(entry());
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     const input = bankInput();
     input.focus();
     await fill(input, '1234');
@@ -215,7 +217,7 @@ describe('the pay-from bank account picker', () => {
 
   it('says there is no account in the currency, with a Settings link only when given one', async () => {
     mounted = await mountForm(entry({ bankAccountsHref: '/settings/company-accounts' }));
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     expect(mounted.container.textContent).not.toContain('No active NPR bank account.');
     await choose(mounted.container, 'currency', 'USD');
     expect(mounted.container.textContent).not.toContain('No active USD bank account.');
@@ -229,7 +231,7 @@ describe('the pay-from bank account picker', () => {
         bankAccountsHref="/settings/company-accounts"
       />,
     );
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     // Only a retired NPR account: nothing to offer.
     expect(mounted.container.textContent).toContain('No active NPR bank account.');
     const link = mounted.container.querySelector<HTMLAnchorElement>(
@@ -241,7 +243,7 @@ describe('the pay-from bank account picker', () => {
     mounted = await mountForm(
       <PaymentRequestEntry idempotencyKey="key" items={items} bankAccounts={[NABIL_USD]} />,
     );
-    await choose(mounted.container, 'vendorPartyId', 'Himal Supplies');
+    await pickByTyping(mounted.container, 'vendorPartyId', 'Himal Supplies', 'Himal Supplies');
     expect(mounted.container.textContent).toContain(
       'No active NPR bank account. Ask an administrator to add one in Settings > Bank and expense accounts.',
     );

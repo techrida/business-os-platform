@@ -186,7 +186,8 @@ export function NewDepartmentDialog({
           )}
         </Field>
         <Field
-          label="Head (optional)"
+          label="Head"
+          optional
           hint="The head sees all of this department's work."
           error={headError}
         >

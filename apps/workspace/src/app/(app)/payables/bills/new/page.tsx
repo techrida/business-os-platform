@@ -12,10 +12,8 @@ import { listTaxCodes } from '@/lib/api-tax-codes';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
-import { Field } from '@/components/ui/field';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { SearchInput } from '@/components/ui/search-input';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { listBillSubmissions, type BillSubmission } from '@/lib/api-payables';
@@ -33,6 +31,7 @@ import { amountText, duplicateText } from '../../_lib/duplicates';
 import { billFailure } from '../../_lib/failure';
 import { NEW_BILL_HEADING, withholdingOption } from '../../_lib/forms';
 import { fileStatusLabel } from '../../_lib/model';
+import { vendorOption } from '../../_lib/vendor-options';
 import styles from '../../payables.module.css';
 
 export const metadata: Metadata = { title: 'New bill · Business OS' };
@@ -112,21 +111,13 @@ export default async function NewBillPage({
   searchParams: Promise<{
     submission?: string | string[];
     po?: string | string[];
-    q?: string | string[];
   }>;
 }) {
   const params = await searchParams;
   const submissionId = typeof params.submission === 'string' ? params.submission.trim() : '';
   const poId = typeof params.po === 'string' ? params.po.trim() : '';
-  const q = typeof params.q === 'string' ? params.q.trim().slice(0, 200) : '';
   const query = new URLSearchParams(
-    submissionId !== ''
-      ? { submission: submissionId }
-      : poId !== ''
-        ? { po: poId }
-        : q !== ''
-          ? { q }
-          : {},
+    submissionId !== '' ? { submission: submissionId } : poId !== '' ? { po: poId } : {},
   );
   const here = `/payables/bills/new${query.size > 0 ? `?${query}` : ''}`;
   const session = await requireStaffSession(here);
@@ -161,7 +152,7 @@ export default async function NewBillPage({
         </Shell>
       );
     let standaloneOrder: PoProgress | undefined;
-    let vendors: { id: string; name: string }[] = [];
+    let vendors: { id: string; name: string; description?: string }[] = [];
     let vendorCount = 0;
     let standaloneTax: { id: string; label: string }[];
     let standaloneWithholding: { id: string; label: string }[];
@@ -183,12 +174,15 @@ export default async function NewBillPage({
       if (poId !== '') {
         standaloneOrder = await getPoProgress(session, poId);
       } else {
-        const result = await listVendors(session, {
-          limit: 100,
-          offset: 0,
-          ...(q === '' ? {} : { q }),
+        const result = await listVendors(session, { limit: 100, offset: 0 });
+        vendors = result.items.map((vendor) => {
+          const option = vendorOption(vendor);
+          return {
+            id: option.id,
+            name: option.label,
+            ...(option.description === undefined ? {} : { description: option.description }),
+          };
         });
-        vendors = result.items.map((vendor) => ({ id: vendor.id, name: vendor.legalName }));
         vendorCount = result.total;
       }
       standaloneTax = (await listTaxCodes(session)).map((tax) => ({
@@ -236,26 +230,9 @@ export default async function NewBillPage({
           </Alert>
         </Shell>
       );
-    // The vendor search is its own GET form: it sits beside the bill form, never inside it.
+    // The vendor picker is part of the entry form: typing searches the vendors, no separate search step.
     const lookup = (
       <>
-        {poId === '' ? (
-          <form method="get" action="/payables/bills/new" className={styles.filter}>
-            <Field label="Find a vendor">
-              {(control) => (
-                <SearchInput placeholder="Vendor name" name="q" defaultValue={q} {...control} />
-              )}
-            </Field>
-            <Button type="submit" variant="secondary">
-              Find vendor
-            </Button>
-          </form>
-        ) : null}
-        {vendorCount > 100 ? (
-          <p className={styles.note}>
-            Showing the first 100 vendors. Search by name to narrow the list.
-          </p>
-        ) : null}
         {ordersProblem ? (
           <p className={styles.note}>
             The vendors&apos; purchase orders did not load, so this bill can only be entered without
@@ -273,7 +250,7 @@ export default async function NewBillPage({
         <Shell>
           {lookup}
           <Alert tone="info" role="status">
-            No vendors match this search. Try another name, or ask Procurement to add the vendor.
+            There are no vendors to bill yet. Ask Procurement to add the vendor.
           </Alert>
         </Shell>
       );
@@ -301,6 +278,8 @@ export default async function NewBillPage({
           reloadHref={here}
           entry={{
             vendors,
+            // More vendors than the page lists: the picker asks the server as the user types.
+            searchVendors: vendorCount > 100,
             orders,
             // The invoice date starts at today in Kathmandu (the tenant's calendar), and stays editable.
             today: todayInKathmandu(),
