@@ -45,7 +45,7 @@ const RAM = '3f0c5a52-7c2e-4d0b-9a55-0e8d1d6a3b11';
 const GITA = '7a1e2b3c-4d5e-4f60-8a7b-8c9d0e1f2a3b';
 /** GET /v1/admin/settings/crm.default_lead_owner/people as the API answers it (SettingsPerson[]). */
 const OWNERS = [
-  { userId: RAM, displayName: 'Ram Thapa' },
+  { userId: RAM, displayName: 'Ram Thapa', role: 'Head · Sales', salesHead: true },
   { userId: GITA, displayName: '' },
 ];
 
@@ -182,8 +182,8 @@ describe('the lead owner card (F1-Q21)', () => {
   /** What the form submits for the key: the picker's named hidden field. */
   const submitted = (field: string) =>
     field.match(/<input type="hidden" name="v:crm\.default_lead_owner" value="([^"]*)"/)?.[1];
-  /** What the closed picker shows. */
-  const shown = (field: string) => field.match(/<span class="_label_[^"]*">([^<]*)<\/span>/)?.[1];
+  /** What the closed member picker reads: name, then role. */
+  const shown = (field: string) => field.match(/role="combobox"[^>]*? value="([^"]*)"/)?.[1];
 
   it('offers the people a new lead may fall back to, with the Sales head first, to the Founder', async () => {
     persona('founder-live', ['sales'], 'admin.settings.write');
@@ -198,14 +198,14 @@ describe('the lead owner card (F1-Q21)', () => {
       'New leads that have no owner of their own, such as website leads, go to this person.',
     );
     const field = ownerField(html);
-    // The hidden native select React Aria renders leads with a blank option of its own.
-    const labels = [...field.matchAll(/<option[^>]*>([^<]*)<\/option>/g)]
-      .map((m) => m[1]!)
-      .filter((label) => label.trim() !== '');
-    expect(labels).toEqual(['Sales head (default)', 'Ram Thapa', 'Unnamed user']);
     expect(field).not.toContain('example.test');
-    expect(shown(field)).toBe('Sales head (default)');
+    // Nothing chosen: the box names the Sales head, by name and role, never "Sales head (default)"...
+    expect(shown(field)).toBe('Ram Thapa Head · Sales');
+    expect(field).not.toContain('Sales head (default)');
+    // ...while the form still posts nothing, so the API keeps storing null for "follow the Sales head".
     expect(submitted(field)).toBe('');
+    // And the hint says where that default comes from.
+    expect(field).toContain('Nobody chosen, so the Sales head, shown here, gets them.');
   });
 
   it('shows the saved person as chosen', async () => {
@@ -214,7 +214,7 @@ describe('the lead owner card (F1-Q21)', () => {
       Promise.resolve(settingDto(key, RAM, 2)),
     );
     const field = ownerField(await render());
-    expect(shown(field)).toBe('Ram Thapa');
+    expect(shown(field)).toBe('Ram Thapa Head · Sales');
     expect(submitted(field)).toBe(RAM);
   });
 
@@ -250,10 +250,8 @@ describe('the lead owner card (F1-Q21)', () => {
     persona('settings-only-live', ['warehouse'], 'admin.settings.write');
     const field = ownerField(await render());
     expect(crm.listLeadOwners).not.toHaveBeenCalled();
-    const labels = [...field.matchAll(/<option[^>]*>([^<]*)<\/option>/g)]
-      .map((m) => m[1]!)
-      .filter((label) => label.trim() !== '');
-    expect(labels).toEqual(['Sales head (default)', 'Ram Thapa', 'Unnamed user']);
+    expect(admin.listDefaultLeadOwnerPeople).toHaveBeenCalledTimes(1);
+    expect(shown(field)).toBe('Ram Thapa Head · Sales');
   });
 });
 

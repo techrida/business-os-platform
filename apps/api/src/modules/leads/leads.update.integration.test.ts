@@ -789,6 +789,44 @@ describe('D50: who a lead may be handed to, under the entity rule and live grant
     }
   });
 
+  it('marks in the create owner list the person an ownerless lead goes to, with their role (BOS-UI-001)', async () => {
+    const settings = new SettingsService(h.db);
+    const setDefault = (value: string | null) =>
+      withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        settings.set(tx, 'crm.default_lead_owner', value),
+      );
+    const createList = async () => {
+      const res = await request(baseUrl).get('/v1/leads/owners?context=create');
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return LeadOwnerOptionSchema.array().parse(res.body);
+    };
+    try {
+      await h.actAs(finance);
+      // Nothing set: the Sales head, and the list says so.
+      let list = await createList();
+      expect(list.filter((o) => o.defaultOwner !== undefined)).toEqual([
+        expect.objectContaining({ userId: salesHead, defaultOwner: 'sales_head' }),
+      ]);
+      expect((await seed()).ownerUserId).toBe(salesHead);
+      // Job title and department read as the memo people list words them.
+      expect(list.find((o) => o.userId === salesHead)?.role).toBe('Sales');
+
+      // The configured person wins, and the mark follows it: the same person the lead then gets.
+      await setDefault(salesPeer);
+      list = await createList();
+      expect(list.filter((o) => o.defaultOwner !== undefined)).toEqual([
+        expect.objectContaining({ userId: salesPeer, defaultOwner: 'settings' }),
+      ]);
+      expect((await seed()).ownerUserId).toBe(salesPeer);
+
+      // A caller who keeps the lead themselves gets no mark: nothing is being defaulted for them.
+      await h.actAs(salesStaff);
+      expect((await createList()).some((o) => o.defaultOwner !== undefined)).toBe(false);
+    } finally {
+      await setDefault(null);
+    }
+  });
+
   it('offers in the owner select exactly the people PATCH accepts', async () => {
     const everyone = [
       salesStaff,

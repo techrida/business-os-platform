@@ -383,7 +383,8 @@ describe('quotation detail page', () => {
     });
     const html = await render();
     expect(html).toContain('>Cancel quotation</button>');
-    expect(html).toContain('Cancelling ends this quotation and its approval request');
+    // Revision 2 of the fixture: cancelling it discards the revision and gives the earlier one back (R6D).
+    expect(html).toContain('Cancelling discards this revision and its approval request');
 
     mocks.getQuotation.mockResolvedValue(quote);
     expect(await render()).not.toContain('>Cancel quotation</button>');
