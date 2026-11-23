@@ -333,3 +333,54 @@ it('keeps the opener focusable while the draft is created, and ignores presses u
   await flush();
   expect(opener.getAttribute('aria-disabled')).toBeNull();
 });
+
+it('leaves focus on the error message when the server refuses a confirmed request', async () => {
+  // The refusal is back before the closing review hands focus back, so the opener must not take it.
+  actions.createPaymentRequestAction.mockImplementationOnce(() =>
+    Promise.resolve({ key: 'key', error: 'The bill is no longer open.' }),
+  );
+  await filledForm();
+  const opener = await openReview();
+  await click(button('Create draft request'));
+  await flush();
+  await flush();
+
+  const alert = mounted!.container.querySelector<HTMLElement>('[role="alert"]');
+  expect(alert?.textContent).toContain('The bill is no longer open.');
+  expect(document.activeElement).toBe(alert);
+  expect(document.activeElement).not.toBe(opener);
+});
+
+it('leaves focus on the first wrong field when the server names one after Confirm', async () => {
+  actions.createPaymentRequestAction.mockImplementationOnce(() =>
+    Promise.resolve({ key: 'key', errors: { fromBankAccountId: 'Choose an account.' } }),
+  );
+  await filledForm();
+  const opener = await openReview();
+  await click(button('Create draft request'));
+  await flush();
+  await flush();
+
+  const invalid = mounted!.container.querySelector<HTMLElement>('[aria-invalid="true"]');
+  expect(invalid).not.toBeNull();
+  expect(document.activeElement).toBe(invalid);
+  expect(document.activeElement).not.toBe(opener);
+});
+
+it('returns focus to the opener after Back when an earlier request was refused', async () => {
+  actions.createPaymentRequestAction.mockImplementationOnce(() =>
+    Promise.resolve({ key: 'key', error: 'The bill is no longer open.' }),
+  );
+  await filledForm();
+  await openReview();
+  await click(button('Create draft request'));
+  await flush();
+  await flush();
+  expect(mounted!.container.querySelector('[role="alert"]')).not.toBeNull();
+
+  const opener = await openReview();
+  await click(button('Back'));
+  await flush();
+  await flush();
+  expect(document.activeElement).toBe(opener);
+});

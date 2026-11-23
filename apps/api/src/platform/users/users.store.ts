@@ -121,6 +121,14 @@ export interface UserFields {
 export type ListedUser = AdminUser & UserRow;
 /** Up to `limit + 1` rows (the extra one says another page exists) and the count of all matches. */
 export type ListedUsers = { rows: ListedUser[]; total: number };
+/** A staff user flagged for identity review, before the reason is read from the audit log. */
+export type FlaggedUserRow = {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  status: MirroredStatus;
+  flaggedAt: string | null;
+};
 export type StaffSummary = Omit<AdminUsersSummary, 'canSendPasswordReset'>;
 
 /** One ZITADEL event id as the webhook delivered it; the triple is the dedupe key (§3). */
@@ -245,6 +253,8 @@ export abstract class UsersStore {
    */
   abstract list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUsers>;
   abstract summary(scope: TxScope): Promise<StaffSummary>;
+  /** The tenant's staff users flagged for identity review (newest flag first, at most 200). */
+  abstract listFlagged(scope: TxScope): Promise<FlaggedUserRow[]>;
   abstract recordActivity(scope: TxScope, actor: Actor): Promise<void>;
 
   /** True when the event is new; false when this (instance, aggregate, sequence) was seen before. */
@@ -769,6 +779,18 @@ export class SqlUsersStore extends UsersStore {
       count,
     });
     return { rows: result.rows, total: result.total };
+  }
+
+  listFlagged(scope: TxScope): Promise<FlaggedUserRow[]> {
+    return rows<FlaggedUserRow>(
+      this.db,
+      sql`SELECT u.id, u.email, u.display_name AS "displayName", u.status,
+            to_char(u.identity_review_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "flaggedAt"
+          ${STAFF_USERS}
+          WHERE u.tenant_id = ${scope.tenantId} AND u.identity_review_required
+          ORDER BY u.identity_review_at DESC NULLS LAST, u.id
+          LIMIT 200`,
+    );
   }
 
   async summary(scope: TxScope): Promise<StaffSummary> {
