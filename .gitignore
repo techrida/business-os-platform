@@ -19,3 +19,7 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 next-env.d.ts
+
+# Internal agent instruction files stay out of the repository
+AGENTS.md
+**/AGENTS.md
