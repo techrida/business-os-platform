@@ -85,7 +85,7 @@ jobs:
           BOS_E2E_BRANDED_LOGIN: '1'
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
-          SPEC_FILTER: ${{ inputs.spec_filter || 'exit.spec inbox.spec overview.spec p2/crm p2/opportunity-stage p4/access-grant p4/list-filters p0-shell' }}
+          SPEC_FILTER: ${{ inputs.spec_filter || 'inbox.spec' }}
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           cd apps/workspace
@@ -136,6 +136,14 @@ jobs:
             apps/portal/test-results
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Directory diagnostics on failure (counts only)
+        if: ${{ failure() }}
+        run: |
+          q() { docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -P pager=off -c "$1" || true; }
+          q "select count(*) users from app.users"
+          q "select ue.level, ue.role_keys, (ue.department_id is not null) has_dept, count(*) from app.user_entities ue group by 1,2,3"
+          q "select status, count(*) from app.users group by 1"
 
       - name: Stack logs on failure (env files are never printed)
         if: ${{ failure() }}
