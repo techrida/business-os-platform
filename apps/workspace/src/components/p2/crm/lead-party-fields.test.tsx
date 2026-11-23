@@ -53,8 +53,8 @@ async function mountLead(
   opts: { matches?: LeadDuplicateMatch[]; contacts?: LeadContactOption[] } = {},
 ) {
   const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
-  const search = vi.fn(async () => opts.matches ?? MATCHES);
-  const loadContacts = vi.fn(async () => opts.contacts ?? CONTACTS);
+  const search = vi.fn(() => Promise.resolve(opts.matches ?? MATCHES));
+  const loadContacts = vi.fn(() => Promise.resolve(opts.contacts ?? CONTACTS));
   const onOpenLead = vi.fn();
   const mounted = await mountForm(
     <LeadForm
@@ -183,7 +183,7 @@ it('links a picked customer, fills its name and country, and posts the link', as
   await fill(t.contact(), 'Sunita Shrestha');
   const data = await t.posted();
   expect(data.get('customerId')).toBe(CUSTOMER);
-  expect(data.get('country')).toBe('IN');
+  expect(data.get('address.country')).toBe('IN');
   expect(parseLead(data)).toMatchObject({
     ok: true,
     data: { companyName: 'Himalayan Traders Pvt. Ltd.', customerId: CUSTOMER, country: 'IN' },
