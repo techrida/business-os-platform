@@ -363,10 +363,10 @@ it('starts a lead linked to a customer and contact on converting into them, with
     />,
   );
   await click(mounted.container.querySelector('button'));
-  const customerMode = dialog().querySelector<HTMLInputElement>(
-    'input[name="customerMode"][value="existing"]',
+  // A linked lead has no "new organisation" choice: the mode is fixed to existing.
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerMode"]')?.value).toBe(
+    'existing',
   );
-  expect(customerMode?.checked).toBe(true);
   expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
     CUSTOMER,
   );
@@ -693,10 +693,9 @@ it('a lead linked to a customer starts on that customer, and the Contact step li
     customerId: CUSTOMER,
     contactName: 'Mina',
   });
-  expect(
-    dialog().querySelector<HTMLInputElement>('input[name="customerMode"][value="existing"]')
-      ?.checked,
-  ).toBe(true);
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerMode"]')?.value).toBe(
+    'existing',
+  );
   expect(dialog().querySelector('[name="legalName"]')).toBeNull();
   expect(box('Organisation').value).toBe('Himal Supplies Pvt. Ltd.');
   expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
@@ -906,4 +905,120 @@ it('D9: the prefilled address stays editable, and a lead without one starts empt
   await mountWithoutTyping({ address: null });
   expect(dialog().querySelector<HTMLTextAreaElement>('[name="address.line"]')?.value).toBe('');
   expect(dialog().querySelector<HTMLInputElement>('[name="address.city"]')?.value).toBe('');
+});
+
+// ---- R6T: linked leads -------------------------------------------------------------------------------------------
+
+const unlinkAction = vi.fn();
+async function mountLinked(lead: Partial<ConvertLead> = {}) {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  mounted = await mountForm(
+    <ConvertDialog
+      searchDelayMs={0}
+      unlinkAction={unlinkAction}
+      lead={{
+        id: LEAD,
+        version: 3,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'Himal Supplies Pvt. Ltd.',
+        customerId: CUSTOMER,
+        contactName: 'Mina',
+        email: 'mina@himal.example',
+        country: 'NP',
+        phones: [],
+        ...lead,
+      }}
+      action={async (prev, form) => {
+        submitted.push(form);
+        return convertLeadAction(prev, form);
+      }}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  await flush();
+}
+
+const unlinkButton = () =>
+  [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Unlink customer') ?? null;
+
+it('a linked lead has no "new organisation" choice and no Create row, and can be unlinked', async () => {
+  api.listContacts.mockResolvedValue({
+    items: [{ id: CONTACT, fullName: 'Mina', email: 'mina@himal.example' }],
+  });
+  await mountLinked();
+  expect(dialog().querySelector('input[name="customerMode"][type="radio"]')).toBeNull();
+  expect(dialog().querySelector('[name="legalName"]')).toBeNull();
+  await typeKeys(box('Organisation'), 'Zzz');
+  await flush();
+  expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent)).not.toContain(
+    'Create "Zzz"',
+  );
+  expect(unlinkButton()).not.toBeNull();
+});
+
+it('Unlink customer drops the link, starts the Create form with the lead company, and converts at the new version', async () => {
+  unlinkAction.mockResolvedValue({ ok: true, version: 4 });
+  api.listContacts.mockResolvedValue({
+    items: [{ id: CONTACT, fullName: 'Mina', email: 'mina@himal.example' }],
+  });
+  await mountLinked({ address: { line: '12 Lazimpat Road', city: 'Kathmandu' } });
+  await click(unlinkButton());
+  await flush();
+  expect(unlinkAction).toHaveBeenCalledWith(LEAD, 3);
+  expect(unlinkButton()).toBeNull();
+  expect(box('Legal name').value).toBe('Himal Supplies Pvt. Ltd.');
+  expect(dialog().querySelector('input[name="customerMode"][type="radio"]')).not.toBeNull();
+  expect(dialog().querySelector<HTMLInputElement>('input[name="expectedVersion"]')?.value).toBe(
+    '4',
+  );
+  await fillAddress('Balaju', 'Kathmandu');
+  await convert();
+  expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({
+    customer: { mode: 'create', customer: { legalName: 'Himal Supplies Pvt. Ltd.' } },
+    expectedVersion: 4,
+  });
+});
+
+it('a refused unlink says why and keeps the link', async () => {
+  unlinkAction.mockResolvedValue({ ok: false, error: 'This record was changed by someone else.' });
+  api.listContacts.mockResolvedValue({ items: [] });
+  await mountLinked();
+  await click(unlinkButton());
+  await flush();
+  expect(dialog().textContent).toContain('This record was changed by someone else.');
+  expect(unlinkButton()).not.toBeNull();
+  expect(dialog().querySelector<HTMLInputElement>('input[name="customerId"]')?.value).toBe(
+    CUSTOMER,
+  );
+});
+
+it('a customer the converter cannot open is explained on the Organisation step, Next stops, and Unlink is offered', async () => {
+  api.listContacts.mockRejectedValue(new ApiError(404, 'not found'));
+  await mountLinked();
+  expect(dialog().textContent).toContain('You cannot open this customer');
+  expect(unlinkButton()).not.toBeNull();
+  await submit(dialog());
+  expect(stepOf()).toBe('Organisation');
+  expect(api.convertLead).not.toHaveBeenCalled();
+});
+
+it('a linked contact without an email is explained, Next stops, and "create a contact from the lead" is offered', async () => {
+  api.listContacts.mockResolvedValue({
+    items: [{ id: NO_MAIL, fullName: 'Ravi', email: null }],
+  });
+  await mountLinked({ contactId: NO_MAIL, contactName: 'Ravi' });
+  await submit(dialog());
+  expect(stepOf()).toBe('Contact');
+  expect(dialog().textContent).toContain('This contact has no email');
+  await submit(dialog());
+  expect(stepOf()).toBe('Contact');
+  const fix = [...dialog().querySelectorAll('button')].find((b) =>
+    b.textContent?.startsWith('Create a contact from the lead'),
+  );
+  expect(fix).toBeDefined();
+  await click(fix ?? null);
+  expect(dialog().textContent).not.toContain('This contact has no email');
+  await submit(dialog());
+  expect(stepOf()).toBe('Deal');
 });

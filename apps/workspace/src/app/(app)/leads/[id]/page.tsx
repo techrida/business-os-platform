@@ -31,12 +31,13 @@ import { when } from '@/lib/kernel-format';
 import { getMeOrNull, getPermissionCheck } from '@/lib/live-permissions';
 
 import { logActivityAction } from '../../activities/actions';
-import { convertLeadAction, moveLeadStageAction } from '../actions';
+import { convertLeadAction, moveLeadStageAction, unlinkLeadCustomerAction } from '../actions';
 import styles from '../leads.module.css';
 import { QualifyLead } from '../qualify-lead';
 
 import { LeadAddressField } from './lead-address-field';
 import { LeadContactField } from './lead-contact-field';
+import { LeadCustomerField } from './lead-customer-field';
 import { LeadOwnerField } from './lead-owner-field';
 
 export const metadata: Metadata = { title: 'Lead · Business OS' };
@@ -56,10 +57,14 @@ function facts(
     {
       key: 'company',
       label: 'Organization',
-      value: l.customerId ? (
-        <Link href={`/customers/${l.customerId}`}>{l.companyName}</Link>
-      ) : (
-        l.companyName
+      value: (
+        <LeadCustomerField
+          leadId={l.id}
+          version={l.version}
+          customerId={l.customerId}
+          companyName={l.companyName}
+          editable={editable}
+        />
       ),
     },
     {
@@ -375,6 +380,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               {canConvert ? (
                 <ConvertDialog
                   action={convertLeadAction}
+                  unlinkAction={unlinkLeadCustomerAction}
                   lead={{
                     id: lead.id,
                     version: lead.version,

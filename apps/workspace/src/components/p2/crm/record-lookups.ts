@@ -3,6 +3,7 @@
 import type { CustomerDto } from '@bos/contracts';
 
 import { listContacts, listCustomers } from '@/components/p2/customers/api';
+import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
 
 /** What the conversion dialog shows of a customer it may link: enough to tell two organisations apart. */
@@ -70,7 +71,7 @@ export async function searchConversionCustomers(
 export async function loadConversionContacts(customerId: string) {
   const session = await requireStaffSession('/leads');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customerId)) {
-    return { options: [], error: 'Choose a customer first.' };
+    return { options: [], error: 'Choose a customer first.', unreadable: false };
   }
   try {
     const result = await listContacts(session, customerId);
@@ -83,8 +84,14 @@ export async function loadConversionContacts(customerId: string) {
         disabled: c.email === null,
       })),
       error: '',
+      unreadable: false,
     };
-  } catch {
-    return { options: [], error: 'Contacts could not be loaded. Check your access and try again.' };
+  } catch (err) {
+    // 403/404: the caller may not open this customer (a lead can stay linked to one its viewer cannot read).
+    return {
+      options: [],
+      error: 'Contacts could not be loaded. Check your access and try again.',
+      unreadable: err instanceof ApiError && (err.status === 403 || err.status === 404),
+    };
   }
 }

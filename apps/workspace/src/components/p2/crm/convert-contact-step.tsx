@@ -5,6 +5,7 @@ import { MAX_PARTY_PHONES, type CountryCode, type PartyPhoneInput } from '@bos/c
 import { useEffect, useMemo, useState } from 'react';
 
 import styles from '@/app/(app)/leads/leads.module.css';
+import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
 import type { ComboboxOption } from '@/components/ui/combobox-model';
 import { CountrySelect } from '@/components/ui/country-select';
@@ -13,7 +14,7 @@ import { PhoneListInput } from '@/components/ui/phone-list-input';
 
 import type { ConvertLead } from './convert-dialog';
 import { OptionalLabel } from './convert-parts';
-import type { StepContext } from './convert-types';
+import type { ContactLookup, StepContext } from './convert-types';
 import { loadConversionContacts } from './record-lookups';
 
 type Loaded = {
@@ -28,12 +29,15 @@ export function ContactStep({
   phones,
   setPhones,
   dupes,
+  onLookup,
 }: {
   lead: ConvertLead;
   ctx: StepContext;
   phones: readonly PartyPhoneInput[];
   setPhones: (phones: readonly PartyPhoneInput[]) => void;
   dupes: readonly { kind: string; id: string; label: string }[];
+  /** Tells the dialog what this customer's contacts look like (unreadable, or without an email). */
+  onLookup: (lookup: ContactLookup) => void;
 }) {
   const { values, patch, set, err } = ctx;
   const customerId = values['customerId'] ?? '';
@@ -49,7 +53,13 @@ export function ContactStep({
     let active = true;
     void loadConversionContacts(customerId)
       .then((result) => {
-        if (active) setContacts({ customerId, ...result });
+        if (!active) return;
+        setContacts({ customerId, ...result });
+        onLookup({
+          customerId,
+          unreadable: result.unreadable,
+          noEmailIds: result.options.filter((o) => o.disabled).map((o) => o.id),
+        });
       })
       .catch(() => {
         if (active) {
@@ -63,6 +73,8 @@ export function ContactStep({
     return () => {
       active = false;
     };
+    // onLookup is a state setter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, canLink]);
 
   const loaded = contacts?.customerId === customerId ? contacts : null;
@@ -180,36 +192,52 @@ export function ContactStep({
       </div>
 
       {contactMode === 'existing' ? (
-        <Field label="Contact" hint={loaded?.error || undefined} error={err['contactId']}>
-          {(c) => (
-            <Combobox
-              id={c.id}
-              name="contactId"
-              maxLength={200}
-              labelledBy={c['aria-labelledby']}
-              describedBy={c['aria-describedby']}
-              invalid={c['aria-invalid'] === true}
-              required
-              keepOrder
-              groupThreshold={Number.POSITIVE_INFINITY}
-              options={options}
-              value={contactId}
-              onChange={(id) => patch({ contactId: id })}
-              open={open}
-              onOpenChange={setOpen}
-              addOption={{
-                always: true,
-                label: (typed) => `Create "${typed}"`,
-                onAdd: (typed) => {
-                  patch({ contactMode: 'create', contactId: '', contactName: typed });
-                },
-              }}
-              emptyText="This organisation has no contacts yet. Type a new name."
-              noMatchText="No matching contact."
-              placeholder="Search this organisation's contacts"
-            />
-          )}
-        </Field>
+        <>
+          <Field label="Contact" hint={loaded?.error || undefined} error={err['contactId']}>
+            {(c) => (
+              <Combobox
+                id={c.id}
+                name="contactId"
+                maxLength={200}
+                labelledBy={c['aria-labelledby']}
+                describedBy={c['aria-describedby']}
+                invalid={c['aria-invalid'] === true}
+                required
+                keepOrder
+                groupThreshold={Number.POSITIVE_INFINITY}
+                options={options}
+                value={contactId}
+                onChange={(id) => patch({ contactId: id })}
+                open={open}
+                onOpenChange={setOpen}
+                addOption={{
+                  always: true,
+                  label: (typed) => `Create "${typed}"`,
+                  onAdd: (typed) => {
+                    patch({ contactMode: 'create', contactId: '', contactName: typed });
+                  },
+                }}
+                emptyText="This organisation has no contacts yet. Type a new name."
+                noMatchText="No matching contact."
+                placeholder="Search this organisation's contacts"
+              />
+            )}
+          </Field>
+          {err['contactId'] &&
+          contactId !== '' &&
+          loaded?.options.some((o) => o.id === contactId && o.disabled) ? (
+            <div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="small"
+                onClick={() => patch({ contactMode: 'create', contactId: '' })}
+              >
+                Create a contact from the lead instead
+              </Button>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </fieldset>
   );
