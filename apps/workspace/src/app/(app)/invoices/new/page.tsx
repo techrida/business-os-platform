@@ -71,7 +71,8 @@ export default async function NewInvoicePage() {
     .filter((c) => c.mergedIntoId === null)
     .map((c) => ({
       id: c.id,
-      label: `${c.legalName} (${c.number})`,
+      label: c.legalName,
+      detail: [c.number, c.panVatNo].filter(Boolean).join(' · '),
       currency: c.defaultCurrency,
     }));
   const taxCodes: TaxCode[] | null = taxResult.status === 'fulfilled' ? taxResult.value : null;

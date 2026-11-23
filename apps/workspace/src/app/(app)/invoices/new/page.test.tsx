@@ -76,7 +76,9 @@ it('loads the manual invoice picker using a query accepted by the real customer 
 
   const html = renderToStaticMarkup(await NewInvoicePage());
   expect(html).toContain('Save draft invoice');
-  expect(html).toContain('Invoice customer (CUS-001)');
+  // The customer box is one combobox; its options (name, then number and PAN) show only while it is open.
+  expect(html).toContain('role="combobox"');
+  expect(html).toContain('<input type="hidden" name="customerId" value=""');
   expect(html).not.toContain('The customers did not load');
 });
 

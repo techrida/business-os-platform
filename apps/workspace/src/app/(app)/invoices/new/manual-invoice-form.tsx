@@ -2,11 +2,12 @@
 
 import type { Currency, TaxCode } from '@bos/contracts';
 import { Dec, formatMoney, plainAmount } from '@bos/locale';
-import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useActionState, useEffect, useMemo, useRef, useState } from 'react';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { Combobox } from '@/components/ui/combobox';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Select, Textarea } from '@/components/ui/field';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
@@ -25,7 +26,10 @@ import styles from './manual-invoice.module.css';
 
 export interface CustomerOption {
   id: string;
+  /** The customer's legal name. */
   label: string;
+  /** The number and PAN/VAT shown under the name in the picker, so a search by either finds the customer. */
+  detail?: string | undefined;
   /** The customer's usual currency: it preselects the currency when the customer is chosen. */
   currency: Currency | null;
 }
@@ -103,6 +107,11 @@ export function ManualInvoiceForm({
     errors: {},
   });
   const [customerId, setCustomerId] = useState('');
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const customerOptions = useMemo(
+    () => (customers ?? []).map((c) => ({ id: c.id, label: c.label, description: c.detail })),
+    [customers],
+  );
   const [currency, setCurrency] = useState<Currency>('NPR');
   const [manualReason, setManualReason] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -201,20 +210,26 @@ export function ManualInvoiceForm({
             className={styles.wide ?? ''}
           >
             {(control) => (
-              <Select
+              // One search-as-you-type box (UIP-FORM-009); `name` posts the chosen id as the select did. An invoice
+              // is raised for a customer that exists, so there is no Create row: the customer is added on
+              // Customers first.
+              <Combobox
+                id={control.id}
+                labelledBy={control['aria-labelledby']}
+                describedBy={control['aria-describedby']}
+                invalid={control['aria-invalid'] === true}
                 name="customerId"
+                searchIcon
+                options={customerOptions}
                 value={customerId}
+                onChange={choose}
+                open={customerOpen}
+                onOpenChange={setCustomerOpen}
                 disabled={customers === null || customers.length === 0}
-                onChange={(e) => choose(e.target.value)}
-                {...control}
-              >
-                <option value="">Choose a customer</option>
-                {(customers ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
+                placeholder="Search by name, number or PAN"
+                emptyText="There are no customers to invoice yet."
+                noMatchText="No matching customer. Add the customer first."
+              />
             )}
           </Field>
           <Field
@@ -260,7 +275,8 @@ export function ManualInvoiceForm({
           </Field>
           <Field
             label="Due date"
-            hint="Optional. Leave blank to use the customer's payment terms."
+            optional
+            hint="Leave blank to use the customer's payment terms."
             error={errors['dueDate']}
           >
             {(control) => (
@@ -278,7 +294,8 @@ export function ManualInvoiceForm({
           <div className={styles.discountPair}>
             <Field
               label="Discount %"
-              hint="Optional. Applies to the whole invoice, before tax."
+              optional
+              hint="Applies to the whole invoice, before tax."
               error={discountMode === 'pct' ? errors['discount'] : undefined}
             >
               {(control) => (
@@ -293,7 +310,8 @@ export function ManualInvoiceForm({
             </Field>
             <Field
               label={`Discount amount (${currency})`}
-              hint="Optional. Kept in step with the percentage."
+              optional
+              hint="Kept in step with the percentage."
               error={overBase ?? (discountMode === 'amount' ? errors['discount'] : undefined)}
             >
               {(control) => (
