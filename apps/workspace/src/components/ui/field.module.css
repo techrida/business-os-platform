@@ -118,10 +118,15 @@
   resize: vertical;
 }
 
-/* Keep text entry at 16px on touch screens to avoid automatic focus zoom. */
+/* Touch screens: 44px hit targets and 16px text. The label select and the phone box beside a text box are 44px there
+   too (select.module.css, phone-field.module.css), so every control in a row has one height at each size (UIP-FORM-010). */
 @media (pointer: coarse) {
   .control {
     font-size: max(16px, var(--font-size-body-small));
+  }
+
+  .control:not(.textarea) {
+    min-height: 44px;
   }
 }
 
