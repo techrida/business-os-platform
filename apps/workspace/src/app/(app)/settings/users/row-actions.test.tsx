@@ -1,14 +1,40 @@
+// @vitest-environment jsdom
 import type { AdminUser } from '@bos/contracts';
-import { isValidElement, type ReactElement, type ReactNode } from 'react';
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { Muted, OWN_ACCOUNT, ROW_SLOTS, RowActions, type RowCapabilities } from './row-actions';
+import { click, mountForm as mountRaw } from '@/test/form-interactions';
+
+import { OWN_ACCOUNT, ROW_SLOTS, RowActions, type RowCapabilities } from './row-actions';
 
 vi.mock('server-only', () => ({}));
+const actions = vi.hoisted(() => ({
+  changeUserStatusAction: vi.fn(),
+  sendPasswordResetAction: vi.fn(),
+  setRolesAction: vi.fn(),
+}));
+vi.mock('./actions', () => actions);
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
+
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  vi.useFakeTimers();
+});
+let views: { unmount(): Promise<void> }[] = [];
+afterEach(async () => {
+  for (const view of views) await view.unmount();
+  views = [];
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
 
 const ME = '00000000-0000-4000-9000-0000000000a1';
 const IDP = '00000000-0000-4000-8000-000000000001';
@@ -59,9 +85,7 @@ it('an active person with an email shows every action live, each in its own slot
   expect(html).toContain('aria-label="Lock Asha · asha@example.test"');
   expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
   // Keep locked applies only after failed sign-ins: muted here, with its reason.
-  expect(slot(html, 'keep')).toContain(
-    'data-tooltip="Only for a user locked after failed sign-ins"',
-  );
+  expect(slot(html, 'keep')).toContain('aria-disabled="true"');
   expect(html.match(/aria-disabled="true"/g)).toHaveLength(1);
 });
 
@@ -145,43 +169,56 @@ const MUTED: {
   },
 ];
 
-it.each(MUTED)('muted: $name', ({ row, can, slot: id, reason, label }) => {
-  const html = render(user({ id: '00000000-0000-4000-9000-0000000000a9', ...row }), {
-    ...ALL,
-    ...can,
-  });
+it.each(MUTED)('muted: $name', async ({ row, can, slot: id, reason, label }) => {
+  const u = user({ id: '00000000-0000-4000-9000-0000000000a9', ...row });
+  const html = render(u, { ...ALL, ...can });
   // Same slots as a fully live row: nothing moved.
   expect(ids(html)).toEqual([...ROW_SLOTS]);
   const cell = slot(html, id);
   expect(cell).toContain('aria-disabled="true"');
-  expect(cell).toContain(`data-tooltip="${reason}"`);
   expect(cell).toContain(`aria-label="${label} `);
   expect(cell).toContain('(unavailable)');
-  // The reason is also the accessible description, so a screen reader hears it on focus.
-  const describedBy = cell.match(/aria-describedby="([^"]+)"/)?.[1];
-  expect(describedBy).toBeTruthy();
-  expect(cell).toContain(`<span id="${describedBy}" class="sr-only">${reason}</span>`);
   // A real button that is not natively disabled (so it takes focus and hover) and is not a link or submit.
   expect(cell).toMatch(/<button type="button"/);
   expect(cell).not.toContain(' disabled');
+
+  // The design-system tooltip shows the reason on keyboard focus, linked with aria-describedby.
+  const name = u.displayName ?? 'Unnamed user';
+  const view = await mountRaw(
+    <RowActions
+      user={u}
+      name={name}
+      label={`${name} · ${u.email ?? ''}`}
+      can={{ ...ALL, ...can }}
+    />,
+  );
+  views.push(view);
+  const button = view.container.querySelector<HTMLElement>(`[data-slot="${id}"] button`)!;
+  expect(button.getAttribute('aria-disabled')).toBe('true');
+  await act(async () => {
+    button.focus();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(document.activeElement).toBe(button);
+  const tip = document.body.querySelector('[role="tooltip"]');
+  expect(tip?.textContent).toBe(reason);
+  const describedBy = button.getAttribute('aria-describedby');
+  expect(describedBy && document.getElementById(describedBy)?.textContent).toContain(reason);
+
+  // A click does nothing: no action runs and nothing navigates.
+  await click(button);
+  expect(actions.changeUserStatusAction).not.toHaveBeenCalled();
+  expect(actions.sendPasswordResetAction).not.toHaveBeenCalled();
 });
 
-it('a muted action carries no handler, so clicking it fires nothing', () => {
-  const element = Muted({ id: 'lock', name: 'Lock Asha', reason: 'Because', children: 'Lock' });
-  const found: ReactElement<Record<string, unknown>>[] = [];
-  const walk = (node: ReactNode) => {
-    if (Array.isArray(node)) node.forEach(walk);
-    else if (isValidElement<Record<string, unknown>>(node)) {
-      found.push(node);
-      walk(node.props.children as ReactNode);
-    }
-  };
-  walk(element);
-  const button = found.find((e) => e.props['aria-disabled'] === 'true');
-  expect(button).toBeDefined();
-  expect(Object.keys(button!.props).filter((key) => /^on[A-Z]/.test(key))).toEqual([]);
-  expect(button!.props.href).toBeUndefined();
-  expect(button!.props.form).toBeUndefined();
+it('a live action opens its confirmation dialog while a muted one never does', async () => {
+  const u = user({ id: '00000000-0000-4000-9000-0000000000a8', email: null });
+  const view = await mountRaw(<RowActions user={u} name="Asha" label="Asha" can={ALL} />);
+  views.push(view);
+  await click(view.container.querySelector('[data-slot="reset"] button'));
+  expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
+  await click(view.container.querySelector('[data-slot="lock"] button'));
+  expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).not.toBeNull();
 });
 
 it('a locked person keeps Unlock in the lock slot and Keep locked live only after failed sign-ins', () => {
@@ -215,7 +252,6 @@ it('a role without a permission sees no muted hint for it, but its slot stays re
       slot(none, id).split(`data-slot="${ROW_SLOTS[ROW_SLOTS.indexOf(id as never) + 1]}"`)[0],
     ).toMatch(new RegExp(`^${id}"[^>]*></span>`));
   }
-  expect(none).not.toContain('data-tooltip');
   expect(none).not.toContain('aria-disabled');
 });
 

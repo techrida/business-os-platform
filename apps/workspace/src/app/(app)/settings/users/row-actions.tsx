@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { Button, LinkButton } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
+import { Tooltip } from '@/components/ui/tooltip';
 
 import { PasswordReset } from './password-reset';
 import { PictureEditor } from './picture-editor';
@@ -46,9 +47,10 @@ function Slot({ id, children }: { id: SlotId; children?: ReactNode }) {
 }
 
 /**
- * An action that does not apply to this row, shown but off, with the reason. It stays in the tab order with
- * `aria-disabled` (a natively disabled button takes no focus and no hover, so the reason would never show); the reason
- * is its hover and keyboard-focus tooltip and its accessible description. A click does nothing.
+ * An action that does not apply to this row, shown but off, with the reason in the design-system tooltip (hover and
+ * keyboard focus; the bubble is linked to the button with `aria-describedby`). The button stays in the tab order with
+ * `aria-disabled` (a natively disabled button takes no focus and no hover, so the reason would never show) and has no
+ * handler, so a click does nothing.
  */
 export function Muted({
   id,
@@ -61,23 +63,18 @@ export function Muted({
   reason: string;
   children: ReactNode;
 }) {
-  const reasonId = `${id}-reason-${name.replace(/\W+/g, '-')}`;
   return (
     <Slot id={id}>
-      <Button
-        variant="ghost"
-        size="small"
-        aria-disabled="true"
-        aria-label={`${name} (unavailable)`}
-        aria-describedby={reasonId}
-        data-tooltip={reason}
-        className={styles.muted ?? ''}
-      >
-        {children}
-      </Button>
-      <span id={reasonId} className="sr-only">
-        {reason}
-      </span>
+      <Tooltip content={reason} align="end">
+        <Button
+          variant="ghost"
+          size="small"
+          aria-disabled="true"
+          aria-label={`${name} (unavailable)`}
+        >
+          {children}
+        </Button>
+      </Tooltip>
     </Slot>
   );
 }
