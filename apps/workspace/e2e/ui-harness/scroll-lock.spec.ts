@@ -217,7 +217,7 @@ for (const scope of ['page', 'dialog'] as const) {
       await page.waitForTimeout(300);
       const state = await page.evaluate(() => {
         const box = document.querySelector('[role=listbox]') as HTMLElement;
-        const active = box.querySelector('[data-focused]') as HTMLElement | null;
+        const active = box.querySelector<HTMLElement>('[data-focused]');
         const a = active?.getBoundingClientRect();
         const l = box.getBoundingClientRect();
         return {
