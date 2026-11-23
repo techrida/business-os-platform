@@ -138,9 +138,8 @@ describe('invoice detail page', () => {
     mocks.getInvoice.mockResolvedValue(note(true));
     const blocked = await render();
     expect(blocked).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Issue debit note<\/button>/);
-    expect(blocked).toContain(
-      'You created this note, so someone else with issue access must issue it.',
-    );
+    // UIP-FORM-011: the reason is the button's tooltip, not text on the page.
+    expect(blocked).not.toContain('You created this note');
 
     mocks.getInvoice.mockResolvedValue(note(false));
     const open = await render();
