@@ -47,6 +47,29 @@ vi.mock('@/lib/api-kernel', async (original) => ({
 }));
 const currencies = vi.hoisted(() => ({ loadEnabledCurrencies: vi.fn() }));
 vi.mock('@/lib/enabled-currencies.server', () => currencies);
+// The picker's options are only in the markup while it is open, so the real form is wrapped to record what the
+// page handed it: the vendors (from the bill items) and the orders it offers.
+const form = vi.hoisted(() => ({
+  props:
+    vi.fn<
+      (p: {
+        items: readonly { vendorPartyId: string; vendorName: string }[];
+        orders?: readonly { id: string; vendorId: string; label: string }[];
+      }) => void
+    >(),
+}));
+vi.mock('./forms', async (original) => {
+  const actual = await original<typeof import('./forms')>();
+  return {
+    ...actual,
+    PaymentRequestEntry: (props: Parameters<typeof actual.PaymentRequestEntry>[0]) => {
+      form.props(props);
+      return actual.PaymentRequestEntry(props);
+    },
+  };
+});
+const orderApi = vi.hoisted(() => ({ listPaymentRequestOrders: vi.fn() }));
+vi.mock('@/lib/api-payables-orders', () => orderApi);
 vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NOT_FOUND');
@@ -95,6 +118,7 @@ beforeEach(() => {
   reads.getVendor.mockResolvedValue({ legalName: 'Himal Supplies' });
   reads.getApprovalRequest.mockRejectedValue(new Error('forbidden'));
   api.getPaymentRequest.mockResolvedValue(record);
+  orderApi.listPaymentRequestOrders.mockResolvedValue([]);
   api.listPaymentRequestItemsWithoutBankAccount.mockResolvedValue([]);
   banks.listCompanyBankAccounts.mockResolvedValue([bankAccount]);
   api.listPaymentRequestItems.mockResolvedValue([
@@ -146,11 +170,36 @@ it('shows controlled entry fields for the vendor, source account and bill items'
   expect(banks.listCompanyBankAccounts).toHaveBeenCalledWith(session);
   expect(html).toContain('name="allocation:0:openItemId"');
   expect(html).toContain('name="allocation:0:amount"');
-  // The vendor is a live-search picker: its options show once it is opened.
-  expect(html).toContain('Search a vendor');
+  // The vendor is a live-search picker whose options show once it is opened, so check what the form was handed.
+  expect(html).toContain('role="combobox"');
   expect(html).not.toContain('Vendor ID');
+  expect(form.props).toHaveBeenCalledTimes(1);
+  expect(form.props.mock.calls[0]![0].items).toEqual([
+    expect.objectContaining({ vendorPartyId: id, vendorName: 'Himal Supplies' }),
+  ]);
   // Payment requests are exempt from the currency switch-off (D56 U16-Q1), so the page does not read it.
   expect(currencies.loadEnabledCurrencies).not.toHaveBeenCalled();
+});
+
+it('hands the form each order with its vendor and the number and status the picker shows', async () => {
+  const order = {
+    id: '66666666-6666-4666-8666-666666666666',
+    number: 'PO-2083-0007',
+    status: 'issued',
+    vendorId: id,
+  };
+  orderApi.listPaymentRequestOrders.mockResolvedValue([order]);
+  renderToStaticMarkup(await NewPage());
+  expect(form.props.mock.calls[0]![0].orders).toEqual([
+    { id: order.id, vendorId: id, label: 'PO-2083-0007 · Issued' },
+  ]);
+});
+
+it('hands the form no orders when the order list does not load, and the form still opens', async () => {
+  orderApi.listPaymentRequestOrders.mockRejectedValue(new Error('502'));
+  const html = renderToStaticMarkup(await NewPage());
+  expect(form.props.mock.calls[0]![0].orders).toEqual([]);
+  expect(html).toContain('name="vendorPartyId"');
 });
 
 it('starts a ?bill= in a currency the company switched off filled in, like any other bill (D56 U16-Q1)', async () => {
