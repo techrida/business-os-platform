@@ -141,6 +141,18 @@ export class AdminUsersController {
   }
 
   /**
+   * GET /v1/admin/users/identity-review: the people flagged for identity review and why (FU8). Read-only; it takes the
+   * same company-wide grant as resolving a flag, so a caller who cannot resolve cannot list.
+   */
+  @Get('identity-review')
+  @Can(STATUS_PERMISSION)
+  async identityReview() {
+    if (!canChangeStatus()) throw new ForbiddenException('Forbidden');
+    const { scope } = requestTx();
+    return { items: await this.users.listFlagged(scope) };
+  }
+
+  /**
    * POST /v1/admin/users/:id/deactivate, /reactivate, /lock and /unlock (F1-Q5, F1-Q4). 204 on success; 409 for the
    * caller's own account, the last Founder of an entity, a status or lock the action does not fit, a concurrent
    * change, or a change ZITADEL refused; 404 for anyone who is not a staff user of the tenant.
