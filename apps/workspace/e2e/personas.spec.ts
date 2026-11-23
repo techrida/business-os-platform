@@ -37,9 +37,9 @@ const personas = loadPersonas();
 
 test.describe('seeded personas', () => {
   // P1 added the accountant (blueprint base route Accountant -> Finance); P4 added procurement, warehouse,
-  // depthead, management2 and finance2. A stale file from an older `pnpm seed` fails here, with a clear message,
+  // depthead, management2 and finance2; the sales and marketing line added six more. A stale file from an older `pnpm seed` fails here, with a clear message,
   // instead of deep inside a ZITADEL login.
-  test('the seed wrote exactly twelve personas, accountant included', () => {
+  test('the seed wrote exactly the eighteen personas, accountant included', () => {
     expect(personas.map((p) => p.key).sort()).toEqual([...PERSONA_KEYS].sort());
     const accountant = persona('accountant');
     expect(accountant.role).toBe('accountant');
