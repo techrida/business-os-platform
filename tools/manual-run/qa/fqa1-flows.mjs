@@ -1231,10 +1231,18 @@ export async function decide(c, word, req) {
   c.controls.push(`decision "${word}" recorded`);
 }
 
-/** An invoice action dialog ends on an empty body with Done; Done reloads the page with the new state. */
+/** An invoice action dialog shows its result and next step (EF1), then Done reloads the page with the new state. */
 async function doneDialog(c) {
   const done = c.page().getByRole('dialog').getByRole('button', { name: 'Done', exact: true });
   await c.see(done, 'button Done after the action', 90000);
+  // EF1: the dialog now shows the server's result and what happens next, not an empty body.
+  const body = (await c.page().getByRole('dialog').innerText()).replace(/\s+/g, ' ');
+  const words = body
+    .replace(/Done|Close|Cancel/g, '')
+    .trim()
+    .split(' ').length;
+  c.controls.push(`dialog body before Done: ${body.slice(0, 240)}`);
+  c.ok(words >= 8, 'the dialog body says what happened and what happens next', body.slice(0, 160));
   await done.click({ delay: 80 });
   await c
     .page()

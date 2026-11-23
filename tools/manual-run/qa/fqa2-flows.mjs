@@ -1,7 +1,7 @@
 /* global document, DataTransfer, ClipboardEvent -- referenced inside page.evaluate callbacks, which run in the browser */
 // FQA2 flows (final QA part 2): the areas the last round-5 units changed. Same shape as FQA1: each flow is
 // { area, flow, persona, steps(c, S, step) } and runs once per size with its own recorded context.
-import { goNav, noSideScroll, reachable, ledger } from './fqa1-lib.mjs';
+import { goNav, noSideScroll, reachable, ledger, logIssue } from './fqa1-lib.mjs';
 import { proofFile, search } from './fqa1-flows.mjs';
 import { realLogin } from '../lib/session.mjs';
 import { pdfText } from '../lib/support.mjs';
@@ -79,10 +79,48 @@ export const PARTY_FLOWS = [
             'textbox Organization legal name',
           );
           await c.see(
-            p().getByRole('combobox', { name: 'Country', exact: true }).nth(1),
+            p().getByRole('combobox', { name: 'Country', exact: true }),
             'address Country combobox',
           );
+          await c.see(
+            p().getByRole('combobox', { name: 'Contact country', exact: true }),
+            'contact picker named "Contact country" (distinct from "Country")',
+          );
+          c.ok(
+            (await p().getByRole('combobox', { name: 'Country', exact: true }).count()) === 1,
+            'exactly one combobox is named "Country"',
+          );
           await noSideScroll(c, '/customers/new');
+        },
+      );
+      await step(
+        '2b-phone-follows-country',
+        'EF1: an untouched blank phone row follows the party country (US shows +1, back to Nepal shows +977)',
+        async (c) => {
+          const row1 = p().locator('[aria-label="Phone 1 country"]').first();
+          const dial = async () => (await shown(row1)).trim();
+          const before = await dial();
+          await pickCountry(
+            c,
+            p().getByRole('combobox', { name: 'Country', exact: true }),
+            'United States',
+          );
+          await p().waitForTimeout(500);
+          const us = await dial();
+          await pickCountry(
+            c,
+            p().getByRole('combobox', { name: 'Country', exact: true }),
+            'Nepal',
+          );
+          await p().waitForTimeout(500);
+          const np = await dial();
+          c.controls.push(`phone 1 country: ${before} -> (party US) ${us} -> (party Nepal) ${np}`);
+          c.ok(
+            /\+1\b|United States/.test(us),
+            'with the party country US the blank phone row shows +1',
+            us,
+          );
+          c.ok(/977|Nepal/.test(np), 'back to Nepal the blank phone row shows +977', np);
         },
       );
       await step(
@@ -143,6 +181,14 @@ export const PARTY_FLOWS = [
           c.ok(
             await p().getByRole('radio', { name: 'Phone 1 primary' }).isChecked(),
             'the primary mark followed the moved row (row 1 is primary)',
+          );
+          const live = (await p().locator('[aria-live], [role=status]').allInnerTexts()).join(
+            ' | ',
+          );
+          c.ok(
+            /Phone 2 moved to position 1/.test(live),
+            'a live region announces "Phone 2 moved to position 1"',
+            live.slice(0, 200),
           );
           await c.s.click(c.btn('Add phone number'), 'Add phone number');
           await c.s.fill(phone(c, 3), '+1 4155552672');
@@ -219,7 +265,7 @@ export const PARTY_FLOWS = [
             '500 Test Street',
           );
           await c.s.fill(p().getByRole('textbox', { name: 'City', exact: true }), 'Austin');
-          const country = p().getByRole('combobox', { name: 'Country', exact: true }).nth(1);
+          const country = p().getByRole('combobox', { name: 'Country', exact: true });
           await country.click();
           await country.fill('');
           await country.press('Tab');
@@ -493,7 +539,7 @@ export const LEAD_FLOWS = [
           await d.getByLabel('City', { exact: true }).fill('Denver');
           await pickCountry(
             c,
-            d.getByRole('combobox', { name: 'Country', exact: true }).last(),
+            d.getByRole('combobox', { name: 'Country', exact: true }),
             'United States',
           );
           await d.getByLabel('Contact name', { exact: true }).fill('FQA2 Contact');
@@ -1114,7 +1160,7 @@ export const FLAG_FLOWS = [
         'FX9 Q3: the address Country list opens; screenshot of how the flags render',
         async (c) => {
           await c.open('/customers/new');
-          const box = p().getByRole('combobox', { name: 'Country', exact: true }).nth(1);
+          const box = p().getByRole('combobox', { name: 'Country', exact: true });
           await box.evaluate((e) => e.scrollIntoView({ block: 'center' }));
           await box.click();
           await box.fill('');
@@ -1278,13 +1324,13 @@ export const USER_FLOWS = [
 ];
 
 /** The portal's own sign-in (password and one-time code are read in code and masked), then the portal home. */
-async function portalSignIn(c, S, key) {
+export async function portalSignIn(c, S, key) {
   const portal = S.qa.cfg.portalUrl;
   await realLogin(c.s, c.page(), key, `${portal}/`);
   await c.page().waitForURL((u) => u.origin === new URL(portal).origin, { timeout: 90000 });
   c.persona = `${key} (portal, real sign-in)`;
 }
-async function portalNav(c, S, href, label) {
+export async function portalNav(c, S, href, label) {
   const p = c.page();
   const link = () => p.locator(`a[href="${href}"]`).filter({ hasText: label }).first();
   if (
@@ -1868,10 +1914,10 @@ export const PROC_FLOWS = [
           );
           c.ok(
             await p()
-              .getByText(/Choose the date it is needed by/)
+              .getByText(/Choose the date it is needed by|Finish the date/)
               .first()
               .isVisible(),
-            'a message under Needed by says to choose the date',
+            'a message under Needed by tells the person to finish or choose the date',
           );
           c.ok(new URL(p().url()).pathname === '/procurement/requests/new', 'nothing was saved');
         },
@@ -1887,8 +1933,45 @@ export const PROC_FLOWS = [
             'message "Finish the date"',
             5000,
           );
+          const f = await focusInfo(c);
+          c.controls.push(`focus after the refused save: ${focusText(f)}`);
+          c.ok(
+            /day/i.test(f.name) || f.role === 'spinbutton',
+            `focus is on the empty day segment (${focusText(f)})`,
+            focusText(f),
+          );
+          const month = p().getByRole('spinbutton', { name: /month/i }).first();
+          const year = p().getByRole('spinbutton', { name: /year/i }).first();
+          c.ok(
+            /\d/.test(await month.innerText()) && /\d/.test(await year.innerText()),
+            'the month and year typed earlier are kept',
+          );
         },
-        { soft: true },
+      );
+      await step(
+        '5-type-day-and-save',
+        'EF4: type the day and Save draft: the date no longer complains (other required fields are not filled by this flow)',
+        async (c) => {
+          const day = p().getByRole('spinbutton', { name: /day/i }).first();
+          await day.click();
+          await p().keyboard.type('15', { delay: 80 });
+          await c.s.click(c.btn('Save draft'), 'Save draft');
+          await p().waitForTimeout(2000);
+          c.ok(
+            (await p()
+              .getByText(/Finish the date|Choose the date it is needed by/)
+              .count()) === 0,
+            'no date message remains once the day is typed',
+          );
+          c.ok(
+            /15/.test(await day.innerText()),
+            'the day segment holds 15 again',
+            await day.innerText(),
+          );
+          c.controls.push(
+            `other required fields still refuse the draft (department, cost centre, budget code, reason): the draft is not created by this flow`,
+          );
+        },
       );
     },
   },
@@ -2024,11 +2107,24 @@ export const INVITE_FLOWS = [
               .first(),
             'the Portal access line',
           );
-          await c.see(
-            p().getByRole('button', { name: 'Invite portal admin' }),
-            'button Invite portal admin',
-            30000,
-          );
+          await p().waitForTimeout(4000);
+          S.invited = !(await p().getByRole('button', { name: 'Invite portal admin' }).count());
+          if (S.invited) {
+            // FQA2 already sent this customer's first-admin invitation (a second one would refuse): re-check the state.
+            const line = (await p().locator('main').innerText()).replace(/\s+/g, ' ');
+            c.controls.push(
+              `invitation already sent in FQA2; Portal access line: ${line.match(/Portal access[^.]{0,80}/)?.[0] ?? '?'}`,
+            );
+            c.ok(
+              /Portal access/.test(line),
+              'the Portal access line is shown and offers no second invite',
+            );
+          } else
+            await c.see(
+              p().getByRole('button', { name: 'Invite portal admin' }),
+              'button Invite portal admin',
+              30000,
+            );
           await noSideScroll(c, 'customer page');
         },
       );
@@ -2036,6 +2132,7 @@ export const INVITE_FLOWS = [
         '3-invite',
         'Invite portal admin: choose the contact and send; a confirmation shows',
         async (c) => {
+          if (S.invited) return void c.controls.push('skipped: already invited in FQA2');
           await c.s.click(
             p().getByRole('button', { name: 'Invite portal admin' }),
             'Invite portal admin',
@@ -2063,6 +2160,7 @@ export const INVITE_FLOWS = [
         },
       );
       await step('4-mail', 'The invitation mail is in Mailpit (no link recorded)', async (c) => {
+        if (S.invited) return void c.controls.push('skipped: already invited in FQA2');
         const { findMail } = await import('../lib/support.mjs');
         const mail = await findMail(S.qa.cfg, 'subject:invit', 60000, { signal: c.s.signal });
         c.ok(!!mail, 'a Mailpit message about the invitation exists');
@@ -2197,8 +2295,68 @@ export const FLOWS = [
         },
       );
       await step(
+        '6b-tax-review',
+        'EF2: with tax withheld entered the review lists "Tax withheld" and the code; clearing the tax box removes both rows',
+        async (c) => {
+          const p = c.page();
+          const summary = p
+            .getByText('The customer withheld tax at source', { exact: false })
+            .first();
+          await summary.click();
+          const tax = p.getByRole('textbox', { name: 'Tax withheld', exact: true });
+          await c.s.fill(tax, '0.10');
+          await c.s.fill(
+            p.getByRole('textbox', { name: 'Withholding code', exact: true }),
+            'TDS-1.5',
+          );
+          await c.s.click(
+            p.getByRole('button', { name: 'Record payment', exact: true }),
+            'Record payment (submit)',
+          );
+          const d = p.getByRole('dialog');
+          await c.see(d, 'the review dialog');
+          const text = (await d.innerText()).replace(/\s+/g, ' ');
+          c.controls.push(`review with tax: ${text.slice(0, 300)}`);
+          c.ok(
+            /Tax withheld\s*NPR\s*0\.10/.test(text),
+            'the review lists "Tax withheld NPR 0.10"',
+            text.slice(0, 200),
+          );
+          c.ok(/Withholding code\s*TDS-1\.5/.test(text), 'the review lists the code TDS-1.5');
+          await d.getByRole('button', { name: 'Back', exact: true }).click();
+          await d.waitFor({ state: 'hidden', timeout: 10000 });
+          await c.s.fill(tax, '');
+          await c.s.click(
+            p.getByRole('button', { name: 'Record payment', exact: true }),
+            'Record payment (submit)',
+          );
+          await c.see(d, 'the review dialog without tax');
+          const text2 = (await d.innerText()).replace(/\s+/g, ' ');
+          c.ok(
+            !/Tax withheld/.test(text2) && !/Withholding code/.test(text2),
+            'with the tax box empty the review has neither row',
+            text2.slice(0, 200),
+          );
+          await d.getByRole('button', { name: 'Back', exact: true }).click();
+          await d.waitFor({ state: 'hidden', timeout: 10000 });
+          // EF2 open question 4: the review hides the code row, but a typed code is still sent, so the server
+          // refuses it. Logged; the code is cleared so the flow can go on.
+          logIssue({
+            id: 'I-N1 withholding code left behind',
+            severity: 'low',
+            area: 'payments, Record payment review',
+            found:
+              'Tax withheld was entered with a code, then the tax box was cleared and the code left: the review shows neither row, but Confirm still sends the code and the form comes back with a red error on Withholding code instead of posting (Confirm appears to do nothing).',
+            repro:
+              'Dev Finance, an invoice > Record payment; open the TDS section; Tax withheld 0.10, Withholding code TDS-1.5; clear Tax withheld; Record payment > Confirm. EF2 open question 4 (known; recommendation: send the code only when the tax is above zero).',
+            size: S.size,
+          });
+          await c.s.fill(p.getByRole('textbox', { name: 'Withholding code', exact: true }), '');
+        },
+      );
+      await step(
         '7-confirm-focus',
-        'FX5 Q4: Confirm posts one payment; where focus lands afterwards',
+        'EF4: Confirm posts one payment; focus lands on the new payment page heading',
         async (c) => {
           const p = c.page();
           await c.s.click(
@@ -2218,11 +2376,23 @@ export const FLOWS = [
             size: S.size,
           });
           await p.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+          await p.waitForTimeout(2500); // a late focus move would show by now
           const f = await focusInfo(c);
           c.controls.push(`focus after Confirm (new record page ${S.pay}): ${focusText(f)}`);
           S.focusAfterConfirm = focusText(f);
-          // PASS when the new record opened (focus starts at the top of the new page) or focus is on a real control.
-          c.ok(true, `Confirm opened the new payment; focus is on ${focusText(f)}`);
+          c.ok(
+            f.tag === 'h1',
+            `focus is on the payment page heading after Confirm (${focusText(f)})`,
+            focusText(f),
+          );
+          await p.keyboard.press('Tab');
+          const f2 = await focusInfo(c);
+          c.controls.push(`after one Tab: ${focusText(f2)}`);
+          c.ok(
+            f2.tag !== 'h1' && f2.tag !== 'body',
+            `Tab moves on to a control, no extra stop on the heading (${focusText(f2)})`,
+            focusText(f2),
+          );
         },
       );
       await step('8-detail', 'The payment page shows its status and proof', async (c) => {
