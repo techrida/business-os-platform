@@ -2884,3 +2884,173 @@ describe('Fail-closed reconcile against Postgres (FU8)', () => {
     });
   });
 });
+
+describe('R6C1: identity follow-ups against Postgres', () => {
+  const leaseName = (f: Fixture) => `users.founder-lease:${f.scope.tenantId}`;
+  const leaseCursorOf = async (f: Fixture) =>
+    (
+      await adminPool.query<{ cursor: string }>(
+        `SELECT cursor FROM ops.sync_cursors WHERE name = $1`,
+        [leaseName(f)],
+      )
+    ).rows[0]?.cursor;
+  const zitadelFor = (f: Fixture, status: 'active' | 'inactive', locked = false) => {
+    const zitadel = new RecordingZitadel();
+    zitadel.users.set(
+      f.zitadelUserId,
+      zUser(f.zitadelUserId, { orgId: f.zitadelOrgId, status, locked }),
+    );
+    return zitadel;
+  };
+  const mirrorOf = (zitadel: RecordingZitadel) =>
+    new UserMirror(db, store, zitadel.asClient(), fakeQueue() as unknown as Queue<UsersSyncData>);
+  const timedLockDue = (f: Fixture, now: Date) =>
+    write(f, {
+      email: 'mina@techrida.test',
+      displayName: 'Mina Gurung',
+      status: 'inactive',
+      lock: {
+        reason: 'failed_sign_ins',
+        lockedAt: new Date(now.getTime() - 20 * 60_000),
+        until: new Date(now.getTime() - 5 * 60_000),
+      },
+    });
+  const auditCount = async (entityId: string, action: string) =>
+    (
+      await adminPool.query(
+        `SELECT 1 FROM audit.audit_events WHERE entity_id = $1 AND action = $2`,
+        [entityId, action],
+      )
+    ).rowCount;
+  const removalOf = (f: Fixture) => ({
+    userId: f.userId,
+    zitadelUserId: f.zitadelUserId,
+    intent: 'deactivate',
+  });
+  const ageLease = (f: Fixture) =>
+    adminPool.query(
+      `UPDATE ops.sync_cursors SET updated_at = now() - make_interval(secs => 301) WHERE name = $1`,
+      [leaseName(f)],
+    );
+
+  it('(g) UserLocks.expire leaves a due lock alone while another identity change holds the tenant lease, and holds the lease itself while it unlocks', async () => {
+    const now = new Date();
+    const f = await fixture('active');
+    await timedLockDue(f, now);
+    const zitadel = zitadelFor(f, 'inactive', true);
+    const duringUnlock: (string | undefined)[] = [];
+    zitadel.onCall = async (op) => {
+      if (op === 'unlock') duringUnlock.push(await leaseCursorOf(f));
+    };
+    const locks = new UserLocks(db, store, zitadel.asClient(), audit);
+
+    expect(await store.claimFounderLease(f.scope.tenantId, 'live-holder', 300, 1000)).toBe(true);
+    expect(await locks.expire(now)).toEqual({ unlocked: 0, cleared: 0, postponed: 0 });
+    expect(zitadel.calls).toEqual([]);
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({
+      lockReason: 'failed_sign_ins',
+    });
+
+    await store.releaseFounderLease(f.scope.tenantId, 'live-holder');
+    expect(await locks.expire(now)).toMatchObject({ unlocked: 1 });
+    expect(duringUnlock).toHaveLength(1);
+    expect(duringUnlock[0]).not.toBe('free');
+    expect(await leaseCursorOf(f)).toBe('free');
+  }, 60_000);
+
+  it('(g) the invited-to-active flip of resolve waits for the tenant lease (503 while it is held) and runs under it', async () => {
+    const f = await fixture('invited');
+    const mirror = mirrorOf(zitadelFor(f, 'active'));
+    const input = {
+      zitadelUserId: f.zitadelUserId,
+      tenantId: f.scope.tenantId,
+      idpOrgId: f.idpOrgId,
+    };
+
+    expect(await store.claimFounderLease(f.scope.tenantId, 'live-holder', 300, 1000)).toBe(true);
+    await expect(mirror.resolve(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'invited' });
+
+    await store.releaseFounderLease(f.scope.tenantId, 'live-holder');
+    expect(await mirror.resolve(input)).toMatchObject({ status: 'active' });
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'active' });
+  }, 60_000);
+
+  it('(a, f) a removal left on a released lease flags the Founder even when ZITADEL shows them active; only a TTL takeover trusts that read, and says so in the audit', async () => {
+    const released = await fixture('active', { roles: ['founder'] });
+    const tenant = released.scope.tenantId;
+    expect(await store.claimFounderLease(tenant, 'holder-a', 300, 1000)).toBe(true);
+    expect(await store.recordFounderRemoval(tenant, 'holder-a', removalOf(released))).toBe(true);
+    await store.releaseFounderLease(tenant, 'holder-a');
+    await mirrorOf(zitadelFor(released, 'active')).syncUser(released.zitadelUserId);
+    expect(await store.findById(db, released.scope, released.userId)).toMatchObject({
+      identityReviewRequired: true,
+    });
+    expect(await auditCount(released.userId, 'identity.removal_untouched')).toBe(0);
+
+    const dead = await fixture('active', { roles: ['founder'] });
+    expect(await store.claimFounderLease(dead.scope.tenantId, 'dead-holder', 300, 1000)).toBe(true);
+    expect(
+      await store.recordFounderRemoval(dead.scope.tenantId, 'dead-holder', removalOf(dead)),
+    ).toBe(true);
+    await ageLease(dead);
+    await mirrorOf(zitadelFor(dead, 'active')).syncUser(dead.zitadelUserId);
+    const row = await store.findById(db, dead.scope, dead.userId);
+    expect(row!.identityReviewRequired).toBeFalsy();
+    expect(await auditCount(dead.userId, 'identity.removal_untouched')).toBe(1);
+  }, 60_000);
+
+  it('(a) the store tells a TTL takeover from a released or fresh lease', async () => {
+    const f = await fixture('active');
+    const tenant = f.scope.tenantId;
+    expect(await store.claimFounderLeaseWithOrigin(tenant, 'a', 300, 1000)).toEqual({
+      claimed: true,
+      ttlTakeover: false,
+    });
+    expect(await store.claimFounderLeaseWithOrigin(tenant, 'b', 300, 1000)).toEqual({
+      claimed: false,
+      ttlTakeover: false,
+    });
+    await ageLease(f);
+    expect(await store.claimFounderLeaseWithOrigin(tenant, 'b', 300, 1000)).toEqual({
+      claimed: true,
+      ttlTakeover: true,
+    });
+    await store.releaseFounderLease(tenant, 'b');
+    await ageLease(f);
+    // Free for a long time is not a takeover.
+    expect(await store.claimFounderLeaseWithOrigin(tenant, 'c', 300, 1000)).toEqual({
+      claimed: true,
+      ttlTakeover: false,
+    });
+  }, 60_000);
+
+  it('(e) deactivateMissing asks ZITADEL about a missing person while holding the tenant lease', async () => {
+    const f = await fixture('active');
+    const zitadel = zitadelFor(f, 'inactive');
+    const extra = `extra-${f.scope.tenantId}`;
+    zitadel.users.set(extra, zUser(extra, { orgId: f.zitadelOrgId, status: 'active' }));
+    vi.spyOn(zitadel, 'listUsers').mockImplementation((orgId: string) =>
+      Promise.resolve(
+        orgId === f.zitadelOrgId
+          ? { users: [zitadel.users.get(extra)!], nextCursor: null, totalResult: 1 }
+          : { users: [], nextCursor: null, totalResult: 0 },
+      ),
+    );
+    const heldAtConfirm: (string | undefined)[] = [];
+    zitadel.onCall = async (op, userId) => {
+      if (op === 'getUser' && userId === f.zitadelUserId) {
+        heldAtConfirm.push(await leaseCursorOf(f));
+      }
+    };
+
+    await mirrorOf(zitadel).reconcile({ yieldMs: 0 });
+
+    expect(heldAtConfirm.length).toBeGreaterThan(0);
+    for (const cursor of heldAtConfirm) {
+      expect(cursor).toBeTypeOf('string');
+      expect(cursor).not.toBe('free');
+    }
+    expect(await store.findById(db, f.scope, f.userId)).toMatchObject({ status: 'inactive' });
+  }, 60_000);
+});
