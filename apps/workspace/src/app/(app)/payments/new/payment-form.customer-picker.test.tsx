@@ -188,6 +188,26 @@ describe('the customer picker', () => {
     }
   });
 
+  it('says the search did not load, not that nothing matches, when the server search fails', async () => {
+    const search = vi.fn((_text: string, _signal: AbortSignal) =>
+      Promise.reject<CustomerOption[]>(new Error('Customer search failed with 503')),
+    );
+    const mounted = await mount({ customersCutOff: true, search });
+    try {
+      await fill(customerBox(mounted.container), 'far away');
+      await act(() => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(options()).toEqual([]);
+      expect(document.body.textContent).toContain('Search did not load. Try again.');
+      expect(document.body.textContent).not.toContain('No matching customer.');
+      // Typing again is the retry: the failure notice goes with the old text.
+      await fill(customerBox(mounted.container), 'far away t');
+      expect(document.body.textContent).toContain('No matching customer.');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   it('does not ask the server when the whole list is already here', async () => {
     const search = vi.fn((_text: string, _signal: AbortSignal) =>
       Promise.resolve<CustomerOption[]>([]),

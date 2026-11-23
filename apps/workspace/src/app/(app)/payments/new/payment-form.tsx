@@ -218,6 +218,8 @@ export function PaymentForm({
   // The customers the picker knows: the page's list plus whatever a search of a cut-off list has found since.
   const [searched, setSearched] = useState<readonly CustomerOption[]>([]);
   const [customerText, setCustomerText] = useState('');
+  // The server search for the typed text did not load: say so instead of "No matching customer.".
+  const [searchFailed, setSearchFailed] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
   const known = useMemo(() => {
     const byId = new Map<string, CustomerOption>();
@@ -238,7 +240,8 @@ export function PaymentForm({
           if (!controller.signal.aborted) setSearched((old) => [...old, ...found]);
         },
         () => {
-          // A failed search leaves the list as it is: the page's own customers can still be chosen.
+          // The list stays as it is (the page's own customers can still be chosen); the empty state says so.
+          if (!controller.signal.aborted) setSearchFailed(true);
         },
       );
     }, CUSTOMER_SEARCH_DELAY_MS);
@@ -631,13 +634,19 @@ export function PaymentForm({
                     groupThreshold={Number.POSITIVE_INFINITY}
                     value={customerId}
                     onChange={chooseCustomer}
-                    onInputChange={setCustomerText}
+                    onInputChange={(text) => {
+                      setCustomerText(text);
+                      // A new text is a new search: typing again is how a failed one is retried.
+                      setSearchFailed(false);
+                    }}
                     open={customerOpen}
                     onOpenChange={setCustomerOpen}
                     disabled={customerLocked}
                     placeholder="Search by name, number or PAN"
                     emptyText="There are no customers to choose from."
-                    noMatchText="No matching customer."
+                    noMatchText={
+                      searchFailed ? 'Search did not load. Try again.' : 'No matching customer.'
+                    }
                   />
                 )}
               </Field>
