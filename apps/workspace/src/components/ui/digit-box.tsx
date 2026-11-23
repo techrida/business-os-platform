@@ -440,9 +440,12 @@ export function DigitBox({
           className={styles.status}
           data-tone={status ? 'error' : undefined}
         >
-          {/* Two spans, so a standing blur error is not read out again when a refusal comes and goes. */}
-          {notice.text ? <span key={notice.seq}>{notice.text}</span> : null}
-          {error ? <span key="error">{error}</span> : null}
+          {/* One message: a live refusal while one stands, else the blur error (UIP-FORM-010: one line in a Field). */}
+          {notice.text ? (
+            <span key={notice.seq}>{notice.text}</span>
+          ) : error ? (
+            <span key="error">{error}</span>
+          ) : null}
         </div>
         {countText ? (
           <span id={countId} className={styles.count}>

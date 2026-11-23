@@ -11,20 +11,30 @@
   font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-body-small);
+  /* One line: a label too long for its row is cut here and shown in full in a tooltip (FieldLabel). */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* One line, always the same height: a label that wraps would push its box below the box beside it. A label too long
+   for its row is cut with an ellipsis and shows in full in a tooltip (FieldLabel). */
 .labelRow {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  height: var(--line-height-body-small);
   min-height: var(--line-height-body-small);
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 8px;
   min-width: 0;
 }
 
 /* Right end of the label row; muted so it reads as a note, not as part of the label. */
 .optional {
   flex: none;
+  margin-inline-start: auto;
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);

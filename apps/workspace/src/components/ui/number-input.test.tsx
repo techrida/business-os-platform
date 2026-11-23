@@ -814,10 +814,12 @@ describe('review fixes', () => {
   });
 
   it('reads the words after the prefix and before the error', async () => {
+    // Outside a Field the words print their own line; inside one they share the field's message line.
     const { box, container } = await mount(
-      <Field label="Amount" error="Too high">
-        {(control) => <MoneyInput {...control} currency="NPR" showWords />}
-      </Field>,
+      <>
+        <MoneyInput aria-describedby="amount-error" currency="NPR" showWords aria-label="Amount" />
+        <span id="amount-error">Too high</span>
+      </>,
     );
     await typeKeys(box, '2018180');
     const order = box

@@ -1,5 +1,6 @@
 import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
 
+import { FieldLabel } from './field-label';
 import { FieldScope } from './field-scope';
 import styles from './field.module.css';
 
@@ -58,9 +59,9 @@ export function Field({
   return (
     <div className={cls}>
       <div className={styles.labelRow}>
-        <label id={labelId} htmlFor={base} className={styles.label}>
+        <FieldLabel id={labelId} htmlFor={base}>
           {label}
-        </label>
+        </FieldLabel>
         {optional ? (
           <span id={optionalId} className={styles.optional}>
             Optional

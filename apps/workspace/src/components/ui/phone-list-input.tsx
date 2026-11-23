@@ -548,13 +548,9 @@ export function PhoneListInput({
                   {...(shownError ? { 'aria-describedby': rowErrorId } : {})}
                   invalid={shownError !== undefined && shownError !== null}
                   hint={hintOf(row)}
+                  {...(shownError ? { error: shownError, errorId: rowErrorId } : {})}
                   disabled={disabled === true}
                 />
-                {shownError ? (
-                  <p id={rowErrorId} className={styles.rowError}>
-                    {shownError}
-                  </p>
-                ) : null}
               </div>
               <div className={styles.extras}>
                 {showLabels ? (

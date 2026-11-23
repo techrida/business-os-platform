@@ -9,6 +9,7 @@ import {
   useState,
   type ChangeEvent,
   type ClipboardEvent,
+  type ReactNode,
 } from 'react';
 
 import {
@@ -40,6 +41,10 @@ export interface PhoneFieldProps {
   onBlur?: (() => void) | undefined;
   /** The text under the field while it has focus ("Mobile: 10 digits, starting with 9"). */
   hint?: string | undefined;
+  /** A problem with the number. It takes the field's one message line from the hint (UIP-FORM-010). */
+  error?: ReactNode | undefined;
+  /** The id of the error text, for the caller's `aria-describedby`. */
+  errorId?: string | undefined;
   /** Posted by hidden inputs: `<numberName>` the E.164 number, `<countryName>` the ISO code. */
   numberName?: string | undefined;
   countryName?: string | undefined;
@@ -72,6 +77,8 @@ export function PhoneField({
   onReselect,
   onBlur,
   hint,
+  error,
+  errorId,
   numberName,
   countryName,
   'aria-label': ariaLabel,
@@ -268,11 +275,17 @@ export function PhoneField({
       <p id={noticeId} className="sr-only" role="status" key={notice.seq}>
         {notice.text}
       </p>
-      {focused && hint ? (
-        <p id={hintId} className={styles.hint}>
-          {hint}
+      {/* The one reserved message line under the box: present when empty, so the hint that shows on focus and the
+          error that replaces it never move the row (UIP-FORM-010). */}
+      {error ? (
+        <p id={errorId} className={styles.error}>
+          {error}
         </p>
-      ) : null}
+      ) : (
+        <p id={focused && hint ? hintId : undefined} className={styles.hint}>
+          {focused && hint ? hint : null}
+        </p>
+      )}
     </div>
   );
 }
