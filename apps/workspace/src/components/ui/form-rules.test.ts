@@ -36,10 +36,10 @@ const hits = (pattern: RegExp) =>
   files.filter(({ text }) => pattern.test(text)).map(({ file }) => file);
 
 /**
- * Files owned by other round-6 units that still hold the old wording (lead form: R6O). Remove an
+ * Files owned by other round-6 units that still hold the old wording (none now). Remove an
  * entry when its file moves; the last test fails when an entry no longer needs listing.
  */
-const OTHER_UNITS = ['apps/workspace/src/components/p2/crm/lead-form.tsx'];
+const OTHER_UNITS: string[] = [];
 
 const OPTIONAL_HINT = /['"`]Optional[.,]/;
 const OPTIONAL_LABEL = /\(optional\)/i;
