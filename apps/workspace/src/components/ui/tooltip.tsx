@@ -1,7 +1,15 @@
 'use client';
 
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
-import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
+import {
+  cloneElement,
+  createContext,
+  useContext,
+  type HTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+} from 'react';
 
 import styles from './tooltip.module.css';
 
@@ -29,7 +37,9 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export interface TooltipProps {
+export interface TooltipProps extends Omit<HTMLAttributes<HTMLElement>, 'content' | 'children'> {
+  /** Passed on to the child, so a Tooltip can sit directly inside another `asChild` trigger (a dialog or popover trigger). */
+  ref?: Ref<HTMLButtonElement>;
   /** The hint. Short text; leave it out (or empty) to render the child with no tooltip. */
   content: ReactNode;
   /** Exactly one element that takes a ref and DOM props (a button, a link, a span). It receives the hover and focus handlers. */
@@ -52,14 +62,22 @@ export interface TooltipProps {
  * The hint must never be the only place a control's name or an essential fact lives: touch screens have
  * no hover. An icon button still needs its own `aria-label`.
  */
-export function Tooltip({ content, children, side = 'top', align = 'center' }: TooltipProps) {
+export function Tooltip({
+  content,
+  children,
+  side = 'top',
+  align = 'center',
+  ...triggerProps
+}: TooltipProps) {
   const hasProvider = useContext(ProviderContext);
   if (content === null || content === undefined || content === false || content === '') {
-    return children;
+    return cloneElement(children, triggerProps);
   }
   const tooltip = (
     <TooltipPrimitive.Root>
-      <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Trigger asChild {...triggerProps}>
+        {children}
+      </TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
           className={styles.content}
