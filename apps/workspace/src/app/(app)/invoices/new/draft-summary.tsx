@@ -5,6 +5,7 @@ import { Dec, formatMoney } from '@bos/locale';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
+import { Tooltip } from '@/components/ui/tooltip';
 import { Icon } from '@/components/ui/icon';
 import { useNumberSystems } from '@/components/ui/number-system-context';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -67,17 +68,20 @@ export function DraftSummary({
         title="Draft invoice preview"
         description="An invoice number, issue date and final totals are assigned through the invoice workflow."
         trigger={
-          <Button
-            variant="secondary"
-            disabled={!customer || !details || pending}
-            title={
+          // A natively disabled button gets no hover events, so the reason hangs on a wrapper.
+          <Tooltip
+            content={
               !customer || !details
                 ? 'Choose a customer and complete each line to preview.'
                 : undefined
             }
           >
-            <Icon name="file-text" size={18} /> Preview
-          </Button>
+            <span style={{ display: 'inline-flex' }}>
+              <Button variant="secondary" disabled={!customer || !details || pending}>
+                <Icon name="file-text" size={18} /> Preview
+              </Button>
+            </span>
+          </Tooltip>
         }
         footer={
           <DialogClose asChild>

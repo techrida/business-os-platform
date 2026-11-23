@@ -3,22 +3,6 @@
   gap: 16px;
 }
 
-/* Issue shown but off, with the reason under it (TR-Q12f). */
-.blocked {
-  display: grid;
-  gap: 4px;
-  max-width: 36ch;
-  justify-items: start;
-}
-
-.blockedReason {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
-}
-
 /* What the dialog says once its action is done, until Done reloads the invoice. */
 .done {
   display: grid;

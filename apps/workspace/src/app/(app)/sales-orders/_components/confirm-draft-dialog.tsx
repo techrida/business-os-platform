@@ -46,6 +46,7 @@ export function ConfirmDraftDialog({
       initial={{ key: idempotencyKey }}
       action={confirmOrderAction}
       reloadHref={reloadHref}
+      focusHeadingOnDone
       blocked={blocked}
     >
       {(state) => (
