@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   changeUserStatus,
   inviteUser,
+  resolveUserIdentity,
   sendPasswordReset,
   setUserRoles,
   type UserStatusAction,
@@ -143,4 +144,26 @@ export async function changeUserStatusAction(
   }
   revalidatePath(PATH);
   return ok(STATUS_DONE[action].done);
+}
+
+/** Clears a flag after the API reads the identity provider again; a 503 or 409 comes back as the message. */
+export async function resolveIdentityAction(userId: string): Promise<ActionState> {
+  const session = await requireSection('users');
+  const parsed = z.uuid().safeParse(userId);
+  if (!parsed.success) return fail('Missing user.');
+
+  try {
+    await resolveUserIdentity(session, parsed.data);
+  } catch (error) {
+    // 503: ZITADEL could not be read (or is not configured). Nothing changed and the flag stays, whatever message came.
+    if (typeof error === 'object' && error !== null && 'status' in error && error.status === 503) {
+      return fail(
+        'The identity provider could not be read, so nothing changed and the flag stays. Try again later.',
+      );
+    }
+    return fail(describeError(error, 'resolve flagged users'));
+  }
+  revalidatePath(PATH);
+  revalidatePath(`${PATH}/flagged`);
+  return ok('Flag resolved.');
 }

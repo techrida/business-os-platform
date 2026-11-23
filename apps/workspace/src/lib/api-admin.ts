@@ -12,6 +12,7 @@ import {
   type AdminUsersQuery,
   AdminUsersPageSchema,
   AdminUsersSummarySchema,
+  FlaggedUsersSchema,
   SettingKeySchema,
   SettingsPersonSchema,
   type RoleKey,
@@ -221,6 +222,16 @@ export async function changeUserStatus(
   action: UserStatusAction,
 ): Promise<void> {
   await request(session, 'POST', `/v1/admin/users/${seg(userId)}/${action}`);
+}
+
+/** People flagged for identity review, with why and when (FU8). Needs the company-wide account grant. */
+export function listFlaggedUsers(session: Session) {
+  return requestParsed(session, 'GET', '/v1/admin/users/identity-review', FlaggedUsersSchema);
+}
+
+/** Resolves one flag: the API reads the identity provider again and answers 204, 409, or 503 with nothing changed. */
+export async function resolveUserIdentity(session: Session, userId: string): Promise<void> {
+  await request(session, 'POST', `/v1/admin/users/${seg(userId)}/resolve-identity`);
 }
 
 /** Complete, caller-scoped picker data. These routes expose no directory administration fields. */
