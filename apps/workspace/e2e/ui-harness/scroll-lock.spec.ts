@@ -125,6 +125,11 @@ for (const viewport of viewports) {
       await page.waitForTimeout(300);
       const before = await frame(page);
       expect(before.scrollY).toBeGreaterThan(0);
+      if (control.scope === 'page') {
+        expect(
+          await page.evaluate(() => innerWidth - document.documentElement.clientWidth),
+        ).toBeGreaterThan(0);
+      }
 
       const box = await control.trigger(page).boundingBox();
       if (!box) throw new Error('trigger has no box');
@@ -160,4 +165,15 @@ test('the page stays locked behind a dialog while a Select is open', async ({ pa
   await page.mouse.wheel(0, 600);
   await page.waitForTimeout(300);
   expect(await frame(page)).toEqual(before);
+  expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe('hidden');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).overflow)).toBe(
+    'visible',
+  );
+
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.overflow)).toBe('');
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(before.scrollY);
 });
