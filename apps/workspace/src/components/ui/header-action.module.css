@@ -7,16 +7,6 @@
   min-width: 0;
 }
 
-.pills {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 /* Looks unavailable but stays legible and clickable (it explains itself). Beats `.primary` by selector weight. */
 .root .blocked {
   border-color: transparent;
