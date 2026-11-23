@@ -239,10 +239,11 @@ export function QuoteForm({
               />
             </>
           ) : null}
-          <Field label="Vendor’s reference" hint="Optional." error={err.vendorRef}>
+          <Field label="Vendor’s reference" optional error={err.vendorRef}>
             {(control) => (
               <Input
                 name="vendorRef"
+                placeholder="QT-2083-114"
                 value={values.vendorRef}
                 onChange={set('vendorRef')}
                 maxLength={100}
@@ -266,7 +267,7 @@ export function QuoteForm({
               </Select>
             )}
           </Field>
-          <Field label="Valid until" hint="Optional." error={err.validUntil}>
+          <Field label="Valid until" optional error={err.validUntil}>
             {(control) => (
               <DatePicker
                 {...control}
@@ -276,11 +277,12 @@ export function QuoteForm({
               />
             )}
           </Field>
-          <Field label="Delivery time (days)" hint="Optional." error={err.deliveryDays}>
+          <Field label="Delivery time (days)" optional error={err.deliveryDays}>
             {(control) => (
               <DecimalInput
                 {...control}
                 name="deliveryDays"
+                placeholder="14"
                 intDigits={4}
                 scale={0}
                 min="0"
@@ -290,10 +292,11 @@ export function QuoteForm({
               />
             )}
           </Field>
-          <Field label="Warranty" hint="Optional." error={err.warranty} className={WIDE}>
+          <Field label="Warranty" optional error={err.warranty} className={WIDE}>
             {(control) => (
               <Input
                 name="warranty"
+                placeholder="12 months from delivery"
                 value={values.warranty}
                 onChange={set('warranty')}
                 maxLength={500}
@@ -301,7 +304,7 @@ export function QuoteForm({
               />
             )}
           </Field>
-          <Field label="Terms" hint="Optional." error={err.terms} className={WIDE}>
+          <Field label="Terms" optional error={err.terms} className={WIDE}>
             {(control) => (
               <RichTextEditor
                 name="terms"
