@@ -118,6 +118,68 @@ describe('PhoneListInput, one box: the code is shown once, in the number', () =>
   });
 });
 
+describe('PhoneListInput, digits typed one at a time with no plus', () => {
+  it.each([
+    ['US', '4805551234', '+1 480 555 1234'],
+    ['US', '7575551234', '+1 757 555 1234'],
+    ['US', '2125551234', '+1 212 555 1234'],
+    ['US', '9195551234', '+1 919 555 1234'],
+    ['GB', '2079460958', '+44 20 7946 0958'],
+    ['IN', '2226781234', '+91 22 2678 1234'],
+  ] as const)('keeps a real %s number %s in its country the whole way', async (country, typed, shown) => {
+    const list = await mount({ defaultCountry: country });
+    await typeKeys(list.number(1), typed);
+    expect(list.posted('0.country')).toBe(country);
+    expect(list.number(1).value).toBe(shown);
+  });
+
+  it('refuses one digit past a complete number, so a typo cannot make it a foreign number', async () => {
+    const list = await mount({ defaultCountry: 'US' });
+    await typeKeys(list.number(1), '41555526719');
+    expect(list.number(1).value).toBe('+1 415 555 2671');
+    expect(list.posted('0.country')).toBe('US');
+    expect(list.container.textContent).toContain('one digit more than a valid number');
+    await mounted!.unmount();
+
+    const nepal = await mount();
+    await typeKeys(nepal.number(1), '98123456789');
+    expect(nepal.number(1).value).toBe('+977 9812345678');
+    expect(nepal.posted('0.country')).toBe('NP');
+  });
+
+  it('does not switch the country the user picked, however the digits start', async () => {
+    const list = await mount();
+    await pickCountry(list.country(1), 'united states');
+    await typeKeys(list.number(1), '977');
+    expect(list.posted('0.country')).toBe('US');
+    expect(list.number(1).value).toBe('+1 977');
+  });
+
+  it('drops the trunk 0 of a pasted national number', async () => {
+    const list = await mount();
+    await paste(list.number(1), '01 4123456');
+    expect(list.posted('0.number')).toBe('+97714123456');
+    expect(list.number(1).value).toBe('+977 1-4123456');
+    await mounted!.unmount();
+    const uk = await mount({ defaultCountry: 'GB' });
+    await paste(uk.number(1), '020 7946 0958');
+    expect(uk.posted('0.number')).toBe('+442079460958');
+  });
+
+  it('keeps the plus when 00 is typed, and backspace over a space removes the digit before it', async () => {
+    const list = await mount();
+    await typeKeys(list.number(1), '00');
+    expect(list.number(1).value).toBe('+');
+    await typeKeys(list.number(1), '{Backspace}');
+    await typeKeys(list.number(1), '+14155552671');
+    expect(list.number(1).value).toBe('+1 415 555 2671');
+    // The caret sits after the space before 5552671; Backspace there removes the space, so it takes the 5 before it.
+    list.number(1).setSelectionRange(8, 8);
+    await typeKeys(list.number(1), '{Backspace}');
+    expect(list.number(1).value).toBe('+1 415 552 671');
+  });
+});
+
 describe('PhoneListInput, the flag menu', () => {
   const options = () => [...document.querySelectorAll('[role="option"]')];
 

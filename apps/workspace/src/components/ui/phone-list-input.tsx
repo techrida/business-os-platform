@@ -388,6 +388,8 @@ export function PhoneListInput({
 
   useFormReset(rootRef, () => {
     setRows(startRows(defaultValue, defaultCountry, () => nextKey(), limit));
+    setTouched(new Set());
+    setSubmitStopped(false);
     // The fresh rows have new keys: the errors (this commit's, or ones still to come) bind to them by position.
     setBound({ source: [], byKey: new Map() });
   });

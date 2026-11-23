@@ -7,6 +7,7 @@ import {
   displayPhone,
   examplePhone,
   interpretTyped,
+  refusesExtraDigit,
 } from './phone-detect';
 
 const np = { country: 'NP' as const, picked: false };
@@ -66,8 +67,8 @@ describe('interpretTyped: with a plus', () => {
   });
 });
 
-describe('interpretTyped: without a plus (UIP-FORM-007)', () => {
-  it('reads digits as the current country national number while they can be one', () => {
+describe('interpretTyped: typed without a plus (UIP-FORM-007)', () => {
+  it('reads digits as the current country national number', () => {
     expect(interpretTyped('9', np)).toEqual({ country: 'NP', e164: '+9779' });
     expect(interpretTyped('9812345678', np)).toEqual({ country: 'NP', e164: '+9779812345678' });
     expect(interpretTyped('415', us)).toEqual({ country: 'US', e164: '+1415' });
@@ -76,43 +77,39 @@ describe('interpretTyped: without a plus (UIP-FORM-007)', () => {
     expect(interpretTyped('9123456789', inIndia)).toEqual({ country: 'IN', e164: '+919123456789' });
   });
 
-  it('switches to Nepal when 977… is typed under the United States, no plus needed', () => {
+  it('switches at exactly a calling code that cannot start a national number: 977 under the US or Nepal', () => {
+    expect(couldBeNational('US', '977')).toBe(false);
+    expect(couldBeNational('NP', '977')).toBe(false);
     expect(interpretTyped('977', us)).toEqual({ country: 'NP', e164: '+977' });
-    expect(interpretTyped('9779812345678', us)).toEqual({ country: 'NP', e164: '+9779812345678' });
+    expect(interpretTyped('977', np)).toEqual({ country: 'NP', e164: '+977' });
+    // India has 977… mobile numbers, so there it stays a national start.
+    expect(interpretTyped('977', inIndia).country).toBe('IN');
   });
 
-  it('switches to India for 91 98765 43210 typed or pasted under the US and under Nepal', () => {
-    expect(interpretTyped('91 98765 43210', us)).toEqual({ country: 'IN', e164: '+919876543210' });
-    expect(interpretTyped('91 98765 43210', np)).toEqual({ country: 'IN', e164: '+919876543210' });
-    expect(interpretTyped('919876543210', inIndia)).toEqual({
-      country: 'IN',
-      e164: '+919876543210',
+  it('does not switch on real national starts that look like a code: 91, 212, 480, 757 under the US', () => {
+    for (const start of ['4', '48', '480', '75', '757', '91', '212', '44', '650', '310', '541']) {
+      expect(interpretTyped(start, us).country, start).toBe('US');
+    }
+  });
+
+  it('does not switch on real national starts in other countries', () => {
+    expect(interpretTyped('2079460958', { country: 'GB', picked: false }).country).toBe('GB');
+    expect(interpretTyped('2226781234', inIndia).country).toBe('IN');
+    for (const start of ['9', '98', '984', '985', '97', '1', '14', '44']) {
+      expect(interpretTyped(start, np).country, start).toBe('NP');
+    }
+  });
+
+  it('never switches a country the user picked on bare digits', () => {
+    expect(interpretTyped('977', { country: 'US', picked: true })).toEqual({
+      country: 'US',
+      e164: '+1977',
     });
-  });
-
-  it('reads 1 415… under Nepal as the United States', () => {
-    expect(interpretTyped('1 415 555 2671', np)).toEqual({ country: 'US', e164: '+14155552671' });
+    expect(interpretTyped('415', { country: 'US', picked: true }).country).toBe('US');
   });
 
   it('reads the own code typed in front of a US number as the same country, written once', () => {
     expect(interpretTyped('14155552671', us)).toEqual({ country: 'US', e164: '+14155552671' });
-    expect(interpretTyped('1415', us)).toEqual({ country: 'US', e164: '+1415' });
-  });
-
-  it('under Nepal, 977… is its own code (no Nepal number starts 977), and a real mobile stays national', () => {
-    expect(couldBeNational('NP', '977')).toBe(false);
-    expect(interpretTyped('977', np)).toEqual({ country: 'NP', e164: '+977' });
-    expect(interpretTyped('9779812345678', np)).toEqual({ country: 'NP', e164: '+9779812345678' });
-    expect(interpretTyped('984', np)).toEqual({ country: 'NP', e164: '+977984' });
-    expect(interpretTyped('9841234567', np)).toEqual({ country: 'NP', e164: '+9779841234567' });
-  });
-
-  it('keeps a picked country while the digits are still a possible national start', () => {
-    expect(interpretTyped('415', { country: 'US', picked: true })).toEqual({
-      country: 'US',
-      e164: '+1415',
-    });
-    expect(interpretTyped('91 98765 43210', { country: 'US', picked: true }).country).toBe('IN');
   });
 
   it('ignores letters and punctuation, and caps the digits at 15', () => {
@@ -120,6 +117,56 @@ describe('interpretTyped: without a plus (UIP-FORM-007)', () => {
     expect(interpretTyped('+', np)).toEqual({ country: 'NP', e164: '' });
     expect(interpretTyped('+123456789012345678', np).e164).toBe('+123456789012345');
     expect(interpretTyped('', us)).toEqual({ country: 'US', e164: '' });
+  });
+});
+
+describe('interpretTyped: pasted without a plus', () => {
+  it('reads a complete international number under its calling code, in any current country', () => {
+    expect(interpretTyped('91 98765 43210', us, 'paste')).toEqual({
+      country: 'IN',
+      e164: '+919876543210',
+    });
+    expect(interpretTyped('91 98765 43210', np, 'paste')).toEqual({
+      country: 'IN',
+      e164: '+919876543210',
+    });
+    expect(interpretTyped('919876543210', inIndia, 'paste')).toEqual({
+      country: 'IN',
+      e164: '+919876543210',
+    });
+    expect(interpretTyped('1 415 555 2671', np, 'paste')).toEqual({
+      country: 'US',
+      e164: '+14155552671',
+    });
+    expect(interpretTyped('9779812345678', us, 'paste')).toEqual({
+      country: 'NP',
+      e164: '+9779812345678',
+    });
+    expect(interpretTyped('9779812345678', np, 'paste')).toEqual({
+      country: 'NP',
+      e164: '+9779812345678',
+    });
+  });
+
+  it('drops the trunk 0 of a pasted national number', () => {
+    expect(interpretTyped('020 7946 0958', { country: 'GB', picked: false }, 'paste')).toEqual({
+      country: 'GB',
+      e164: '+442079460958',
+    });
+    expect(interpretTyped('01 4123456', np, 'paste')).toEqual({
+      country: 'NP',
+      e164: '+97714123456',
+    });
+  });
+});
+
+describe('refusesExtraDigit', () => {
+  it('refuses one digit past a complete valid national number, not a longer valid one', () => {
+    expect(refusesExtraDigit('US', '4155552671', '41555526719')).toBe(true);
+    expect(refusesExtraDigit('NP', '9812345678', '98123456789')).toBe(true);
+    expect(refusesExtraDigit('NP', '9812345', '98123456')).toBe(false);
+    expect(refusesExtraDigit('US', '415555267', '4155552671')).toBe(false);
+    expect(refusesExtraDigit('NP', '14123456', '141234567')).toBe(false);
   });
 });
 

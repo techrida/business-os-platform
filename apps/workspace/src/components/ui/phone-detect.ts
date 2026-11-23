@@ -8,19 +8,21 @@
 //     contracts' `phoneCountryFromE164` (main country of a shared code; +1 and +7 resolve by area code once the number is
 //     complete), and a country the user picked on purpose is kept when the detected one only shares its calling code
 //     (a picked Canada stays Canada for `+1 204…`; R6A's rule).
-//   * Bare digits (a first digit typed into the empty field, or the text pasted over the whole box): digits of the
-//     current country's national number, unless they cannot be one. Decided in this order:
-//       1. The digits are a complete valid national number of the current country: national. (Nothing is read as a code
-//          when the whole number is already valid. `9123456789` in India is a mobile, not +91 23456789.)
-//       2. They still could become one (a strict probe: some completion is a valid national number, with nothing
-//          stripped): national. A country picked on purpose is therefore kept while the typing is a possible national
-//          start (UIP-FORM-007). `977…` is not a possible national start in Nepal (no mobile range 977) or the United
-//          States (no area code 977), so under either it is read next, as Nepal's code.
-//       3. They begin with a calling code (prefix-free, so there is one): international, the country follows the code,
-//          and the code is not typed twice (`1 415…` in a Nepal row is the United States, `977…` in a US row is Nepal).
-//       4. Anything else stays national and is reported as invalid by `problemOf`.
-//     A valid number that only parses because libphonenumber stripped the country's own code or a trunk prefix
-//     (`919876543210` in India, `14155552671` in the US) is read as international when it starts with the code.
+//   * Bare digits (a first digit typed into the empty field, or the text pasted over the whole box): the digits of the
+//     current country's national number unless they plainly are not. Typing and pasting differ, because typing goes one
+//     digit at a time and a misread country mid-number is worse than a late switch:
+//       - Pasted (the whole box replaced): national when the digits are a valid national number of the current country
+//         (`9123456789` in India is a mobile, not +91 23456789). Otherwise, when they are a complete valid international
+//         number under their leading calling code, international: `91 98765 43210` under the United States is India. A
+//         trunk 0 that only parses away (`020 7946 0958`) is dropped.
+//       - Typed, in a country the user did not pick: national, until the digits are exactly a calling code that cannot
+//         start a national number (`977` under the United States or Nepal; `91` is a real US start, `212` is a New York
+//         area code, so neither switches). Then the country follows the code, which ends bare typing: the next digits
+//         are read after the code. A country the user picked is never switched by bare digits (type the `+`).
+//       - Typed, one digit past a complete valid national number: refused by the field (`refusesExtraDigit`), so a typo
+//         cannot turn a US number into a Swiss one.
+//     A valid number that only parses because libphonenumber stripped the country's own code (`919876543210` in India,
+//     `14155552671` in the US) is read as international when it starts with the code.
 //
 // The 'max' metadata is used for the "could this be a national number" test only (its per-type patterns know that no
 // US area code is 977); what is saved is still checked by the contracts' `phoneProblem` on the 'min' metadata.
@@ -67,24 +69,76 @@ export function countryAfterTyping(
   return detected;
 }
 
-const PADS = ['2345678901234', '5550100987654', '9876543210123'] as const;
+const TAILS = ['2345678901234', '5550100987654', '9876543210123'] as const;
 
-/** Whether `digits`, nothing stripped from them, are a valid national number of `country` or the start of one. */
+/**
+ * Whether `digits`, nothing stripped from them, are a valid national number of `country` or the start of one: some
+ * completion is valid. The first three digits are completed with every combination (an area code is up to three
+ * digits and which ones exist is what tells `977` from `480`), then the number is filled out with a few different
+ * tails. Only used with an exact calling code (`977`, `91`) to decide whether that is the start of a national number.
+ */
 export function couldBeNational(country: CountryCode, digits: string): boolean {
   if (digits === '') return true;
   const max = E164_MAX_DIGITS - dialOf(country).length;
-  for (let length = digits.length; length <= max; length += 1) {
-    for (const pad of PADS) {
-      const candidate = `${digits}${pad}`.slice(0, length);
-      const parsed = parsePhoneNumberFromString(candidate, country as LibCountryCode);
-      if (parsed?.isValid() === true && parsed.nationalNumber === candidate) return true;
+  const heads =
+    digits.length >= 3
+      ? [digits]
+      : Array.from(
+          { length: 10 ** (3 - digits.length) },
+          (_, n) => `${digits}${String(n).padStart(3 - digits.length, '0')}`,
+        );
+  for (const head of heads) {
+    for (let length = Math.max(head.length, 4); length <= max; length += 1) {
+      for (const tail of TAILS) {
+        const candidate = `${head}${tail}`.slice(0, length);
+        const parsed = parsePhoneNumberFromString(candidate, country as LibCountryCode);
+        if (parsed?.isValid() === true && parsed.nationalNumber === candidate) return true;
+      }
     }
   }
   return false;
 }
 
-/** What the text typed or pasted into the field means. Letters and punctuation are ignored; digits are capped at 15. */
-export function interpretTyped(text: string, current: TypingContext): PhoneTyped {
+/** Whether `digits` are, as typed, a complete valid national number of `country`. */
+export function isCompleteNational(country: CountryCode, digits: string): boolean {
+  const parsed = parsePhoneNumberFromString(digits, country as LibCountryCode);
+  return parsed?.isValid() === true && parsed.nationalNumber === digits;
+}
+
+/**
+ * Whether typing one more digit after `before` should be refused: `before` is a complete valid national number and
+ * `after` (one digit longer) can no longer become one, so the digit is more likely a typo than the start of a foreign
+ * code. (A 7-digit Nepal landline followed by an 8th digit is still on its way to a 10-digit mobile: not refused.)
+ */
+export function refusesExtraDigit(country: CountryCode, before: string, after: string): boolean {
+  // Nepal keeps FX8's rule: a mobile is ten digits starting with 9, a landline 7 to 9 digits (libphonenumber knows
+  // only the 8-digit ones), so only a complete mobile refuses another digit.
+  if (country === 'NP') {
+    return (
+      before.length === 10 &&
+      before.startsWith('9') &&
+      after.length === 11 &&
+      after.startsWith(before)
+    );
+  }
+  return (
+    before !== '' &&
+    after.length === before.length + 1 &&
+    after.startsWith(before) &&
+    isCompleteNational(country, before) &&
+    !couldBeNational(country, after)
+  );
+}
+
+/**
+ * What the text typed or pasted into the field means. Letters and punctuation are ignored; digits are capped at 15.
+ * `via` is how it got there: `type` (one edit at a time) or `paste` (a whole number at once).
+ */
+export function interpretTyped(
+  text: string,
+  current: TypingContext,
+  via: 'type' | 'paste' = 'type',
+): PhoneTyped {
   const trimmed = text.trimStart();
   const international = trimmed.startsWith('+') || trimmed.startsWith('00');
   const all = text.replace(/\D/g, '');
@@ -100,24 +154,39 @@ export function interpretTyped(text: string, current: TypingContext): PhoneTyped
 
   const dial = dialOf(current.country);
   const national: PhoneTyped = { country: current.country, e164: `+${dial}${digits}` };
-  if (dial === '') {
+  const intl = (): PhoneTyped | null => {
     const detected = phoneCountryFromE164(`+${digits}`);
     return detected === null
-      ? national
+      ? null
       : { country: countryAfterTyping(current, detected), e164: `+${digits}` };
-  }
+  };
+  if (dial === '') return intl() ?? national;
+
   const own = parsePhoneNumberFromString(digits, current.country as LibCountryCode);
   if (own?.isValid() === true) {
     if (own.nationalNumber === digits) return national;
     // Valid only because the own code was dropped (`14155552671`): the user typed the code.
     if (digits.startsWith(dial)) return { country: current.country, e164: `+${digits}` };
-    return national;
+    // A pasted number with its trunk 0 (`020 7946 0958`): E.164 leaves the 0 out.
+    return via === 'paste' ? { country: current.country, e164: own.number } : national;
   }
-  if (couldBeNational(current.country, digits)) return national;
-  const detected = phoneCountryFromE164(`+${digits}`);
-  const code = detected === null ? null : countryCallingCode(detected);
-  if (detected !== null && code !== null && digits.length >= code.length) {
-    return { country: countryAfterTyping(current, detected), e164: `+${digits}` };
+
+  const code = (() => {
+    const detected = phoneCountryFromE164(`+${digits}`);
+    return detected === null ? null : countryCallingCode(detected);
+  })();
+  if (via === 'paste') {
+    const parsed = parsePhoneNumberFromString(`+${digits}`);
+    return parsed?.isValid() === true ? (intl() ?? national) : national;
+  }
+  // Typed: only an exact calling code that cannot start a national number, and only where the user has not picked.
+  if (
+    !current.picked &&
+    code !== null &&
+    digits === code &&
+    !couldBeNational(current.country, digits)
+  ) {
+    return intl() ?? national;
   }
   return national;
 }

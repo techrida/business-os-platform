@@ -18,6 +18,7 @@ import {
   E164_MAX_DIGITS,
   examplePhone,
   interpretTyped,
+  refusesExtraDigit,
   type PhoneTyped,
 } from './phone-detect';
 import { PhoneCountryMenu } from './phone-country-menu';
@@ -111,7 +112,7 @@ export function PhoneField({
     }
   });
 
-  function apply(raw: string, digitsBeforeCaret: number | null) {
+  function apply(raw: string, digitsBeforeCaret: number | null, via: 'type' | 'paste' = 'type') {
     // While the digits are the user's bare ones, the text is `+<code> <digits>` with the code added for them: take
     // the code off again so they are judged as typed. Edited code, or any text written with a plus: read as given.
     const dial = countryCallingCode(country) ?? '';
@@ -120,8 +121,23 @@ export function PhoneField({
       bare && /^\s*\+/.test(raw) && dial !== '' && allDigits.startsWith(dial)
         ? allDigits.slice(dial.length)
         : raw;
-    const typed = interpretTyped(source, { country, picked });
     const sourceDigits = source.replace(/\D/g, '').slice(0, E164_MAX_DIGITS);
+    // One digit past a complete number is more likely a typo than a foreign code: keep the number, say why.
+    if (
+      via === 'type' &&
+      bare &&
+      dial !== '' &&
+      refusesExtraDigit(country, e164.slice(1 + dial.length), sourceDigits)
+    ) {
+      setText(displayPhone(e164));
+      caret.current = digitCount(displayPhone(e164));
+      setNotice((previous) => ({
+        text: 'That is one digit more than a valid number. Type + first for a number from another country.',
+        seq: previous.seq + 1,
+      }));
+      return;
+    }
+    const typed = interpretTyped(source, { country, picked }, via);
     const nationalOutcome =
       !/^\s*(\+|00)/.test(source) &&
       typed.e164 !== '' &&
@@ -141,7 +157,7 @@ export function PhoneField({
       }));
     }
     // A lone `+` or `00` is the start of a number: keep it on screen until the first digit comes.
-    const shown = typed.e164 === '' && RAW_PLUS.test(raw) ? '+' : displayPhone(typed.e164);
+    const shown = typed.e164 === '' && RAW_PLUS.test(source) ? '+' : displayPhone(typed.e164);
     setText(shown);
     setShownFor(typed.e164);
     caret.current = digitsBeforeCaret === null ? null : digitsBeforeCaret + codeAdded;
@@ -158,7 +174,18 @@ export function PhoneField({
 
   function onChange(event: ChangeEvent<HTMLInputElement>) {
     const input = event.target;
-    apply(input.value, digitCount(input.value, input.selectionStart ?? input.value.length));
+    let value = input.value;
+    let at = input.selectionStart ?? value.length;
+    // Backspace over a space or bracket the field added removes nothing by itself: take the digit before it instead.
+    if (digitCount(value) === digitCount(text) && value.length < text.length) {
+      let index = at - 1;
+      while (index >= 0 && !/\d/.test(value[index]!)) index -= 1;
+      if (index >= 0) {
+        value = value.slice(0, index) + value.slice(index + 1);
+        at = index;
+      }
+    }
+    apply(value, digitCount(value, at));
   }
 
   function onPaste(event: ClipboardEvent<HTMLInputElement>) {
@@ -170,7 +197,7 @@ export function PhoneField({
     // A whole number written with its code replaces the field; any other text goes in at the caret, as typed.
     if (/^(\+|00)/.test(pasted) || (wholeBox && pasted !== '')) {
       event.preventDefault();
-      apply(pasted, null);
+      apply(pasted, null, 'paste');
     }
   }
 
