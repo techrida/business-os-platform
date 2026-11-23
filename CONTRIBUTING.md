@@ -78,6 +78,14 @@ pnpm --filter @bos/workspace e2e
 pnpm --filter @bos/portal e2e
 ```
 
+You do not need the stack on your machine for these: GitHub runs them for you.
+
+- **Run it:** in the Actions tab open the `qa` workflow and choose **Run workflow**, pick your branch, and optionally a file filter such as `p4/list-filters`. It also runs on pushes to `main` and `p4-main` and on pull requests that touch `apps/`, `packages/` or `infra/`.
+- **Read it:** open the run, then **Artifacts** at the bottom (`playwright-specs-1` to `3`, kept 14 days). `workspace/playwright-report/index.html` is the HTML report, and every test has its video under `workspace/test-results/`.
+- **Quarantine:** specs that cannot pass yet are listed with their reasons in [.github/qa/quarantine.md](.github/qa/quarantine.md); they run in a separate job that is allowed to fail.
+
+The `ui` job of `ci` runs the no-stack Playwright project (`pnpm --filter @bos/workspace exec playwright test --project=ui`) on every push.
+
 ## Pull request process
 
 1. Push your branch to your fork or feature branch and open a pull request using the repository template ([.github/pull_request_template.md](.github/pull_request_template.md)).
@@ -88,6 +96,8 @@ pnpm --filter @bos/portal e2e
    - `e2e`: `@bos/db` tests and `@bos/api` end-to-end tests
    - `web`: production builds for Workspace and Portal plus dev-route exclusion checks
    - `docker`: production Docker image builds and Login V2 tests
+   - `ui`: real-Chromium component specs that need no stack
+   - `qa` (when your change touches `apps/`, `packages/` or `infra/`): the full browser suites against a stack built on the runner
 4. Address review feedback with clear follow-up commits.
 
 ## Licensing of contributions

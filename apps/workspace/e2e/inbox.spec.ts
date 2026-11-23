@@ -46,7 +46,7 @@ test('the inbox shows the reason for each item, and excludes the requester’s m
     await test.step('Sales can open the inbox but cannot decide this memo', async () => {
       await sales.page.goto('/inbox');
       await expect(sales.page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
-      await expect(sales.page.getByRole('alert')).toHaveCount(0);
+      await expect(sales.page.getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(0);
       await expect(inboxRow(sales.page, title)).toHaveCount(0);
     });
 

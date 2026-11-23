@@ -73,6 +73,17 @@ export async function createDraftMemo(
       name: approver ? 'Approved by' : `Recommended by ${i + 1}`,
       exact: true,
     });
+    // The rule arrives after the form and may already have chosen the person: the live preview then names them under
+    // "Approved by" while the box itself stays empty. Wait a moment for that before choosing by hand.
+    if (approver) {
+      const prefilled = await expect(page.getByLabel('Memo preview'))
+        .toContainText(signers[i]!, { timeout: 5_000 })
+        .then(
+          () => true,
+          () => false,
+        );
+      if (prefilled) continue;
+    }
     await box.click();
     await box.fill(signers[i]!);
     // Match the option's own name line, whole. A prefix match also picks "Dev Management Two" when
@@ -179,7 +190,7 @@ export async function openFromInbox(
   }).toPass({ timeout: 30_000 });
   await expect(row).toContainText(reason);
 
-  await row.getByRole('link', { name: title }).click();
+  await row.getByRole('link', { name: title, exact: true }).click();
   await page.waitForURL(/\/inbox\/[0-9a-f-]{36}$/, { timeout: 30_000 });
   const requestId = new URL(page.url()).pathname.split('/').pop() ?? '';
   // The reason shows in the inbox row above; the decision card no longer repeats it.
