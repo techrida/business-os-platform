@@ -42,7 +42,10 @@ export const IDENTITY_RECONCILED = 'identity.reconciled';
 export const IDENTITY_REVIEW_RESOLVED = 'identity.review_resolved';
 
 /** What the denial may call in ZITADEL: read, and close a person. Never open, grant, replace or delete. */
-export type CloseOnlyIdentity = Pick<ZitadelAdminClient, 'getUser' | 'lockUser' | 'deactivateUser'>;
+export type CloseOnlyIdentity = Pick<
+  ZitadelAdminClient,
+  'getUser' | 'listGrants' | 'lockUser' | 'deactivateUser'
+>;
 
 // Takes the access-revision lock before the user row lock and the first audited write, like every other access write.
 const AFTER_ACCESS_LOCK: TxOptions = { audit: 'lazy' };
@@ -190,11 +193,16 @@ export class IdentityReconciler {
 
   /**
    * Settles a Founder removal the previous lease holder recorded and never cleared (it crashed, or stalled until its
-   * lease was taken over): ZITADEL may already have removed that person, so the row is closed and flagged for review
-   * now, as after any ambiguous write, and the record is cleared in the same transaction. The flag is set whatever the
-   * row shows: a sync may already have mirrored the removal (a fresh admin lock reads as a timed failed-sign-in lock,
-   * which the expiry job would lift), so an inherited lock is pinned as an admin lock. No ZITADEL call. Throws when it
-   * cannot finish; the record then stays on the lease.
+   * lease was taken over). ZITADEL is read first (read only, nothing is changed there): when it still holds the person
+   * as the removal found them (active and unlocked, or the same roles as the database), the removal never reached it, so
+   * the record is only cleared and nobody is flagged. In every other case, and whenever ZITADEL cannot be read, the row
+   * is closed and flagged for review as after any ambiguous write, and the record is cleared in the same transaction.
+   * The flag is set whatever the row shows: a sync may already have mirrored the removal (a fresh admin lock reads as a
+   * timed failed-sign-in lock, which the expiry job would lift), so an inherited lock is pinned as an admin lock. Throws
+   * when it cannot finish; the record then stays on the lease.
+   *
+   * The read cannot be overtaken by the dead holder: it starts no provider call once its fence has passed, which is
+   * before the lease can be taken over.
    */
   async settleOutstandingRemoval(
     scope: TxScope,
@@ -202,6 +210,7 @@ export class IdentityReconciler {
     removal: PendingFounderRemoval,
     clearRecord: (tx: DbTransaction) => Promise<boolean>,
   ): Promise<void> {
+    const untouched = await this.providerUntouched(scope, removal);
     const local = await withTx(
       this.db,
       scope,
@@ -209,6 +218,7 @@ export class IdentityReconciler {
       async (tx) => {
         await lockAccessRevision(tx, scope.tenantId);
         if (!(await clearRecord(tx))) throw new FounderLeaseLostError();
+        if (untouched) return null;
         const row = await this.store.findById(tx, scope, removal.userId, true);
         if (!row) return null;
         const lock =
@@ -237,6 +247,37 @@ export class IdentityReconciler {
         before: local.before,
         after: local.after,
       });
+    }
+  }
+
+  /**
+   * Whether ZITADEL still holds the person as the recorded removal found them, so the removal never reached it. Only a
+   * clear answer counts: an unreadable user, an unknown state or a failed read is false (the person is flagged).
+   * Never throws.
+   */
+  private async providerUntouched(
+    scope: TxScope,
+    removal: PendingFounderRemoval,
+  ): Promise<boolean> {
+    try {
+      const live = await this.zitadel.getUser(removal.zitadelUserId);
+      if (!live || live.status !== 'active' || live.locked === true) return false;
+      if (removal.intent !== 'set_roles') return true;
+      // A role set may have replaced the grants without changing the user's state: compare them with the database.
+      const org = await this.store.staffIdpOrgOf(scope.tenantId);
+      if (!org) return false;
+      const [grants, stored] = await Promise.all([
+        this.zitadel.listGrants(removal.zitadelUserId, org.zitadelOrgId),
+        this.store.rolesOf(this.db, scope.tenantId, removal.userId),
+      ]);
+      const left = [...new Set(grants)].sort();
+      const right = [...new Set(stored)].sort();
+      return left.length === right.length && left.every((role, i) => role === right[i]);
+    } catch (error) {
+      this.logger.warn(
+        `users.review: could not read ${removal.zitadelUserId} to settle a removal (kind=${errorName(error)}); flagging`,
+      );
+      return false;
     }
   }
 
