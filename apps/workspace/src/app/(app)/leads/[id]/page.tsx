@@ -300,7 +300,10 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   }
   const lead = leadResult.value;
   const canEdit = lead.canEdit ?? (await getPermissionCheck(session))('crm.lead.write');
-  const currentUserId = (await getMeOrNull(session.accessToken))?.id ?? null;
+  const meRead = await getMeOrNull(session.accessToken);
+  const currentUserId = meRead?.id ?? null;
+  const me =
+    meRead?.id && meRead.displayName ? { userId: meRead.id, name: meRead.displayName } : null;
   const moves = resolvedMoves(
     'lead',
     lead.stage,
@@ -590,6 +593,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               leadId={lead.id}
               items={planned ?? []}
               ownerUserId={lead.ownerUserId}
+              ownerName={lead.ownerName}
+              me={me}
               owners={owners}
               schedule={canEdit}
               canEdit={canEdit}
