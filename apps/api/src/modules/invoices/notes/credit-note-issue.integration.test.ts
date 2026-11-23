@@ -35,6 +35,7 @@ import {
   postingEvents,
   users,
 } from '@bos/db';
+import { Dec } from '@bos/money-rules';
 import { type ArgumentsHost, ForbiddenException, HttpException } from '@nestjs/common';
 import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -130,9 +131,16 @@ const authz = {
   },
 } as unknown as AuthzService;
 const passAuthz = { assert: () => undefined } as unknown as AuthzService;
+// The rate the faked MoneyService applies; 1 (NPR) except in the foreign-currency test, which sets and restores it.
+const fx = { rate: '1' };
 const money = {
   toNprSnapshot: (_tx: unknown, _scope: unknown, m: { amount: string }) =>
-    Promise.resolve({ amountNpr: m.amount, rate: '1', rateSource: 'NPR', rateDate: '2026-11-09' }),
+    Promise.resolve({
+      amountNpr: new Dec(m.amount).times(fx.rate).toDecimalPlaces(2, Dec.ROUND_HALF_UP).toFixed(2),
+      rate: fx.rate,
+      rateSource: 'NPR',
+      rateDate: '2026-11-09',
+    }),
 } as unknown as MoneyService;
 const settings = {
   get: (_scope: unknown, k: string) =>
@@ -604,6 +612,52 @@ describe('credit-note issue: settlement and release (done checks 7 and 8)', () =
     expect(again.id).not.toBe(original);
     expect((await invoiceRow(again.id)).status).toBe('draft');
     await expectNoNegativeOpenAmount();
+  });
+});
+
+describe('credit-note issue: a foreign-currency invoice credited in tiny steps (R6G)', () => {
+  it('0.06 INR at 1.6 credited one 0.01 unit at a time: every credit has a positive NPR value and the NPR values net to 0', async () => {
+    fx.rate = '1.6';
+    try {
+      as(U.acc, 'accountant');
+      const draft = await drafting.draftManual(
+        {
+          customerId: f.customerPartyId,
+          currency: 'INR',
+          manualReason: 'Sub-cent foreign-currency invoice',
+          lines: [
+            {
+              description: 'Tiny units',
+              uom: 'each',
+              quantity: '6',
+              unitPrice: '0.01',
+              taxCodeId: f.taxCodeExemptId,
+            },
+          ],
+        },
+        key(),
+      );
+      await forceApproved(draft.invoice.id);
+      await issueAs(draft.invoice.id);
+      const original = await invoiceRow(draft.invoice.id);
+      expect([original.total, original.amountNpr]).toEqual(['0.06', '0.10']);
+
+      const stepsNpr: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const note = await approvedCredit(original.id, [{ originalLineNo: 1, quantity: '1' }]);
+        await issueAs(note);
+        stepsNpr.push((await invoiceRow(note)).amountNpr!);
+      }
+      expect(stepsNpr).toEqual(['0.02', '0.01', '0.02', '0.02', '0.01', '0.02']);
+      expect((await invoiceRow(original.id)).creditedInFullAt).not.toBeNull();
+      expect(await settlementOf(original.id)).toMatchObject({
+        openAmount: '0.00',
+        settlement: 'credited',
+      });
+      await expectNoNegativeOpenAmount();
+    } finally {
+      fx.rate = '1';
+    }
   });
 });
 
