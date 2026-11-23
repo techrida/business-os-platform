@@ -63,6 +63,7 @@ export function renderQuotationHtml(
     dateFormat: opts.snapshot?.dateFormat ?? DEFAULT_CUSTOMER_DATE_FORMAT,
     showBs: opts.showBsDate !== false,
     logo: logo?.success ? logo.data : null,
+    logoChosen: opts.snapshot?.logoForBackground !== undefined,
   };
   return documentShell(ctx, layout, QUOTATION_LAYOUTS[layout](ctx));
 }

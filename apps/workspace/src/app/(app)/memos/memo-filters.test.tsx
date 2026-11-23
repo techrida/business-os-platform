@@ -22,7 +22,10 @@ async function mount(url: string, status: string[] = []) {
   mounted = await mountForm(<MemoFilters status={status} />);
 }
 
-const trigger = () => mounted.container.querySelector<HTMLButtonElement>('form button')!;
+const trigger = () =>
+  mounted.container.querySelector<HTMLButtonElement>(
+    'form button:not([aria-label="Clear search"])',
+  )!;
 const option = (label: string) =>
   Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
     (o) => o.textContent?.trim() === label,

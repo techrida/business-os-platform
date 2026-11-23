@@ -64,7 +64,9 @@ it('searches names with tenant and owner visibility, and requires customer.read'
     const db = {
       select: (count?: unknown) => ({
         from: (table: unknown) => {
-          expect(table).toBe(customers);
+          // The list's primary-phone read (R6A) joins the contacts to their phones; these customers have none.
+          if (table !== customers)
+            return { innerJoin: () => ({ where: () => Promise.resolve([]) }) };
           return {
             where: (where: SQL) => {
               const rows = execute(where);

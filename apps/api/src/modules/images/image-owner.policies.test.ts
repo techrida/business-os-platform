@@ -138,6 +138,21 @@ describe('image owner policies', () => {
   });
 });
 
+describe('entity logo variants (for dark and for light backgrounds)', () => {
+  it.each(['entity_logo_on_dark', 'entity_logo_on_light'] as const)(
+    "%s: the entity's own, with the settings grant, like the main logo",
+    async (ownerType) => {
+      const policy = entityLogoOwnerPolicy(ownerType);
+      expect(policy.ownerType).toBe(ownerType);
+      expect(policy.uploadPermission).toBe('admin.settings.write');
+      await expect(policy.resource(scope, scope.organizationId)).resolves.toMatchObject({
+        organizationId: scope.organizationId,
+      });
+      await expect(policy.resource(scope, randomUUID())).resolves.toBeNull();
+    },
+  );
+});
+
 describe('entity_logo', () => {
   it('is uploaded with admin.settings.write', () => {
     expect(entityLogo.uploadPermission).toBe('admin.settings.write');
