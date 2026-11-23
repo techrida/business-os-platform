@@ -848,6 +848,13 @@
       "when": 1783000000166,
       "tag": "0218_logo_image_stats",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1783000000167,
+      "tag": "0220_verification_identity_reset",
+      "breakpoints": true
     }
   ]
 }

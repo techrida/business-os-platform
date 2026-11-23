@@ -5,24 +5,20 @@ import {
   DEFAULT_COUNTRY,
   MAX_PARTY_PHONES,
   PHONE_LABELS,
-  phoneCountryFromE164,
   phoneProblem,
   type CountryCode,
   type PartyPhoneInput,
   type PhoneLabel,
 } from '@bos/contracts';
-import {
-  parsePhoneNumberFromString,
-  type CountryCode as LibCountryCode,
-} from 'libphonenumber-js/min';
+import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from './button';
 import { Radio, RadioGroup } from './checkbox';
-import { CountrySelect } from './country-select';
-import { DigitBox, type DigitRules } from './digit-box';
 import { Icon } from './icon';
-import { fitsNepalBox, INTERNATIONAL_RULES, NEPAL_PREFIX, NEPAL_RULES } from './phone-input';
+import type { PhoneTyped } from './phone-detect';
+import { PhoneField } from './phone-field';
+import { NEPAL_PREFIX, NEPAL_RULES } from './phone-input';
 import { Select } from './select';
 import { useFormReset } from './use-form-reset';
 import styles from './phone-list-input.module.css';
@@ -32,23 +28,14 @@ export interface PhoneRowState {
   /** Stable for the row's life; a new row always gets a new one, never an index. */
   key: string;
   country: CountryCode;
-  /**
-   * `national`: the box shows the country's code as a fixed prefix and takes the national digits (Nepal keeps FX8's
-   * rules). `international`: the user started with `+`, so the box takes the whole number, country code first, and
-   * the country follows what is typed.
-   */
-  mode: 'national' | 'international';
   /** What the row's box posts: E.164 once typed (complete or not), `''` while empty. */
   e164: string;
   label: PhoneLabel | null;
   isPrimary: boolean;
-  /** Whether the user has edited the number; handed back to the box when it remounts. */
+  /** Whether the user has edited the number. */
   edited: boolean;
   /** Whether the user picked this row's country; a blank row they have not touched follows the party's country. */
   countryPicked: boolean;
-  /** What the box mounts with, and `mount` remounts it (country or mode changed). */
-  seed: string;
-  mount: number;
 }
 
 /** A row the form must not submit: typed but not a valid number for its country, or listed twice. */
@@ -102,10 +89,7 @@ export interface PhoneListInputProps {
   className?: string | undefined;
 }
 
-const NOISE = /[\s\p{Pd}().]/gu;
 const ALL_DIGITS = /^\d*$/;
-const E164_MAX = 15;
-
 const dialOf = (country: CountryCode) => countryCallingCode(country) ?? '';
 /** A contract problem ("not a valid United States number") as a sentence. */
 const sentence = (problem: string) => `${problem.charAt(0).toUpperCase()}${problem.slice(1)}.`;
@@ -141,118 +125,33 @@ function problemOf(country: CountryCode, e164: string): string | null {
   return null;
 }
 
-const nationalCache = new Map<CountryCode, DigitRules>();
-
-/**
- * The box for a country other than Nepal: `+<code>` is the fixed prefix and the national digits are checked by
- * libphonenumber through the contracts' `phoneProblem`, so the box and the save agree.
- */
-function nationalRules(country: CountryCode): DigitRules {
-  const cached = nationalCache.get(country);
-  if (cached) return cached;
-  const dial = dialOf(country);
-  const prefix = `+${dial}`;
-  const max = E164_MAX - dial.length;
-  const rules: DigitRules = {
-    noun: 'phone number',
-    parse: (posted) => {
-      if (!posted.startsWith(prefix)) return posted;
-      const national = posted.slice(prefix.length);
-      return ALL_DIGITS.test(national) ? national : posted;
-    },
-    post: (digits) => (digits === '' ? '' : `${prefix}${digits}`),
-    maxFor: () => max,
-    cleanPaste: (pasted, whole) => {
-      const bare = pasted.replace(NOISE, '');
-      if (!whole) return bare;
-      // A whole national number in its local spelling (`020 7946 0958`): drop the trunk prefix the way the country does.
-      const parsed = parsePhoneNumberFromString(pasted, country as LibCountryCode);
-      return parsed !== undefined && parsed.countryCallingCode === dial
-        ? parsed.nationalNumber
-        : bare;
-    },
-    tooLong: () => `A phone number has at most ${max} digits after ${prefix}.`,
-    problem: (digits) => {
-      if (digits === '') return null;
-      if (!ALL_DIGITS.test(digits)) return `Type the digits after ${prefix} only.`;
-      return problemOf(country, `${prefix}${digits}`);
-    },
-    count: () => '',
-  };
-  nationalCache.set(country, rules);
-  return rules;
-}
-
-/** The box after a typed `+`: the whole number, judged against the country its calling code names. */
-function internationalRules(fallback: CountryCode): DigitRules {
-  return {
-    ...INTERNATIONAL_RULES,
-    problem: (digits) => {
-      const base = INTERNATIONAL_RULES.problem(digits);
-      if (base !== null || digits === '') return base;
-      const e164 = `+${digits}`;
-      return problemOf(phoneCountryFromE164(e164) ?? fallback, e164);
-    },
-  };
-}
-
-/**
- * The country of a row after a number is typed or pasted: the detected one, except that a country the user picked on
- * purpose stays when the detected one only shares its calling code (a picked Canada stays Canada for `+1 204…`).
- */
-function countryAfterTyping(row: PhoneRowState, detected: CountryCode | null): CountryCode {
-  if (detected === null) return row.country;
-  if (
-    row.countryPicked &&
-    countryCallingCode(row.country) !== null &&
-    countryCallingCode(row.country) === countryCallingCode(detected)
-  )
-    return row.country;
-  return detected;
-}
-
-function rulesOf(row: PhoneRowState): { rules: DigitRules; prefix: string } {
-  if (row.mode === 'international') return { rules: internationalRules(row.country), prefix: '+' };
-  if (row.country === 'NP') return { rules: NEPAL_RULES, prefix: NEPAL_PREFIX };
-  return { rules: nationalRules(row.country), prefix: `+${dialOf(row.country)}` };
-}
-
-/** Whether `e164` can open in the national box of `country` (its own code, digits that box would let a user type). */
-function fitsNational(country: CountryCode, e164: string): boolean {
-  if (country === 'NP') return fitsNepalBox(e164);
-  const prefix = `+${dialOf(country)}`;
-  const national = e164.slice(prefix.length);
-  return (
-    dialOf(country) !== '' &&
-    e164.startsWith(prefix) &&
-    ALL_DIGITS.test(national) &&
-    national.length <= E164_MAX - dialOf(country).length
-  );
-}
-
 /** The problem with a row as a save would see it, or null for an empty or valid row. */
 function rowProblem(row: PhoneRowState): string | null {
   return problemOf(row.country, row.e164);
+}
+
+/** The text under a Nepal field while it has focus: FX8's count line ("Mobile: 10 digits, starting with 9"). */
+function hintOf(row: PhoneRowState): string | undefined {
+  if (row.country !== 'NP' || (row.e164 !== '' && !row.e164.startsWith(NEPAL_PREFIX))) {
+    return undefined;
+  }
+  return NEPAL_RULES.count(row.e164.slice(NEPAL_PREFIX.length));
 }
 
 function makeBlankRow(key: string, country: CountryCode, isPrimary: boolean): PhoneRowState {
   return {
     key,
     country,
-    mode: 'national',
     e164: '',
     label: null,
     isPrimary,
     edited: false,
     countryPicked: false,
-    seed: '',
-    mount: 0,
   };
 }
 
 /** Whether a row is still as the list made it: blank, never typed in, its country not picked by the user. */
-const untouched = (row: PhoneRowState) =>
-  row.mode === 'national' && row.e164 === '' && !row.edited && !row.countryPicked;
+const untouched = (row: PhoneRowState) => row.e164 === '' && !row.edited && !row.countryPicked;
 
 /** A row's server error, held by the row's key so it stays with that row through moves and removals. */
 interface BoundErrors {
@@ -303,14 +202,11 @@ function startRows(
   return phones.map((phone, index) => ({
     key: keyOf(index),
     country: phone.country,
-    mode: 'national',
     e164: phone.e164,
     label: phone.label ?? null,
     isPrimary: index === primary,
     edited: false,
     countryPicked: false,
-    seed: phone.e164,
-    mount: 0,
   }));
 }
 
@@ -380,6 +276,10 @@ export function PhoneListInput({
   // What the polite live region last said: a moved row's new position.
   const [announcement, setAnnouncement] = useState('');
 
+  // A row's problem shows once the user has left its field, or after a submit was stopped (then every row shows its own).
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  const [submitStopped, setSubmitStopped] = useState(false);
+
   // Where focus goes once the rows have re-rendered: the moved row's button, the new or switched row's box.
   const pendingFocus = useRef<{ key: string; target: 'number' | 'up' | 'down' } | null>(null);
   useLayoutEffect(() => {
@@ -403,35 +303,13 @@ export function PhoneListInput({
   const update = (key: string, patch: (row: PhoneRowState) => Partial<PhoneRowState>) =>
     setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch(row) } : row)));
 
-  function onNumber(row: PhoneRowState, posted: string) {
-    update(row.key, (current) => {
-      if (current.mode !== 'international') return { e164: posted };
-      // The country follows the typed calling code: `+1 4…` is the United States, `+977 98…` Nepal.
-      const detected = posted === '' ? null : phoneCountryFromE164(posted);
-      return { e164: posted, country: countryAfterTyping(current, detected) };
-    });
-  }
-
-  function onPlus(row: PhoneRowState, digits: string) {
-    const e164 = digits === '' ? '' : `+${digits}`;
-    const detected = e164 === '' ? null : phoneCountryFromE164(e164);
-    // A whole number pasted or autofilled with its code opens in that country's own box; a typed `+` starts the
-    // international box, where the country follows as the code is typed.
-    const national = detected !== null && fitsNational(detected, e164);
-    pendingFocus.current = { key: row.key, target: 'number' };
-    update(row.key, (current) => ({
-      mode: national ? 'national' : 'international',
-      country: countryAfterTyping(current, detected),
-      e164,
-      seed: e164,
-      edited: true,
-      mount: current.mount + 1,
-    }));
+  function onTyped(row: PhoneRowState, typed: PhoneTyped) {
+    update(row.key, () => ({ e164: typed.e164, country: typed.country, edited: true }));
   }
 
   function onCountry(row: PhoneRowState, country: CountryCode) {
-    if (country === row.country && row.mode === 'national') {
-      // A deliberate pick stops the row following the party country.
+    if (country === row.country) {
+      // A deliberate pick stops the row following the party country or the typed code.
       if (!row.countryPicked) update(row.key, (current) => ({ ...current, countryPicked: true }));
       return;
     }
@@ -442,24 +320,21 @@ export function PhoneListInput({
         current.e164.startsWith(prefix) && ALL_DIGITS.test(current.e164.slice(prefix.length))
           ? current.e164.slice(prefix.length)
           : null;
-      const rawSeed =
+      const next =
         current.e164 === ''
           ? ''
           : national === null
             ? current.e164
             : `+${dialOf(country)}${national}`;
       // A bare calling code would show as an empty box that still holds a value, so it is cleared.
-      const seed = rawSeed === `+${dialOf(country)}` ? '' : rawSeed;
       return {
         country,
-        mode: 'national',
-        e164: seed,
-        seed,
+        e164: next === `+${dialOf(country)}` ? '' : next,
         edited: current.edited || current.e164 !== '',
         countryPicked: true,
-        mount: current.mount + 1,
       };
     });
+    pendingFocus.current = { key: row.key, target: 'number' };
   }
 
   function setPrimary(key: string) {
@@ -514,6 +389,8 @@ export function PhoneListInput({
 
   useFormReset(rootRef, () => {
     setRows(startRows(defaultValue, defaultCountry, () => nextKey(), limit));
+    setTouched(new Set());
+    setSubmitStopped(false);
     // The fresh rows have new keys: the errors (this commit's, or ones still to come) bind to them by position.
     setBound({ source: [], byKey: new Map() });
   });
@@ -597,6 +474,7 @@ export function PhoneListInput({
       if (problem === undefined) return;
       const stopped = event.defaultPrevented;
       event.preventDefault();
+      setSubmitStopped(true);
       if (!stopped) {
         rootRef.current
           ?.querySelector<HTMLInputElement>(
@@ -639,47 +517,42 @@ export function PhoneListInput({
       <ol className={styles.rows}>
         {rows.map((row, index) => {
           const n = index + 1;
-          const { rules, prefix } = rulesOf(row);
           const duplicate = problems.find(
             (problem) =>
               problem.key === row.key && problem.message === 'This number is already listed.',
           );
+          const own = problems.find((problem) => problem.key === row.key)?.message;
           const rowError = bound.byKey.get(row.key) ?? duplicate?.message;
+          const shownError = rowError ?? (touched.has(row.key) || submitStopped ? own : undefined);
           const rowErrorId = `${row.key}-error`;
           const blank = single && row.e164 === '';
           return (
             <li key={row.key} data-row={row.key} className={styles.row}>
-              <div className={styles.country}>
-                <CountrySelect
-                  compact
-                  aria-label={`${noun} ${n} country`}
-                  {...(name ? { name: `${name}.${index}.country` } : {})}
-                  value={row.country}
-                  disabled={disabled === true}
-                  onChange={(country) => onCountry(row, country)}
-                  onReselect={(country) => onCountry(row, country)}
-                />
-              </div>
               <div className={styles.number} data-part="number">
-                <DigitBox
-                  key={`${row.mode}-${row.mode === 'national' ? row.country : ''}-${row.mount}`}
+                <PhoneField
+                  country={row.country}
+                  picked={row.countryPicked}
+                  e164={row.e164}
+                  onTyped={(typed) => onTyped(row, typed)}
+                  onCountry={(country) => onCountry(row, country)}
+                  onReselect={(country) => onCountry(row, country)}
+                  onBlur={() =>
+                    setTouched((current) =>
+                      current.has(row.key) ? current : new Set(current).add(row.key),
+                    )
+                  }
+                  countryLabel={`${noun} ${n} country`}
                   aria-label={`${noun} ${n} number`}
-                  {...(name ? { name: `${name}.${index}.number` } : {})}
-                  {...(rowError ? { 'aria-describedby': rowErrorId } : {})}
-                  {...(rowError ? { 'aria-invalid': true } : {})}
-                  defaultValue={row.seed}
-                  onValueChange={(posted) => onNumber(row, posted)}
-                  edited={row.edited}
-                  onEditedChange={(edited) => update(row.key, () => ({ edited }))}
+                  {...(name ? { numberName: `${name}.${index}.number` } : {})}
+                  {...(name ? { countryName: `${name}.${index}.country` } : {})}
+                  {...(shownError ? { 'aria-describedby': rowErrorId } : {})}
+                  invalid={shownError !== undefined && shownError !== null}
+                  hint={hintOf(row)}
                   disabled={disabled === true}
-                  rules={rules}
-                  prefix={prefix}
-                  onPlus={(digits) => onPlus(row, digits)}
-                  inputMode="tel"
                 />
-                {rowError ? (
+                {shownError ? (
                   <p id={rowErrorId} className={styles.rowError}>
-                    {rowError}
+                    {shownError}
                   </p>
                 ) : null}
               </div>

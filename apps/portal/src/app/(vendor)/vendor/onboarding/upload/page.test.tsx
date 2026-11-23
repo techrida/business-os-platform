@@ -46,6 +46,17 @@ describe('send a KYC document page', () => {
     expect(html).toMatch(/name="idempotencyKey" value="[0-9a-f-]{36}"/);
   });
 
+  it('says the details changed and that a file sent before cannot be used', async () => {
+    m.getVendorOnboarding.mockResolvedValue(
+      sampleOnboarding({ detailsChanged: { at: '2026-11-23T04:00:00.000Z', by: null } }),
+    );
+    const t = text(await render());
+    expect(t).toMatch(/Details changed on .*; upload the documents again\./);
+    expect(t).toContain('A file you sent before the change cannot be used.');
+    m.getVendorOnboarding.mockResolvedValue(sampleOnboarding());
+    expect(text(await render())).not.toContain('Details changed');
+  });
+
   it('starts on a document that still needs sending, or on the one asked for', async () => {
     // The first checklist item that is missing, rejected or expired: tax clearance (rejected).
     const chosen = (docType: string) => `<input type="hidden" name="docType" value="${docType}"/>`;

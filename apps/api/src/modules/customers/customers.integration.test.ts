@@ -1405,6 +1405,8 @@ describe('detail can and verification presence (audit #6)', () => {
     );
     const body = await detail(mine.id);
     expect(body.portalAccess).toEqual({ hasUser: false, canInvite: true, blocked: null });
+    // R6AE: the writer learns the customer is verified (its identity fields are locked); a reader without write does not.
+    expect(body.verification).toEqual({ exists: true, approved: true });
   });
 
   it("tells Sales a colleague's customer has a case, without offering to start one or leaking the case", async () => {
