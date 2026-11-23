@@ -184,7 +184,7 @@ export function ManualInvoiceForm({
     : searchFailed
       ? 'Search did not load. Try again.'
       : query.length < CUSTOMER_SEARCH_MIN_CHARS
-        ? `Not in the first ${customers?.length ?? 0} customers. Find it on the Customers list.`
+        ? 'Keep typing to search all customers.'
         : found?.query === query
           ? 'No matching customer. Add the customer first.'
           : 'Searching…';
