@@ -53,6 +53,10 @@ function toInline(disposition: string | null): string {
 /** What a customer reads when their PDF failed to render or was refused by the scan. */
 export const DELAYED_MESSAGE = 'This PDF is delayed. Our team has been told.';
 
+/** What a person reads when the short-lived download link ran out before the file was fetched. */
+export const LINK_EXPIRED_MESSAGE =
+  'This download link has expired. Go back to the page and open the document again.';
+
 const isPdf = (contentType: string | null): boolean =>
   (contentType ?? '').split(';')[0]?.trim().toLowerCase() === 'application/pdf';
 
@@ -86,8 +90,12 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
   const { id } = await opts.params;
   if (!opts.isId(id)) return plain(opts.notFound, 404);
 
+  // Which call failed matters: a 401 or 410 from the file itself means the signed link ran out, not that the
+  // person is signed out, and a missing file is a plain not-found page, never a gateway error (R6D).
+  let stage: 'link' | 'file' = 'link';
   try {
     const link = await opts.getLink(session, id);
+    stage = 'file';
     const file = await opts.openFile(session, link);
     const headers = new Headers({
       'cache-control': 'private, no-store',
@@ -112,7 +120,13 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 404 || status === 403) return plain(opts.notFound, 404);
+    if (stage === 'file' && (status === 401 || status === 410)) return plain(LINK_EXPIRED_MESSAGE, 410);
     if (status === 401) return plain(opts.signIn, 401);
+    if (status === 503) {
+      const response = plain('This is busy right now. Please try again in a moment.', 503);
+      response.headers.set('retry-after', '1');
+      return response;
+    }
     if (status === 409 || status === 410) {
       return plain(
         'This PDF is not available to download yet. Please try again in a few minutes.',
