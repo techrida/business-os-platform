@@ -806,8 +806,9 @@ describe('R6AA: an identity edit before approval voids the KYB case; a foreign v
   it('a foreign vendor may clear its PAN; a Nepal vendor may not', async () => {
     const foreign = await createVendor({ kind: 'foreign', country: 'DE', pan: 'DE12345678' });
     expect(foreign.status, JSON.stringify(foreign.body)).toBe(201);
-    const cleared = await patchVendor(foreign.body.id, {
-      expectedVersion: foreign.body.version,
+    const created = VendorDtoSchema.parse(foreign.body);
+    const cleared = await patchVendor(created.id, {
+      expectedVersion: created.version,
       pan: null,
     });
     expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
