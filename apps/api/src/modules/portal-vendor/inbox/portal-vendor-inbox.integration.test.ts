@@ -559,6 +559,34 @@ describe('quotation submissions', () => {
     expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(0);
   });
 
+  it('refuses a file whose write failed (quarantined, no sha256) with 409, and takes it once the bytes are recorded (EF3)', async () => {
+    const a = await vendor('approved');
+    const rfqId = await rfq([a.partyId]);
+    // createQuotationFile makes the document and its awaiting_content version; a failed write leaves the version
+    // quarantined without the sha256 that receiving the bytes records.
+    const created = await as(a, (who) => service.createQuotationFile(who, file(PDF)));
+    await exec(
+      sql`UPDATE app.document_versions SET status = 'quarantined', sha256 = NULL WHERE id = ${created.versionId}`,
+    );
+
+    const res = await errorOf(
+      as(a, (who) =>
+        service.submitQuotation(who, quotationBody(rfqId, created.documentId), randomUUID()),
+      ),
+    );
+    expect(res.status).toBe(409);
+    expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(0);
+
+    // The same version with its sha256 is a received file, scan pending: the submission is taken.
+    await exec(
+      sql`UPDATE app.document_versions SET sha256 = decode(repeat('ab', 32), 'hex') WHERE id = ${created.versionId}`,
+    );
+    await as(a, (who) =>
+      service.submitQuotation(who, quotationBody(rfqId, created.documentId), randomUUID()),
+    );
+    expect(await count('vendor_quotation_submissions', `rfq_id = '${rfqId}'`)).toBe(1);
+  });
+
   it('refuses a quotation after the RFQ deadline with 409 rfq_deadline_passed, and takes it once extended (F1-Q47)', async () => {
     const a = await vendor('approved');
     const rfqId = await rfq([a.partyId]);
