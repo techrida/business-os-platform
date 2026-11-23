@@ -69,6 +69,8 @@ export interface ComboboxProps {
   invalid?: boolean;
   /** The input's id, so a visible `<label for>` reaches it (clicking the label focuses the box). */
   id?: string;
+  /** A search icon inside the box, right-aligned: the cue that this field searches (UIP-FORM-009). */
+  searchIcon?: boolean;
   maxLength?: number;
   /** Keep the options in the order given instead of sorting them by name. */
   keepOrder?: boolean;
@@ -140,6 +142,7 @@ export function Combobox({
   required,
   invalid,
   id,
+  searchIcon = false,
   maxLength,
   name,
   keepOrder = false,
@@ -379,6 +382,7 @@ export function Combobox({
           if (!open) openList(null, selected && ids.includes(selected.id) ? selected.id : null);
         }}
       />
+      {searchIcon ? <Icon name="search" size={18} className={styles.searchIcon} /> : null}
       {closedRole ? (
         // The same words as the box, with the role muted (an input cannot style part of its text).
         <span className={styles.overlay} aria-hidden="true">

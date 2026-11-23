@@ -34,6 +34,9 @@ export const LeadDuplicateMatchSchema = z.object({
   label: z.string(),
   /** A customer's country (ISO 3166-1 alpha-2): picking it in the company field fills the lead's country (R6O). */
   country: z.string().length(2).optional(),
+  /** A customer's number (CUS-...) and PAN/VAT: shown on the option, and searched like the name (UIP-FORM-009). */
+  number: z.string().optional(),
+  pan: z.string().nullable().optional(),
   matchedOn: z.array(LeadDuplicateFieldSchema).min(1),
 });
 export type LeadDuplicateMatch = z.infer<typeof LeadDuplicateMatchSchema>;
