@@ -270,6 +270,11 @@ describe('PortalRespondService', () => {
       'quotation_not_sent',
     ],
     ['superseded', headOf({ status: 'superseded' }), 'quotation_not_sent'],
+    [
+      'superseded of a cancelled quotation',
+      headOf({ status: 'superseded', quotationCancelled: true }),
+      'quotation_closed',
+    ],
     ['expired', headOf({ status: 'expired' }), 'quotation_expired'],
   ])(
     'answers 409 for a visible version that is %s, without calling the core',
