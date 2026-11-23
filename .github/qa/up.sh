@@ -69,6 +69,8 @@ export NEXT_TELEMETRY_DISABLED=1 NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt"
 export BOS_DEV_PERSONAS_FILE="$PWD/.dev/personas.json" BOS_DEV_LOGIN_CLIENT_TOKEN_FILE="$PWD/.dev/login-client.pat"
 export SMTP_URL=smtp://127.0.0.1:1025 FILES_ROOT="$PWD/.dev/files" CLAMD_HOST=127.0.0.1 CLAMD_PORT=3310
 export GOTENBERG_URL=http://127.0.0.1:3300 API_INTERNAL_URL=http://127.0.0.1:3001
+# compose.dev.yaml sets this on the containerised workspace: 20 logins per minute per IP is too few for a parallel sign-in run.
+export BOS_DEV_LOGIN_RATE_LIMIT=200
 export ZITADEL_API_URL=https://auth.localhost BOS_DEV_IDENTITY_API_URL=https://auth.localhost
 export DATABASE_URL="${DATABASE_URL/@postgres:/@127.0.0.1:}" VALKEY_URL="${VALKEY_URL/@valkey:/@127.0.0.1:}"
 mkdir -p .dev/files .dev/logs
