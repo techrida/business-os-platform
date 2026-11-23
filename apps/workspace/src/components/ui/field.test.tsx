@@ -21,3 +21,21 @@ it('renders help and errors below the input and associates both with it', () => 
   expect(html.indexOf('<input')).toBeLessThan(html.indexOf(`id="${id}-hint"`));
   expect(html.indexOf(`id="${id}-hint"`)).toBeLessThan(html.indexOf(`id="${id}-error"`));
 });
+
+it('puts a muted "Optional" in the label row, never in the hint', () => {
+  const html = renderToStaticMarkup(
+    <Field label="Branch" optional>
+      {(control) => <Input name="branch" {...control} />}
+    </Field>,
+  );
+  expect(html).toContain('Optional');
+  // Inside the label row, after the label, before the control.
+  expect(html.indexOf('>Branch</label>')).toBeLessThan(html.indexOf('Optional'));
+  expect(html.indexOf('Optional')).toBeLessThan(html.indexOf('<input'));
+  // The label's accessible name stays "Branch": the marker sits outside the <label>.
+  expect(html).toMatch(/<label[^>]*>Branch<\/label>/);
+  const none = renderToStaticMarkup(
+    <Field label="Branch">{(control) => <Input name="branch" {...control} />}</Field>,
+  );
+  expect(none).not.toContain('Optional');
+});

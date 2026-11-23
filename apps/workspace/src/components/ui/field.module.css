@@ -12,6 +12,22 @@
   letter-spacing: var(--letter-spacing-medium);
 }
 
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Right end of the label row; muted so it reads as a note, not as part of the label. */
+.optional {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
 .hint {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
