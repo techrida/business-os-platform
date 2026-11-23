@@ -21,7 +21,7 @@ export async function departmentNames(
   scope: { tenantId: string; organizationId: string },
   ids: readonly (string | null)[],
 ): Promise<ReadonlyMap<string, string>> {
-  const wanted = [...new Set(ids.filter((id): id is string => id !== null))];
+  const wanted = [...new Set(ids.filter((id): id is string => id !== null && id !== undefined))];
   if (wanted.length === 0) return new Map();
   const rows = await tx
     .select({ id: departments.id, name: departments.name })

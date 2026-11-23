@@ -50,6 +50,7 @@ export default async function NewLeadPage() {
         enabledCurrencies={enabledCurrencies}
         defaultOwnerId={defaultOwnerId}
         defaultOwnerSource={defaultOwnerSource}
+        callerUnplaced={meId !== undefined && callerId === undefined && owners.length > 0}
         idempotencyKey={randomUUID()}
       />
     </Page>

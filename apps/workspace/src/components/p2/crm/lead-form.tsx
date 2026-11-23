@@ -89,13 +89,15 @@ function ownerHint(
   source: 'settings' | 'sales_head' | undefined,
   chosen: string,
   defaultId: string | undefined,
+  callerUnplaced: boolean,
 ): string | undefined {
-  if (source !== undefined && chosen !== '' && chosen === defaultId) {
+  // Nothing chosen and the box shows the default person: the API gives the lead to them.
+  if (source !== undefined && chosen === '' && defaultId !== undefined) {
     return source === 'settings'
       ? 'Default owner from Settings.'
-      : 'Default owner: the Sales head, because no default is set in Settings.';
+      : 'Default owner: the Sales head.';
   }
-  if (chosen === '' && defaultId === undefined && source === undefined && count > 1) {
+  if (chosen === '' && defaultId === undefined && callerUnplaced) {
     return 'No default owner is set and you cannot own this lead, so choose who it goes to.';
   }
   return count === 1 ? 'You can create leads for yourself only.' : undefined;
@@ -117,6 +119,7 @@ export function LeadForm({
   enabledCurrencies,
   defaultOwnerId,
   defaultOwnerSource,
+  callerUnplaced = false,
   idempotencyKey,
   onPrimaryPhoneChange,
   defaultPhones,
@@ -140,6 +143,11 @@ export function LeadForm({
    * Sales): the entity's Default lead owner in Settings, or the Sales head when none is set. Said under the field.
    */
   defaultOwnerSource?: 'settings' | 'sales_head' | undefined;
+  /**
+   * The signed-in user is known and may not own a lead they start (Finance, Accountant or PMO). False when who they
+   * are did not load: the API then makes the lead theirs, so nothing is said about a missing default.
+   */
+  callerUnplaced?: boolean | undefined;
   /** Made once per page render on the server; the action hands back the key the next try uses. */
   idempotencyKey: string;
   /**
@@ -163,7 +171,12 @@ export function LeadForm({
     // Never preselect someone else: when the signed-in user is not placed in the list, the empty
     // choice posts nothing and the API picks the owner (the default lead owner for a role that enters
     // leads for Sales, the caller otherwise).
-    ownerUserId: defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : ''),
+    // A defaulted owner (Settings or the Sales head) stays empty: the box shows that person and the form posts
+    // nothing, so the API applies the default as it does today.
+    ownerUserId:
+      defaultOwnerSource !== undefined
+        ? ''
+        : (defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : '')),
   }));
   const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
   const [country, setCountry] = useState<CountryCode>(defaultCountry ?? DEFAULT_COUNTRY);
@@ -325,6 +338,7 @@ export function LeadForm({
                   defaultOwnerSource,
                   values['ownerUserId'] ?? '',
                   defaultOwnerId,
+                  callerUnplaced,
                 )}
                 error={err['ownerUserId']}
               >
@@ -337,6 +351,7 @@ export function LeadForm({
                     people={memberPeople(owners)}
                     value={values['ownerUserId'] ?? ''}
                     onChange={(value) => update('ownerUserId', value)}
+                    emptyStandsFor={defaultOwnerSource !== undefined ? defaultOwnerId : undefined}
                     placeholder="Search by name"
                   />
                 )}
@@ -547,6 +562,7 @@ export function LeadForm({
                     people={memberPeople(owners)}
                     value={assignee}
                     onChange={(value) => update('followUpAssigneeUserId', value)}
+                    emptyStandsFor={defaultOwnerSource !== undefined ? defaultOwnerId : undefined}
                     placeholder="The lead owner"
                   />
                 )}

@@ -131,6 +131,7 @@ describe('the owner of a lead the caller may not own', () => {
   const mountUnplaced = (
     defaultOwnerId: string | undefined,
     defaultOwnerSource: 'settings' | 'sales_head' | undefined,
+    callerUnplaced = true,
   ) =>
     mountForm(
       <LeadForm
@@ -140,6 +141,7 @@ describe('the owner of a lead the caller may not own', () => {
         enabledCurrencies={ALL_CURRENCIES}
         defaultOwnerId={defaultOwnerId}
         defaultOwnerSource={defaultOwnerSource}
+        callerUnplaced={callerUnplaced}
         idempotencyKey="44444444-4444-4444-8444-444444444444"
       />,
     );
@@ -153,7 +155,8 @@ describe('the owner of a lead the caller may not own', () => {
       const hidden = container.querySelector<HTMLInputElement>(
         'input[type="hidden"][name="ownerUserId"]',
       );
-      expect(hidden?.value).toBe(RAM);
+      // The box shows the person; the form posts nothing, so the API applies the default as before.
+      expect(hidden?.value).toBe('');
       const box = hidden!.parentElement!.querySelector<HTMLInputElement>('input[role="combobox"]')!;
       expect(box.value).toBe('Ram Thapa Head · Sales');
       expect(container.textContent).toContain('Default owner from Settings.');
@@ -165,9 +168,16 @@ describe('the owner of a lead the caller may not own', () => {
   it('says the default is the Sales head when Settings names no one', async () => {
     const mounted = await mountUnplaced(RAM, 'sales_head');
     try {
-      expect(mounted.container.textContent).toContain(
-        'Default owner: the Sales head, because no default is set in Settings.',
-      );
+      expect(mounted.container.textContent).toContain('Default owner: the Sales head.');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('says nothing about a missing default when who the caller is did not load', async () => {
+    const mounted = await mountUnplaced(undefined, undefined, false);
+    try {
+      expect(mounted.container.textContent).not.toContain('No default owner is set');
     } finally {
       await mounted.unmount();
     }
