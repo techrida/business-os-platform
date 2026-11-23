@@ -107,7 +107,26 @@ async function saveReach(page: Page, reach: string, expectWarning: RegExp | null
 }
 
 /**
- * The reach in the "Can see" cell of the Leads row in Check a person: its first span, without the "was ..." note
+ * The person's own id for the Check a person address (`app.users.id`). The Dev menu's who-am-I gives the identity
+ * provider's id, which that page refuses, so the person is chosen in the page's own picker and the id is read from
+ * the address it navigates to.
+ */
+async function checkPersonId(page: Page, name: string): Promise<string> {
+  await page.goto('/settings/access/check');
+  const box = page.getByRole('combobox', { name: 'Person', exact: true });
+  await box.click();
+  await box.fill(name);
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page
+    .getByRole('option')
+    .filter({ has: page.getByText(new RegExp(`^${escaped}(?: \\(.+\\))?$`)) })
+    .click();
+  await expect(page).toHaveURL(/[?&]person=[0-9a-f-]{36}/i);
+  return new URL(page.url()).searchParams.get('person') ?? '';
+}
+
+/**
+ * The reach in the "Can see" cell of the Leads row in Check a person: its first span, without the count or the "was ..." note
  * the page adds after a recent change.
  */
 async function leadsCanSee(page: Page, personId: string): Promise<string> {
@@ -117,7 +136,11 @@ async function leadsCanSee(page: Page, personId: string): Promise<string> {
     .getByRole('row')
     .filter({ has: page.getByRole('rowheader', { name: 'Leads', exact: true }) });
   await expect(row).toHaveCount(1);
-  return (await row.getByRole('cell').first().locator('span').first().innerText()).trim();
+  // The first line only: the cell may add a count underneath ("0 of 0").
+  return (await row.getByRole('cell').first().locator('span').first().innerText())
+    .trim()
+    .split('\n')[0]!
+    .trim();
 }
 
 test('the Founder changes a grant, confirms the warning, saves, and Check a person shows it', async ({
@@ -143,7 +166,8 @@ test('the Founder changes a grant, confirms the warning, saves, and Check a pers
   await page.goto(ROLE_PAGE);
   const original = await shownReach(selectByLabel(page, GRANT_LABEL));
   expect(original, 'the Sales role must not already see every lead').not.toBe(WIDE);
-  const before = await leadsCanSee(page, salesUser.userId);
+  const salesPersonId = await checkPersonId(page, sales.label);
+  const before = await leadsCanSee(page, salesPersonId);
   expect(before).not.toBe(WIDE);
 
   // Saved grants reach the person's next request; the polls allow for the grant cache.
@@ -157,14 +181,14 @@ test('the Founder changes a grant, confirms the warning, saves, and Check a pers
     });
 
     await test.step('Check a person shows the wider reach', async () => {
-      await expect.poll(() => leadsCanSee(page, salesUser.userId), settle).toBe(WIDE);
+      await expect.poll(() => leadsCanSee(page, salesPersonId), settle).toBe(WIDE);
     });
 
     await test.step('restore the grant against the new revision', async () => {
       const restoreRevision = await saveReach(page, original, null);
       changed = false;
       expect(restoreRevision).not.toBe(firstRevision);
-      await expect.poll(() => leadsCanSee(page, salesUser.userId), settle).toBe(before);
+      await expect.poll(() => leadsCanSee(page, salesPersonId), settle).toBe(before);
     });
   } finally {
     if (changed) await saveReach(page, original, null);
