@@ -2,6 +2,9 @@
 import { act, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/dialog';
+import { Tooltip } from '@/components/ui/tooltip';
 import { SendDialog } from '@/components/p2/quotations/send-dialog';
 import { mountForm } from '@/test/form-interactions';
 
@@ -82,5 +85,37 @@ describe('a blocked action explains itself in a tooltip, with no caption', () =>
       />,
     );
     expect(await focusAndRead(container)).toBe(reason);
+  });
+});
+
+describe('a dialog trigger that is blocked stays focusable and does not open', () => {
+  it('shows its tooltip on focus and ignores a click (the pattern the Preview and Remove buttons use)', async () => {
+    const container = await show(
+      <ConfirmDialog
+        trigger={
+          <Tooltip content="Choose a customer first.">
+            <Button
+              aria-disabled="true"
+              onClick={(event) => {
+                event.preventDefault();
+              }}
+            >
+              Preview
+            </Button>
+          </Tooltip>
+        }
+        title="Sure?"
+        description="Really?"
+        confirmLabel="Yes"
+        onConfirm={() => true}
+      />,
+    );
+    const button = container.querySelector('button')!;
+    await act(() => Promise.resolve(button.focus()));
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+      'Choose a customer first.',
+    );
+    await act(() => Promise.resolve(button.click()));
+    expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull();
   });
 });
