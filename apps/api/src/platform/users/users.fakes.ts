@@ -312,6 +312,19 @@ export class FakeUsersStore extends UsersStore {
         createdAt: '2026-01-01T00:00:00.000Z',
       }));
   }
+  listFlagged(scope: TxScope) {
+    return Promise.resolve(
+      this.staff(scope)
+        .filter((u) => u.identityReviewRequired === true)
+        .map((u) => ({
+          id: u.id,
+          email: u.email,
+          displayName: u.displayName,
+          status: u.status,
+          flaggedAt: null,
+        })),
+    );
+  }
   summary(scope: TxScope) {
     const users = this.staff(scope);
     return Promise.resolve({
