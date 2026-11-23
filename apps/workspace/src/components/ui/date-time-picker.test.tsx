@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, useState } from 'react';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { mountForm, submit } from '@/test/form-interactions';
 import { DateTimePicker } from './date-time-picker';
@@ -47,7 +47,7 @@ async function clearSegment(segment: Element) {
 const segment = (type: string) => mounted.container.querySelector(`[data-type="${type}"]`)!;
 const posted = (name: string) => new FormData(mounted.container.querySelector('form')!).get(name);
 
-it('keeps the typed time of a controlled picker when a refused submit resets the form', async () => {
+it('holds a noValidate action form while the day of a controlled picker is cleared, and keeps the typed time', async () => {
   const sent: unknown[] = [];
   function Harness() {
     const [value, setValue] = useState('2026-11-21T14:30');
@@ -73,30 +73,31 @@ it('keeps the typed time of a controlled picker when a refused submit resets the
   expect(posted('deadline')).toBe('');
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['']);
+  expect(sent).toEqual([]);
   expect(segment('hour').textContent).toBe('2');
   expect(segment('minute').textContent).toBe('30');
-  // The day was incomplete when it posted '', so it shows empty, as it posted.
   expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
-  expect(segment('month').hasAttribute('data-placeholder')).toBe(true);
-  expect(posted('deadline')).toBe('');
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
+  expect(document.activeElement).toBe(segment('day'));
   await typeSegment(segment('day'), '22');
-  await typeSegment(segment('month'), '11');
-  await typeSegment(segment('year'), '2026');
   expect(posted('deadline')).toBe('2026-11-22T14:30');
+  await submit(mounted.container);
+  expect(sent).toEqual(['2026-11-22T14:30']);
 });
 
-it('restores the default of an uncontrolled picker when the form resets', async () => {
+it('holds a noValidate action form while the day of an uncontrolled picker is cleared', async () => {
+  const action = vi.fn(async () => {});
   mounted = await mountForm(
-    <form noValidate action={async () => {}}>
+    <form noValidate action={action}>
       <DateTimePicker aria-label="Due" name="dueAt" defaultValue="2026-11-21T14:30" />
     </form>,
   );
   await clearSegment(segment('day'));
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(segment('day').textContent).toBe('21');
-  expect(posted('dueAt')).toBe('2026-11-21T14:30');
+  expect(action).not.toHaveBeenCalled();
+  expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
 });
 
 it('blocks a plain form while a required picker lacks its day or its time', async () => {
@@ -157,7 +158,7 @@ it('tells a controlled parent the value is empty while the time is incomplete, a
   expect(posted('dueAt')).toBe('2026-11-21T14:30');
 });
 
-it('shows and posts an empty time after a refused submit resets a controlled picker with the time incomplete', async () => {
+it('holds a noValidate action form while the time of a controlled picker is cleared', async () => {
   const heard: string[] = [];
   const sent: unknown[] = [];
   function Harness() {
@@ -186,19 +187,21 @@ it('shows and posts an empty time after a refused submit resets a controlled pic
   await clearSegment(segment('hour'));
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['']);
+  expect(sent).toEqual([]);
   expect(posted('deadline')).toBe('');
   expect(heard).toEqual(['']);
   expect(segment('hour').hasAttribute('data-placeholder')).toBe(true);
   expect(segment('day').textContent).toBe('21');
+  expect(segment('minute').textContent).toBe('30');
+  await typeSegment(segment('hour'), '2');
   await submit(mounted.container);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['', '']);
+  expect(sent).toEqual(['2026-11-21T14:30']);
 });
 
-it('restores the default time of an uncontrolled picker when the form resets', async () => {
+it('holds a noValidate action form while the time of an uncontrolled picker is cleared', async () => {
+  const action = vi.fn(async () => {});
   mounted = await mountForm(
-    <form noValidate action={async () => {}}>
+    <form noValidate action={action}>
       <DateTimePicker aria-label="Due" name="dueAt" defaultValue="2026-11-21T14:30" />
     </form>,
   );
@@ -206,8 +209,9 @@ it('restores the default time of an uncontrolled picker when the form resets', a
   expect(posted('dueAt')).toBe('');
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(segment('hour').textContent).toBe('2');
-  expect(posted('dueAt')).toBe('2026-11-21T14:30');
+  expect(action).not.toHaveBeenCalled();
+  expect(segment('hour').hasAttribute('data-placeholder')).toBe(true);
+  expect(segment('minute').textContent).toBe('30');
 });
 
 it('shows "Enter the date and time" when a required, empty picker blocks a plain form', async () => {

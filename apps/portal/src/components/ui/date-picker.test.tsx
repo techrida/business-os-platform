@@ -96,7 +96,7 @@ it('tells a controlled parent the date is empty while incomplete, without wiping
   expect(mounted.container.textContent).toContain('05 Mangsir 2083 BS');
 }, 15_000);
 
-it('after a refused submit resets an incomplete controlled date, it shows, posts and reports empty', async () => {
+it('holds a noValidate action form while a controlled date is incomplete, keeping the other segments', async () => {
   const heard: string[] = [];
   const sent: unknown[] = [];
   function Harness() {
@@ -126,14 +126,16 @@ it('after a refused submit resets an incomplete controlled date, it shows, posts
   expect(posted('d')).toBe('');
   await submit(mounted.container);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['']);
-  // React Aria would refill the day from the date it held (2, after the first Backspace).
+  // Without the hold the action ran with '' and reset the form, which left every segment empty.
+  expect(sent).toEqual([]);
   expect(segment('day').hasAttribute('data-placeholder')).toBe(true);
+  expect(segment('month').hasAttribute('data-placeholder')).toBe(false);
+  expect(segment('year').hasAttribute('data-placeholder')).toBe(false);
   expect(posted('d')).toBe('');
   expect(heard).toEqual(['2026-11-02', '']);
+  await typeSegment(segment('day'), '21');
   await submit(mounted.container);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(sent).toEqual(['', '']);
+  expect(sent).toEqual(['2026-11-21']);
 }, 15_000);
 
 it('lets the browser block a required picker left incomplete in a plain form', async () => {
