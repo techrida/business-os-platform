@@ -2,12 +2,7 @@
 
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group';
-import {
-  type ComponentPropsWithoutRef,
-  type MouseEvent,
-  type ReactNode,
-  type Ref,
-} from 'react';
+import { type ComponentPropsWithoutRef, type MouseEvent, type ReactNode, type Ref } from 'react';
 
 import styles from './checkbox.module.css';
 import { Tooltip } from './tooltip';
@@ -114,7 +109,7 @@ export function Checkbox({
   return blocked ? <Tooltip content={disabledReason}>{control}</Tooltip> : control;
 }
 
-export interface RadioGroupProps extends ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root> {}
+export type RadioGroupProps = ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root>;
 
 /**
  * A group of radios. Give it `name` to submit the choice in a form, and `aria-label` or
@@ -136,7 +131,8 @@ export function RadioGroup({ onValueChange, ...rest }: RadioGroupProps) {
 }
 
 export interface RadioProps
-  extends Omit<ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>, 'asChild' | 'children'>,
+  extends
+    Omit<ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>, 'asChild' | 'children'>,
     DisabledReason {}
 
 /** One radio inside a `RadioGroup`. Pair it with a `<label>` like `Checkbox`. */
