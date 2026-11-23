@@ -67,13 +67,34 @@ export interface ComboboxProps {
   noMatchText?: string;
   required?: boolean;
   invalid?: boolean;
+  /** The input's id, so a visible `<label for>` reaches it (clicking the label focuses the box). */
+  id?: string;
+  /** The input's form field name. Only a free-text field (`inputValue`) posts its text this way. */
+  name?: string;
   /** Keep the options in the order given instead of sorting them by name. */
   keepOrder?: boolean;
   /**
    * Offers `Add "<typed text>"` as the last row when the text matches no option. Choosing it calls `onAdd` with the
    * trimmed text; the caller decides what adding means (here, a new lost reason saved with the form).
    */
-  addOption?: { onAdd: (text: string) => void; label?: (text: string) => string };
+  addOption?: {
+    onAdd: (text: string) => void;
+    label?: (text: string) => string;
+    /** Offer the row even when an option has exactly the typed name (the typed name may still be a new record). */
+    always?: boolean;
+  };
+  /**
+   * Free-text mode (BOS-UI-002): the field owns its text instead of showing the chosen option's label. The text
+   * stays in the box after the list closes or the add row is taken, typing reports through `onInputChange`, and
+   * choosing an option reports through `onChange` (the caller then sets the text it wants, e.g. the option's name).
+   * Enter with the list closed is left alone, so a free-text field still submits its form.
+   */
+  inputValue?: string;
+  onInputChange?: (text: string) => void;
+  /** The options already match the text (the caller searched for it): do not filter them again here. */
+  serverFiltered?: boolean;
+  /** `'add'` highlights the add row while typing, so Enter keeps the typed text; the default highlights the first match. */
+  defaultActive?: 'first' | 'add';
   /** Called when the box loses focus with no value, e.g. to put a fixed choice back. */
   onBlurEmpty?: () => void;
   inputRef?: Ref<HTMLInputElement>;
@@ -103,12 +124,19 @@ export function Combobox({
   noMatchText = 'No matches.',
   required,
   invalid,
+  id,
+  name,
   keepOrder = false,
   addOption,
+  inputValue,
+  onInputChange,
+  serverFiltered = false,
+  defaultActive = 'first',
   onBlurEmpty,
   inputRef,
   className,
 }: ComboboxProps) {
+  const freeText = inputValue !== undefined;
   const base = useId();
   const listId = `${base}-list`;
   const optionId = (id: string) => `${base}-o-${id}`;
@@ -124,39 +152,50 @@ export function Combobox({
   );
   const selected = options.find((o) => o.id === value);
   // `query` is null while the box simply shows the chosen label; a string while the user is searching.
-  const [query, setQuery] = useState<string | null>(null);
+  const [searching, setQuery] = useState<string | null>(null);
+  const query = freeText ? inputValue : searching;
   const [activeId, setActiveId] = useState<string | null>(null);
+  // What the options are filtered by here: nothing when the caller already searched for the text.
+  const filterBy = (text: string) => (serverFiltered ? '' : text);
 
   // The "Add ..." row is appended to what is searched, so the keyboard and the screen reader treat it like any option.
   const withAdd = (list: readonly ComboboxOption[], text: string): readonly ComboboxOption[] => {
     const add =
       addOption === undefined
         ? null
-        : addOptionFor(list, text, addOption.label ?? ((t) => `Add "${t}"`));
+        : addOptionFor(
+            list,
+            text,
+            addOption.label ?? ((t) => `Add "${t}"`),
+            addOption.always === true,
+          );
     return add === null ? list : [...list, add];
   };
   const layout = useMemo(
     () =>
       layoutOptions(
         withAdd(options, query ?? ''),
-        query ?? '',
+        filterBy(query ?? ''),
         groupThreshold,
         ungroupedLabel,
         keepOrder,
       ),
     // withAdd closes over addOption only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [options, query, groupThreshold, ungroupedLabel, keepOrder, addOption],
+    [options, query, groupThreshold, ungroupedLabel, keepOrder, addOption, serverFiltered],
   );
   const ids = useMemo(() => selectableIds(layout.flat), [layout.flat]);
-  const live = ids.includes(activeId ?? '') ? activeId : null;
+  // While text is typed, `defaultActive: 'add'` keeps the add row highlighted unless the arrows or the mouse moved off it.
+  const addByDefault =
+    defaultActive === 'add' && (query ?? '').trim() !== '' && ids.includes(ADD_OPTION_ID);
+  const live = ids.includes(activeId ?? '') ? activeId : addByDefault ? ADD_OPTION_ID : null;
 
   // Keep the highlighted option in view as the arrows move.
   useEffect(() => {
     if (!open || live === null) return;
     listRef.current
       ?.querySelector<HTMLElement>(`[id="${optionId(live)}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
+      ?.scrollIntoView?.({ block: 'nearest' });
     // optionId is a pure function of base and the id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, live]);
@@ -185,12 +224,19 @@ export function Combobox({
   function onInput(e: ChangeEvent<HTMLInputElement>) {
     const text = e.target.value;
     setQuery(text);
-    // Typing is searching: the first match is highlighted so Enter takes it.
+    onInputChange?.(text);
+    // Typing is searching: the first match is highlighted so Enter takes it (or the add row, by `defaultActive`).
     const first =
       selectableIds(
-        layoutOptions(withAdd(options, text), text, groupThreshold, ungroupedLabel, keepOrder).flat,
+        layoutOptions(
+          withAdd(options, text),
+          filterBy(text),
+          groupThreshold,
+          ungroupedLabel,
+          keepOrder,
+        ).flat,
       )[0] ?? null;
-    setActiveId(text.trim() === '' ? null : first);
+    setActiveId(text.trim() === '' || defaultActive === 'add' ? null : first);
     onOpenChange(true);
     // An emptied box means "nobody", not "keep the old name hidden behind a blank".
     if (text === '' && value !== '') onChange('');
@@ -223,8 +269,9 @@ export function Combobox({
         }
         break;
       case 'Enter':
-        // Always swallowed: Enter in a field must not submit the memo form behind the list.
-        e.preventDefault();
+        // Swallowed while the list is open (and always, outside free-text mode): Enter in a field must not submit
+        // the form behind the list. A free-text field with its list closed submits as a plain input does.
+        if (open || !freeText) e.preventDefault();
         if (open && live !== null) choose(live);
         break;
       case 'Escape':
@@ -242,7 +289,7 @@ export function Combobox({
     }
   }
 
-  const text = query ?? selected?.label ?? '';
+  const text = freeText ? inputValue : (query ?? selected?.label ?? '');
   const announcement = open
     ? resultsAnnouncement(layout.flat.length, options.length, {
         empty: emptyText,
@@ -270,6 +317,8 @@ export function Combobox({
       <input
         ref={internalInputRef}
         type="text"
+        id={id}
+        name={freeText ? name : undefined}
         role="combobox"
         className={styles.input}
         value={text}
@@ -345,7 +394,7 @@ export function Combobox({
                 {o.id === value ? <Icon name="check" size={20} className={styles.check} /> : null}
               </div>
             ));
-            return group.label === null ? (
+            return group.label === null || group.label === '' ? (
               <div key="flat" role="presentation" className={styles.groupItems}>
                 {items}
               </div>
