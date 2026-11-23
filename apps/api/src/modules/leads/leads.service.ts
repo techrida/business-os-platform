@@ -712,7 +712,8 @@ export class LeadsService {
         // form shows them instead of a placeholder.
         const self = actorParty(principal);
         const fallback =
-          context === 'create' && decideAssignment(self, self, 'create').reason === 'sales_owner_required'
+          context === 'create' &&
+          decideAssignment(self, self, 'create').reason === 'sales_owner_required'
             ? await this.fallbackOwner(tx, scope, people)
             : null;
         return people
@@ -841,7 +842,11 @@ export class LeadsService {
       return principal.userId;
     }
     if (decision.reason === 'sales_owner_required') {
-      const fallback = await this.fallbackOwner(tx, scope, await assignableParties(tx, principal, scope, check));
+      const fallback = await this.fallbackOwner(
+        tx,
+        scope,
+        await assignableParties(tx, principal, scope, check),
+      );
       if (fallback !== null) return fallback.userId;
     }
     throw assignmentRefused('ownerUserId', decision.reason);

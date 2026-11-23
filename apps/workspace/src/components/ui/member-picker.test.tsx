@@ -68,7 +68,9 @@ it('shows the chosen person as name and role in the closed field, and only the n
   const box = input(mounted.container);
   expect(box.value).toBe('Dev Sales Sales');
   // The muted role is painted over the box, so a reader sees what the list row shows.
-  expect(mounted.container.querySelector('[aria-hidden="true"]')?.textContent).toBe('Dev SalesSales');
+  expect(mounted.container.querySelector('[aria-hidden="true"]')?.textContent).toBe(
+    'Dev SalesSales',
+  );
   await act(() => {
     box.focus();
     return Promise.resolve();

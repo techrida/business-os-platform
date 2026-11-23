@@ -288,17 +288,16 @@ describe('GET /v1/admin/settings/crm.default_lead_owner/people', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     // Not the Founder or Marketing (an intake lead goes to Sales), not a Sales user without a department, not
     // Management (no lead write), not the settings-only role, the inactive user, a portal user or another tenant.
-    expect(res.body).toEqual([{ userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales' }]);
+    expect(res.body).toEqual([
+      { userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales' },
+    ]);
     expect(JSON.stringify(res.body)).not.toContain(portalUserId);
   });
 
   it('marks the Sales head, the person an unset setting stands for, so the card names them (BOS-UI-001)', async () => {
     const setLevel = (level: 'head' | 'staff') =>
       withTx(db, scope, systemActor('test'), (tx) =>
-        tx
-          .update(userEntities)
-          .set({ level })
-          .where(eq(userEntities.userId, salesInDept.userId)),
+        tx.update(userEntities).set({ level }).where(eq(userEntities.userId, salesInDept.userId)),
       );
     caller = await principalOf(founder);
     await setLevel('head');
@@ -332,7 +331,9 @@ describe('GET /v1/admin/settings/crm.default_lead_owner/people', () => {
     caller = await principalOf(foreignFounder, foreignScope);
     const res = await people();
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ userId: foreignSales.userId, displayName: 'Foreign Sales', role: 'Sales' }]);
+    expect(res.body).toEqual([
+      { userId: foreignSales.userId, displayName: 'Foreign Sales', role: 'Sales' },
+    ]);
 
     // Nor may it save one of this tenant's people as its default.
     const refused = await save(salesInDept.userId);
@@ -414,7 +415,9 @@ describe('the Lead owner card for a role with admin.settings.write and no lead a
 
     const res = await people();
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual([{ userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales' }]);
+    expect(res.body).toEqual([
+      { userId: salesInDept.userId, displayName: 'Ram Thapa', role: 'Sales' },
+    ]);
     expect((await request(baseUrl).get(`/v1/admin/settings/${KEY}`)).status).toBe(200);
     try {
       expect((await save(salesInDept.userId)).status).toBe(200);
