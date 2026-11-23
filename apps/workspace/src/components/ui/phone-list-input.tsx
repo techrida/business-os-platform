@@ -18,6 +18,7 @@ import {
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from './button';
+import { Radio, RadioGroup } from './checkbox';
 import { CountrySelect } from './country-select';
 import { DigitBox, type DigitRules } from './digit-box';
 import { Icon } from './icon';
@@ -706,15 +707,17 @@ export function PhoneListInput({
                 ) : null}
                 {showPrimary ? (
                   <label className={styles.primary}>
-                    <input
-                      type="radio"
+                    {/* One group per row: the number fields sit between the rows' radios, and a group
+                          wrapped around them would skip row 1's fields when tabbing in. */}
+                    <RadioGroup
+                      neutral
                       name={`${name ?? base}.primary`}
-                      value={String(index)}
-                      checked={row.isPrimary}
+                      value={row.isPrimary ? String(index) : ''}
                       disabled={disabled === true}
-                      aria-label={`${noun} ${n} primary`}
-                      onChange={() => setPrimary(row.key)}
-                    />
+                      onValueChange={() => setPrimary(row.key)}
+                    >
+                      <Radio value={String(index)} aria-label={`${noun} ${n} primary`} />
+                    </RadioGroup>
                     <span aria-hidden="true">Primary</span>
                   </label>
                 ) : null}

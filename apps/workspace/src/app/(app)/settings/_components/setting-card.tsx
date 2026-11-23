@@ -30,6 +30,7 @@ import {
 import { SettingsForm, useSettingsFormContext, type SaveSettingsPageAction } from './settings-form';
 import styles from './settings.module.css';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * Whole digits for a whole-number setting the contracts give no upper bound (`z.number().int()`,
@@ -488,25 +489,16 @@ function CurrenciesControl({
         {CURRENCIES.map((currency) =>
           currency === 'NPR' ? (
             <label key={currency} className={styles.checkLabel} htmlFor={`${id}-NPR`}>
-              <input
-                id={`${id}-NPR`}
-                className={styles.checkbox}
-                type="checkbox"
-                value="NPR"
-                checked
-                disabled
-              />
+              <Checkbox id={`${id}-NPR`} value="NPR" checked disabled />
               NPR (always on)
             </label>
           ) : (
             <label key={currency} className={styles.checkLabel} htmlFor={`${id}-${currency}`}>
-              <input
+              <Checkbox
                 id={`${id}-${currency}`}
-                className={styles.checkbox}
-                type="checkbox"
                 value={currency}
                 checked={values.includes(currency)}
-                onChange={(e) => toggle(currency, e.currentTarget.checked)}
+                onCheckedChange={(nextChecked) => toggle(currency, nextChecked)}
               />
               {currency}
             </label>

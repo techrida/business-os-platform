@@ -86,6 +86,13 @@ function box(label: string): HTMLInputElement {
   return found;
 }
 
+/** The design-system radio for a form field name and value: the button just before Radix's hidden input. */
+function radio(name: string, value: string): HTMLElement | null {
+  const hidden = dialog().querySelector(`input[name="${name}"][value="${value}"]`);
+  const button = hidden?.previousElementSibling;
+  return button instanceof HTMLElement ? button : null;
+}
+
 function dialog(): HTMLElement {
   const element = document.querySelector<HTMLElement>('[role="dialog"]');
   if (!element) throw new Error('Conversion dialog is not open');
@@ -196,7 +203,7 @@ it("offers the existing customer's contacts, a contact without an email disabled
   await submit(dialog());
   expect(stepOf()).toBe('Contact');
   await flush();
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(radio('contactMode', 'existing'));
   const field = dialog().querySelector<HTMLInputElement>('input[name="contactId"]');
   await click(box('Contact'));
   const options = Array.from(document.querySelectorAll('[role="option"]'));
@@ -260,7 +267,7 @@ it('links an existing organisation through one live-search box: no Find box, no 
     />,
   );
   await click(mounted.container.querySelector('button'));
-  await click(dialog().querySelector('input[name="customerMode"][value="existing"]'));
+  await click(radio('customerMode', 'existing'));
   expect([...dialog().querySelectorAll('button')].some((b) => b.textContent === 'Search')).toBe(
     false,
   );
@@ -283,7 +290,7 @@ it('links an existing organisation through one live-search box: no Find box, no 
   await submit(dialog());
   expect(stepOf()).toBe('Contact');
   await flush();
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(radio('contactMode', 'existing'));
   await click(box('Contact'));
   await click(
     [...document.querySelectorAll('[role="option"]')].find((o) => o.textContent === 'Mina') ?? null,
@@ -324,15 +331,13 @@ it('Create "<typed>" is the only row when nothing matches, and choosing it switc
     />,
   );
   await click(mounted.container.querySelector('button'));
-  await click(dialog().querySelector('input[name="customerMode"][value="existing"]'));
+  await click(radio('customerMode', 'existing'));
   await typeKeys(box('Organisation'), 'Zed Corp');
   await flush();
   const rows = [...document.querySelectorAll('[role="option"]')];
   expect(rows.map((o) => o.textContent)).toEqual(['Create "Zed Corp"']);
   await click(rows[0] ?? null);
-  expect(
-    dialog().querySelector<HTMLInputElement>('input[name="customerMode"][value="create"]')?.checked,
-  ).toBe(true);
+  expect(radio('customerMode', 'create')?.getAttribute('aria-checked') === 'true').toBe(true);
   expect(box('Legal name').value).toBe('Zed Corp');
 });
 
@@ -443,8 +448,8 @@ it('keeps a short new-contact phone blocked after switching to an existing conta
   const phone = () =>
     dialog().querySelector<HTMLInputElement>('input[aria-label="Phone 1 number"]');
   await fill(phone(), '981234567');
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
-  await click(dialog().querySelector('input[name="contactMode"][value="create"]'));
+  await click(radio('contactMode', 'existing'));
+  await click(radio('contactMode', 'create'));
   expect(phone()?.value).toBe('981234567');
   await convert();
   expect(submitted).toHaveLength(0);
@@ -675,9 +680,7 @@ it('stays on a step that has a problem and says what it is, without losing the o
 
 it('a lead with no link starts on Create, with the organisation and the contact filled in from the lead', async () => {
   await mountNewCustomer({ companyName: 'Fresh Traders', contactName: 'Sita Rai' });
-  expect(
-    dialog().querySelector<HTMLInputElement>('input[name="customerMode"][value="create"]')?.checked,
-  ).toBe(true);
+  expect(radio('customerMode', 'create')?.getAttribute('aria-checked') === 'true').toBe(true);
   expect(box('Legal name').value).toBe('Fresh Traders');
   expect(dialog().querySelector<HTMLInputElement>('[name="contactName"]')?.value).toBe('Sita Rai');
   // A new organisation has no contacts to link, so the contact step offers only Create.
@@ -705,7 +708,7 @@ it('a lead linked to a customer starts on that customer, and the Contact step li
   await flush();
   await submit(dialog());
   expect(stepOf()).toBe('Contact');
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await click(radio('contactMode', 'existing'));
   await click(box('Contact'));
   expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toEqual([
     'Mina',
