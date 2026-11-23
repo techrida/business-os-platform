@@ -53,7 +53,7 @@ const MAIL_TIMEOUT_MS = 60_000;
 async function approve(page: Page, comment: string): Promise<void> {
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Approve request' });
-  await dialog.getByLabel('Comment (optional)', { exact: true }).fill(comment);
+  await dialog.getByPlaceholder('Anything the requester should know').fill(comment);
   await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
   await expect(page.getByText('Your approval was recorded.')).toBeVisible();
