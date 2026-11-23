@@ -4,6 +4,7 @@ import { isQuotationEditable, type CustomerDto, type OpportunityDto } from '@bos
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { addContactAction } from '@/components/p2/customers/actions';
 import * as api from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
@@ -17,6 +18,7 @@ import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { getPermissionCheck } from '@/lib/live-permissions';
 import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 export const metadata: Metadata = { title: 'Edit quotation · Business OS' };
@@ -141,6 +143,7 @@ export default async function EditQuotationPage({
     );
   }
 
+  const mayAddContact = (await getPermissionCheck(session))('customer.write');
   const [customer, opportunity, lookups, enabledCurrencies] = await Promise.all([
     api.getCustomer(session, quotation.customerId).then(
       (c): CustomerDto | null => c,
@@ -173,6 +176,15 @@ export default async function EditQuotationPage({
         initial={valuesFromVersion(version)}
         context={<ContextCard customer={customer} opportunity={opportunity} />}
         contacts={lookups.contacts}
+        createContact={
+          mayAddContact
+            ? {
+                action: addContactAction,
+                customerId: quotation.customerId,
+                ...(customer ? { customerCountry: customer.country } : {}),
+              }
+            : null
+        }
         taxCodes={lookups.taxCodes}
         paymentTerms={lookups.paymentTerms}
         termPresets={lookups.termPresets}

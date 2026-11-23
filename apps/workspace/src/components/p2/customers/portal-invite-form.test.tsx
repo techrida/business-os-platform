@@ -3,7 +3,7 @@
 // contact without an email cannot be chosen), sends the chosen contact id, and closes with a toast on success.
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { choose, click, mountForm } from '@/test/form-interactions';
+import { click, fill, mountForm } from '@/test/form-interactions';
 
 import type { PortalInviteState } from './form-state';
 import { PortalInviteForm } from './portal-invite-form';
@@ -21,6 +21,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   // The shared Select measures its trigger; jsdom has no ResizeObserver.
+  Element.prototype.scrollIntoView = () => {};
   globalThis.ResizeObserver ??= class {
     observe() {}
     unobserve() {}
@@ -48,7 +49,13 @@ it("offers only the customer's contacts, sends the chosen id, and closes with a 
       idempotencyKey={KEY}
       first
       contacts={[
-        { id: ANA, label: 'Ana Bista (ana@acme.test)', hasEmail: true },
+        {
+          id: ANA,
+          label: 'Ana Bista (ana@acme.test)',
+          name: 'Ana Bista',
+          detail: 'Finance head · ana@acme.test',
+          hasEmail: true,
+        },
         { id: BIKASH, label: 'Bikash Thapa', hasEmail: false },
       ]}
     />,
@@ -61,7 +68,15 @@ it("offers only the customer's contacts, sends the chosen id, and closes with a 
   // No way to type an address: the admin is always one of the customer's contacts.
   expect(dialog?.querySelector('[name="email"], input[type="email"]')).toBeNull();
 
-  await choose(dialog!, 'contactId', 'Ana Bista (ana@acme.test)');
+  // One box that searches as you type (no Search button); a row shows the name and the email it matched on.
+  expect(
+    Array.from(dialog!.querySelectorAll('button')).some((b) => /search/i.test(b.textContent ?? '')),
+  ).toBe(false);
+  await fill(dialog!.querySelector('input[role="combobox"]'), 'ana@acme');
+  const rows = Array.from(document.querySelectorAll('[role="option"]'));
+  expect(rows.map((r) => r.textContent?.trim())).toEqual([expect.stringContaining('Ana Bista')]);
+  expect(rows[0]?.textContent).toContain('ana@acme.test');
+  await click(rows[0] ?? null);
   await click(dialog?.querySelector('footer button[type="submit"]') ?? null);
 
   expect(action).toHaveBeenCalledTimes(1);
@@ -88,13 +103,12 @@ it('lists a contact without an email but does not let it be chosen', async () =>
   await click(mounted.container.querySelector('[aria-haspopup="dialog"]'));
   const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
   expect(dialog?.textContent).toContain('Invite portal user');
-  const trigger = dialog
-    ?.querySelector('input[type="hidden"][name="contactId"]')
-    ?.parentElement?.querySelector('button');
-  await click(trigger ?? null);
+  await fill(dialog!.querySelector('input[role="combobox"]'), 'bikash');
   const option = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
     el.textContent?.includes('Bikash Thapa'),
   );
-  expect(option?.textContent).toContain('(no email)');
+  expect(option?.textContent).toContain('No email address');
   expect(option?.getAttribute('aria-disabled')).toBe('true');
+  // No create action was given, so there is no Create row.
+  expect(document.body.textContent).not.toContain('Create "');
 });

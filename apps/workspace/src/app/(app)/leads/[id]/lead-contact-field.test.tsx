@@ -101,7 +101,7 @@ describe('LeadContactField', () => {
     expect(countryBox()).not.toBeNull();
     expect(container.querySelector<HTMLInputElement>('input[name="country"]')?.value).toBe('NP');
     expect(numberBox(1)).not.toBeNull();
-    expect(container.querySelector('input[aria-label="Phone 1 country"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Phone 1 country"]')).not.toBeNull();
     expect(container.querySelector<HTMLInputElement>('input[name="phones.0.number"]')?.value).toBe(
       NEPAL.e164,
     );

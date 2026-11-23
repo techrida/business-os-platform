@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 import { click, mountForm, typeKeys } from '@/test/form-interactions';
+import { phoneCountryButton, pickPhoneCountry } from '@/test/phone-field';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -257,10 +258,7 @@ describe('the customer form posts the country, address and phone shapes (FX9)', 
       const { container } = mounted;
       await typeKeys(phoneBox(container, 1), '9812345678');
       await click(container.querySelector('button[data-action="add"]'));
-      await pickCountry(
-        container.querySelector<HTMLInputElement>('input[aria-label="Phone 2 country"]')!,
-        '+1',
-      );
+      await pickPhoneCountry(phoneCountryButton(container, 2)!, '+1');
       await typeKeys(phoneBox(container, 2), '4155552671');
       const body = await submitAndReadBody(container);
       expect((body.contact as { phones: unknown }).phones).toMatchObject([
@@ -343,7 +341,7 @@ describe('the customer form posts the country, address and phone shapes (FX9)', 
       await settle();
       expect(api.createCustomer).not.toHaveBeenCalled();
       const box = phoneBox(container, 1);
-      expect(box.value).toBe('9812345678');
+      expect(box.value).toBe('+977 9812345678');
       const described = (box.getAttribute('aria-describedby') ?? '')
         .split(' ')
         .map((id) => document.getElementById(id)?.textContent ?? '')
@@ -366,7 +364,7 @@ describe('the customer form posts the country, address and phone shapes (FX9)', 
       await settle();
       expect(container.textContent).toContain('This may be an organization you already have');
       // React resets the form after the action; the list comes back with the number.
-      expect(phoneBox(container, 1).value).toBe('9812345678');
+      expect(phoneBox(container, 1).value).toBe('+977 9812345678');
 
       await click(buttonNamed(container, 'Create anyway'));
       await typeReason('A separate company with the same trading name.');

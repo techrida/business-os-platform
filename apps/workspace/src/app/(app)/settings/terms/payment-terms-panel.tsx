@@ -175,29 +175,37 @@ function AddPaymentTermDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <form id="add-payment-term" className={terms.form} noValidate onSubmit={submit}>
-        <Field label="Name" hint="As documents show it, for example Net 45.">
+        <Field label="Name">
           {(c) => (
-            <Input {...c} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+            <Input
+              {...c}
+              value={name}
+              maxLength={80}
+              placeholder="Net 45"
+              onChange={(e) => setName(e.target.value)}
+            />
           )}
         </Field>
-        <Field label="Code" hint="1 to 20 capitals, digits, - or _.">
+        <Field label="Code">
           {(c) => (
             <Input
               {...c}
               value={code}
               maxLength={20}
+              placeholder="NET45"
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
             />
           )}
         </Field>
-        <Field label="Days to pay" hint="0 means due on receipt. Up to 365.">
+        <Field label="Days to pay" hint="0 means due on receipt.">
           {(c) => (
             <DecimalInput
               {...c}
               intDigits={3}
               scale={0}
+              placeholder="45"
               min="0"
               max="365"
               value={netDays}

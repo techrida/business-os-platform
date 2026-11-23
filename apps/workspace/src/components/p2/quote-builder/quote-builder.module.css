@@ -206,8 +206,13 @@
 .milestoneHead {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  /* The box has the label row above it and the reserved message line below, so the button is placed by the label. */
+  align-items: start;
   gap: 8px;
+}
+
+.milestoneHead > button {
+  margin-top: calc(var(--line-height-body-small) + 8px);
 }
 
 .legacyDue {

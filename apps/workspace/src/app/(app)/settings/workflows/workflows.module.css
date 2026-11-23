@@ -362,6 +362,11 @@
   flex: 1 1 240px;
 }
 
+/* Each Field ends in a reserved message line (UIP-FORM-010); lift the button to the input box. */
+.addRow > * + button {
+  margin-block-end: calc(var(--line-height-caption) + 8px);
+}
+
 .formActions {
   display: flex;
   flex-wrap: wrap;

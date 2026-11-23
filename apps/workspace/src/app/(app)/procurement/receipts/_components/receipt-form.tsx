@@ -186,10 +186,11 @@ export function ReceiptForm({
                 />
               )}
             </Field>
-            <Field label="Location" hint="Optional. Where it was put." error={errors['location']}>
+            <Field label="Location" optional error={errors['location']}>
               {(c) => (
                 <Input
                   name="location"
+                  placeholder="Main store, rack B2"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   maxLength={200}

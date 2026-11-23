@@ -15,7 +15,7 @@ import { CreditHoldHelp } from './credit-hold-help';
 import styles from './sales-orders.module.css';
 
 const EVIDENCE_HINT =
-  "Optional. A file you hold for this order, such as the customer purchase order. It is kept with the order. What the company's evidence policy needs comes from the customer's accepted evidence.";
+  "A file you hold for this order, such as the customer purchase order. It is kept with the order. What the company's evidence policy needs comes from the customer's accepted evidence.";
 
 export interface ConfirmOption {
   /** The quotation's `currentVersionId`: the version the order is confirmed from. */
@@ -128,7 +128,8 @@ export function ConfirmOrderDialog({
               kind="quotation-version"
               ownerId={version}
               name="evidenceDocumentIds"
-              label="Evidence document (optional)"
+              label="Evidence document"
+              optional
               hint={EVIDENCE_HINT}
               error={state.errors?.evidence}
               onBlockingChange={setBlocked}
