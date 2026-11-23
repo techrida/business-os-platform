@@ -198,3 +198,55 @@ it('portals into the dialog container instead of being clipped by the scrolling 
   expect(dialog.contains(listbox)).toBe(true);
   expect(form.contains(listbox)).toBe(false);
 });
+
+it('shows the label and muted description when closed, the label alone while focused, and posts the id by name', async () => {
+  mounted = await mountForm(
+    <form>
+      <Combobox
+        label="Owner"
+        options={PEOPLE}
+        value="u1"
+        onChange={() => undefined}
+        open={false}
+        onOpenChange={() => undefined}
+        showDescriptionWhenClosed
+        name="ownerId"
+      />
+    </form>,
+  );
+  const input = mounted.container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+  expect(input.value).toBe('Aarav Sharma Sales');
+  expect(mounted.container.querySelector<HTMLInputElement>('input[name="ownerId"]')?.value).toBe(
+    'u1',
+  );
+  await act(() => {
+    input.focus();
+    return Promise.resolve();
+  });
+  expect(input.value).toBe('Aarav Sharma');
+});
+
+it('offers a trailing custom "Create" row for text that matches nothing, and shows the option an empty value stands for', async () => {
+  const added: string[] = [];
+  mounted = await mountForm(
+    <form>
+      <Combobox
+        label="Company"
+        options={PEOPLE}
+        value=""
+        emptyStandsFor="u2"
+        onChange={() => undefined}
+        open
+        onOpenChange={() => undefined}
+        addOption={{ onAdd: (t) => added.push(t), label: (t) => `Create "${t}"` }}
+      />
+    </form>,
+  );
+  const input = mounted.container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+  expect(input.value).toBe('Bina Gurung');
+  await fill(input, 'Zed Corp');
+  const rows = [...document.querySelectorAll('[role="option"]')];
+  expect(rows.at(-1)?.textContent).toContain('Create "Zed Corp"');
+  await click(rows.at(-1)!);
+  expect(added).toEqual(['Zed Corp']);
+});

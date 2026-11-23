@@ -783,6 +783,12 @@ const LeadFieldsSchema = z.strictObject({
  * person: an email or at least one phone.
  */
 export const CreateLeadBodySchema = LeadFieldsSchema.extend({
+  /**
+   * R6O (BOS-UI-002): the existing customer the company field was picked from, and one of its contacts. Both optional:
+   * a lead is quick to create and stays free text without them. The API checks the caller may read that customer.
+   */
+  customerId: z.guid().optional(),
+  contactId: z.guid().optional(),
   currency: CurrencySchema.default('NPR'),
   phones: PartyPhonesSchema.default([]),
   followUp: LeadFollowUpSchema.optional(),
@@ -791,6 +797,10 @@ export const CreateLeadBodySchema = LeadFieldsSchema.extend({
   .refine((b) => b.followUp === undefined || b.nextFollowUpAt === undefined, {
     path: ['followUp'],
     message: 'Send followUp or nextFollowUpAt, not both',
+  })
+  .refine((b) => b.contactId === undefined || b.customerId !== undefined, {
+    path: ['contactId'],
+    message: 'a contact needs its customer',
   })
   .refine((b) => b.email !== undefined || b.phones.length > 0, {
     path: ['email'],

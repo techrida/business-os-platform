@@ -33,6 +33,12 @@ export interface ConvertLead {
   address?: { line: string; city: string } | null;
   /** The lead person's numbers (the DTO's `phones`, primary first): the new contact starts with them. */
   phones: readonly PartyPhoneInput[];
+  /**
+   * R6O: the customer (and contact) picked in the lead's company field. The dialog starts on converting INTO them, so
+   * there is no duplicate warning to answer; the API refuses a second customer for a linked lead.
+   */
+  customerId?: string | null;
+  contactId?: string | null;
   requirement?: string | null;
   value?: string | null;
   probability?: number | null;
@@ -41,15 +47,15 @@ export interface ConvertLead {
 
 function initialValues(lead: ConvertLead): Record<string, string> {
   return {
-    customerMode: 'create',
-    customerId: '',
+    customerMode: lead.customerId ? 'existing' : 'create',
+    customerId: lead.customerId ?? '',
     legalName: lead.companyName,
     panVatNo: '',
     line: lead.address?.line ?? '',
     city: lead.address?.city ?? '',
     country: lead.country,
-    contactMode: 'create',
-    contactId: '',
+    contactMode: lead.customerId && lead.contactId ? 'existing' : 'create',
+    contactId: lead.customerId ? (lead.contactId ?? '') : '',
     contactName: lead.contactName,
     contactEmail: lead.email,
     contactCountry: lead.country,
@@ -331,7 +337,9 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       {customerId && !customers.some((c) => c.id === customerId) ? (
                         <option value={customerId}>
                           {dupes.find((d) => d.kind === 'customer' && d.id === customerId)?.label ??
-                            'Selected customer'}
+                            (customerId === lead.customerId
+                              ? lead.companyName
+                              : 'Selected customer')}
                         </option>
                       ) : null}
                       {customers.map((c) => (
