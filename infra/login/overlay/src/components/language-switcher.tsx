@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { setLanguageCookie } from "@/lib/cookies";
-import { Lang } from "@/lib/i18n";
-import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from "@headlessui/react";
-import { useLocale } from "next-intl";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { setLanguageCookie } from '@/lib/cookies';
+import { Lang } from '@/lib/i18n';
+import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
+import { useLocale } from 'next-intl';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 /**
  * Language dropdown in the footer. Replaces the upstream file of the same name (the overlay is copied over the
@@ -16,7 +16,9 @@ import { useState } from "react";
  */
 export function LanguageSwitcher({ languages }: { languages: Lang[] }) {
   const currentLocale = useLocale();
-  const [selected, setSelected] = useState(languages.find((l) => l.code === currentLocale) || languages[0]);
+  const [selected, setSelected] = useState(
+    languages.find((l) => l.code === currentLocale) || languages[0],
+  );
   const router = useRouter();
 
   const handleChange = async (language: Lang) => {
@@ -46,7 +48,7 @@ export function LanguageSwitcher({ languages }: { languages: Lang[] }) {
             <path d="m6 9 6 6 6-6" />
           </svg>
         </ListboxButton>
-        <ListboxOptions anchor={{ to: "top end", gap: 8 }} className="bos-lang__list">
+        <ListboxOptions anchor={{ to: 'top end', gap: 8 }} className="bos-lang__list">
           {languages.map((lang) => (
             <ListboxOption key={lang.code} value={lang} className="bos-lang__item">
               <span className="bos-lang__label">{lang.name}</span>
