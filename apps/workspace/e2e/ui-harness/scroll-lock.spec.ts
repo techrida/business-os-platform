@@ -194,3 +194,65 @@ for (const scope of ['page', 'dialog'] as const) {
     expect(await frame(page)).toEqual(before);
   });
 }
+
+for (const scope of ['page', 'dialog'] as const) {
+  test.describe(`keyboard navigation ${scope === 'dialog' ? 'in a dialog' : 'on the page'}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(origin);
+      await page.getByTestId('page-controls').scrollIntoViewIfNeeded();
+      await page.evaluate(() => window.scrollBy(0, 100));
+      if (scope === 'dialog') await page.getByRole('button', { name: 'Open dialog' }).click();
+      await page.waitForTimeout(300);
+    });
+
+    test('arrowing through a Select longer than its list keeps the option in view and the shell still', async ({
+      page,
+    }) => {
+      const before = await frame(page);
+      await page.getByRole('button', { name: new RegExp(`${scope} long list`, 'i') }).click();
+      const list = page.getByRole('listbox');
+      await expect(list).toBeVisible();
+      for (let i = 0; i < 45; i++) await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(300);
+      const state = await page.evaluate(() => {
+        const box = document.querySelector('[role=listbox]') as HTMLElement;
+        const active = box.querySelector('[data-focused]') as HTMLElement | null;
+        const a = active?.getBoundingClientRect();
+        const l = box.getBoundingClientRect();
+        return {
+          text: active?.textContent ?? null,
+          inside: a ? a.top >= l.top - 1 && a.bottom <= l.bottom + 1 : false,
+          scrolled: box.scrollTop > 0,
+        };
+      });
+      expect(state.text).toContain('Option 45');
+      expect(state.inside).toBe(true);
+      expect(state.scrolled).toBe(true);
+      expect(await frame(page)).toEqual(before);
+    });
+
+    test('arrowing across months in a DatePicker leaves the shell where it was', async ({
+      page,
+    }) => {
+      const before = await frame(page);
+      const root = scope === 'page' ? page.getByTestId('page-controls') : page.getByRole('dialog');
+      await root.getByRole('button', { name: /calendar|date/i }).click();
+      await expect(page.getByRole('grid')).toBeVisible();
+      const header = () => page.getByRole('grid').first().getAttribute('aria-label');
+      const first = await header();
+      for (let i = 0; i < 70; i++) await page.keyboard.press('ArrowRight');
+      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('PageDown');
+      await page.waitForTimeout(300);
+      expect(await header()).not.toBe(first);
+      const focused = await page.evaluate(() => {
+        const cell = document.activeElement as HTMLElement | null;
+        const r = cell?.getBoundingClientRect();
+        return { inView: r ? r.top >= 0 && r.bottom <= innerHeight : false, tag: cell?.tagName };
+      });
+      expect(focused.inView).toBe(true);
+      expect(await frame(page)).toEqual(before);
+    });
+  });
+}
