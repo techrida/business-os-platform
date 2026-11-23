@@ -646,6 +646,21 @@ describe('company logo variants (R6AC)', () => {
     },
   );
 
+  it.each(['entity_logo', 'entity_logo_on_dark', 'entity_logo_on_light'] as const)(
+    'POST %s refuses a 600 KB picture with 413, announced or chunked, and writes nothing (R6AC)',
+    async (ownerType) => {
+      const big = Buffer.concat([PNG, Buffer.alloc(600 * 1024)]);
+      const before = await documentCount(ownerType, a.organizationId);
+      const announced = pngHeaders(big);
+      expect(await statusOf(postAs(staff(a), ownerType, a.organizationId, announced, big))).toBe(
+        413,
+      );
+      const { 'content-length': _omitted, ...chunked } = announced;
+      expect(await statusOf(postAs(staff(a), ownerType, a.organizationId, chunked, big))).toBe(413);
+      expect(await documentCount(ownerType, a.organizationId)).toBe(before);
+    },
+  );
+
   it('keeps all three slots after each is set', async () => {
     const founder = staff(a);
     const main = (await postAs(founder, 'entity_logo', a.organizationId, pngHeaders())).documentId;
