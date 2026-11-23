@@ -80,7 +80,7 @@ export interface AssignmentCandidate extends AssignmentParty {
   email: string | null;
   avatarDocumentId: string | null;
   /** What a picker shows after the name: job title and department (BOS-UI-001). */
-  role: string | null;
+  role?: string | null;
 }
 
 /**

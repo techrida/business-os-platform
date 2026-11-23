@@ -4,7 +4,7 @@
 import { departments, userEntities } from '@bos/db';
 import { and, eq, inArray } from 'drizzle-orm';
 
-import type { DbTransaction } from '../db/tx';
+import type { Db, DbTransaction } from '../db/db.module';
 
 /** "Sales Executive · Sales", "Sales" or "Sales Executive"; null when the person has neither. */
 export function roleLine(jobTitle: string | null, departmentName: string | null): string | null {
@@ -17,7 +17,7 @@ export function roleLine(jobTitle: string | null, departmentName: string | null)
 
 /** The department names of an entity, by id, for the role lines of its members. */
 export async function departmentNames(
-  tx: DbTransaction,
+  tx: Db | DbTransaction,
   scope: { tenantId: string; organizationId: string },
   ids: readonly (string | null)[],
 ): Promise<ReadonlyMap<string, string>> {
@@ -38,7 +38,7 @@ export async function departmentNames(
 
 /** The role line of each named user in the acting entity (a user with no membership there is absent). */
 export async function roleLines(
-  tx: DbTransaction,
+  tx: Db | DbTransaction,
   scope: { tenantId: string; organizationId: string },
   userIds: readonly string[],
 ): Promise<ReadonlyMap<string, string | null>> {
