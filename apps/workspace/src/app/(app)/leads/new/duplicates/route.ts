@@ -6,7 +6,7 @@ import { errorResponse, jsonResponse, routeSession } from '@/lib/bff';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const FIELDS = ['company', 'name', 'email', 'phone'] as const;
+const FIELDS = ['company'] as const;
 
 /**
  * The New lead company field's list (BOS-UI-002; it began as the F1-Q54 a duplicate hint):
