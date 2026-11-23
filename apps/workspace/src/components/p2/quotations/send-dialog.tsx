@@ -4,6 +4,7 @@ import { useActionState, useId, useRef, useState } from 'react';
 
 import { sendAction, type ActionState } from '@/app/(app)/quotations/[id]/actions';
 import { Button } from '@/components/ui/button';
+import { Tooltip } from '@/components/ui/tooltip';
 import { Field, Select, Textarea } from '@/components/ui/field';
 
 import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './action-dialog';
@@ -35,23 +36,19 @@ export interface SendDialogProps {
 /**
  * Send to customer. When the gate says no, the button stays in the tab order with `aria-disabled`
  * (a natively disabled button cannot be focused, so its reason would never be read out) and the
- * reason sits next to it, linked with `aria-describedby`. A click does nothing.
+ * reason shows in a tooltip on hover and focus (UIP-FORM-011: no text beside the button). A click does nothing.
  */
 export function SendDialog(props: SendDialogProps) {
   return props.blocker === null ? <SendForm {...props} /> : <SendBlocked reason={props.blocker} />;
 }
 
 function SendBlocked({ reason }: { reason: string }) {
-  const reasonId = useId();
   return (
-    <div className={styles.group}>
-      <Button aria-disabled="true" aria-describedby={reasonId} onClick={(e) => e.preventDefault()}>
+    <Tooltip content={reason}>
+      <Button aria-disabled="true" onClick={(e) => e.preventDefault()}>
         Send to customer
       </Button>
-      <p id={reasonId} className={styles.reason}>
-        {reason}
-      </p>
-    </div>
+    </Tooltip>
   );
 }
 

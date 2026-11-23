@@ -434,6 +434,9 @@ export const leads = appSchema.table(
     emailNorm: text('email_norm'),
     /** ISO 3166-1 alpha-2 (0191, CHECK). */
     country: char('country', { length: 2 }).notNull().default('NP'),
+    /** The lead's optional address (0199): street lines and city, together or both NULL; its country is `country`. */
+    addressLine: text('address_line'),
+    addressCity: text('address_city'),
     /**
      * The lead's numbers (leadPhones) as E.164, space-separated in sort order; NULL when it has none (0192). The API
      * writes it with the phones; the list search reads it through leads_phones_search_trgm_idx.
@@ -531,6 +534,10 @@ export const leads = appSchema.table(
     check('leads_probability_check', sql`${t.probability} BETWEEN 0 AND 100`),
     check('leads_email_norm_check', sql`${t.emailNorm} = lower(btrim(${t.emailNorm}))`),
     check('leads_country_check', sql`${t.country} ~ '^[A-Z]{2}$'`),
+    check(
+      'leads_address_check',
+      sql`((${t.addressLine} IS NULL) = (${t.addressCity} IS NULL)) AND btrim(${t.addressLine}) <> '' AND btrim(${t.addressCity}) <> ''`,
+    ),
     check(
       'leads_contact_customer_check',
       sql`${t.contactId} IS NULL OR ${t.customerId} IS NOT NULL`,

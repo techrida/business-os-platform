@@ -34,8 +34,8 @@ describe('development identity boundary', () => {
     expect(localDevelopmentRequest(request(), true)).toBe(false);
   });
   it('requires exact explicit HTTPS trust and preserves host, port, origin and production boundaries', () => {
-    const app = 'https://host.example.net:8443';
-    const issuer = 'https://host.example.net:8444';
+    const app = 'https://dev-host.example.net:8443';
+    const issuer = 'https://dev-host.example.net:8444';
     vi.stubEnv('WORKSPACE_PUBLIC_URL', app);
     vi.stubEnv('OIDC_ISSUER', issuer);
     const req = (origin = app, host = new URL(app).host) => request(origin, host);
@@ -43,7 +43,7 @@ describe('development identity boundary', () => {
     vi.stubEnv('BOS_DEV_TRUSTED_ORIGINS', `${app},${issuer}`);
     expect(localDevelopmentRequest(req(), true)).toBe(true);
     expect(localDevelopmentRequest(req(issuer), true)).toBe(false);
-    expect(localDevelopmentRequest(req(app, 'host.example.net:9443'), true)).toBe(false);
+    expect(localDevelopmentRequest(req(app, 'dev-host.example.net:9443'), true)).toBe(false);
     expect(localDevelopmentRequest(req('https://other.example.net:8443'), true)).toBe(false);
     expect(
       localDevelopmentRequest(new Request(app, { headers: { host: new URL(app).host } }), true),
@@ -65,7 +65,7 @@ describe('development identity boundary', () => {
 
   it('keeps privileged identity calls on a validated internal base with redirects refused', async () => {
     vi.stubEnv('BOS_DEV_IDENTITY_API_URL', 'https://auth.p1.bos.test');
-    vi.stubEnv('OIDC_ISSUER', 'https://host.example.net:8444');
+    vi.stubEnv('OIDC_ISSUER', 'https://dev-host.example.net:8444');
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ result: [] }));
     vi.stubGlobal('fetch', fetchMock);
     await developmentAccounts();

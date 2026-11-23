@@ -99,8 +99,11 @@ it('walks items with ArrowDown, ArrowUp, Home and End, and closes on Escape', as
   await press('Home');
   expect(document.activeElement).toBe(links[0]);
   await press('Escape');
-  expect(document.querySelector('a')).toBeNull();
-  expect(document.activeElement).toBe(trigger);
+  // Radix hands focus back to the trigger after the close, not in the same tick; a slow runner saw <body> (GitHub run 45148774320).
+  await vi.waitFor(() => {
+    expect(document.querySelector('a')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
   await view.unmount();
 });
 

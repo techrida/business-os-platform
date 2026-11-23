@@ -70,6 +70,8 @@ interface Seed {
   evidenceConfirmed?: boolean;
   /** When it was sent; absent means sent for a status only a sent version reaches, never sent otherwise. */
   sentAt?: Date | null;
+  /** The quotation's newest version is cancelled (a Lost deal). */
+  quotationCancelled?: boolean;
 }
 
 /** A whole internal source; internal columns ride along so a leak shows up in the output. */
@@ -127,6 +129,7 @@ function sourceOf(s: Seed): PortalViewSource {
     issuerLegalName: 'Techrida Pvt. Ltd.',
     documentStyle: s.documentStyle ?? null,
     renderAttempts: 0,
+    quotationCancelled: s.quotationCancelled ?? false,
     sentAt:
       s.sentAt !== undefined
         ? s.sentAt
@@ -170,6 +173,8 @@ function fakeStore(seeds: Seed[]) {
           validUntil: '2026-11-23',
           currency: 'USD',
           total: '610200.00',
+          sentAt: sourceOf(s).sentAt,
+          quotationCancelled: s.quotationCancelled ?? false,
         })),
       ),
     ),
@@ -191,6 +196,8 @@ function fakeStore(seeds: Seed[]) {
               renderState: s.rendered === true ? ('rendered' as const) : ('none' as const),
               renderAttempts: 0,
               renderedDocumentId: s.rendered === true ? DOC : null,
+              sentAt: sourceOf(s).sentAt,
+              quotationCancelled: s.quotationCancelled ?? false,
             },
       );
     }),
@@ -353,6 +360,7 @@ describe('PortalService.list', () => {
         number: 'QT-6',
         revisionNo: 1,
         status: 'superseded',
+        sentAt: new Date('2026-11-08T10:00:00Z'),
       },
       { versionId: vid(7), quotationId: qid(6), number: 'QT-6', revisionNo: 2, status: 'sent' },
       // Revised, new draft not sent yet: the last sent version (now superseded) shows, never the draft.
@@ -362,6 +370,7 @@ describe('PortalService.list', () => {
         number: 'QT-7',
         revisionNo: 1,
         status: 'superseded',
+        sentAt: new Date('2026-11-08T10:00:00Z'),
       },
       { versionId: vid(9), quotationId: qid(7), number: 'QT-7', revisionNo: 2, status: 'draft' },
       // Another customer's quotation: the store never returns it.
@@ -508,6 +517,123 @@ describe('PortalService.get', () => {
     }
   });
 
+  it('answers 409 quotation_closed for a mailed superseded version whose quotation was then cancelled (R6D)', async () => {
+    const sent = new Date('2026-11-08T10:00:00Z');
+    const { service } = setup([
+      {
+        versionId: vid(8),
+        quotationId: qid(7),
+        number: 'QT-7',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: sent,
+        quotationCancelled: true,
+      },
+      {
+        versionId: vid(11),
+        quotationId: qid(9),
+        number: 'QT-9',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: sent,
+        quotationCancelled: false,
+      },
+    ]);
+    const error = await service.get(vid(8)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'quotation_closed' });
+    // A revision still open keeps showing the superseded page.
+    await expect(service.get(vid(11))).resolves.toMatchObject({ status: 'superseded' });
+  });
+
+  it('never shows a version that was never sent, whatever it was replaced or expired into (R6D)', async () => {
+    const sent = new Date('2026-11-08T10:00:00Z');
+    const { service, store } = setup([
+      // Approved, never sent, then revised: superseded with no sent_at.
+      {
+        versionId: vid(8),
+        quotationId: qid(7),
+        number: 'QT-7',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: null,
+        rendered: true,
+      },
+      { versionId: vid(9), quotationId: qid(7), number: 'QT-7', revisionNo: 2, status: 'draft' },
+      // Approved, never sent, then ran out.
+      {
+        versionId: vid(10),
+        quotationId: qid(8),
+        number: 'QT-8',
+        revisionNo: 1,
+        status: 'expired',
+        sentAt: null,
+        rendered: true,
+      },
+      // The same statuses after a send stay visible.
+      {
+        versionId: vid(11),
+        quotationId: qid(9),
+        number: 'QT-9',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: sent,
+        rendered: true,
+      },
+      {
+        versionId: vid(12),
+        quotationId: qid(10),
+        number: 'QT-10',
+        revisionNo: 1,
+        status: 'expired',
+        sentAt: sent,
+        rendered: true,
+      },
+    ]);
+    expect((await service.list()).map((i) => i.number).sort()).toEqual(['QT-10', 'QT-9']);
+    for (const id of [vid(8), vid(10)]) {
+      await expect(service.get(id), id).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.quotationPdfLink(id), id).rejects.toBeInstanceOf(NotFoundException);
+    }
+    for (const id of [vid(11), vid(12)]) await expect(service.get(id)).resolves.toBeDefined();
+    expect(store.loadDocumentHead).toHaveBeenCalled();
+  });
+
+  it('says closed everywhere for a sent, superseded version of a cancelled quotation: list, page and PDF (R6D)', async () => {
+    const sent = new Date('2026-11-08T10:00:00Z');
+    const { service } = setup([
+      {
+        versionId: vid(8),
+        quotationId: qid(7),
+        number: 'QT-7',
+        revisionNo: 1,
+        status: 'superseded',
+        sentAt: sent,
+        quotationCancelled: true,
+        rendered: true,
+      },
+      {
+        versionId: vid(9),
+        quotationId: qid(8),
+        number: 'QT-8',
+        revisionNo: 1,
+        status: 'cancelled',
+        sentAt: sent,
+        rendered: true,
+      },
+    ]);
+    expect(await service.list()).toEqual([]);
+    for (const id of [vid(8), vid(9)]) {
+      for (const call of [() => service.get(id), () => service.quotationPdfLink(id)]) {
+        const error = await call().catch((e: unknown) => e);
+        expect(error, id).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+          code: 'quotation_closed',
+        });
+      }
+    }
+  });
+
   it('after a revise with the new draft unsent, shows the last sent version and 404s the draft', async () => {
     const { service } = setup([
       {
@@ -516,6 +642,7 @@ describe('PortalService.get', () => {
         number: 'QT-7',
         revisionNo: 1,
         status: 'superseded',
+        sentAt: new Date('2026-11-08T10:00:00Z'),
       },
       { versionId: vid(9), quotationId: qid(7), number: 'QT-7', revisionNo: 2, status: 'draft' },
     ]);

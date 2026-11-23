@@ -7,17 +7,19 @@ import { ConfirmDialog } from '@/components/ui/dialog';
 // The one place the dropdown control is chosen: the shared Select.
 import { Select } from '@/components/ui/field';
 
-import { offeredPresets, pickOutcome } from './saved-options';
+import { offeredPresets, pickOutcome, pickerState } from './saved-options';
 import styles from './saved-options.module.css';
 
 /** The value of the "Add more" entry. Never a set id, so it cannot be mistaken for one. */
 const ADD_MORE = '__add_more__';
 
 /**
- * "Saved options" above a rich text field. Choosing one fills the field with the saved text; the
- * field stays editable and keeps no link to the option (the quotation stores the text, so editing a
- * set later never changes it). If the words in the field were changed since the last fill, choosing
- * another asks "Replace the text you typed?" first.
+ * The saved-options picker above a rich text field (UIP-FORM-012). Choosing one fills the field with
+ * the saved text; the field stays editable and keeps no link to the option (the quotation stores the
+ * text, so editing a set later never changes it). The picker shows what the field holds: the name of
+ * the option whose words it holds, "Custom" for other words, a "Choose ..." prompt when empty. Choosing
+ * any option, the one shown included, puts its text in the field. If the words in the field were
+ * changed since the last fill, choosing asks "Replace the text you typed?" first.
  *
  * - `presets` null (not loaded, or not readable): renders nothing, so a person without access, or a
  *   failed load, sees no dropdown and no error.
@@ -48,12 +50,14 @@ export function SavedOptionsSelect({
 }) {
   const offered = offeredPresets(presets, kind, maxLength);
   const [lastFilled, setLastFilled] = useState<string | null>(null);
+  const [appliedId, setAppliedId] = useState<string | null>(null);
   const [asking, setAsking] = useState<TermPreset | null>(null);
 
   if (presets === null || presets === undefined) return null;
 
   function fill(preset: TermPreset) {
     setLastFilled(preset.body);
+    setAppliedId(preset.id);
     onFill(preset.body);
   }
 
@@ -72,8 +76,9 @@ export function SavedOptionsSelect({
     );
   }
 
+  const shown = pickerState(value, offered, appliedId);
+  const kindLabel = TERM_PRESET_KIND_LABELS[kind];
   const options = [
-    { value: '', label: 'Saved options' },
     ...offered.map((preset) => ({ value: preset.id, label: preset.name })),
     ...(onAddMore
       ? [{ value: ADD_MORE, label: 'Add more', icon: 'plus' as const, separatorBefore: true }]
@@ -82,11 +87,19 @@ export function SavedOptionsSelect({
 
   return (
     <div className={styles.wrap}>
-      {/* Always shows "Saved options": the field holds the text, not a chosen option. */}
+      {/* No option is ever "selected": the name, "Custom" or the prompt is the control's placeholder, so choosing any option, the one shown included, fires a change. The name and "Custom" are styled as a value, the prompt stays muted. */}
       <Select
         name={`saved-${kind}`}
         aria-label={label}
+        className={shown.state === 'empty' ? undefined : styles.shown}
         value=""
+        placeholder={
+          shown.state === 'preset'
+            ? shown.preset.name
+            : shown.state === 'custom'
+              ? 'Custom'
+              : `Choose ${kindLabel.toLowerCase()}`
+        }
         options={options}
         onChange={(event) => {
           if (event.target.value === ADD_MORE) {

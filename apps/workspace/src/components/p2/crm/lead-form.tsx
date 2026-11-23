@@ -17,12 +17,15 @@ import {
   type ReactNode,
 } from 'react';
 
+import type { ContactLoader } from '@/app/(app)/leads/_lib/customer-contacts';
+import type { CompanySearcher } from '@/app/(app)/leads/_lib/use-company-search';
 import styles from '@/app/(app)/leads/leads.module.css';
+import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
-import { CountrySelect } from '@/components/ui/country-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { MemberPicker } from '@/components/ui/member-picker';
 import { MoneyInput, PercentInput } from '@/components/ui/number-input';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
@@ -32,6 +35,7 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
 import { EMAIL_OR_PHONE, SCHEDULE_ACTIVITY_KINDS } from './forms';
+import { CompanyField, ContactField } from './lead-party-fields';
 import type { FormAction, FormState } from './types';
 
 type FollowUpKind = (typeof SCHEDULE_ACTIVITY_KINDS)[number];
@@ -40,6 +44,8 @@ type FollowUpKind = (typeof SCHEDULE_ACTIVITY_KINDS)[number];
 export interface OwnerOption {
   value: string;
   label: string;
+  /** Job title and department, muted after the name in the picker (BOS-UI-001). */
+  role?: string | null | undefined;
 }
 
 const EMPTY: Record<string, string> = {
@@ -49,6 +55,9 @@ const EMPTY: Record<string, string> = {
   companyName: '',
   contactName: '',
   email: '',
+  // The optional address (D9); its country is the lead's country, held in its own state.
+  addressLine: '',
+  addressCity: '',
   requirement: '',
   expectedValue: '',
   currency: 'NPR',
@@ -77,56 +86,27 @@ function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactN
   );
 }
 
-/**
- * The people picker for the owner and the follow-up assignee. With one option (a caller who may
- * only assign to themselves) it is shown read-only and a hidden input posts the value, since a
- * disabled field is not submitted. With none (the list did not load) nothing is posted and the
- * API applies its default.
- */
-function PersonSelect({
-  name,
-  label,
-  hint,
-  error,
-  options,
-  value,
-  onChange,
-  emptyLabel,
-}: {
-  name: string;
-  label: string;
-  /** A first choice that posts nothing, so the API applies its default (the caller, the owner). */
-  emptyLabel?: string | undefined;
-  hint?: string | undefined;
-  error?: string | undefined;
-  options: readonly OwnerOption[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const only = options.length === 1 ? options[0] : undefined;
-  return (
-    <Field label={label} hint={hint} error={error}>
-      {(c) =>
-        only ? (
-          <>
-            <Select value={only.value} disabled {...c}>
-              <option value={only.value}>{only.label}</option>
-            </Select>
-            <input type="hidden" name={name} value={only.value} />
-          </>
-        ) : (
-          <Select name={name} value={value} onChange={(e) => onChange(e.target.value)} {...c}>
-            {emptyLabel ? <option value="">{emptyLabel}</option> : null}
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        )
-      }
-    </Field>
-  );
+const memberPeople = (owners: readonly OwnerOption[]) =>
+  owners.map((o) => ({ id: o.value, name: o.label, role: o.role ?? null }));
+
+/** What the owner field says under itself: where a defaulted person comes from, never in place of their name. */
+function ownerHint(
+  count: number,
+  source: 'settings' | 'sales_head' | undefined,
+  chosen: string,
+  defaultId: string | undefined,
+  callerUnplaced: boolean,
+): string | undefined {
+  // Nothing chosen and the box shows the default person: the API gives the lead to them.
+  if (source !== undefined && chosen === '' && defaultId !== undefined) {
+    return source === 'settings'
+      ? 'Default owner from Settings.'
+      : 'Default owner: the Sales head.';
+  }
+  if (chosen === '' && defaultId === undefined && callerUnplaced) {
+    return 'No default owner is set and you cannot own this lead, so choose who it goes to.';
+  }
+  return count === 1 ? 'You can create leads for yourself only.' : undefined;
 }
 
 /** The fields the API always needs; the email-or-phone check waits for them (see `checkBeforeSave`). */
@@ -144,12 +124,17 @@ export function LeadForm({
   owners,
   enabledCurrencies,
   defaultOwnerId,
+  defaultOwnerSource,
   callerUnplaced = false,
   idempotencyKey,
   onPrimaryPhoneChange,
   defaultPhones,
   defaultCountry,
   phonesKey,
+  companySearch,
+  companySearchDelayMs,
+  loadContacts,
+  onOpenLead,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
@@ -157,12 +142,20 @@ export function LeadForm({
   enabledCurrencies: readonly string[];
   /** Who the lead can go to. Empty when the list did not load: the API then makes it the caller's. */
   owners: readonly OwnerOption[];
-  /** The signed-in user when they are in `owners`; the select starts there. */
+  /**
+   * Who the owner box starts on, by their real name and role: the signed-in user when they are in `owners`, else the
+   * person an ownerless lead would go to (the Default lead owner from Settings, or the Sales head). Undefined when
+   * there is no such person: the box then starts empty and says so.
+   */
   defaultOwnerId?: string | undefined;
   /**
-   * The signed-in user is known and not in `owners` (Finance, Accountant or PMO entering a lead for Sales): leaving
-   * the owner empty gives the lead to the entity's default lead owner, not to them. False when who they are did
-   * not load, so the empty choice keeps saying the API makes it theirs.
+   * Where `defaultOwnerId` comes from when it is not the signed-in user (Finance, Accountant or PMO entering a lead for
+   * Sales): the entity's Default lead owner in Settings, or the Sales head when none is set. Said under the field.
+   */
+  defaultOwnerSource?: 'settings' | 'sales_head' | undefined;
+  /**
+   * The signed-in user is known and may not own a lead they start (Finance, Accountant or PMO). False when who they
+   * are did not load: the API then makes the lead theirs, so nothing is said about a missing default.
    */
   callerUnplaced?: boolean | undefined;
   /** Made once per page render on the server; the action hands back the key the next try uses. */
@@ -178,6 +171,16 @@ export function LeadForm({
   defaultCountry?: CountryCode | undefined;
   /** Changes when the saved record changes (its version), so the phone list starts again from `defaultPhones`. */
   phonesKey?: string | number | undefined;
+  /**
+   * Where the Company field's suggestions come from (BOS-UI-002): the customers and open leads the user may read.
+   * Without it the field is a plain input with only Create "<text>".
+   */
+  companySearch?: CompanySearcher | undefined;
+  companySearchDelayMs?: number | undefined;
+  /** The contacts of a linked customer, for the Contact person field. */
+  loadContacts?: ContactLoader | undefined;
+  /** Opens a lead picked from the Company field's "Already a lead" group. */
+  onOpenLead?: ((leadId: string) => void) | undefined;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, {
     values: EMPTY,
@@ -188,10 +191,19 @@ export function LeadForm({
     // Never preselect someone else: when the signed-in user is not placed in the list, the empty
     // choice posts nothing and the API picks the owner (the default lead owner for a role that enters
     // leads for Sales, the caller otherwise).
-    ownerUserId: defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : ''),
+    // A defaulted owner (Settings or the Sales head) stays empty: the box shows that person and the form posts
+    // nothing, so the API applies the default as it does today.
+    ownerUserId:
+      defaultOwnerSource !== undefined
+        ? ''
+        : (defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : '')),
   }));
   const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
   const [country, setCountry] = useState<CountryCode>(defaultCountry ?? DEFAULT_COUNTRY);
+  // BOS-UI-002: the customer (and contact) picked from the Company and Contact person fields, if any. Free text
+  // when null, exactly as before; picking links, editing the text unlinks.
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [contactId, setContactId] = useState<string | null>(null);
   // The complete, valid numbers as the list last reported them, and its primary. They are also what
   // the list restores when React resets the form after a refused save, so the typed numbers stay.
   const startPhones = (key: typeof phonesKey) => ({
@@ -214,7 +226,6 @@ export function LeadForm({
   const formId = useId();
   const err = { ...state.fieldErrors, ...clientErrors };
   const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
-  const unplaced = defaultOwnerId === undefined;
   // The chosen value stays listed even if it is not in the enabled list, so the select never blanks.
   const currencies = currencyChoices(enabledCurrencies, values['currency']);
 
@@ -344,16 +355,31 @@ export function LeadForm({
               )}
             </Field>
             {owners.length > 0 ? (
-              <PersonSelect
-                name="ownerUserId"
+              <Field
                 label="Lead owner"
-                hint={owners.length === 1 ? 'You can create leads for yourself only.' : undefined}
+                hint={ownerHint(
+                  owners.length,
+                  defaultOwnerSource,
+                  values['ownerUserId'] ?? '',
+                  defaultOwnerId,
+                  callerUnplaced,
+                )}
                 error={err['ownerUserId']}
-                options={owners}
-                emptyLabel={unplaced ? (callerUnplaced ? 'Default owner' : 'You') : undefined}
-                value={values['ownerUserId'] ?? ''}
-                onChange={(value) => update('ownerUserId', value)}
-              />
+              >
+                {(c) => (
+                  <MemberPicker
+                    labelledBy={c['aria-labelledby']}
+                    describedBy={c['aria-describedby']}
+                    invalid={c['aria-invalid'] === true}
+                    name="ownerUserId"
+                    people={memberPeople(owners)}
+                    value={values['ownerUserId'] ?? ''}
+                    onChange={(value) => update('ownerUserId', value)}
+                    emptyStandsFor={defaultOwnerSource !== undefined ? defaultOwnerId : undefined}
+                    placeholder="Search by name"
+                  />
+                )}
+              </Field>
             ) : (
               <Field
                 label="Lead owner"
@@ -370,30 +396,43 @@ export function LeadForm({
           <div className={styles.formGrid}>
             <Field label="Company or organization" error={err['companyName']}>
               {(c) => (
-                <Input
-                  name="companyName"
-                  value={values['companyName']}
-                  onChange={set('companyName')}
-                  maxLength={200}
-                  required
-                  {...c}
+                <CompanyField
+                  control={c}
+                  text={values['companyName'] ?? ''}
+                  onTextChange={(text) => update('companyName', text)}
+                  linkedCustomerId={customerId}
+                  onPick={(customer) => {
+                    update('companyName', customer.name);
+                    if (customer.country !== null) setCountry(customer.country);
+                    setCustomerId(customer.id);
+                    setContactId(null);
+                  }}
+                  onUnlink={() => {
+                    setCustomerId(null);
+                    setContactId(null);
+                  }}
+                  search={companySearch}
+                  delayMs={companySearchDelayMs}
+                  onOpenLead={onOpenLead}
                 />
               )}
             </Field>
             <Field label="Contact person" error={err['contactName']}>
               {(c) => (
-                <Input
-                  name="contactName"
-                  value={values['contactName']}
-                  onChange={set('contactName')}
-                  maxLength={200}
-                  required
-                  {...c}
+                <ContactField
+                  control={c}
+                  text={values['contactName'] ?? ''}
+                  onTextChange={(text) => update('contactName', text)}
+                  customerId={customerId}
+                  linkedContactId={contactId}
+                  onPick={(contact) => {
+                    update('contactName', contact.name);
+                    setContactId(contact.id);
+                  }}
+                  onUnlink={() => setContactId(null)}
+                  loadContacts={loadContacts}
                 />
               )}
-            </Field>
-            <Field label="Country" error={err['country']}>
-              {(c) => <CountrySelect name="country" value={country} onChange={setCountry} {...c} />}
             </Field>
             <Field label="Email" hint="Optional." error={err['email']}>
               {(c) => (
@@ -408,6 +447,26 @@ export function LeadForm({
               )}
             </Field>
           </div>
+
+          {/* The lead's Country is the address's country, so the two sit together; the address itself is optional. */}
+          <AddressFields
+            name="address"
+            value={{
+              line: values['addressLine'] ?? '',
+              city: values['addressCity'] ?? '',
+              country,
+            }}
+            onChange={(next) => {
+              update('addressLine', next.line);
+              update('addressCity', next.city);
+              setCountry(next.country);
+            }}
+            errors={{
+              line: err['address.line'],
+              city: err['address.city'],
+              country: err['country'],
+            }}
+          />
 
           <Field label="Phone" hint="Optional. Pick each number's country, or type + and its code.">
             {(c) => (
@@ -546,16 +605,25 @@ export function LeadForm({
               )}
             </Field>
             {owners.length > 0 ? (
-              <PersonSelect
-                name="followUpAssigneeUserId"
+              <Field
                 label="Assignee"
                 hint="Starts as the lead owner."
                 error={err['followUpAssigneeUserId']}
-                options={owners}
-                emptyLabel={unplaced ? 'The lead owner' : undefined}
-                value={assignee}
-                onChange={(value) => update('followUpAssigneeUserId', value)}
-              />
+              >
+                {(c) => (
+                  <MemberPicker
+                    labelledBy={c['aria-labelledby']}
+                    describedBy={c['aria-describedby']}
+                    invalid={c['aria-invalid'] === true}
+                    name="followUpAssigneeUserId"
+                    people={memberPeople(owners)}
+                    value={assignee}
+                    onChange={(value) => update('followUpAssigneeUserId', value)}
+                    emptyStandsFor={defaultOwnerSource !== undefined ? defaultOwnerId : undefined}
+                    placeholder="The lead owner"
+                  />
+                )}
+              </Field>
             ) : null}
           </div>
           <Field
