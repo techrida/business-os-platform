@@ -813,6 +813,14 @@ export const LeadOwnerOptionSchema = z.object({
   email: z.string(),
   /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
   avatarDocumentId: z.guid().nullable().optional(),
+  /** Job title and department, shown muted after the name in every member picker (BOS-UI-001); null or absent for none. */
+  role: z.string().nullable().optional(),
+  /**
+   * Set only on `GET /v1/leads/owners?context=create`, on the one person a lead started with no owner chosen goes to,
+   * when the caller may not keep it themselves: `settings` = the entity's Default lead owner, `sales_head` = the
+   * Sales head fallback. The picker starts on this person instead of a placeholder.
+   */
+  defaultOwner: z.enum(['settings', 'sales_head']).optional(),
 });
 export type LeadOwnerOption = z.infer<typeof LeadOwnerOptionSchema>;
 
