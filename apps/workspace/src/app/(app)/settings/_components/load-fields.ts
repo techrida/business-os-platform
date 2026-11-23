@@ -59,11 +59,7 @@ function personFields(
   };
 }
 
-function optionsFor(
-  kind: FieldKind,
-  saved: unknown,
-  people: readonly SettingsPerson[],
-): Option[] | undefined {
+function optionsFor(kind: FieldKind): Option[] | undefined {
   if (kind === 'select') {
     return EVIDENCE_POLICIES.map((value) => ({ value, label: EVIDENCE_LABEL[value] }));
   }
@@ -77,7 +73,7 @@ function toSpec(
 ): FieldSpec {
   const copy = SETTING_COPY[key];
   if (copy === undefined) throw new Error(`No settings copy for ${key}`);
-  const options = optionsFor(copy.kind, current.value, people);
+  const options = optionsFor(copy.kind);
   return {
     key,
     label: copy.label,
