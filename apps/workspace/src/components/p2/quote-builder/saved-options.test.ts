@@ -7,6 +7,7 @@ import {
   offeredPresets,
   pickOutcome,
   pickerState,
+  withDefaultTerms,
 } from './saved-options';
 
 const make = (n: number, kind: TermPreset['kind'], name: string, body: string): TermPreset => ({
@@ -139,5 +140,27 @@ describe('defaultPreset', () => {
     expect(defaultPreset([{ ...other, isDefault: true }], 'scope', 10_000)).toBeUndefined();
     expect(defaultPreset([{ ...b, isDefault: true }], 'scope', 5)).toBeUndefined();
     expect(defaultPreset(null, 'scope', 10_000)).toBeUndefined();
+  });
+});
+
+describe('withDefaultTerms', () => {
+  const blank = {
+    scope: '',
+    assumptions: '',
+    exclusions: '',
+    deliveryTimeline: '',
+    termsAndConditions: '',
+  };
+  it('fills each empty field with its kind default and leaves the others empty', () => {
+    const scopeDefault = { ...a, isDefault: true };
+    const terms = { ...make(7, 'terms_conditions', 'Std terms', 'Net 30.'), isDefault: true };
+    expect(withDefaultTerms(blank, [scopeDefault, b, terms])).toEqual({
+      ...blank,
+      scope: a.body,
+      termsAndConditions: 'Net 30.',
+    });
+    expect(withDefaultTerms(blank, [a, b])).toEqual(blank);
+    expect(withDefaultTerms(blank, null)).toEqual(blank);
+    expect(withDefaultTerms({ ...blank, scope: 'typed' }, [scopeDefault]).scope).toBe('typed');
   });
 });
