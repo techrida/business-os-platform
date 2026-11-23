@@ -53,21 +53,86 @@
 
 /* ---- logo -------------------------------------------------------------------------------------- */
 
-.logo {
+.slots {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;
+  gap: var(--spacing-section);
+  min-width: 0;
 }
 
-.logo[data-empty='true'] {
-  grid-template-columns: minmax(0, 1fr);
+.slot {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
-@media (max-width: 479.98px) {
-  .logo {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* One fixed-height label row (UIP-FORM-008, UIP-FORM-010): the name on the left, "Optional" muted at the right end. */
+.slotLabelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: var(--line-height-body-small);
+}
+
+.slotLabel {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.optional {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.slotNote {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* An empty slot: the Business OS mark on the background the slot is for, dimmed and captioned "Example". The dashed
+   edge and the dimming say it is a sample, not a file. Colours are fixed per stage so a white logo example stays on
+   near-black in either theme. */
+.placeholder {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  width: 76px;
+  height: 76px;
+  border: var(--border-width-thin) dashed var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.placeholder[data-stage='dark'] {
+  border-color: var(--neutral-600);
+  background: var(--neutral-950);
+  color: var(--neutral-0);
+}
+
+.placeholder[data-stage='light'] {
+  background: var(--neutral-0);
+  color: var(--neutral-950);
+}
+
+.placeholderMark {
+  display: grid;
+  opacity: 0.5;
+}
+
+.placeholderCaption {
+  font-size: 10px;
+  line-height: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
 }
 
 .thumb {
