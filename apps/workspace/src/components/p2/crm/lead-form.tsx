@@ -17,6 +17,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import type { ContactLoader } from '@/app/(app)/leads/_lib/customer-contacts';
+import type { CompanySearcher } from '@/app/(app)/leads/_lib/use-company-search';
 import styles from '@/app/(app)/leads/leads.module.css';
 import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
@@ -32,6 +34,7 @@ import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
 import { EMAIL_OR_PHONE, SCHEDULE_ACTIVITY_KINDS } from './forms';
+import { CompanyField, ContactField } from './lead-party-fields';
 import type { FormAction, FormState } from './types';
 
 type FollowUpKind = (typeof SCHEDULE_ACTIVITY_KINDS)[number];
@@ -153,6 +156,10 @@ export function LeadForm({
   defaultPhones,
   defaultCountry,
   phonesKey,
+  companySearch,
+  companySearchDelayMs,
+  loadContacts,
+  onOpenLead,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
@@ -181,6 +188,16 @@ export function LeadForm({
   defaultCountry?: CountryCode | undefined;
   /** Changes when the saved record changes (its version), so the phone list starts again from `defaultPhones`. */
   phonesKey?: string | number | undefined;
+  /**
+   * Where the Company field's suggestions come from (BOS-UI-002): the customers and open leads the user may read.
+   * Without it the field is a plain input with only Create "<text>".
+   */
+  companySearch?: CompanySearcher | undefined;
+  companySearchDelayMs?: number | undefined;
+  /** The contacts of a linked customer, for the Contact person field. */
+  loadContacts?: ContactLoader | undefined;
+  /** Opens a lead picked from the Company field's "Already a lead" group. */
+  onOpenLead?: ((leadId: string) => void) | undefined;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, {
     values: EMPTY,
@@ -195,6 +212,10 @@ export function LeadForm({
   }));
   const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
   const [country, setCountry] = useState<CountryCode>(defaultCountry ?? DEFAULT_COUNTRY);
+  // BOS-UI-002: the customer (and contact) picked from the Company and Contact person fields, if any. Free text
+  // when null, exactly as before; picking links, editing the text unlinks.
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [contactId, setContactId] = useState<string | null>(null);
   // The complete, valid numbers as the list last reported them, and its primary. They are also what
   // the list restores when React resets the form after a refused save, so the typed numbers stay.
   const startPhones = (key: typeof phonesKey) => ({
@@ -373,25 +394,41 @@ export function LeadForm({
           <div className={styles.formGrid}>
             <Field label="Company or organization" error={err['companyName']}>
               {(c) => (
-                <Input
-                  name="companyName"
-                  value={values['companyName']}
-                  onChange={set('companyName')}
-                  maxLength={200}
-                  required
-                  {...c}
+                <CompanyField
+                  control={c}
+                  text={values['companyName'] ?? ''}
+                  onTextChange={(text) => update('companyName', text)}
+                  linkedCustomerId={customerId}
+                  onPick={(customer) => {
+                    update('companyName', customer.name);
+                    if (customer.country !== null) setCountry(customer.country);
+                    setCustomerId(customer.id);
+                    setContactId(null);
+                  }}
+                  onUnlink={() => {
+                    setCustomerId(null);
+                    setContactId(null);
+                  }}
+                  search={companySearch}
+                  delayMs={companySearchDelayMs}
+                  onOpenLead={onOpenLead}
                 />
               )}
             </Field>
             <Field label="Contact person" error={err['contactName']}>
               {(c) => (
-                <Input
-                  name="contactName"
-                  value={values['contactName']}
-                  onChange={set('contactName')}
-                  maxLength={200}
-                  required
-                  {...c}
+                <ContactField
+                  control={c}
+                  text={values['contactName'] ?? ''}
+                  onTextChange={(text) => update('contactName', text)}
+                  customerId={customerId}
+                  linkedContactId={contactId}
+                  onPick={(contact) => {
+                    update('contactName', contact.name);
+                    setContactId(contact.id);
+                  }}
+                  onUnlink={() => setContactId(null)}
+                  loadContacts={loadContacts}
                 />
               )}
             </Field>

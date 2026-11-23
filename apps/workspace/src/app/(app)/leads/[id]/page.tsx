@@ -381,6 +381,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                     number: lead.number,
                     title: lead.title,
                     companyName: lead.companyName,
+                    customerId: lead.customerId,
+                    contactId: lead.contactId,
                     contactName: lead.contactName,
                     email: lead.email ?? '',
                     country: lead.country,
