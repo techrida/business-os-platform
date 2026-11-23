@@ -70,6 +70,19 @@ export interface ComboboxProps {
   /** Keep the options in the order given instead of sorting them by name. */
   keepOrder?: boolean;
   /**
+   * While the box is not being typed in, it reads the chosen option's label followed by its description (muted),
+   * exactly like the list row; focusing it shows just the label to search by. A member picker's name and role.
+   */
+  showDescriptionWhenClosed?: boolean;
+  disabled?: boolean;
+  /**
+   * The option an empty value stands for (a default the server applies): the box shows that person while `value` is
+   * '' and the form still posts ''. Typing starts from a blank search; clearing the box goes back to the default.
+   */
+  emptyStandsFor?: string;
+  /** Posted with the form: a hidden input of this name carries the chosen id (the box itself posts nothing). */
+  name?: string;
+  /**
    * Offers `Add "<typed text>"` as the last row when the text matches no option. Choosing it calls `onAdd` with the
    * trimmed text; the caller decides what adding means (here, a new lost reason saved with the form).
    */
@@ -104,6 +117,10 @@ export function Combobox({
   required,
   invalid,
   keepOrder = false,
+  showDescriptionWhenClosed = false,
+  disabled,
+  emptyStandsFor,
+  name,
   addOption,
   onBlurEmpty,
   inputRef,
@@ -122,10 +139,17 @@ export function Combobox({
     () => internalInputRef.current,
     [],
   );
-  const selected = options.find((o) => o.id === value);
+  const selected =
+    options.find((o) => o.id === value) ??
+    (value === '' && emptyStandsFor ? options.find((o) => o.id === emptyStandsFor) : undefined);
   // `query` is null while the box simply shows the chosen label; a string while the user is searching.
   const [query, setQuery] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [focused, setFocused] = useState(false);
+  // Focusing swaps the box from "Name Role" to "Name"; select the text once it has changed.
+  useEffect(() => {
+    if (focused && showDescriptionWhenClosed) internalInputRef.current?.select();
+  }, [focused, showDescriptionWhenClosed]);
 
   // The "Add ..." row is appended to what is searched, so the keyboard and the screen reader treat it like any option.
   const withAdd = (list: readonly ComboboxOption[], text: string): readonly ComboboxOption[] => {
@@ -242,7 +266,9 @@ export function Combobox({
     }
   }
 
-  const text = query ?? selected?.label ?? '';
+  const closedRole = showDescriptionWhenClosed && !focused ? selected?.description : undefined;
+  const text =
+    query ?? (closedRole ? `${selected?.label ?? ''} ${closedRole}` : (selected?.label ?? ''));
   const announcement = open
     ? resultsAnnouncement(layout.flat.length, options.length, {
         empty: emptyText,
@@ -271,8 +297,11 @@ export function Combobox({
         ref={internalInputRef}
         type="text"
         role="combobox"
-        className={styles.input}
+        className={[styles.input, closedRole ? styles.inputOverlaid : undefined]
+          .filter(Boolean)
+          .join(' ')}
         value={text}
+        disabled={disabled}
         placeholder={placeholder}
         autoComplete="off"
         autoCapitalize="off"
@@ -288,11 +317,23 @@ export function Combobox({
         aria-invalid={invalid || undefined}
         onChange={onInput}
         onKeyDown={onKeyDown}
-        onFocus={(e) => e.currentTarget.select()}
+        onFocus={(e) => {
+          setFocused(true);
+          e.currentTarget.select();
+        }}
+        onBlur={() => setFocused(false)}
         onClick={() => {
           if (!open) openList(null, selected && ids.includes(selected.id) ? selected.id : null);
         }}
       />
+      {closedRole ? (
+        // The same words as the box, with the role muted (an input cannot style part of its text).
+        <span className={styles.overlay} aria-hidden="true">
+          <span className={styles.overlayName}>{selected?.label}</span>
+          <span className={styles.overlayRole}>{closedRole}</span>
+        </span>
+      ) : null}
+      {name ? <input type="hidden" name={name} value={value} disabled={disabled} /> : null}
       <div className="sr-only" role="status" aria-live="polite">
         {announcement}
       </div>
