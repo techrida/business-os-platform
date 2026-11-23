@@ -120,7 +120,8 @@ export async function handleSignedFile(opts: SignedFileRouteOptions): Promise<Re
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 404 || status === 403) return plain(opts.notFound, 404);
-    if (stage === 'file' && (status === 401 || status === 410)) return plain(LINK_EXPIRED_MESSAGE, 410);
+    if (stage === 'file' && (status === 401 || status === 410))
+      return plain(LINK_EXPIRED_MESSAGE, 410);
     if (status === 401) return plain(opts.signIn, 401);
     if (status === 503) {
       const response = plain('This is busy right now. Please try again in a moment.', 503);
