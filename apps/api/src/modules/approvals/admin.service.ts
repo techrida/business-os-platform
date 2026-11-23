@@ -238,7 +238,10 @@ export class ApprovalsAdminService {
       // The role line is what a member picker shows after the name (BOS-UI-001).
       items: items.map(({ jobTitle, departmentId, ...person }) => ({
         ...person,
-        role: roleLine(jobTitle, departmentId === null ? null : (deptNames.get(departmentId) ?? null)),
+        role: roleLine(
+          jobTitle,
+          departmentId === null ? null : (deptNames.get(departmentId) ?? null),
+        ),
       })),
       nextAfter: items.length === q.limit ? (items.at(-1)?.id ?? null) : null,
     };

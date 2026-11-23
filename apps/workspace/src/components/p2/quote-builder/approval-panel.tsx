@@ -201,7 +201,11 @@ function ApproverPicker({
           <MemberPicker
             labelledBy={control['aria-labelledby']}
             describedBy={control['aria-describedby']}
-            people={options.map((o) => ({ id: o.userId, name: o.name, role: approverOptionRole(o) }))}
+            people={options.map((o) => ({
+              id: o.userId,
+              name: o.name,
+              role: approverOptionRole(o),
+            }))}
             value={chosen ? value : ''}
             onChange={onChange}
             placeholder={`${stepLabel(step)} (anyone eligible)`}

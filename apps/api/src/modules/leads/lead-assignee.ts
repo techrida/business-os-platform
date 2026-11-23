@@ -134,7 +134,10 @@ export async function loadAssignmentParties(
     displayName: row.displayName,
     email: row.email,
     avatarDocumentId: row.avatarDocumentId,
-    role: roleLine(row.jobTitle, row.departmentId === null ? null : (deptNames.get(row.departmentId) ?? null)),
+    role: roleLine(
+      row.jobTitle,
+      row.departmentId === null ? null : (deptNames.get(row.departmentId) ?? null),
+    ),
   }));
 }
 

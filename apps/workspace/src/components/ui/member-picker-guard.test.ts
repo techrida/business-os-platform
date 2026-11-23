@@ -10,7 +10,8 @@ import { expect, it } from 'vitest';
 // (owners, people, users, staff, members, assignees, approvers) and fails naming the component and file.
 
 const repo = fileURLToPath(new URL('../../../../../', import.meta.url));
-const WORD = '(?:owners?|people|persons?|users?|staff|members?|assignees?|approvers?|candidates?|available)';
+const WORD =
+  '(?:owners?|people|persons?|users?|staff|members?|assignees?|approvers?|candidates?|available)';
 // A list of people turned into options (`owners.map(...)`, `options={people}`, `options={staffOptions(...)}`), not a
 // control that merely mentions a person (a level, a sort order, "One person" as a kind of step).
 const PERSON = new RegExp(

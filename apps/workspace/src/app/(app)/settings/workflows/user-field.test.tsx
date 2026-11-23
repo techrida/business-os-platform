@@ -45,7 +45,9 @@ it('shows a chosen person as name and role', async () => {
       <UserField
         name="userId"
         label="Person"
-        users={[{ id: 'p1', label: 'Mina (m@x.test)', name: 'Mina', email: 'm@x.test', role: 'Sales' }]}
+        users={[
+          { id: 'p1', label: 'Mina (m@x.test)', name: 'Mina', email: 'm@x.test', role: 'Sales' },
+        ]}
         defaultValue="p1"
       />
     </form>,
