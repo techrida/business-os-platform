@@ -189,6 +189,31 @@ describe('SettingsController', () => {
       );
     });
 
+    it('ignores forged or dropped logo-for-dark and logo-for-light pointers in the request', async () => {
+      const withVariants = {
+        ...stored,
+        logoOnDarkDocumentId: DOC_STORED,
+        logoOnLightDocumentId: null,
+      };
+      fakeSettings.getLocked.mockResolvedValue({ value: withVariants, version: 3 });
+      fakeSettings.set.mockResolvedValue({ version: 4 });
+      await controller.putSetting('entity.profile', {
+        value: {
+          ...withVariants,
+          displayName: 'New Name',
+          logoOnDarkDocumentId: null,
+          logoOnLightDocumentId: DOC_ATTACKER,
+        },
+        expectedVersion: 3,
+      });
+      expect(fakeSettings.set).toHaveBeenCalledWith(
+        { fake: 'tx' },
+        'entity.profile',
+        { ...withVariants, displayName: 'New Name' },
+        { expectedVersion: 3 },
+      );
+    });
+
     it('keeps a stored legacy logo, and cannot clear the stored document id', async () => {
       const legacy = { ...stored, logoDocumentId: null, legacyLogoDataUrl: LEGACY_STORED };
       fakeSettings.getLocked.mockResolvedValue({ value: legacy, version: 5 });

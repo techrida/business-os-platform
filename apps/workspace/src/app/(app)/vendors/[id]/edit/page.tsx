@@ -99,7 +99,11 @@ export default async function EditVendorPage({ params }: { params: Promise<{ id:
       <Breadcrumb items={crumbs} />
       <VendorForm
         title="Edit vendor"
-        description={vendor.legalName}
+        description={
+          vendor.status === 'pending_kyc' || vendor.status === 'under_review'
+            ? `${vendor.legalName}. Changing the legal name, PAN, kind or country sends the vendor back to pending KYB, and its documents must be uploaded again.`
+            : vendor.legalName
+        }
         action={updateVendorAction}
         mode="edit"
         initial={{

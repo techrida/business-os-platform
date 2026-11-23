@@ -104,9 +104,7 @@ describe('vendor form', () => {
 
   it('D10: an approved vendor shows the kind and country locked, and posts neither', () => {
     const out = edit('company', true);
-    expect(out).toContain(
-      'Locked while the vendor is approved. A change goes through a new KYB review.',
-    );
+    expect(out).toContain('Locked once the vendor is approved.');
     // A disabled control posts nothing, so the locked kind and country are not read as a change.
     const hidden = (name: string) =>
       [...out.matchAll(/<input[^>]*>/g)]
