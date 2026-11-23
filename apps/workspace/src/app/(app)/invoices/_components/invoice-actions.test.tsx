@@ -145,16 +145,12 @@ describe('a note its viewer created (TR-Q12f)', () => {
     />,
   );
 
-  it('shows Issue off, with the reason under it and as its tooltip, and no issue form', () => {
+  it('shows Issue off, with the reason only in its tooltip (UIP-FORM-011), and no issue form', () => {
     expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Issue debit note<\/button>/);
-    const described = /aria-describedby="([^"]+)"/.exec(html)?.[1];
-    expect(described).toBeDefined();
-    expect(html).toMatch(
-      new RegExp(`id="${described ?? 'missing'}"[^>]*>You created this note, so someone else`),
-    );
-    expect(html).toContain(
-      `title="You created this note, so someone else with issue access must issue it."`,
-    );
+    // No caption beside the button, and never a native title bubble; the reason opens in the Tooltip
+    // (blocked-action-tooltips.test.tsx drives that).
+    expect(html).not.toContain('You created this note');
+    expect(html).not.toMatch(/<button[^>]* title=/);
     // The only form is Back to draft (the creator may still take their approved note back); no issue form.
     expect(html).not.toContain('<h2>Issue ');
     expect(html.match(/name="idempotencyKey"/g)).toHaveLength(1);
@@ -230,16 +226,15 @@ describe('Edit due date', () => {
     expect(html).toContain('This invoice has no due date yet.');
   });
 
-  it("shows an order's invoice the button off, with the API's reason under it and as its tooltip", () => {
+  it("shows an order's invoice the button off, with the API's reason in its tooltip only", () => {
     const html = renderDetail({
       salesOrderId: ORDER_ID,
       can: detailCan({ allowed: false, reason: ORDER_REASON }),
     });
     expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Edit due date<\/button>/);
-    const described = /aria-describedby="([^"]+)"[^>]*>Edit due date/.exec(html)?.[1];
-    expect(described).toBeDefined();
-    expect(html).toContain(`id="${described ?? 'missing'}" class`);
-    expect(html).toContain(`title="${ORDER_REASON.replaceAll("'", '&#x27;')}"`);
+    // UIP-FORM-011: the reason is the Tooltip's, not text under the button.
+    expect(html).not.toContain(ORDER_REASON.slice(0, 30));
+    expect(html).not.toMatch(/<button[^>]* title=/);
     expect(html).not.toContain('name="dueDate"');
   });
 

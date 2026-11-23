@@ -11,6 +11,7 @@ import { toast } from '@/components/ui/toast';
 import type { SettingsSectionId } from '@/lib/settings-nav';
 
 import styles from './reset-to-default.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export interface ResetConfirm {
   title: string;
@@ -119,16 +120,17 @@ export function ResetToDefaultButton({
   };
 
   const button = (
-    <button
-      type="button"
-      className={[styles.button, className].filter(Boolean).join(' ')}
-      aria-label={resetLabel(label)}
-      title={resetTitle(defaultText)}
-      aria-busy={busy || undefined}
-      {...(confirm ? {} : { onClick: () => void reset() })}
-    >
-      <Icon name="undo-2" size={16} />
-    </button>
+    <Tooltip content={resetTitle(defaultText)}>
+      <button
+        type="button"
+        className={[styles.button, className].filter(Boolean).join(' ')}
+        aria-label={resetLabel(label)}
+        aria-busy={busy || undefined}
+        {...(confirm ? {} : { onClick: () => void reset() })}
+      >
+        <Icon name="undo-2" size={16} />
+      </button>
+    </Tooltip>
   );
 
   if (!confirm) return button;

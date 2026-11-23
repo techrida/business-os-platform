@@ -19,6 +19,7 @@ import {
   type VendorCapabilities,
   type VendorContactBody,
   type VendorDto,
+  type VendorKind,
   type VendorStatus,
 } from '@bos/contracts';
 import {
@@ -480,22 +481,46 @@ export class VendorsService {
           message: `A ${row.status} vendor cannot be edited`,
         });
       }
+      // D10: the kind and country may change after create. What counts is a real change; the form sends both.
+      const kindAfter: VendorKind = fields.kind ?? kindFromRow(row.kind);
+      const countryAfter = fields.country ?? rowCountry(row.country);
+      const identityChanged =
+        kindToRow(kindAfter) !== row.kind || countryAfter !== rowCountry(row.country);
       if (
-        (fields.legalName !== undefined || fields.pan !== undefined) &&
+        (fields.legalName !== undefined || fields.pan !== undefined || identityChanged) &&
         (row.status === 'approved' || row.status === 'suspended')
       ) {
         throw new ConflictException({
           code: 'vendor_identity_locked',
-          message: 'The legal name and PAN of an approved vendor change through a new KYB review',
+          message:
+            'The legal name, PAN, kind and country of an approved vendor change through a new KYB review',
         });
       }
       const pan = fields.pan?.toUpperCase();
+      // The pair the vendor will have, the PAN it will have (sent, else stored) and whether that PAN is allowed: the
+      // table's checks (vendors_foreign_country_check, vendors_pan_check) as answers a person can act on.
+      const panAfter = pan ?? row.pan;
+      const pairProblem = identityChanged ? kindCountryProblem(kindAfter, countryAfter) : undefined;
+      const panProblem =
+        pan !== undefined || identityChanged
+          ? (vendorPanProblem(countryAfter, panAfter) ??
+            (kindAfter !== 'foreign' && panAfter === null
+              ? 'a PAN is required unless the vendor is foreign'
+              : undefined))
+          : undefined;
+      if (pairProblem !== undefined) {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: pairProblem,
+        });
+      }
+      if (panProblem !== undefined) {
+        throw new BadRequestException({
+          code: 'bad_request',
+          message: panProblem,
+        });
+      }
       if (pan !== undefined) {
-        // A Nepal vendor's PAN is nine digits; a foreign vendor's tax id keeps the loose shape (FX9).
-        const panProblem = vendorPanProblem(row.country, pan);
-        if (panProblem !== undefined) {
-          throw new BadRequestException({ code: 'bad_request', message: panProblem });
-        }
         await this.assertPanFree(tx, scope.tenantId, pan, id);
       }
       if (fields.ownerUserId !== undefined) {
@@ -505,6 +530,7 @@ export class VendorsService {
         const updated = await updateVersioned(tx, vendors, id, expectedVersion, {
           ...(fields.legalName !== undefined && { legalName: fields.legalName }),
           ...(pan !== undefined && { pan }),
+          ...(identityChanged && { kind: kindToRow(kindAfter), country: countryAfter }),
           ...(fields.address !== undefined && addressColumns(fields.address)),
           ...(fields.vatRegistered !== undefined && { vatRegistered: fields.vatRegistered }),
           ...(fields.ownerUserId !== undefined && { ownerUserId: fields.ownerUserId }),
@@ -515,6 +541,22 @@ export class VendorsService {
             .update(parties)
             .set({ name: fields.legalName, updatedAt: now })
             .where(and(eq(parties.tenantId, scope.tenantId), eq(parties.id, id)));
+        }
+        if (identityChanged) {
+          // The trigger audit already holds the row's before and after; this names the decision, with the values a
+          // reviewer looks for (D10). The PAN is listed when the same edit changed it, so a switch to Nepal reads whole.
+          const panChanged = pan !== undefined && pan !== row.pan;
+          await this.audit.record(tx, {
+            action: 'vendor.kind_country_changed',
+            entityType: 'vendor',
+            entityId: id,
+            before: {
+              kind: kindFromRow(row.kind),
+              country: row.country,
+              ...(panChanged && { pan: row.pan }),
+            },
+            after: { kind: kindAfter, country: countryAfter, ...(panChanged && { pan }) },
+          });
         }
         return toVendorDto(updated, principal);
       } catch (error) {

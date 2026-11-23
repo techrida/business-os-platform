@@ -28,6 +28,8 @@ export interface ConvertLead {
   email: string;
   /** The lead person's country: the new customer and contact start in it. */
   country: CountryCode;
+  /** The lead's address, when it has one (D9): the new customer's Address and City start from it, editable. */
+  address?: { line: string; city: string } | null;
   /** The lead person's numbers (the DTO's `phones`, primary first): the new contact starts with them. */
   phones: readonly PartyPhoneInput[];
   /**
@@ -48,8 +50,8 @@ function initialValues(lead: ConvertLead): Record<string, string> {
     customerId: lead.customerId ?? '',
     legalName: lead.companyName,
     panVatNo: '',
-    line: '',
-    city: '',
+    line: lead.address?.line ?? '',
+    city: lead.address?.city ?? '',
     country: lead.country,
     contactMode: lead.customerId && lead.contactId ? 'existing' : 'create',
     contactId: lead.customerId ? (lead.contactId ?? '') : '',

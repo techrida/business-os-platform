@@ -11,6 +11,7 @@ import {
   parseCompleteActivity,
   parseConvert,
   parseLead,
+  parseLeadAddress,
   parseLeadUpdate,
   parseRescheduleActivity,
   parseScheduleFollowUp,
@@ -283,6 +284,83 @@ describe('parseStageMove', () => {
     if (!longSubject.ok) {
       expect(longSubject.fieldErrors['contactSubject']).toMatch(/200 characters/);
     }
+  });
+});
+
+describe('parseLead address (D9)', () => {
+  const base = {
+    title: 'Dispatch automation',
+    source: 'referral',
+    companyName: 'Binford Ltd.',
+    contactName: 'Sunita Shrestha',
+    email: 'sunita@binford.com.np',
+    'phones.0.number': '',
+    'phones.0.country': 'NP',
+    'phones.0.label': '',
+    'phones.0.isPrimary': 'true',
+  };
+
+  it('reads the address block: its country is the lead country, its lines and city the address', () => {
+    const r = parseLead(
+      form({
+        ...base,
+        'address.country': 'IN',
+        'address.line': ' Connaught Place ',
+        'address.city': 'New Delhi',
+      }),
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      data: { country: 'IN', address: { line: 'Connaught Place', city: 'New Delhi' } },
+    });
+  });
+
+  it('sends no address when both are blank', () => {
+    const r = parseLead(
+      form({ ...base, 'address.country': 'NP', 'address.line': '', 'address.city': '' }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).not.toHaveProperty('address');
+  });
+
+  it('names the missing half of an address on its own field', () => {
+    const noCity = parseLead(form({ ...base, 'address.country': 'NP', 'address.line': 'Balaju' }));
+    expect(noCity.ok).toBe(false);
+    if (!noCity.ok) expect(noCity.fieldErrors['address.city']).toMatch(/city/i);
+    const noLine = parseLead(
+      form({ ...base, 'address.country': 'NP', 'address.city': 'Kathmandu' }),
+    );
+    expect(noLine.ok).toBe(false);
+    if (!noLine.ok) expect(noLine.fieldErrors['address.line']).toMatch(/street address/i);
+  });
+});
+
+describe('parseLeadAddress (D9)', () => {
+  it('sends the lines and city with the version the page showed', () => {
+    const r = parseLeadAddress(
+      form({
+        'address.line': '12 Lazimpat Road',
+        'address.city': 'Kathmandu',
+        expectedVersion: '3',
+      }),
+    );
+    expect(r).toEqual({
+      ok: true,
+      data: { address: { line: '12 Lazimpat Road', city: 'Kathmandu' }, expectedVersion: 3 },
+    });
+  });
+
+  it('clears the address with null when both are blank', () => {
+    const r = parseLeadAddress(
+      form({ 'address.line': ' ', 'address.city': '', expectedVersion: '3' }),
+    );
+    expect(r).toEqual({ ok: true, data: { address: null, expectedVersion: 3 } });
+  });
+
+  it('refuses half an address, on the field that is missing', () => {
+    const r = parseLeadAddress(form({ 'address.line': 'Balaju', expectedVersion: '3' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.fieldErrors['address.city']).toBeDefined();
   });
 });
 

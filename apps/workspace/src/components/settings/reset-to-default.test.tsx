@@ -28,7 +28,8 @@ describe('ResetToDefaultButton', () => {
     const button = html.match(/<button[^>]*>/)?.[0] ?? '';
     expect(button).toContain('type="button"');
     expect(button).toContain('aria-label="Reset Default VAT rate (%) to default"');
-    expect(button).toContain('title="Reset to default (13)"');
+    // The default shows in the design-system Tooltip (opens on hover or focus), never as a native title bubble.
+    expect(button).not.toContain(' title="');
     expect(button).not.toContain('disabled');
     // The icon is decorative; the button's name is the label above.
     expect(html).toContain('aria-hidden="true"');
