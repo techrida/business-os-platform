@@ -35,6 +35,7 @@ import { convertLeadAction, moveLeadStageAction } from '../actions';
 import styles from '../leads.module.css';
 import { QualifyLead } from '../qualify-lead';
 
+import { LeadAddressField } from './lead-address-field';
 import { LeadContactField } from './lead-contact-field';
 import { LeadOwnerField } from './lead-owner-field';
 
@@ -87,6 +88,19 @@ function facts(
       wide: editable,
     },
     { key: 'country', label: 'Country', value: countryName(l.country) },
+    {
+      key: 'address',
+      label: 'Address',
+      value: (
+        <LeadAddressField
+          leadId={l.id}
+          version={l.version}
+          address={l.address}
+          editable={editable}
+        />
+      ),
+      wide: editable,
+    },
     {
       key: 'source',
       label: 'Lead source',
@@ -372,6 +386,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                     contactName: lead.contactName,
                     email: lead.email ?? '',
                     country: lead.country,
+                    address: lead.address,
                     phones: lead.phones,
                     requirement: lead.requirement,
                     value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),

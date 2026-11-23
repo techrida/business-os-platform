@@ -17,6 +17,7 @@ import {
 import { Icon, type IconName } from './icon';
 import richStyles from './rich-text.module.css';
 import styles from './rich-text-editor.module.css';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** What the editor opens: rich text as it is, legacy plain text as escaped paragraphs. */
 export function toEditorHtml(value: string | null | undefined): string {
@@ -262,21 +263,22 @@ export function RichTextEditor({
               {index === 2 ? (
                 <span className={styles.sep} role="separator" aria-orientation="vertical" />
               ) : null}
-              <button
-                type="button"
-                className={styles.tool}
-                aria-label={action.label}
-                title={`${action.label} (${action.shortcut})`}
-                aria-pressed={state[action.key]}
-                disabled={toolsOff}
-                tabIndex={index === stop ? 0 : -1}
-                // Keep the caret in the text while a toolbar button is pressed with the mouse.
-                onMouseDown={(event) => event.preventDefault()}
-                onFocus={() => setStop(index)}
-                onClick={() => editor && action.run(editor)}
-              >
-                <Icon name={action.icon} size={16} />
-              </button>
+              <Tooltip content={`${action.label} (${action.shortcut})`}>
+                <button
+                  type="button"
+                  className={styles.tool}
+                  aria-label={action.label}
+                  aria-pressed={state[action.key]}
+                  disabled={toolsOff}
+                  tabIndex={index === stop ? 0 : -1}
+                  // Keep the caret in the text while a toolbar button is pressed with the mouse.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onFocus={() => setStop(index)}
+                  onClick={() => editor && action.run(editor)}
+                >
+                  <Icon name={action.icon} size={16} />
+                </button>
+              </Tooltip>
             </Fragment>
           ))}
         </div>

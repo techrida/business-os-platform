@@ -25,7 +25,7 @@ const create = () =>
     />,
   );
 
-const edit = (kind: 'company' | 'foreign' = 'company') =>
+const edit = (kind: 'company' | 'foreign' = 'company', lockIdentity = false) =>
   renderToStaticMarkup(
     <VendorForm
       title="Edit vendor"
@@ -35,6 +35,7 @@ const edit = (kind: 'company' | 'foreign' = 'company') =>
       initial={{ ...EMPTY_VENDOR_VALUES, legalName: 'Himal Traders', kind, pan: '301234567' }}
       vendorId={ID}
       version={3}
+      lockIdentity={lockIdentity}
       cancelHref={`/vendors/${ID}`}
       reloadHref={`/vendors/${ID}/edit`}
     />,
@@ -79,13 +80,15 @@ describe('vendor form', () => {
     expect(out).not.toContain('name="country"');
   });
 
-  it('edit keeps the editable fields in a details card and an address card, the country fixed', () => {
+  it('D10: edit asks for the kind and the country, as create does, in a details card and an address card', () => {
     const out = edit();
     expect(names(out)).toEqual(
       [
         'address.city',
+        'address.country',
         'address.line',
         'expectedVersion',
+        'kind',
         'legalName',
         'pan',
         'vatRegistered',
@@ -95,7 +98,26 @@ describe('vendor form', () => {
     expect(out.match(/<section/g)).toHaveLength(2);
     expect(out).toContain('>Save changes</button>');
     expect(out).toContain('value="Nepal"');
-    expect(out).toContain('Fixed once the vendor is added.');
+    expect(out).not.toContain('Fixed once the vendor is added.');
+    expect(out.match(/name="address\.country"/g)).toHaveLength(1);
+  });
+
+  it('D10: an approved vendor shows the kind and country locked, and posts neither', () => {
+    const out = edit('company', true);
+    expect(out).toContain(
+      'Locked while the vendor is approved. A change goes through a new KYB review.',
+    );
+    // A disabled control posts nothing, so the locked kind and country are not read as a change.
+    const hidden = (name: string) =>
+      [...out.matchAll(/<input[^>]*>/g)]
+        .map((m) => m[0])
+        .filter((tag) => tag.includes(` name="${name}"`));
+    for (const name of ['kind', 'address.country']) {
+      expect(hidden(name).length).toBeGreaterThan(0);
+      for (const tag of hidden(name)) expect(tag).toContain('disabled');
+    }
+    // The address itself stays editable.
+    expect(names(out)).toContain('address.line');
   });
 
   it('edit of a foreign vendor offers an optional Tax ID instead of the nine-digit PAN', () => {

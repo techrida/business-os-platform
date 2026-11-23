@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Icon } from '@/components/ui/icon';
 import { ImageUpload } from '@/components/ui/image-upload';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * A directory row's profile picture: an icon button beside the other row actions opens a dialog with the shared
@@ -35,9 +36,11 @@ export function PictureEditor({
       description={label}
       size="small"
       trigger={
-        <Button variant="ghost" size="small" aria-label={action} title={action}>
-          <Icon name="user" size={20} />
-        </Button>
+        <Tooltip content={action}>
+          <Button variant="ghost" size="small" aria-label={action}>
+            <Icon name="user" size={20} />
+          </Button>
+        </Tooltip>
       }
       footer={
         <DialogClose asChild>

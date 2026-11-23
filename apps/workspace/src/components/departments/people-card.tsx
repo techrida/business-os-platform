@@ -50,6 +50,7 @@ import {
   type PersonCandidate,
   type StagedPerson,
 } from './people-model';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export const PEOPLE_STALE_MESSAGE = 'Access was changed by someone else. Reload to see the latest.';
 
@@ -384,18 +385,19 @@ export function PeopleCard({
                         ) : (
                           <>
                             <span className={styles.wide}>
-                              <Button
-                                variant="ghost"
-                                size="small"
-                                className={styles.iconButton}
-                                aria-label={`Remove ${person.name} from ${name}`}
-                                title={`Remove ${person.name} from ${name}`}
-                                onClick={() =>
-                                  setStaged((current) => removePeople(current, [person.userId]))
-                                }
-                              >
-                                <Icon name="x" size={18} />
-                              </Button>
+                              <Tooltip content={`Remove ${person.name} from ${name}`}>
+                                <Button
+                                  variant="ghost"
+                                  size="small"
+                                  className={styles.iconButton}
+                                  aria-label={`Remove ${person.name} from ${name}`}
+                                  onClick={() =>
+                                    setStaged((current) => removePeople(current, [person.userId]))
+                                  }
+                                >
+                                  <Icon name="x" size={18} />
+                                </Button>
+                              </Tooltip>
                             </span>
                             <span className={styles.narrow}>
                               <ActionMenu

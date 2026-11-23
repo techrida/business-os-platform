@@ -9,6 +9,8 @@ import '@/styles/token-overrides.css';
 import '@fontsource-variable/outfit';
 import '@/styles/globals.css';
 
+import { TooltipProvider } from '@/components/ui/tooltip';
+
 export const metadata: Metadata = {
   title: 'Customer portal - Business OS',
 };
@@ -16,7 +18,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme={BOS_LIGHT_ONLY ? 'light' : undefined}>
-      <body>{children}</body>
+      <body>
+        <TooltipProvider>{children}</TooltipProvider>
+      </body>
     </html>
   );
 }

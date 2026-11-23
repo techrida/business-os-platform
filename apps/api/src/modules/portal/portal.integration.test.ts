@@ -212,7 +212,7 @@ async function seedQuotation(
   w: World,
   entity: string,
   party: string,
-  status: 'draft' | 'sent',
+  status: 'draft' | 'approved' | 'sent',
 ): Promise<Seeded> {
   const scope: TxScope = { tenantId: w.tenantId, organizationId: entity };
   const number = `QT-${randomUUID().slice(0, 8)}`;
@@ -228,7 +228,7 @@ async function seedQuotation(
               ${first(opp.rows).id}::uuid) RETURNING id`);
     const quotationId = first(quotation.rows).id;
     const versionId = await insertDraft(tx, w, entity, quotationId, 1, null);
-    if (status === 'sent') {
+    if (status === 'sent' || status === 'approved') {
       await tx.execute(sql`
         UPDATE app.quotation_versions
            SET status = 'submitted', submitted_at = now(), fx_rate = 1, amount_npr = total,
@@ -238,9 +238,11 @@ async function seedQuotation(
       await tx.execute(
         sql`UPDATE app.quotation_versions SET status = 'approved', approved_at = now() WHERE id = ${versionId}::uuid`,
       );
-      await tx.execute(
-        sql`UPDATE app.quotation_versions SET status = 'sent', sent_at = now() WHERE id = ${versionId}::uuid`,
-      );
+      if (status === 'sent') {
+        await tx.execute(
+          sql`UPDATE app.quotation_versions SET status = 'sent', sent_at = now() WHERE id = ${versionId}::uuid`,
+        );
+      }
     }
     return { quotationId, versionId, number, opportunityId: first(opp.rows).id };
   });
@@ -517,6 +519,48 @@ describe('portal reads on a real database', () => {
     });
     // The never-sent newer version stays "not found".
     expect((await refusal(portal.get(v2Id))).status).toBe(404);
+    // Closed everywhere: the list drops the row and the PDF link answers the same 409.
+    expect(await portal.list()).toEqual([]);
+    expect(await refusal(portal.quotationPdfLink(v1.versionId))).toEqual({
+      status: 409,
+      body: { code: 'quotation_closed', message: 'This quotation is no longer open' },
+    });
+  });
+
+  it('never shows a version that was approved but never sent, once it was revised or expired (R6D visibility)', async () => {
+    const w = await seedWorld();
+    const revisedUnsent = await seedQuotation(w, w.entityA, w.partyP, 'approved');
+    await reviseToDraft(w, w.entityA, revisedUnsent);
+    const expiredUnsent = await seedQuotation(w, w.entityA, w.partyP, 'approved');
+    const sentThenRevised = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    await reviseToDraft(w, w.entityA, sentThenRevised);
+    await withTx(
+      db,
+      { tenantId: w.tenantId, organizationId: w.entityA },
+      seedActor(),
+      async (tx) => {
+        await tx.execute(
+          sql`UPDATE app.quotation_versions SET status = 'expired' WHERE id = ${expiredUnsent.versionId}::uuid`,
+        );
+      },
+    );
+    const portal = serviceFor(customerOf(w, w.entityA, w.partyP));
+
+    // Only the version that was really mailed is listed and readable.
+    expect((await portal.list()).map((i) => i.id)).toEqual([sentThenRevised.versionId]);
+    await expect(portal.get(sentThenRevised.versionId)).resolves.toMatchObject({
+      status: 'superseded',
+    });
+    for (const s of [revisedUnsent, expiredUnsent]) {
+      expect((await refusal(portal.get(s.versionId))).status).toBe(404);
+      expect((await refusal(portal.quotationPdfLink(s.versionId))).status).toBe(404);
+    }
+    const respond = respondFor(await portalCustomer(w));
+    for (const s of [revisedUnsent, expiredUnsent]) {
+      expect(
+        await failure(respond.accept(s.versionId, `hidden-${randomUUID()}`, SIGNED)),
+      ).toMatchObject({ status: 404 });
+    }
   });
 
   it('lets the same party acting in the other entity see only that entity', async () => {

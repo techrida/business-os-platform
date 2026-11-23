@@ -1,0 +1,14 @@
+name: Feature request
+description: Suggest a change or addition
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: The problem, description: Who is blocked, and what are they trying to do }
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes: { label: Your idea }
+  - type: textarea
+    id: alternatives
+    attributes: { label: Alternatives considered }

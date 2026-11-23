@@ -183,7 +183,7 @@ it('links a picked customer, fills its name and country, and posts the link', as
   await fill(t.contact(), 'Sunita Shrestha');
   const data = await t.posted();
   expect(data.get('customerId')).toBe(CUSTOMER);
-  expect(data.get('country')).toBe('IN');
+  expect(data.get('address.country')).toBe('IN');
   expect(parseLead(data)).toMatchObject({
     ok: true,
     data: { companyName: 'Himalayan Traders Pvt. Ltd.', customerId: CUSTOMER, country: 'IN' },
