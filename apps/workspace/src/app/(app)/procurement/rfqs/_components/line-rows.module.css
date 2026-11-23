@@ -74,11 +74,8 @@
   gap: 8px;
 }
 
-.include input {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
+.includeBox {
+  margin-top: 2px;
 }
 
 /* A part that needs the full width of the line (serial numbers) sits under the row. */

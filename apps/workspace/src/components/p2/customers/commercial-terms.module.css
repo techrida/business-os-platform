@@ -89,12 +89,6 @@
   line-height: var(--line-height-body-small);
 }
 
-.choice input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--button-primary-bg);
-}
-
 .numeric {
   font-variant-numeric: tabular-nums;
 }

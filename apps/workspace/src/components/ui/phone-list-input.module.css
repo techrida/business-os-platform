@@ -80,15 +80,7 @@
   cursor: pointer;
 }
 
-.primary input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--action-primary);
-  cursor: inherit;
-}
-
-.primary:has(input:disabled) {
+.primary:has(button:disabled) {
   color: var(--input-disabled-text);
   cursor: not-allowed;
 }

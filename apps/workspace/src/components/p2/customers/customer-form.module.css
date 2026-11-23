@@ -92,12 +92,6 @@
   line-height: var(--line-height-body-small);
 }
 
-.check input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--button-primary-bg);
-}
-
 /* Why the main-contact box is off: the same quiet caption as a field hint. */
 .checkReason {
   margin: -12px 0 0;

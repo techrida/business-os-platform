@@ -18,6 +18,7 @@ import {
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from './button';
+import { Radio, RadioGroup } from './checkbox';
 import { CountrySelect } from './country-select';
 import { DigitBox, type DigitRules } from './digit-box';
 import { Icon } from './icon';
@@ -607,6 +608,25 @@ export function PhoneListInput({
   const limitId = `${base}-limit`;
   const groupDescribedBy = [describedBy, error ? errorId : undefined].filter(Boolean).join(' ');
 
+  // The Primary radios of all rows are one choice, so they sit in one radio group around the list.
+  const inPrimaryGroup = (list: ReactNode) =>
+    showPrimary ? (
+      <RadioGroup
+        name={`${name ?? base}.primary`}
+        value={String(rows.findIndex((row) => row.isPrimary))}
+        disabled={disabled === true}
+        aria-label={`${noun} primary`}
+        onValueChange={(next) => {
+          const row = rows[Number(next)];
+          if (row) setPrimary(row.key);
+        }}
+      >
+        {list}
+      </RadioGroup>
+    ) : (
+      list
+    );
+
   return (
     <div
       ref={rootRef}
@@ -620,142 +640,140 @@ export function PhoneListInput({
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
-      <ol className={styles.rows}>
-        {rows.map((row, index) => {
-          const n = index + 1;
-          const { rules, prefix } = rulesOf(row);
-          const duplicate = problems.find(
-            (problem) =>
-              problem.key === row.key && problem.message === 'This number is already listed.',
-          );
-          const rowError = bound.byKey.get(row.key) ?? duplicate?.message;
-          const rowErrorId = `${row.key}-error`;
-          const blank = single && row.e164 === '';
-          return (
-            <li key={row.key} data-row={row.key} className={styles.row}>
-              <div className={styles.country}>
-                <CountrySelect
-                  compact
-                  aria-label={`${noun} ${n} country`}
-                  {...(name ? { name: `${name}.${index}.country` } : {})}
-                  value={row.country}
-                  disabled={disabled === true}
-                  onChange={(country) => onCountry(row, country)}
-                  onReselect={(country) => onCountry(row, country)}
-                />
-              </div>
-              <div className={styles.number} data-part="number">
-                <DigitBox
-                  key={`${row.mode}-${row.mode === 'national' ? row.country : ''}-${row.mount}`}
-                  aria-label={`${noun} ${n} number`}
-                  {...(name ? { name: `${name}.${index}.number` } : {})}
-                  {...(rowError ? { 'aria-describedby': rowErrorId } : {})}
-                  {...(rowError ? { 'aria-invalid': true } : {})}
-                  defaultValue={row.seed}
-                  onValueChange={(posted) => onNumber(row, posted)}
-                  edited={row.edited}
-                  onEditedChange={(edited) => update(row.key, () => ({ edited }))}
-                  disabled={disabled === true}
-                  rules={rules}
-                  prefix={prefix}
-                  onPlus={(digits) => onPlus(row, digits)}
-                  inputMode="tel"
-                />
-                {rowError ? (
-                  <p id={rowErrorId} className={styles.rowError}>
-                    {rowError}
-                  </p>
-                ) : null}
-              </div>
-              <div className={styles.extras}>
-                {showLabels ? (
-                  <Select
-                    aria-label={`${noun} ${n} label`}
-                    {...(name ? { name: `${name}.${index}.label` } : {})}
-                    className={styles.label}
-                    value={row.label ?? ''}
+      {inPrimaryGroup(
+        <ol className={styles.rows}>
+          {rows.map((row, index) => {
+            const n = index + 1;
+            const { rules, prefix } = rulesOf(row);
+            const duplicate = problems.find(
+              (problem) =>
+                problem.key === row.key && problem.message === 'This number is already listed.',
+            );
+            const rowError = bound.byKey.get(row.key) ?? duplicate?.message;
+            const rowErrorId = `${row.key}-error`;
+            const blank = single && row.e164 === '';
+            return (
+              <li key={row.key} data-row={row.key} className={styles.row}>
+                <div className={styles.country}>
+                  <CountrySelect
+                    compact
+                    aria-label={`${noun} ${n} country`}
+                    {...(name ? { name: `${name}.${index}.country` } : {})}
+                    value={row.country}
                     disabled={disabled === true}
-                    options={[
-                      { value: '', label: 'No label' },
-                      ...PHONE_LABELS.map((label) => ({ value: label, label: labelText(label) })),
-                    ]}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      update(row.key, () => ({
-                        label: (PHONE_LABELS as readonly string[]).includes(next)
-                          ? (next as PhoneLabel)
-                          : null,
-                      }));
-                    }}
+                    onChange={(country) => onCountry(row, country)}
+                    onReselect={(country) => onCountry(row, country)}
                   />
-                ) : null}
-                {showPrimary ? (
-                  <label className={styles.primary}>
-                    <input
-                      type="radio"
-                      name={`${name ?? base}.primary`}
-                      value={String(index)}
-                      checked={row.isPrimary}
-                      disabled={disabled === true}
-                      aria-label={`${noun} ${n} primary`}
-                      onChange={() => setPrimary(row.key)}
-                    />
-                    <span aria-hidden="true">Primary</span>
-                  </label>
-                ) : null}
-                {name ? (
-                  <input
-                    type="hidden"
-                    name={`${name}.${index}.isPrimary`}
-                    value={row.isPrimary ? 'true' : 'false'}
-                    disabled={disabled === true}
-                  />
-                ) : null}
-                <div className={styles.actions}>
-                  {single ? null : (
-                    <>
-                      <button
-                        type="button"
-                        className={styles.iconButton}
-                        data-action="up"
-                        aria-label={`Move ${noun.toLowerCase()} ${n} up`}
-                        disabled={disabled === true || index === 0}
-                        onClick={() => move(row.key, -1)}
-                      >
-                        <span className={styles.up}>
-                          <Icon name="chevron-down" size={18} />
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.iconButton}
-                        data-action="down"
-                        aria-label={`Move ${noun.toLowerCase()} ${n} down`}
-                        disabled={disabled === true || index === rows.length - 1}
-                        onClick={() => move(row.key, 1)}
-                      >
-                        <Icon name="chevron-down" size={18} />
-                      </button>
-                    </>
-                  )}
-                  {blank ? null : (
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      data-action="remove"
-                      aria-label={`Remove ${noun.toLowerCase()} ${n}`}
-                      disabled={disabled === true}
-                      onClick={() => remove(row.key)}
-                    >
-                      <Icon name="x" size={18} />
-                    </button>
-                  )}
                 </div>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+                <div className={styles.number} data-part="number">
+                  <DigitBox
+                    key={`${row.mode}-${row.mode === 'national' ? row.country : ''}-${row.mount}`}
+                    aria-label={`${noun} ${n} number`}
+                    {...(name ? { name: `${name}.${index}.number` } : {})}
+                    {...(rowError ? { 'aria-describedby': rowErrorId } : {})}
+                    {...(rowError ? { 'aria-invalid': true } : {})}
+                    defaultValue={row.seed}
+                    onValueChange={(posted) => onNumber(row, posted)}
+                    edited={row.edited}
+                    onEditedChange={(edited) => update(row.key, () => ({ edited }))}
+                    disabled={disabled === true}
+                    rules={rules}
+                    prefix={prefix}
+                    onPlus={(digits) => onPlus(row, digits)}
+                    inputMode="tel"
+                  />
+                  {rowError ? (
+                    <p id={rowErrorId} className={styles.rowError}>
+                      {rowError}
+                    </p>
+                  ) : null}
+                </div>
+                <div className={styles.extras}>
+                  {showLabels ? (
+                    <Select
+                      aria-label={`${noun} ${n} label`}
+                      {...(name ? { name: `${name}.${index}.label` } : {})}
+                      className={styles.label}
+                      value={row.label ?? ''}
+                      disabled={disabled === true}
+                      options={[
+                        { value: '', label: 'No label' },
+                        ...PHONE_LABELS.map((label) => ({ value: label, label: labelText(label) })),
+                      ]}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        update(row.key, () => ({
+                          label: (PHONE_LABELS as readonly string[]).includes(next)
+                            ? (next as PhoneLabel)
+                            : null,
+                        }));
+                      }}
+                    />
+                  ) : null}
+                  {showPrimary ? (
+                    <label className={styles.primary}>
+                      <Radio
+                        value={String(index)}
+                        disabled={disabled === true}
+                        aria-label={`${noun} ${n} primary`}
+                      />
+                      <span aria-hidden="true">Primary</span>
+                    </label>
+                  ) : null}
+                  {name ? (
+                    <input
+                      type="hidden"
+                      name={`${name}.${index}.isPrimary`}
+                      value={row.isPrimary ? 'true' : 'false'}
+                      disabled={disabled === true}
+                    />
+                  ) : null}
+                  <div className={styles.actions}>
+                    {single ? null : (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.iconButton}
+                          data-action="up"
+                          aria-label={`Move ${noun.toLowerCase()} ${n} up`}
+                          disabled={disabled === true || index === 0}
+                          onClick={() => move(row.key, -1)}
+                        >
+                          <span className={styles.up}>
+                            <Icon name="chevron-down" size={18} />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.iconButton}
+                          data-action="down"
+                          aria-label={`Move ${noun.toLowerCase()} ${n} down`}
+                          disabled={disabled === true || index === rows.length - 1}
+                          onClick={() => move(row.key, 1)}
+                        >
+                          <Icon name="chevron-down" size={18} />
+                        </button>
+                      </>
+                    )}
+                    {blank ? null : (
+                      <button
+                        type="button"
+                        className={styles.iconButton}
+                        data-action="remove"
+                        aria-label={`Remove ${noun.toLowerCase()} ${n}`}
+                        disabled={disabled === true}
+                        onClick={() => remove(row.key)}
+                      >
+                        <Icon name="x" size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>,
+      )}
       <div className={styles.footer}>
         <Button
           type="button"

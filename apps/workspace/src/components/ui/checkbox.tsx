@@ -2,7 +2,12 @@
 
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group';
-import { type ComponentPropsWithoutRef, type MouseEvent, type ReactNode } from 'react';
+import {
+  type ComponentPropsWithoutRef,
+  type MouseEvent,
+  type ReactNode,
+  type Ref,
+} from 'react';
 
 import styles from './checkbox.module.css';
 import { Tooltip } from './tooltip';
@@ -11,6 +16,26 @@ import { Tooltip } from './tooltip';
 // `<input type="checkbox|radio">`). These are the design-system controls. Both are buttons with the
 // checkbox / radio ARIA role, so a label that wraps them (or `htmlFor` + `id`) names them and a click on
 // the label toggles them; inside a `<form>` they submit `name`/`value` like a native input would.
+
+// Radix listens for the form's `reset` event and, even when the parent controls the value, calls
+// onCheckedChange / onValueChange with the value the control had when it mounted. React 19 resets a
+// form after every `<form action>` completes, so a controlled box would silently flip back to its first
+// value after each save or refusal (a native controlled input is re-synced from state instead). The
+// handlers below skip changes made during a reset: a controlled control keeps what its parent holds,
+// and an uncontrolled one still returns to its default through Radix's own state.
+let resetting = false;
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'reset',
+    () => {
+      resetting = true;
+      queueMicrotask(() => {
+        resetting = false;
+      });
+    },
+    true,
+  );
+}
 
 const join = (...parts: (string | false | undefined)[]) => parts.filter(Boolean).join(' ');
 
@@ -33,6 +58,7 @@ export interface CheckboxProps
     DisabledReason {
   /** Controlled state. `'indeterminate'` is the dash for a parent of partly ticked children. */
   checked?: boolean | 'indeterminate';
+  ref?: Ref<HTMLButtonElement>;
   defaultChecked?: boolean | 'indeterminate';
   onCheckedChange?: (checked: boolean) => void;
 }
@@ -51,7 +77,11 @@ export function Checkbox({
       {...rest}
       className={join(styles.box, className)}
       {...(onCheckedChange
-        ? { onCheckedChange: (next) => onCheckedChange(next === true) }
+        ? {
+            onCheckedChange: (next) => {
+              if (!resetting) onCheckedChange(next === true);
+            },
+          }
         : {})}
       {...(blocked
         ? {
@@ -90,8 +120,19 @@ export interface RadioGroupProps extends ComponentPropsWithoutRef<typeof RadioGr
  * A group of radios. Give it `name` to submit the choice in a form, and `aria-label` or
  * `aria-labelledby` for the group name. Use `asChild` on a `<fieldset>` to keep its `<legend>`.
  */
-export function RadioGroup({ className, ...rest }: RadioGroupProps) {
-  return <RadioGroupPrimitive.Root {...rest} className={join(styles.group, className)} />;
+export function RadioGroup({ onValueChange, ...rest }: RadioGroupProps) {
+  return (
+    <RadioGroupPrimitive.Root
+      {...rest}
+      {...(onValueChange
+        ? {
+            onValueChange: (next: string) => {
+              if (!resetting) onValueChange(next);
+            },
+          }
+        : {})}
+    />
+  );
 }
 
 export interface RadioProps

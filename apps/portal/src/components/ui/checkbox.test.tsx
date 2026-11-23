@@ -190,3 +190,54 @@ it('a radio with a disabled reason stays focusable and is not selected by a clic
   await click(b);
   expect(b.getAttribute('aria-checked')).toBe('false');
 });
+
+it('a controlled checkbox keeps its state when the form resets (React resets a form after each action)', async () => {
+  function Harness() {
+    const [on, setOn] = useState(false);
+    return (
+      <form>
+        <Checkbox aria-label="Opt in" name="optIn" checked={on} onCheckedChange={setOn} />
+      </form>
+    );
+  }
+  const { container } = await mountForm(<Harness />);
+  const box = container.querySelector<HTMLElement>('[role="checkbox"]')!;
+  await click(box);
+  expect(box.getAttribute('aria-checked')).toBe('true');
+  await act(async () => container.querySelector('form')!.reset());
+  expect(box.getAttribute('aria-checked')).toBe('true');
+});
+
+it('an uncontrolled checkbox returns to its default on reset, like a native one', async () => {
+  const { container } = await mountForm(
+    <form>
+      <Checkbox aria-label="Subscribe" name="subscribe" defaultChecked />
+    </form>,
+  );
+  const box = container.querySelector<HTMLElement>('[role="checkbox"]')!;
+  await click(box);
+  expect(box.getAttribute('aria-checked')).toBe('false');
+  await act(async () => container.querySelector('form')!.reset());
+  expect(box.getAttribute('aria-checked')).toBe('true');
+});
+
+it('a controlled radio group keeps its choice when the form resets', async () => {
+  function Harness() {
+    const [value, setValue] = useState('a');
+    return (
+      <form>
+        <RadioGroup name="mode" value={value} onValueChange={setValue} aria-label="Mode">
+          <Radio value="a" aria-label="A" />
+          <Radio value="b" aria-label="B" />
+        </RadioGroup>
+      </form>
+    );
+  }
+  const { container } = await mountForm(<Harness />);
+  const radios = [...container.querySelectorAll<HTMLElement>('[role="radio"]')];
+  await click(radios[1]!);
+  expect(radios[1]!.getAttribute('aria-checked')).toBe('true');
+  await act(async () => container.querySelector('form')!.reset());
+  expect(radios[1]!.getAttribute('aria-checked')).toBe('true');
+  expect(radios[0]!.getAttribute('aria-checked')).toBe('false');
+});
