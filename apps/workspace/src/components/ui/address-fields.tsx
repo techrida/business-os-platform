@@ -30,6 +30,8 @@ export interface AddressFieldsProps {
   labels?: { line?: string; city?: string; country?: string } | undefined;
   hints?: { line?: ReactNode; city?: ReactNode; country?: ReactNode } | undefined;
   disabled?: boolean | undefined;
+  /** Locks the Country alone (a record whose country may no longer change), leaving Address and City editable. */
+  countryDisabled?: boolean | undefined;
   className?: string | undefined;
 }
 
@@ -53,6 +55,7 @@ export function AddressFields({
   labels,
   hints,
   disabled,
+  countryDisabled,
   className,
 }: AddressFieldsProps) {
   const set = (patch: Partial<AddressValue>) => onChange({ ...value, ...patch });
@@ -109,7 +112,7 @@ export function AddressFields({
               aria-invalid={control['aria-invalid']}
               {...(name ? { name: `${name}.country` } : {})}
               required
-              disabled={disabled === true}
+              disabled={disabled === true || countryDisabled === true}
               value={value.country}
               onChange={(country) => set({ country })}
             />
