@@ -79,6 +79,7 @@ import {
   replaceLeadPhones,
   sameLeadPhones,
 } from './lead-phones';
+import { assertLinkableCustomer } from './lead-customer-link';
 import { LeadsCaller } from './leads.caller';
 import { LeadLostReasonsService, lostReasonRefs } from './lost-reasons.service';
 import {
@@ -338,6 +339,10 @@ export class LeadsService {
           );
         }
         await this.currencies.assertEnabled(scope, body.currency);
+        // R6O: a picked customer is linked; checked before the LD number is taken so a refusal uses up none.
+        if (body.customerId !== undefined) {
+          await assertLinkableCustomer(tx, scope, principal, body.customerId, body.contactId);
+        }
         const { number } = await this.numbering.issue(tx, LEAD_SERIES, now);
         const [row] = await tx
           .insert(leads)
@@ -350,6 +355,8 @@ export class LeadsService {
             ownerUserId,
             companyName: body.companyName,
             contactName: body.contactName,
+            customerId: body.customerId ?? null,
+            contactId: body.contactId ?? null,
             country: body.country,
             emailNorm: body.email === undefined ? null : body.email.trim().toLowerCase(),
             phonesSearch: phonesSearchText(body.phones),
