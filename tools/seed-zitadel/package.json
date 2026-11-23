@@ -2,6 +2,7 @@
   "name": "@bos/seed-zitadel",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Idempotent ZITADEL provisioning: project, roles, apps, orgs, personas and the k6 machine user.",
   "type": "module",
   "scripts": {

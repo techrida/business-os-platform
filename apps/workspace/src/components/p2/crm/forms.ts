@@ -185,6 +185,9 @@ const LEAD_MESSAGES: Record<string, string> = {
 
 /** `['followUp', 'dueAt']` belongs to the `followUpAt` input; the other follow-up keys add a prefix. */
 function leadKey(path: PropertyKey[]): string {
+  // A refused link is shown under the field it was picked in.
+  if (path[0] === 'customerId') return 'companyName';
+  if (path[0] === 'contactId') return 'contactName';
   if (path[0] === 'address') return `address.${String(path[1] ?? 'line')}`;
   if (path[0] !== 'followUp') return lastKey(path);
   const key = String(path[1] ?? 'dueAt');
@@ -271,6 +274,9 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
     ownerUserId: field(form, 'ownerUserId'),
     companyName: field(form, 'companyName'),
     contactName: field(form, 'contactName'),
+    // BOS-UI-002: posted only while a customer (and contact) picked from the combobox is linked.
+    customerId: field(form, 'customerId'),
+    contactId: field(form, 'contactId'),
     // The address block posts the country as `address.country`; older forms post `country`.
     country: field(form, 'address.country') ?? field(form, 'country'),
     address: leadAddress(form),

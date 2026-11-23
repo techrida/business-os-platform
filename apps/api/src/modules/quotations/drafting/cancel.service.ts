@@ -6,6 +6,9 @@
 //   quotation's owner, the same rule as editing it), and the quotation is read through scoped(), so another
 //   entity's quotation is a 404.
 //
+// A cancelled revision gives the version it replaced back (R6D): an Approved or Sent version that a revise made
+// Superseded returns to that status and becomes current again, for a caller who may revise. The Lost cascade does not.
+//
 // Which versions: the current one, while it is Draft, Returned or Submitted (canCancelQuotation). A Submitted
 // version's open approval request is cancelled first, with the same reason, so it leaves every inbox. An Approved
 // or Sent version is not cancelled here: it has been, or may be, shown to the customer.
@@ -47,7 +50,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
@@ -64,6 +67,7 @@ import { toQuotationVersionDto } from './mapping';
 export const CANCEL_CLOCK = Symbol('CANCEL_CLOCK');
 
 const CANCEL_ACTION: Permission = 'quotation.draft';
+const REVISE_ACTION: Permission = 'quotation.revise';
 const AUDIT_ENTITY = 'quotations';
 /** Approval request statuses that are still open, so a cancel must cancel them (ApprovalsService.cancel). */
 const OPEN_REQUEST = ['pending', 'blocked'];
@@ -221,6 +225,8 @@ export class CancelService {
       body.reason,
       now,
     );
+    // A revision that is cancelled hands the quotation back to the version it replaced (R6D restore).
+    await this.restoreReplaced(tx, scope, actor, quotation, old, body.reason, now);
 
     const lines = await tx
       .select()
@@ -351,6 +357,119 @@ export class CancelService {
       ...(meta === undefined ? {} : { meta }),
     });
     return { cancelled };
+  }
+
+  /**
+   * Cancelling an unsent revision (v2, a Draft, Returned or Submitted version) must not end the quotation: the
+   * version it replaced (v1, Approved or Sent before the revise made it Superseded) goes back to the status it had
+   * and becomes the quotation's current version again, so the customer can still accept it. Its previous status is
+   * read from its own history row (the revise wrote `from -> superseded`), so no new column is needed. Only the
+   * route does this: the Lost cascade ends the whole deal and restores nothing. A Rejected or Expired version was
+   * never superseded by its revision, so there is nothing to restore for it.
+   *
+   * Order matters: the cancelled draft has left the live set (one_live_version) before v1 re-enters it. The restored
+   * version keeps its valid-until date, so one that is already past it expires normally in the next sweep.
+   */
+  private async restoreReplaced(
+    tx: DbTransaction,
+    scope: TxScope,
+    actor: Actor,
+    quotation: typeof quotations.$inferSelect,
+    cancelledRevision: typeof quotationVersions.$inferSelect,
+    reason: string,
+    now: Date,
+  ): Promise<void> {
+    if (cancelledRevision.supersedesVersionId === null) return;
+    const [replaced] = await tx
+      .select()
+      .from(quotationVersions)
+      .where(
+        and(
+          eq(quotationVersions.tenantId, scope.tenantId),
+          eq(quotationVersions.id, cancelledRevision.supersedesVersionId),
+          eq(quotationVersions.quotationId, quotation.id),
+        ),
+      )
+      .for('update');
+    if (
+      replaced === undefined ||
+      replaced.status !== 'superseded' ||
+      replaced.supersededByVersionId !== cancelledRevision.id
+    ) {
+      return;
+    }
+    const [superseding] = await tx
+      .select({ fromStatus: quotationStatusHistory.fromStatus })
+      .from(quotationStatusHistory)
+      .where(
+        and(
+          eq(quotationStatusHistory.tenantId, scope.tenantId),
+          eq(quotationStatusHistory.versionId, replaced.id),
+          eq(quotationStatusHistory.toStatus, 'superseded'),
+        ),
+      )
+      .orderBy(desc(quotationStatusHistory.at), desc(quotationStatusHistory.id))
+      .limit(1);
+    const previous = superseding?.fromStatus;
+    if (previous !== 'approved' && previous !== 'sent') return;
+    // Putting an offer back in front of the customer is the undo of a revise, so it takes the same right: someone
+    // who may only edit drafts cancels the revision as before (the quotation ends) and reopens nothing.
+    try {
+      this.authz.assert(REVISE_ACTION, draftRefOf(quotation));
+    } catch (error) {
+      if (error instanceof ForbiddenException) return;
+      throw error;
+    }
+
+    const restored = await tx
+      .update(quotationVersions)
+      .set({
+        status: previous,
+        supersededByVersionId: null,
+        updatedAt: now,
+        version: sql`${quotationVersions.version} + 1`,
+      })
+      .where(
+        and(
+          eq(quotationVersions.tenantId, scope.tenantId),
+          eq(quotationVersions.id, replaced.id),
+          eq(quotationVersions.status, 'superseded'),
+        ),
+      )
+      .returning({ id: quotationVersions.id });
+    if (restored.length !== 1) throw changed();
+    await tx
+      .update(quotations)
+      .set({
+        currentVersionId: replaced.id,
+        updatedAt: now,
+        version: sql`${quotations.version} + 1`,
+      })
+      .where(and(eq(quotations.tenantId, scope.tenantId), eq(quotations.id, quotation.id)));
+    const note = `Revision ${cancelledRevision.revisionNo} cancelled: ${reason}`;
+    await tx.insert(quotationStatusHistory).values({
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      versionId: replaced.id,
+      fromStatus: 'superseded',
+      toStatus: previous,
+      actorId: actor.kind === 'user' ? actor.id : null,
+      reason: note,
+      at: now,
+    });
+    await this.audit.record(tx, {
+      action: 'quotation.restored',
+      entityType: AUDIT_ENTITY,
+      entityId: quotation.id,
+      before: { versionId: replaced.id, revisionNo: replaced.revisionNo, status: 'superseded' },
+      after: {
+        versionId: replaced.id,
+        revisionNo: replaced.revisionNo,
+        status: previous,
+        cancelledRevisionId: cancelledRevision.id,
+        reason,
+      },
+    });
   }
 
   /**

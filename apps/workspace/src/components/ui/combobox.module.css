@@ -17,6 +17,46 @@
   transition: border-color 120ms ease;
 }
 
+/* A closed member box: the real text stays (for reading and tests) but the overlay paints name and muted role. */
+.inputOverlaid {
+  color: transparent;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.overlayName {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--input-text);
+}
+
+.overlayRole {
+  flex: 0 100000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.input:disabled {
+  cursor: not-allowed;
+}
+
 .input::placeholder {
   color: var(--input-placeholder);
 }
@@ -155,4 +195,28 @@
   .option {
     min-height: 44px;
   }
+}
+
+/* Forced colours replace `color`, so the real text would show through the overlay: show only the real text. */
+@media (forced-colors: active) {
+  .inputOverlaid {
+    color: inherit;
+  }
+
+  .overlay {
+    display: none;
+  }
+}
+
+.withIcon {
+  padding-right: 40px;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 21px;
+  right: 12px;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  pointer-events: none;
 }
