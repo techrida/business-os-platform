@@ -295,3 +295,28 @@ it('stays usable when the search or the contacts list fails: only Create is offe
   expect(t.options()).toEqual(['Create "Himalayan"']);
   await t.unmount();
 });
+
+it('drops the customer and contact link when Create "<text>" is chosen on a linked field', async () => {
+  const t = await mountLead();
+  await linkCustomer(t);
+  await fill(t.contact(), 'Asha');
+  await click(document.querySelector<HTMLElement>('[role="option"]'));
+  const form = t.contact().closest('form')!;
+  expect(form.querySelector('input[name="contactId"]')).not.toBeNull();
+  await click(t.contact());
+  await fill(t.contact(), 'Asha Rai');
+  const create = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) =>
+    o.textContent?.startsWith('Create'),
+  );
+  await click(create ?? null);
+  expect(form.querySelector('input[name="contactId"]')).toBeNull();
+  expect(form.querySelector('input[name="customerId"]')).not.toBeNull();
+
+  await click(t.company());
+  const createCompany = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (o) => o.textContent?.startsWith('Create'),
+  );
+  await click(createCompany ?? null);
+  expect(form.querySelector('input[name="customerId"]')).toBeNull();
+  await t.unmount();
+});

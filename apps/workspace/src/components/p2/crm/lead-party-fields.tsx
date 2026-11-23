@@ -78,6 +78,7 @@ export function CompanyField({
     <>
       <Combobox
         id={control.id}
+        maxLength={200}
         name="companyName"
         labelledBy={control['aria-labelledby']}
         describedBy={control['aria-describedby']}
@@ -115,7 +116,14 @@ export function CompanyField({
         }}
         open={open}
         onOpenChange={setOpen}
-        addOption={{ always: true, label: createLabel, onAdd: () => undefined }}
+        addOption={{
+          always: true,
+          label: createLabel,
+          // Create "<text>" on a linked field means the text is a new name: drop the link.
+          onAdd: () => {
+            if (linkedCustomerId !== null) onUnlink();
+          },
+        }}
         emptyText="Type at least 3 letters to search customers and leads."
         noMatchText="No matching customer or lead."
         placeholder="Search a customer, or type a new company"
@@ -201,6 +209,7 @@ export function ContactField({
     <>
       <Combobox
         id={control.id}
+        maxLength={200}
         name="contactName"
         labelledBy={control['aria-labelledby']}
         describedBy={control['aria-describedby']}
@@ -226,7 +235,13 @@ export function ContactField({
         }}
         open={open}
         onOpenChange={setOpen}
-        addOption={{ always: true, label: createLabel, onAdd: () => undefined }}
+        addOption={{
+          always: true,
+          label: createLabel,
+          onAdd: () => {
+            if (linkedContactId !== null) onUnlink();
+          },
+        }}
         emptyText="This customer has no contacts yet. Type a new name."
         noMatchText="No matching contact."
         placeholder="Search this customer's contacts, or type a new name"

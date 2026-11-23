@@ -147,7 +147,6 @@ export class LeadDuplicatesService {
       return found
         .map((m, i) => ({ m, i }))
         .sort((a, b) => b.m.matchedOn.length - a.m.matchedOn.length || a.i - b.i)
-        .slice(0, LEAD_DUPLICATE_LIMIT)
         .map(({ m }) => m);
     });
   }
