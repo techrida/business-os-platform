@@ -3,8 +3,6 @@
 // that carries a search icon inside on the right.
 import type { ReactNode } from 'react';
 
-import { Icon } from '@/components/ui/icon';
-
 import { CONVERT_STEPS, type ConvertStep } from './convert-model';
 import styles from './convert-dialog.module.css';
 
@@ -38,15 +36,5 @@ export function OptionalLabel({ children }: { children: ReactNode }) {
       <span>{children}</span>
       <span className={styles.optional}>Optional</span>
     </span>
-  );
-}
-
-/** Wraps a searching combobox with the search icon inside, on the right (UIP-FORM-009). */
-export function SearchBox({ children }: { children: ReactNode }) {
-  return (
-    <div className={styles.searchBox}>
-      {children}
-      <Icon name="search" size={20} className={styles.searchIcon} />
-    </div>
   );
 }
