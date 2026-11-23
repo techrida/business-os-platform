@@ -453,6 +453,43 @@ describe('create a customer and read it back', () => {
     }
   });
 
+  it("sends the primary contact's primary phone on each row of the list, and null without one (R6A, D8)", async () => {
+    const tag = randomUUID().slice(0, 6);
+    const withPhone = await createCustomer({
+      legalName: `Phone Row ${tag} Pvt Ltd`,
+      contact: {
+        ...firstContact(),
+        phones: [
+          { ...usWork, isPrimary: false },
+          { ...npMobile, isPrimary: true },
+        ],
+      },
+    });
+    // A second, non-primary contact's number is never the customer's number.
+    const second = await request(baseUrl)
+      .post(`/v1/customers/${withPhone.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({
+        fullName: 'Second Contact',
+        country: 'NP',
+        isPrimary: false,
+        phones: [{ country: 'IN', e164: '+919812345678', isPrimary: true }],
+      });
+    expect(second.status, JSON.stringify(second.body)).toBe(201);
+    const none = await createCustomer({ legalName: `Phone Row ${tag} None Pvt Ltd` });
+    const res = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Phone Row ${tag}` });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = (res.body as { items: Record<string, unknown>[] }).items;
+    const byId = new Map(items.map((c) => [c.id, c]));
+    expect(byId.get(withPhone.id)).toMatchObject({
+      primaryPhone: { country: 'NP', e164: '+9779812345678', label: 'mobile', isPrimary: true },
+    });
+    expect(byId.get(none.id)).toMatchObject({ primaryPhone: null });
+    for (const item of items) expect(CustomerDtoSchema.parse(item)).toBeDefined();
+  });
+
   it('is a 400 without an Idempotency-Key and for a body that breaks the contract', async () => {
     const missing = await request(baseUrl).post('/v1/customers').send(customerBody());
     expect(missing.status).toBe(400);
