@@ -60,7 +60,7 @@ for (const entry of list) for (const k of ['password','totpSecret']) if (typeof 
 end
 
 step "start api, worker, workspace (devtools build), portal"
-set -a; source .env; source .dev/zitadel.env; [ -f .dev/zitadel-portal.env ] && source .dev/zitadel-portal.env; set +a
+set -a; source .env; source .dev/zitadel.env; set +a
 export NEXT_TELEMETRY_DISABLED=1 NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt"
 export BOS_DEV_PERSONAS_FILE="$PWD/.dev/personas.json" BOS_DEV_LOGIN_CLIENT_TOKEN_FILE="$PWD/.dev/login-client.pat"
 export SMTP_URL=smtp://127.0.0.1:1025 FILES_ROOT="$PWD/.dev/files" CLAMD_HOST=127.0.0.1 CLAMD_PORT=3310
@@ -87,7 +87,7 @@ wait $wbuild || { tail -60 .dev/logs/workspace-build.log; exit 1; }
 wait $pbuild || { tail -60 .dev/logs/portal-build.log; exit 1; }
 lap "next builds done"
 (cd apps/workspace && NODE_ENV=production BOS_BUILD_PROFILE=dev node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3000 > ../../.dev/logs/workspace.log 2>&1 &)
-(cd apps/portal && NODE_ENV=production SESSION_ENC_KEY="$PORTAL_SESSION_ENC_KEY" SESSION_ENC_KEY_ID="$PORTAL_SESSION_ENC_KEY_ID" \
+(cd apps/portal && set -a && { [ ! -f ../../.dev/zitadel-portal.env ] || source ../../.dev/zitadel-portal.env; } && set +a && NODE_ENV=production SESSION_ENC_KEY="$PORTAL_SESSION_ENC_KEY" SESSION_ENC_KEY_ID="$PORTAL_SESSION_ENC_KEY_ID" \
   OIDC_REDIRECT_URI="$PORTAL_PUBLIC_URL/auth/callback" node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3002 > ../../.dev/logs/portal.log 2>&1 &)
 for host in app portal; do
   path=/healthz; [ "$host" = portal ] && path=/healthz
