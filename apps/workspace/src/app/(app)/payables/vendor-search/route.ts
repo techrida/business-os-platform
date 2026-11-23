@@ -22,6 +22,6 @@ export async function GET(req: Request): Promise<Response> {
     const result = await listVendors(session, { limit: VENDOR_SEARCH_LIMIT, offset: 0, q });
     return jsonResponse({ vendors: result.items.map(vendorOption) });
   } catch (err) {
-    return errorResponse(err, 'load');
+    return errorResponse(err);
   }
 }
