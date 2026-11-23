@@ -414,9 +414,9 @@ describe('a pending_kyc vendor (done check 13)', () => {
         ),
     );
     expect(reuse).toBeInstanceOf(ConflictException);
-    expect(reuse!.getResponse()).toMatchObject({
-      message: expect.stringMatching(/before the details changed/),
-    });
+    expect((reuse!.getResponse() as { message: string }).message).toMatch(
+      /before the details changed/,
+    );
     const after = await kycFile(v);
     const receipt = await as(v, (who) =>
       service.submitKycDocument(

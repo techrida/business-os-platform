@@ -1747,10 +1747,9 @@ describe('R6AE: a customer identity edit locks after approval and resets the rev
           (e: unknown) => e as ConflictException,
         );
       expect(err, JSON.stringify(fields)).toBeInstanceOf(ConflictException);
-      expect(err!.getResponse()).toMatchObject({
-        code: 'customer_identity_locked',
-        message: expect.stringMatching(/of a verified customer cannot be edited$/),
-      });
+      const response = err!.getResponse() as { code: string; message: string };
+      expect(response.code).toBe('customer_identity_locked');
+      expect(response.message).toMatch(/of a verified customer cannot be edited$/);
     }
     expect((await getCase(caseId)).status).toBe('approved');
     expect(await customerVersion(partyId)).toBe(version);
@@ -1776,7 +1775,8 @@ describe('R6AE: a customer identity edit locks after approval and resets the rev
     expect(c.status).toBe('draft');
     expect(c.checklist.every((i) => i.status === 'missing' && i.documentId === null)).toBe(true);
     expect(c.reviewRound).toBe((submitted.reviewRound ?? 0) + 1);
-    expect(c.identityReset).toMatchObject({ by: U.founder, byName: expect.any(String) });
+    expect(c.identityReset?.by).toBe(U.founder);
+    expect(typeof c.identityReset?.byName).toBe('string');
     expect([...(c.beforeChangeDocumentIds ?? [])].sort()).toEqual([...oldDocs].sort());
     // The files stay on the case as history.
     expect(c.looseEvidence?.map((v) => v.documentId).sort()).toEqual([...oldDocs].sort());
