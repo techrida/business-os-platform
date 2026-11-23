@@ -1,7 +1,7 @@
 import { CreditHoldDtoSchema, OpportunityDtoSchema } from '@bos/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { confirmOrderAction, draftInvoiceAction, markBillableAction } from './actions';
+import { confirmDraftAction, confirmOrderAction, draftInvoiceAction, markBillableAction } from './actions';
 import { IDS, invoiceDetail, salesOrderDetail, scheduleLine } from './fixtures';
 import type { ActionState } from './state';
 
@@ -120,6 +120,20 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   mocks.apiFetch.mockImplementation(() => answer(200, salesOrderDetail()));
+});
+
+describe('confirmDraftAction', () => {
+  it('answers done instead of redirecting to the page the draft is already on (focus fell to <body>)', async () => {
+    const state = await confirmDraftAction(prev, confirmForm());
+    expect(state).toEqual({ key: KEY, done: true });
+    expect(call()[1]).toBe('/v1/sales-orders');
+  });
+
+  it('keeps the refusals of confirmOrderAction', async () => {
+    const state = await confirmDraftAction(prev, confirmForm({ quotationVersionId: '' }));
+    expect(state.done).toBeUndefined();
+    expect(state.errors).toBeDefined();
+  });
 });
 
 describe('confirmOrderAction', () => {
