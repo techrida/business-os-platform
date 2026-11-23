@@ -562,7 +562,10 @@ describe('vendor detail', () => {
     api.getVendor.mockResolvedValue(vendor({ status: 'pending_kyc' }));
     const out = await detail();
     expect(out).toContain('Grant portal access');
-    expect(out).toContain('No Mail (no email)');
+    // The contact is picked in a search box (a combobox posting `contactId`), not a plain select; the options (and
+    // "No Mail" without an email) are covered in panel-forms.portal.test.tsx.
+    expect(out).toContain('placeholder="Search by name or email"');
+    expect(out).toContain('name="contactId"');
     // The contact's primary number, in the print format; the other number stays off the table.
     expect(out).toContain('href="tel:+14155552671"');
     expect(out).toContain(formatPartyPhoneForPrint('+14155552671'));
