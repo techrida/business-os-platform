@@ -69,7 +69,7 @@ import { nameIn, personLabel, personNameMap, personNames } from '../../platform/
 import { roleLines } from '../../platform/users/person-role';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { customerHasPortalUser, firstAdminRule } from '../portal-access/first-admin';
-import { loadContactPhones, replaceContactPhones } from './contact-phones';
+import { loadContactPhones, loadPrimaryPhones, replaceContactPhones } from './contact-phones';
 import { customerVisibleWhere } from './customer-read-scope';
 import { CustomersCaller } from './customers.caller';
 import {
@@ -347,8 +347,18 @@ export class CustomersService {
       scope.tenantId,
       rows.map((r) => r.ownerUserId),
     );
+    // R6A (D8): the primary contact's primary number, one query for the page.
+    const phones = await loadPrimaryPhones(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.id),
+    );
     return {
-      items: rows.map((r) => ({ ...toCustomerDto(r), ownerName: nameIn(names, r.ownerUserId) })),
+      items: rows.map((r) => ({
+        ...toCustomerDto(r),
+        ownerName: nameIn(names, r.ownerUserId),
+        primaryPhone: phones.get(r.id) ?? null,
+      })),
       total,
     };
   }

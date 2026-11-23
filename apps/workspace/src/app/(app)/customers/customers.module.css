@@ -118,8 +118,24 @@
   font-size: var(--font-size-caption);
 }
 
+/* R6A (D8): the primary phone is its own column on a wide screen and sits under the name on a narrow one. */
+.phoneUnderName {
+  display: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
 @media (max-width: 1023.98px) {
   .directory .table td {
     height: 72px;
+  }
+
+  .directory .table .phoneColumn {
+    display: none;
+  }
+
+  .phoneUnderName {
+    display: block;
   }
 }
