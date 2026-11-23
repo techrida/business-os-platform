@@ -9,7 +9,7 @@ import { z } from 'zod';
 export const LEAD_DUPLICATE_MIN_LENGTH = 3;
 /** A phone needs at least this many digits; the last 7 to 10 digits are compared. */
 export const LEAD_DUPLICATE_MIN_PHONE_DIGITS = 7;
-/** The most matches one answer holds. */
+/** The most matches of ONE kind (customers, leads) one answer holds; an answer holds at most twice this. */
 export const LEAD_DUPLICATE_LIMIT = 5;
 
 export const LEAD_DUPLICATE_FIELDS = ['company', 'name', 'email', 'phone'] as const;
@@ -39,6 +39,6 @@ export const LeadDuplicateMatchSchema = z.object({
 export type LeadDuplicateMatch = z.infer<typeof LeadDuplicateMatchSchema>;
 
 export const LeadDuplicatesResponseSchema = z.object({
-  matches: z.array(LeadDuplicateMatchSchema).max(LEAD_DUPLICATE_LIMIT),
+  matches: z.array(LeadDuplicateMatchSchema).max(LEAD_DUPLICATE_LIMIT * 2),
 });
 export type LeadDuplicatesResponse = z.infer<typeof LeadDuplicatesResponseSchema>;

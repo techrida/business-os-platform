@@ -69,6 +69,7 @@ export interface ComboboxProps {
   invalid?: boolean;
   /** The input's id, so a visible `<label for>` reaches it (clicking the label focuses the box). */
   id?: string;
+  maxLength?: number;
   /** The input's form field name. Only a free-text field (`inputValue`) posts its text this way. */
   name?: string;
   /** Keep the options in the order given instead of sorting them by name. */
@@ -125,6 +126,7 @@ export function Combobox({
   required,
   invalid,
   id,
+  maxLength,
   name,
   keepOrder = false,
   addOption,
@@ -318,6 +320,7 @@ export function Combobox({
         ref={internalInputRef}
         type="text"
         id={id}
+        maxLength={maxLength}
         name={freeText ? name : undefined}
         role="combobox"
         className={styles.input}
