@@ -254,7 +254,10 @@ it('while Keep locked is in flight every button is off, so Unlock cannot also be
   }
   await click(buttonNamed(dialog!, 'Unlock'));
   expect(actions.changeUserStatusAction).toHaveBeenCalledTimes(1);
-  await act(async () => finish({ status: 'ok', message: 'Locked' }));
+  await act(() => {
+    finish({ status: 'ok', message: 'Locked' });
+    return Promise.resolve();
+  });
   expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
 });
 
