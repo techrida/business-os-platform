@@ -30,8 +30,7 @@ import { type TxScope, requestTx, withTx } from '../db/tx';
 import { nudgeWithin } from '../queue/nudge-timeout';
 import { ctx } from '../tenancy/request-context';
 import { OUTBOX_DRAIN_JOB, OUTBOX_QUEUE } from './notify.constants';
-import { brandingFromProfile } from '../settings/company-branding';
-import { readSetting } from '../settings/settings.service';
+import { readBranding } from '../settings/company-branding';
 import { type EmailLogo, type EmailTemplate, renderEmail } from './templates';
 
 export interface NotifyInput {
@@ -277,7 +276,6 @@ export class NotifyService {
   }
 }
 
-/** The scope withTx set on this transaction. Empty means the transaction was not opened with withTx. */
 /**
  * The company logo and name for the email, read on the caller's own transaction (a pooled read while the transaction
  * holds a connection can stall the pool). A profile that does not validate gives no logo, never a failure.
@@ -286,11 +284,11 @@ async function brandOf(
   tx: DbTransaction,
   scope: TxScope,
 ): Promise<{ logo: EmailLogo | null; companyName: string | null }> {
-  const { value } = await readSetting(tx, scope, 'entity.profile');
-  const { logo, displayName } = brandingFromProfile(scope.tenantId, value);
-  return { logo, companyName: displayName };
+  const { logo, displayName } = await readBranding(tx, scope);
+  return { logo: logo === null ? null : { tenantId: logo.tenantId }, companyName: displayName };
 }
 
+/** The scope withTx set on this transaction. Empty means the transaction was not opened with withTx. */
 async function scopeOf(tx: DbTransaction): Promise<TxScope> {
   const result = await tx.execute<{ tenant_id: string | null; organization_id: string | null }>(
     sql`SELECT current_setting('bos.tenant_id', true) AS tenant_id,

@@ -24,28 +24,34 @@ export async function getBranding(session: Session): Promise<Branding | null> {
   }
 }
 
-/** The same-origin address an `<img>` uses for the logo (the proxy at `/brand/logo/:tenantId/:documentId`). */
+/** The same-origin address an `<img>` uses for the logo (the proxy at `/brand/logo/:tenantId`, always the current logo). */
 export function logoSrc(branding: Branding | null): string | null {
-  return branding?.logo
-    ? `/brand/logo/${encodeURIComponent(branding.logo.tenantId)}/${encodeURIComponent(branding.logo.documentId)}`
-    : null;
+  return branding?.logo ? `/brand/logo/${encodeURIComponent(branding.logo.tenantId)}` : null;
 }
 
 /**
- * `GET /v1/public/logo/:tenantId/:documentId` with no token: the API serves the company logo and nothing else to
- * anyone. The ids are encoded path segments on a fixed path under API_INTERNAL_URL, so the request cannot leave it.
+ * The longest the anonymous logo fetch may wait for the API to START answering (response headers). The proxy has no
+ * session and no caller who can wait: a slow API must not hold a request open, so a logo not started in this time is a
+ * 404 and the header shows the company name. The timer stops once headers arrive, so a slow reader downloading the
+ * body is never cut off mid-image.
  */
-export async function openPublicLogo(
-  tenantId: string,
-  documentId: string,
-  ifNoneMatch?: string,
-): Promise<Response> {
-  const url = new URL(
-    `/v1/public/logo/${encodeURIComponent(tenantId)}/${encodeURIComponent(documentId)}`,
-    getEnv().API_INTERNAL_URL,
-  );
-  return await fetch(url, {
-    cache: 'no-store',
-    ...(ifNoneMatch === undefined ? {} : { headers: { 'if-none-match': ifNoneMatch } }),
-  });
+export const PUBLIC_LOGO_TIMEOUT_MS = 5000;
+
+/**
+ * `GET /v1/public/logo/:tenantId` with no token: the API serves the company's current logo and nothing else to
+ * anyone. The id is an encoded path segment on a fixed path under API_INTERNAL_URL, so the request cannot leave it.
+ */
+export async function openPublicLogo(tenantId: string, ifNoneMatch?: string): Promise<Response> {
+  const url = new URL(`/v1/public/logo/${encodeURIComponent(tenantId)}`, getEnv().API_INTERNAL_URL);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PUBLIC_LOGO_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      cache: 'no-store',
+      signal: controller.signal,
+      ...(ifNoneMatch === undefined ? {} : { headers: { 'if-none-match': ifNoneMatch } }),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }

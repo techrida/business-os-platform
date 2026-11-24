@@ -38,6 +38,7 @@ import { Readable } from 'node:stream';
 
 import {
   ALLOWED_MIME,
+  CompanyProfileSchema,
   CreateDocumentBodySchema,
   IMAGE_MIME,
   isImageOwnerType,
@@ -67,6 +68,7 @@ import type { Queue } from 'bullmq';
 import { z } from 'zod';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
+import { readDefaultEntityProfile } from '../settings/company-branding';
 import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
 import type { Principal, ResourceRef } from '../authz/can';
 import { queueCallWithin } from '../queue/nudge-timeout';
@@ -1339,26 +1341,27 @@ export class DocumentsService {
 
   // ------------------------------------------------------------------------------------ internals
 
-  /** Signs a link to one version. Fails closed: no secret means no links, never an unsigned one. */
   /**
-   * The bytes of a company logo for a caller with no session (R6Q20: the portal's and the workspace's header, and
-   * emails). It serves one thing only: the live `entity_logo` document of `tenantId` (never a variant, a picture,
-   * an avatar or any other file), as its newest clean version in PNG, JPEG or WebP. The tenant in the path must be
-   * the document's own tenant, so a logo id under another tenant's id is as unknown as a random id; the entity is
-   * not named because the tenant's logo is a public face of the tenant. Every refusal is the one IMAGE_NOT_FOUND 404.
+   * The bytes of the company logo for a caller with no session (R6Q20: the portal's and the workspace's header, and
+   * emails). The address names only the tenant (its stable public handle); what is served is the logo the tenant's
+   * default entity has set in its company profile now (`entity.profile`.logoDocumentId), so a replaced logo shows
+   * in emails sent long ago and an uploaded-but-not-applied or older logo is never public. It serves that one
+   * `entity_logo` document (never a variant, a picture, an avatar or any other file) as its newest version, which
+   * must be clean and a PNG, JPEG or WebP: the same rule as `openImage`, so a replacement still being scanned
+   * answers 404 rather than the clean version before it. Every refusal is the one IMAGE_NOT_FOUND 404.
    */
-  async openPublicLogo(
-    tenantId: string,
-    documentId: string,
-    ifNoneMatch?: string,
-  ): Promise<ImageHandle> {
-    if (!Id.safeParse(tenantId).success || !Id.safeParse(documentId).success) {
-      throw new NotFoundException(IMAGE_NOT_FOUND);
-    }
+  async openPublicLogo(tenantId: string, ifNoneMatch?: string): Promise<ImageHandle> {
+    if (!Id.safeParse(tenantId).success) throw new NotFoundException(IMAGE_NOT_FOUND);
+    const entity = await readDefaultEntityProfile(this.db, tenantId);
+    if (entity === null) throw new NotFoundException(IMAGE_NOT_FOUND);
+    const profile = CompanyProfileSchema.safeParse(entity.profile);
+    const documentId = profile.success ? profile.data.logoDocumentId : null;
+    if (documentId === null) throw new NotFoundException(IMAGE_NOT_FOUND);
     const [row] = await this.db
       .select({
         ownerType: documents.ownerType,
         tenantId: documents.tenantId,
+        organizationId: documents.organizationId,
         removedAt: documents.removedAt,
         version: documentVersions,
       })
@@ -1368,10 +1371,10 @@ export class DocumentsService {
         and(
           eq(documents.tenantId, tenantId),
           eq(documentVersions.tenantId, tenantId),
+          eq(documentVersions.organizationId, entity.organizationId),
           eq(documents.id, documentId),
           eq(documents.ownerType, 'entity_logo'),
           isNull(documents.removedAt),
-          eq(documentVersions.status, 'clean'),
         ),
       )
       .orderBy(desc(documentVersions.version))
@@ -1380,6 +1383,7 @@ export class DocumentsService {
     if (
       row === undefined ||
       row.tenantId !== tenantId ||
+      row.organizationId !== entity.organizationId ||
       row.ownerType !== 'entity_logo' ||
       row.removedAt !== null ||
       row.version.status !== 'clean' ||
@@ -1405,6 +1409,7 @@ export class DocumentsService {
     }
   }
 
+  /** Signs a link to one version. Fails closed: no secret means no links, never an unsigned one. */
   private signLink(versionId: string): SignedLinkDto {
     try {
       const { token, expiresAt } = this.links.issue(versionId);

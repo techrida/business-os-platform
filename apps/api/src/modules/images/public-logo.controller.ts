@@ -1,9 +1,9 @@
 // The company logo for a reader with no session (R6Q20): the workspace and portal headers (through their same-origin
 // proxies) and emails. Public on purpose and read-only: it can answer one kind of file, the live entity logo of the
 // tenant named in the path, and nothing else (DocumentsService.openPublicLogo). It must not call ctx(): there is no
-// identity here. The tenant id in the path is the tenant's public handle and the document id is an unguessable uuid;
-// both must match the stored row, so a wrong pair is the same 404 as an unknown logo.
-//   GET /v1/public/logo/:tenantId/:documentId -> the bytes (inline, never sniffed), or 304 for a matching If-None-Match
+// identity here. The tenant id in the path is the tenant's public handle; what it serves is the logo the company
+// profile names now, so the address never changes when the logo does and an old or unapplied logo is never public.
+//   GET /v1/public/logo/:tenantId -> the bytes (inline, never sniffed), or 304 for a matching If-None-Match
 import { pipeline } from 'node:stream/promises';
 
 import { Controller, Get, Param, Req, Res } from '@nestjs/common';
@@ -13,8 +13,9 @@ import { Public } from '../../platform/auth/public.decorator';
 import { DocumentsService } from '../../platform/documents/documents.service';
 
 /**
- * Anyone may cache the logo, but only for five minutes: the bytes of a version never change, yet a removed or
- * replaced logo stops being served on the next revalidation, so a logo someone took down is gone within that time.
+ * Anyone may cache the logo, but only for five minutes: the address is stable while the logo behind it changes, so a
+ * replaced or removed logo shows on the next revalidation (the ETag is the current version's id, so an unchanged
+ * logo is a 304 with no body).
  */
 export const PUBLIC_LOGO_CACHE_CONTROL = 'public, max-age=300';
 
@@ -22,18 +23,16 @@ export const PUBLIC_LOGO_CACHE_CONTROL = 'public, max-age=300';
 export class PublicLogoController {
   constructor(private readonly docs: DocumentsService) {}
 
-  @Get(':tenantId/:documentId')
+  @Get(':tenantId')
   @Public()
   async open(
     @Param('tenantId') tenantId: string,
-    @Param('documentId') documentId: string,
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
     const ifNoneMatch = req.headers['if-none-match'];
     const image = await this.docs.openPublicLogo(
       tenantId,
-      documentId,
       Array.isArray(ifNoneMatch) ? ifNoneMatch.join(', ') : ifNoneMatch,
     );
     res.set({

@@ -24,6 +24,23 @@
 	}
 }
 
+# The anonymous logo paths (R6Q20b): /brand/logo/* on the two web apps and /v1/public/* on the API answer anyone with
+# no session, so they get tight limits. A GET has no body, so a body over 1 KB is junk; a dial over 3 s or an answer
+# that has not started within 8 s is cut (the app's own proxy gives up after 5 s). Same retry and keepalive settings as
+# node_upstream (a second `transport` block cannot be imported next to it, so they are repeated here).
+# Rate limiting is NOT done here: it needs the third-party caddy-ratelimit module, which the stock caddy image
+# (infra/compose/compose.yaml) does not contain. Adding it means building a custom image; until then the 5-minute
+# public cache on the logo and the proxy timeout are the limits.
+(node_upstream_anonymous) {
+	lb_retries 1
+	lb_try_duration 3s
+	transport http {
+		keepalive 3s
+		dial_timeout 3s
+		response_header_timeout 8s
+	}
+}
+
 # ZITADEL: API (gRPC, Connect, OIDC) on h2c plus the Login V2 UI, same routing as ZITADEL's official compose.
 {$AUTH_HOST:auth.localhost} {
 	import site_tls
@@ -61,6 +78,16 @@
 # Workspace (Next.js staff app)
 {$APP_HOST:app.localhost} {
 	import site_tls
+
+	handle /brand/logo/* {
+		request_body {
+			max_size 1KB
+		}
+		reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000} {
+			import node_upstream_anonymous
+		}
+	}
+
 	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000} {
 		import node_upstream
 	}
@@ -70,6 +97,16 @@
 # frame-deny) come from the app's own next.config.ts, and the login limiter is in the app too.
 {$PORTAL_HOST:portal.localhost} {
 	import site_tls
+
+	handle /brand/logo/* {
+		request_body {
+			max_size 1KB
+		}
+		reverse_proxy {$PORTAL_UPSTREAM:portal:3000} {
+			import node_upstream_anonymous
+		}
+	}
+
 	reverse_proxy {$PORTAL_UPSTREAM:portal:3000} {
 		import node_upstream
 	}
@@ -82,6 +119,16 @@
 	@metrics path /metrics /metrics/*
 	handle @metrics {
 		respond 404
+	}
+
+	handle /v1/public/* {
+		request_body {
+			max_size 1KB
+		}
+		reverse_proxy {$API_UPSTREAM:api:3001} {
+			header_up X-Request-Id {http.request.uuid}
+			import node_upstream_anonymous
+		}
 	}
 
 	handle {
