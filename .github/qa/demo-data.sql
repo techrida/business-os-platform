@@ -43,8 +43,16 @@ SELECT set_config('bos.actor_id', 'p4-qa-fixture-procurement', true);
 DO $fixture$
 DECLARE
   v_tenant uuid; v_org uuid; v_dept uuid; v_cc uuid; v_proc uuid; v_vendor uuid; v_vat uuid;
-  v_pr1 uuid := gen_random_uuid(); v_pr2 uuid := gen_random_uuid(); v_pr3 uuid := gen_random_uuid(); v_pr4 uuid := gen_random_uuid(); v_po2 uuid := gen_random_uuid();
-  v_rfq uuid := gen_random_uuid(); v_po uuid := gen_random_uuid();
+  -- Each marker row is looked up by its number and made only when it is missing, so a stack that holds some of them
+  -- (an older run that stopped part way, or an older version of this file) gets the rest instead of none.
+  v_nums text[] := ARRAY['PR-QA-1', 'PR-QA-2', 'PR-QA-3', 'PR-QA-4'];
+  v_pr uuid[] := ARRAY[NULL, NULL, NULL, NULL]::uuid[];
+  v_new boolean[] := ARRAY[false, false, false, false];
+  v_status text[] := ARRAY['approved', 'approved', 'dept_approved', 'approved'];
+  v_total numeric[] := ARRAY[50000.00, 79646.02, 48000.00, 5000.00];
+  v_why text[] := ARRAY['office chairs', 'laptops', 'monitors', 'keyboards'];
+  v_po1 uuid; v_po2 uuid; v_rfq uuid; v_found uuid;
+  i int;
 BEGIN
   SELECT o.tenant_id, o.id INTO v_tenant, v_org FROM app.organizations o WHERE o.legal_name = 'Techrida Pvt. Ltd.';
   SELECT id INTO v_dept FROM app.departments WHERE organization_id = v_org AND status = 'active' AND lower(btrim(name)) = 'operations';
@@ -57,44 +65,63 @@ BEGIN
     RAISE NOTICE 'procurement fixture skipped: seed rows missing (org %, dept %, cost centre %, procurement user %, vendor %, VAT %)', v_org, v_dept, v_cc, v_proc, v_vendor, v_vat;
     RETURN;
   END IF;
-  IF EXISTS (SELECT 1 FROM app.purchase_requests WHERE organization_id = v_org AND number = 'PR-QA-1') THEN RETURN; END IF;
 
-  INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id, requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
-  VALUES (v_pr1, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: office chairs', '2030-12-01', 'QA-1', 'NPR'),
-         (v_pr2, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: laptops', '2030-12-01', 'QA-2', 'NPR'),
-         (v_pr3, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: monitors', '2030-12-01', 'QA-3', 'NPR'),
-         (v_pr4, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: keyboards', '2030-12-01', 'QA-4', 'NPR');
+  FOR i IN 1..4 LOOP
+    v_found := NULL;
+    SELECT id INTO v_found FROM app.purchase_requests WHERE organization_id = v_org AND number = v_nums[i];
+    IF v_found IS NULL THEN v_pr[i] := gen_random_uuid(); v_new[i] := true; ELSE v_pr[i] := v_found; END IF;
+  END LOOP;
+  SELECT id INTO v_rfq FROM app.rfqs WHERE organization_id = v_org AND number = 'RFQ-QA-1';
+  SELECT id INTO v_po1 FROM app.purchase_orders WHERE organization_id = v_org AND number = 'PO-QA-1';
+  SELECT id INTO v_po2 FROM app.purchase_orders WHERE organization_id = v_org AND number = 'PO-QA-2';
+
+  FOR i IN 1..4 LOOP
+    CONTINUE WHEN NOT v_new[i];
+    INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id, requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
+    VALUES (v_pr[i], v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: ' || v_why[i], '2030-12-01', 'QA-' || i, 'NPR');
+  END LOOP;
   INSERT INTO app.purchase_request_lines (tenant_id, organization_id, purchase_request_id, line_no, description, uom, quantity, estimated_unit_price, estimated_amount)
-  VALUES (v_tenant, v_org, v_pr1, 1, 'Office chair', 'pcs', 10, 4500, 45000),
-         (v_tenant, v_org, v_pr1, 2, 'Desk', 'pcs', 2, 2500, 5000),
-         (v_tenant, v_org, v_pr2, 1, 'Laptop', 'pcs', 1, 79646.02, 79646.02),
-         (v_tenant, v_org, v_pr3, 1, 'Monitor', 'pcs', 4, 12000, 48000),
-         (v_tenant, v_org, v_pr4, 1, 'Keyboard', 'pcs', 1, 5000, 5000);
+  SELECT v_tenant, v_org, v_pr[l.pr], l.line_no, l.description, 'pcs', l.quantity, l.unit_price, l.amount
+    FROM (VALUES (1, 1, 'Office chair', 10, 4500, 45000), (1, 2, 'Desk', 2, 2500, 5000), (2, 1, 'Laptop', 1, 79646.02, 79646.02),
+                 (3, 1, 'Monitor', 4, 12000, 48000), (4, 1, 'Keyboard', 1, 5000, 5000)) AS l(pr, line_no, description, quantity, unit_price, amount)
+   WHERE v_new[l.pr];
 
   -- Lines first: an approved request's lines are frozen.
-  UPDATE app.purchase_requests SET status = CASE WHEN id = v_pr3 THEN 'dept_approved' ELSE 'approved' END, fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 WHEN v_pr4 THEN 5000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 WHEN v_pr4 THEN 5000.00 ELSE 79646.02 END,
-         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' WHEN v_pr3 THEN 'PR-QA-3' WHEN v_pr4 THEN 'PR-QA-4' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2, v_pr3, v_pr4);
+  FOR i IN 1..4 LOOP
+    CONTINUE WHEN NOT v_new[i];
+    UPDATE app.purchase_requests SET status = v_status[i], fx_rate = 1, estimated_total = v_total[i], estimated_total_npr = v_total[i], number = v_nums[i]
+     WHERE id = v_pr[i];
+  END LOOP;
 
-  INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, created_by)
-  VALUES (v_rfq, v_tenant, v_org, v_pr1, 'RFQ-QA-1', '2030-12-15T00:00:00Z', v_proc);
+  IF v_rfq IS NULL THEN
+    v_rfq := gen_random_uuid();
+    INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, created_by)
+    VALUES (v_rfq, v_tenant, v_org, v_pr[1], 'RFQ-QA-1', '2030-12-15T00:00:00Z', v_proc);
+  END IF;
   INSERT INTO app.rfq_vendors (tenant_id, organization_id, rfq_id, vendor_id, invited_by)
-  VALUES (v_tenant, v_org, v_rfq, v_vendor, v_proc);
+  SELECT v_tenant, v_org, v_rfq, v_vendor, v_proc
+   WHERE NOT EXISTS (SELECT 1 FROM app.rfq_vendors rv WHERE rv.rfq_id = v_rfq AND rv.vendor_id = v_vendor);
 
-  INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year, purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate, approved_total_npr, approved_band, created_by)
-  VALUES (v_po, v_tenant, v_org, 'PO-QA-1', 900001, '2082/83', v_pr2, v_vendor, 'NPR', 30, '90000.00', 1, '90000.00', 'base', v_proc);
-  INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
-  VALUES (v_tenant, v_org, v_po, v_pr2, 1, 'goods', 'Laptop', 'pcs', '1', '79646.02', v_vat, '79646.02', '10353.98', '90000.00');
+  IF v_po1 IS NULL THEN
+    v_po1 := gen_random_uuid();
+    INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year, purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate, approved_total_npr, approved_band, created_by)
+    VALUES (v_po1, v_tenant, v_org, 'PO-QA-1', 900001, '2082/83', v_pr[2], v_vendor, 'NPR', 30, '90000.00', 1, '90000.00', 'base', v_proc);
+    INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
+    VALUES (v_tenant, v_org, v_po1, v_pr[2], 1, 'goods', 'Laptop', 'pcs', '1', '79646.02', v_vat, '79646.02', '10353.98', '90000.00');
+  END IF;
   -- A second, draft order of the same vendor: the vendor portal must not show a draft ("foreign" id for its specs).
-  INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year, purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate, approved_total_npr, approved_band, created_by)
-  VALUES (v_po2, v_tenant, v_org, 'PO-QA-2', 900002, '2082/83', v_pr4, v_vendor, 'NPR', 30, '5650.00', 1, '5650.00', 'base', v_proc);
-  INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
-  VALUES (v_tenant, v_org, v_po2, v_pr4, 1, 'goods', 'Keyboard', 'pcs', '1', '5000.00', v_vat, '5000.00', '650.00', '5650.00');
-
+  IF v_po2 IS NULL THEN
+    v_po2 := gen_random_uuid();
+    INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year, purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate, approved_total_npr, approved_band, created_by)
+    VALUES (v_po2, v_tenant, v_org, 'PO-QA-2', 900002, '2082/83', v_pr[4], v_vendor, 'NPR', 30, '5650.00', 1, '5650.00', 'base', v_proc);
+    INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
+    VALUES (v_tenant, v_org, v_po2, v_pr[4], 1, 'goods', 'Keyboard', 'pcs', '1', '5000.00', v_vat, '5000.00', '650.00', '5650.00');
+  END IF;
 END
 $fixture$;
 
 -- The bill needs the finance user, who exists only after the first sign-in: its own block, so the second run (after
--- the warm-up) adds it although the first block returned early on PR-QA-1.
+-- the warm-up) adds it although the procurement block above does not wait for it.
 SELECT set_config('bos.actor_id', 'p4-qa-fixture-bill', true);
 DO $bill$
 DECLARE
