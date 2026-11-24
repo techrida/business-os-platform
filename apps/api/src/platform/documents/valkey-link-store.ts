@@ -13,10 +13,13 @@ export class ValkeyLinkStore implements LinkStore, OnApplicationShutdown {
   constructor(valkeyUrl: string) {
     // lazyConnect: building the module must not need Valkey. Few retries: a download should fail fast
     // (closed) rather than hang while Valkey is down.
+    // replyMapping 'legacy' (ioredis 6's default, stated so the constructor overload resolves under
+    // exactOptionalPropertyTypes) keeps the v5 reply shapes on the RESP3 wire.
     this.redis = new Redis({
       ...(redisOptionsFromUrl(valkeyUrl) as RedisOptions),
       lazyConnect: true,
       maxRetriesPerRequest: 2,
+      replyMapping: 'legacy',
     });
   }
 
