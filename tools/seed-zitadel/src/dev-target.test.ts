@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { assertDevTarget } from './index.js';
+import { assertDevTarget, main } from './index.js';
+import { EXTRA_VENDORS } from './personas.js';
 
 describe('assertDevTarget', () => {
   it('refuses a production issuer and says what to set', () => {
@@ -32,5 +33,22 @@ describe('assertDevTarget', () => {
 
   it('refuses a value that is not a URL', () => {
     expect(() => assertDevTarget('not a url', {})).toThrow(/SEED_ALLOW_NON_LOCAL=1/);
+  });
+
+  // R6Q15: the second approved vendor and the vendor awaiting KYC are dev and QA logins. The whole seed is behind this
+  // guard, so a production issuer reaches neither their ZITADEL orgs nor their vendor rows.
+  describe('main against a production issuer', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it('refuses before it reads the PAT file or creates any org, so the extra vendors are never made', async () => {
+      vi.stubEnv('OIDC_ISSUER', 'https://auth.techrida.com');
+      vi.stubEnv('ZITADEL_API_URL', 'https://auth.techrida.com');
+      vi.stubEnv('SEED_ALLOW_NON_LOCAL', '');
+      // A missing PAT file or database URL would give a different error: only the guard says "refuses to run".
+      vi.stubEnv('ZITADEL_ADMIN_PAT_FILE', '/nonexistent/admin.pat');
+      vi.stubEnv('DATABASE_MIGRATE_URL', '');
+      await expect(main()).rejects.toThrow(/refuses to run against auth\.techrida\.com/);
+      expect(EXTRA_VENDORS.map((v) => v.key)).toEqual(['vendor2', 'vendorpending']);
+    });
   });
 });

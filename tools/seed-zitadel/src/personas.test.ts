@@ -2,10 +2,12 @@ import { ROLE_KEYS } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  EXTRA_VENDORS,
   PERSONAS,
   PROJECT_ROLES,
   generatePassword,
   passwordsFromFile,
+  personaOrgKey,
   personaUsername,
   renderPersonasFile,
   totpSecretsFromFile,
@@ -31,13 +33,36 @@ describe('generatePassword', () => {
 });
 
 describe('personas', () => {
-  it('has eighteen personas: sixteen staff, one customer, one vendor', () => {
+  it('has twenty personas: sixteen staff, one customer, three vendors', () => {
     expect(PERSONAS.map((p) => p.orgKind).sort()).toEqual([
       'customer',
       ...Array.from({ length: 16 }, () => 'staff'),
       'vendor',
+      'vendor',
+      'vendor',
     ]);
-    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(18);
+    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(20);
+  });
+
+  it('adds a second approved vendor and a vendor awaiting KYC, each in an org of its own, after the staff personas', () => {
+    expect(PERSONAS.slice(-2).map((p) => p.key)).toEqual(['vendor2', 'vendorpending']);
+    const [second, pending] = PERSONAS.slice(-2);
+    expect([second?.role, pending?.role]).toEqual(['vendor_user', 'vendor_user']);
+    expect([second?.label, pending?.label]).toEqual(['Vendor 2 (approved)', 'Vendor awaiting KYC']);
+    // Own org each: not Dev Vendor Co's, and not each other's.
+    const orgKeys = new Set(PERSONAS.filter((p) => p.orgKind === 'vendor').map(personaOrgKey));
+    expect(orgKeys).toEqual(new Set(['vendor', 'vendor2', 'vendorpending']));
+    expect(EXTRA_VENDORS.map((v) => [v.key, v.status])).toEqual([
+      ['vendor2', 'approved'],
+      ['vendorpending', 'pending_kyc'],
+    ]);
+    // Each vendor has its own PAN and party code, and none is the dev vendor's (123456789 / VEND-DEV).
+    expect(new Set(EXTRA_VENDORS.map((v) => v.pan)).size).toBe(2);
+    for (const v of EXTRA_VENDORS) {
+      expect(v.pan).toMatch(/^[0-9]{9}$/);
+      expect(v.pan).not.toBe('123456789');
+      expect(v.partyCode).not.toBe('VEND-DEV');
+    }
   });
 
   it('keeps the frozen logins first, in their order, and appends the new ones after them', () => {
@@ -63,6 +88,8 @@ describe('personas', () => {
       'marketing',
       'marketingmgr',
       'marketinghead',
+      'vendor2',
+      'vendorpending',
     ]);
   });
 
@@ -74,7 +101,7 @@ describe('personas', () => {
     for (const key of ['marketing', 'marketingmgr', 'marketinghead']) {
       expect(roleOf.get(key), key).toBe('marketing');
     }
-    for (const p of PERSONAS.slice(12)) {
+    for (const p of PERSONAS.slice(12, -2)) {
       expect(p.orgKind, p.key).toBe('staff');
       expect(p.givenName, p.key).toBe('Dev');
     }
