@@ -808,9 +808,9 @@ describe('GET /v1/public/logo/:tenantId (R6Q20, R6Q20b)', () => {
     expect(after.status).toBe(200);
     expect(after.headers.ETag).not.toBe(before.headers.ETag);
     // The old tag no longer matches: the caller gets the bytes of the current logo, not a 304.
-    expect((await getPublic(a.tenantId, { 'if-none-match': before.headers.ETag ?? '' })).status).toBe(
-      200,
-    );
+    expect(
+      (await getPublic(a.tenantId, { 'if-none-match': before.headers.ETag ?? '' })).status,
+    ).toBe(200);
   });
 
   it('does not serve a logo that was uploaded but not applied, nor an older logo document', async () => {
