@@ -158,7 +158,10 @@ jobs:
           # gives no words. Each word is a Playwright file filter.
           read -r -a filter <<< "$SPEC_FILTER"
           # The persona sign-ins already ran in the warm-up step.
-          pnpm exec playwright test --project=dev --shard="$SHARD" --repeat-each="$REPEAT_EACH" --grep-invert "$skip" "${filter[@]}"
+          # A filter naming only portal specs matches nothing here: with a filter set, no tests is not a failure.
+          extra=()
+          if [ "${#filter[@]}" -gt 0 ]; then extra+=(--pass-with-no-tests); fi
+          pnpm exec playwright test --project=dev --shard="$SHARD" --repeat-each="$REPEAT_EACH" --grep-invert "$skip" "${extra[@]}" "${filter[@]}"
 
       - name: Playwright (quarantined specs, informational)
         if: ${{ matrix.mode == 'quarantined' }}
