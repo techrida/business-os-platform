@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { fillDateField } from '../helpers/date-fields';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import {
   expectParam,
@@ -67,15 +68,18 @@ test('a draft is saved with a server total, then cancelled and read-only', async
     await test.step('the form saves a draft', async () => {
       await page.goto('/procurement/requests/new');
       await page.waitForLoadState('networkidle');
-      await page.getByLabel('Needed by').fill('2026-12-31');
+      await fillDateField(page, 'Needed by', '2026-12-31');
       await chooseOption(selectByName(page, 'departmentId'), DEPARTMENT);
       await chooseOption(selectByName(page, 'costCenterId'), COST_CENTER);
       await page.getByLabel('Budget code').fill('E2E-26');
       await page.getByLabel('Why is this needed?').fill(`E2E request ${Date.now()}`);
       await page.getByLabel('Description').fill('Office chair');
       await page.getByLabel('Unit', { exact: true }).fill('pcs');
-      await page.getByLabel('Quantity').fill('10');
-      await page.getByLabel(/Estimated unit price/).fill('4500.00');
+      await page.getByLabel('Quantity', { exact: true }).first().fill('10');
+      await page
+        .getByLabel(/Estimated unit price/)
+        .first()
+        .fill('4500.00');
       await page.getByRole('button', { name: 'Save draft' }).click();
       await expect(page).toHaveURL(/\/procurement\/requests\/[0-9a-f-]{36}\?created=1/);
       await expect(page.getByText('45,000.00').first()).toBeVisible();
