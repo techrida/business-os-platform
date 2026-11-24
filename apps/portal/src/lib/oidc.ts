@@ -287,7 +287,10 @@ export async function endSessionUrl(options: { idTokenHint?: string } = {}): Pro
   });
 }
 
-function toTokens(response: Awaited<ReturnType<typeof client.refreshTokenGrant>>): OidcTokens {
+/** What both grants return, minus the `decryptedResponseType` brand, which differs between them. */
+type TokenResponse = client.TokenEndpointResponse & client.TokenEndpointResponseHelpers;
+
+function toTokens(response: TokenResponse): OidcTokens {
   const expiresIn = response.expiresIn();
   // Without an expiry we could not know when to refresh; fail closed rather than guess.
   if (expiresIn === undefined) throw new Error('oidc: token response has no expires_in');
