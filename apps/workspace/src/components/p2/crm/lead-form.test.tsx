@@ -409,4 +409,34 @@ describe('lead form follow-up time (R6Q12)', () => {
     expect(action).not.toHaveBeenCalled();
     expect(root.querySelector('[data-type="month"]')?.hasAttribute('data-placeholder')).toBe(false);
   });
+
+  it('holds a date with no time, and says what is missing', async () => {
+    const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
+    const container = await mountLead(action);
+    await fillRequired(container);
+    await fill(boxFor(container, 'Email'), 'sunita@binford.com.np');
+    const root = container.querySelector('input[name="followUpAt"]')!.parentElement!;
+    for (const [type, data] of [
+      ['month', '11'],
+      ['day', '20'],
+      ['year', '2026'],
+    ] as const) {
+      await act(() =>
+        Promise.resolve(
+          root.querySelector(`[data-type="${type}"]`)!.dispatchEvent(
+            new InputEvent('beforeinput', {
+              data,
+              inputType: 'insertText',
+              bubbles: true,
+              cancelable: true,
+            }),
+          ),
+        ),
+      );
+    }
+    await click(submitButton(container));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(action).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Enter the date and time');
+  });
 });
