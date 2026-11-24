@@ -7,7 +7,6 @@ import {
   multiSelectByLabel,
   toggleOptions,
 } from '../helpers/multi-select';
-import { selectByName, selectedInput } from '../helpers/select';
 import { fillDateField } from '../helpers/date-fields';
 
 /**
@@ -65,7 +64,9 @@ test('an RFQ is opened from an approved request', async ({ browser, baseURL }) =
 
     await test.step('the form preselects the request and lists approved vendors', async () => {
       await page.goto(`/procurement/rfqs/new?pr=${PR_ID}`);
-      await expect(selectedInput(selectByName(page, 'purchaseRequestId'))).toHaveValue(PR_ID);
+      await expect(page.locator('input[type="hidden"][name="purchaseRequestId"]')).toHaveValue(
+        PR_ID,
+      );
       await fillDateField(page, 'Quotation deadline', '2030-01-15', '17:00');
       await page
         .getByRole('group', { name: /Invited vendors/ })
