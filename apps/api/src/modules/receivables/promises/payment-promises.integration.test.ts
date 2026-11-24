@@ -147,6 +147,7 @@ beforeAll(async () => {
     (scope, actor, fn) => withTx(h.db, scope, actor, fn),
     audit,
     () => SWEPT_AT,
+    h.notify,
   );
   followUps = new ActivitiesService(h.db, authz, audit, h.caller, h.roleCache, h.notify);
   receivables = new ReceivablesService(h.db, authz, () => SWEPT_AT);
@@ -187,6 +188,7 @@ describe('a missed promise to pay (F1-Q33)', () => {
       (scope, actor, fn) => withTx(h.db, scope, actor, fn),
       new AuditService(h.db),
       () => new Date('2026-11-10T12:00:00Z'),
+      h.notify,
     );
     await expect(early.sweep()).resolves.toMatchObject({ missed: 0, kept: 0 });
 
@@ -197,6 +199,25 @@ describe('a missed promise to pay (F1-Q33)', () => {
     );
     expect(stored).toMatchObject({ status: 'missed', missedAt: SWEPT_AT });
     expect(stored?.collectionActivityId).toEqual(expect.any(String));
+
+    // The call's assignee has one bell notice for it (OQ-30, R6Q22): no email, a link to the Follow-ups page, and the
+    // call's id in the dedupe key.
+    const bell = await h.ownerPool.query(
+      `SELECT user_id, title, link FROM app.notifications WHERE tenant_id = $1 AND dedupe_key = $2`,
+      [h.tenantId, `collection_call.planned:${stored?.collectionActivityId}`],
+    );
+    expect(bell.rows as unknown[]).toEqual([
+      {
+        user_id: finance,
+        title: expect.stringMatching(/^Collect payment for INV-/) as string,
+        link: '/activities/',
+      },
+    ]);
+    const mail = await h.ownerPool.query(
+      `SELECT 1 FROM app.outbox WHERE tenant_id = $1 AND dedupe_key LIKE 'collection_call.planned:%'`,
+      [h.tenantId],
+    );
+    expect(mail.rows).toHaveLength(0);
 
     // Finance finds it on the Follow-ups list (planned, assigned to them) and completes it.
     await h.actAs(finance);
@@ -350,6 +371,7 @@ describe('replacing and listing promises to pay (R4c1 Q6)', () => {
       (scope, actor, fn) => withTx(h.db, scope, actor, fn),
       new AuditService(h.db),
       () => new Date('2026-11-26T06:00:00Z'),
+      h.notify,
     );
     await late.sweep();
     expect((await list(invoice)).items.map((p) => p.status)).toEqual(['missed', 'replaced']);
@@ -407,6 +429,7 @@ describe('recording over an open promise whose day has passed', () => {
         (scope, actor, fn) => withTx(h.db, scope, actor, fn),
         audit,
         () => now,
+        h.notify,
       ),
     };
   }
