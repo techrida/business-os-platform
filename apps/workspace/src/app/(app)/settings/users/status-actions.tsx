@@ -1,19 +1,19 @@
 'use client';
 
+import { useState } from 'react';
+
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 
 import { changeUserStatusAction } from './actions';
 
-/** `keepLocked` is the lock action on a person already locked after failed sign-ins (the lock then never ends). */
-export type StatusActionKind = 'deactivate' | 'reactivate' | 'lock' | 'keepLocked' | 'unlock';
+export type StatusActionKind = 'deactivate' | 'reactivate' | 'lock' | 'unlock';
 
 const API_ACTION = {
   deactivate: 'deactivate',
   reactivate: 'reactivate',
   lock: 'lock',
-  keepLocked: 'lock',
   unlock: 'unlock',
 } as const;
 
@@ -41,13 +41,6 @@ const COPY: Record<
       `${name} is signed out and cannot sign in until someone unlocks them. Their records stay as they are.`,
     confirm: 'Lock',
   },
-  keepLocked: {
-    label: 'Keep locked',
-    title: 'Keep this user locked?',
-    description: (name) =>
-      `${name} was locked after too many failed sign-ins. They stay locked until someone unlocks them, instead of being let back in when the lock runs out.`,
-    confirm: 'Keep locked',
-  },
   unlock: {
     label: 'Unlock',
     title: 'Unlock this user?',
@@ -56,15 +49,23 @@ const COPY: Record<
   },
 };
 
+const KEEP_LOCKED = {
+  label: 'Keep locked',
+  description: (name: string) =>
+    `${name} was locked after too many failed sign-ins and would be let back in when the lock runs out. Keep them locked and they stay locked until someone unlocks them.`,
+};
+
 /**
  * Deactivate, reactivate, lock or unlock one person (F1-Q5, F1-Q4). The API refuses your own account and the last
- * Founder.
+ * Founder. `canKeepLocked` is set on the unlock dialog of a person locked after failed sign-ins: it then also offers
+ * "Keep locked" (the same lock action, so the lock never ends by itself).
  */
 export function StatusAction({
   userId,
   name,
   label,
   action,
+  canKeepLocked = false,
 }: {
   userId: string;
   /** The person's display name, for the dialog text. */
@@ -72,10 +73,42 @@ export function StatusAction({
   /** Tells rows apart for screen readers (name and email). */
   label: string;
   action: StatusActionKind;
+  canKeepLocked?: boolean;
 }) {
   const copy = COPY[action];
+  const [open, setOpen] = useState(false);
+  const [keeping, setKeeping] = useState(false);
+  const offerKeep = canKeepLocked && action === 'unlock';
+
+  async function run(apiAction: (typeof API_ACTION)[StatusActionKind]) {
+    try {
+      const result = await changeUserStatusAction(userId, apiAction);
+      if (result.status === 'ok') {
+        toast.success(result.message);
+        return true;
+      }
+      if (result.status === 'error') toast.error(result.message);
+    } catch {
+      toast.error('Could not confirm the change. Reload the page to see the current status.');
+    }
+    return false;
+  }
+
+  async function keepLocked() {
+    setKeeping(true);
+    try {
+      if (await run('lock')) setOpen(false);
+    } finally {
+      setKeeping(false);
+    }
+  }
+
   return (
     <ConfirmDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!keeping) setOpen(next);
+      }}
       trigger={
         <Button variant="ghost" size="small" aria-label={`${copy.label} ${label}`}>
           {copy.label}
@@ -84,20 +117,23 @@ export function StatusAction({
       title={copy.title}
       description={copy.description(name)}
       confirmLabel={copy.confirm}
-      destructive={action === 'deactivate' || action === 'lock' || action === 'keepLocked'}
-      onConfirm={async () => {
-        try {
-          const result = await changeUserStatusAction(userId, API_ACTION[action]);
-          if (result.status === 'ok') {
-            toast.success(result.message);
-            return true;
-          }
-          if (result.status === 'error') toast.error(result.message);
-        } catch {
-          toast.error('Could not confirm the change. Reload the page to see the current status.');
-        }
-        return false;
-      }}
-    />
+      destructive={action === 'deactivate' || action === 'lock'}
+      onConfirm={() => run(API_ACTION[action])}
+    >
+      {offerKeep ? (
+        <div>
+          <p>{KEEP_LOCKED.description(name)}</p>
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={keeping}
+            aria-label={`${KEEP_LOCKED.label} ${label}`}
+            onClick={() => void keepLocked()}
+          >
+            {KEEP_LOCKED.label}
+          </Button>
+        </div>
+      ) : null}
+    </ConfirmDialog>
   );
 }

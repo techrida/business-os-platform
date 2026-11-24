@@ -84,9 +84,9 @@ it('an active person with an email shows every action live, each in its own slot
   expect(html).toContain('aria-label="Send password reset email to Asha · asha@example.test"');
   expect(html).toContain('aria-label="Lock Asha · asha@example.test"');
   expect(html).toContain('aria-label="Deactivate Asha · asha@example.test"');
-  // Keep locked applies only after failed sign-ins: muted here, with its reason.
-  expect(slot(html, 'keep')).toContain('aria-disabled="true"');
-  expect(html.match(/aria-disabled="true"/g)).toHaveLength(1);
+  // Keep locked has no slot of its own: it lives in the Unlock dialog of a person locked after failed sign-ins.
+  expect(html).not.toContain('Keep locked');
+  expect(html).not.toContain('aria-disabled');
 });
 
 const MUTED: {
@@ -140,25 +140,11 @@ const MUTED: {
     label: 'Deactivate',
   },
   {
-    name: 'an admin lock never ends, so there is nothing to keep',
-    row: { lockReason: 'admin' },
-    slot: 'keep',
-    reason: 'This lock never ends by itself, so there is nothing to keep',
-    label: 'Keep locked',
-  },
-  {
     name: 'your own row: lock',
     row: { id: ME },
     slot: 'lock',
     reason: OWN_ACCOUNT,
     label: 'Lock',
-  },
-  {
-    name: 'your own row: keep locked',
-    row: { id: ME },
-    slot: 'keep',
-    reason: OWN_ACCOUNT,
-    label: 'Keep locked',
   },
   {
     name: 'your own row: deactivate',
@@ -221,15 +207,54 @@ it('a live action opens its confirmation dialog while a muted one never does', a
   expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).not.toBeNull();
 });
 
-it('a locked person keeps Unlock in the lock slot and Keep locked live only after failed sign-ins', () => {
-  const timed = render(
-    user({ id: '00000000-0000-4000-9000-0000000000a3', lockReason: 'failed_sign_ins' }),
+it('a locked person has Unlock in the lock slot and no Keep locked button in the row', () => {
+  for (const lockReason of ['failed_sign_ins', 'admin'] as const) {
+    const html = render(user({ id: '00000000-0000-4000-9000-0000000000a3', lockReason }));
+    expect(slot(html, 'lock')).toContain('aria-label="Unlock Asha');
+    expect(html).not.toContain('Keep locked');
+    expect(html).not.toContain('aria-disabled');
+  }
+});
+
+async function openUnlock(lockReason: 'failed_sign_ins' | 'admin') {
+  const u = user({ id: '00000000-0000-4000-9000-0000000000c1', lockReason });
+  const view = await mountRaw(<RowActions user={u} name="Asha" label="Asha" can={ALL} />);
+  views.push(view);
+  await click(view.container.querySelector('[data-slot="lock"] button'));
+  return document.body.querySelector('[role="alertdialog"], [role="dialog"]');
+}
+
+const buttonNamed = (root: Element, text: string) =>
+  [...root.querySelectorAll('button')].find((b) => b.textContent === text) ?? null;
+
+it('the Unlock dialog of a person locked after failed sign-ins offers Keep locked, which posts the same lock action', async () => {
+  actions.changeUserStatusAction.mockResolvedValue({ status: 'ok', message: 'Locked' });
+  const dialog = await openUnlock('failed_sign_ins');
+  expect(dialog).not.toBeNull();
+  const keep = buttonNamed(dialog!, 'Keep locked');
+  expect(keep).not.toBeNull();
+  expect(dialog!.textContent).toContain('stay locked until someone unlocks them');
+  await click(keep);
+  expect(actions.changeUserStatusAction).toHaveBeenCalledExactlyOnceWith(
+    '00000000-0000-4000-9000-0000000000c1',
+    'lock',
   );
-  expect(slot(timed, 'lock')).toContain('aria-label="Unlock Asha');
-  expect(slot(timed, 'keep')).toContain('aria-label="Keep locked Asha');
-  expect(timed).not.toContain('aria-disabled="true"');
-  const admin = render(user({ id: '00000000-0000-4000-9000-0000000000a4', lockReason: 'admin' }));
-  expect(slot(admin, 'lock')).toContain('aria-label="Unlock Asha');
+  expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
+});
+
+it('the Unlock dialog still unlocks, and an admin lock offers no Keep locked', async () => {
+  actions.changeUserStatusAction.mockResolvedValue({ status: 'ok', message: 'Unlocked' });
+  const timed = await openUnlock('failed_sign_ins');
+  await click(buttonNamed(timed!, 'Unlock'));
+  expect(actions.changeUserStatusAction).toHaveBeenCalledExactlyOnceWith(
+    '00000000-0000-4000-9000-0000000000c1',
+    'unlock',
+  );
+  for (const v of views) await v.unmount();
+  views = [];
+  const admin = await openUnlock('admin');
+  expect(admin).not.toBeNull();
+  expect(buttonNamed(admin!, 'Keep locked')).toBeNull();
 });
 
 it('a deactivated person keeps Deactivate and Reactivate in the same slot', () => {
@@ -247,7 +272,7 @@ it('a role without a permission sees no muted hint for it, but its slot stays re
     meId: ME,
   });
   expect(ids(none)).toEqual([...ROW_SLOTS]);
-  for (const id of ['access', 'reset', 'lock', 'keep', 'toggle']) {
+  for (const id of ['access', 'reset', 'lock', 'toggle']) {
     expect(
       slot(none, id).split(`data-slot="${ROW_SLOTS[ROW_SLOTS.indexOf(id as never) + 1]}"`)[0],
     ).toMatch(new RegExp(`^${id}"[^>]*></span>`));
