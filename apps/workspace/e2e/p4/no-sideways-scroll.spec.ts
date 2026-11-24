@@ -31,6 +31,11 @@ const STAFF_PAGES = [
   '/procurement/rfqs',
   '/procurement/orders',
   '/procurement/receipts',
+  '/activities',
+  '/verification',
+  '/payables/inbox',
+  '/payables/vat-register',
+  '/receivables/aging',
 ] as const;
 
 const PORTAL_PAGES = ['/vendor'] as const;
@@ -46,16 +51,35 @@ async function measure(page: Page): Promise<Overflow> {
     const root = document.scrollingElement ?? document.documentElement;
     const clientWidth = root.clientWidth;
     const offenders: string[] = [];
+    // Content the shell clips (overflow: clip) never widens the document, so the document check alone cannot see
+    // it. An element past the right edge counts unless it is invisible, visually hidden (1 px box), or inside a
+    // frame that scrolls sideways on purpose (its content is reachable there).
+    const inScrollFrame = (el: Element): boolean => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const ox = getComputedStyle(p).overflowX;
+        if (
+          (ox === 'auto' || ox === 'scroll') &&
+          p.getBoundingClientRect().right <= clientWidth + 1
+        ) {
+          return true;
+        }
+        const box = p.getBoundingClientRect();
+        if (box.width <= 1 || box.height <= 1) return true;
+      }
+      return false;
+    };
     for (const el of document.body.querySelectorAll('*')) {
-      const right = el.getBoundingClientRect().right;
-      if (right > clientWidth + 1 && offenders.length < 5) {
+      const box = el.getBoundingClientRect();
+      if (box.right <= clientWidth + 1 || box.width <= 1 || box.height <= 1) continue;
+      if (!el.checkVisibility() || inScrollFrame(el)) continue;
+      if (offenders.length < 5) {
         const id = el.id ? `#${el.id}` : '';
         const cls =
           typeof el.className === 'string' && el.className
             ? `.${el.className.trim().split(/\s+/)[0]}`
             : '';
         offenders.push(
-          `${el.tagName.toLowerCase()}${id}${cls} (right edge ${Math.round(right)}px)`,
+          `${el.tagName.toLowerCase()}${id}${cls} (right edge ${Math.round(box.right)}px)`,
         );
       }
     }
@@ -73,10 +97,12 @@ async function checkFits(
   await page.goto(route);
   const heading = page.getByRole('heading', { level: 1 }).first();
   await expect(heading).toBeVisible();
-  await expect(heading).not.toHaveText(/not found|404/i);
+  await expect(heading).not.toHaveText(
+    /not found|404|did not open|access yet|went wrong|could not load/i,
+  );
   await page.waitForLoadState('networkidle');
   const result = await measure(page);
-  if (result.scrollWidth > result.clientWidth + 1) {
+  if (result.scrollWidth > result.clientWidth + 1 || result.offenders.length > 0) {
     await testInfo.attach(`${route} at ${width}px`, {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png',
@@ -87,6 +113,10 @@ async function checkFits(
     `${route} at ${width}px is ${result.scrollWidth}px wide in a ${result.clientWidth}px window; ` +
       `past the right edge: ${result.offenders.join(', ') || 'none found'}`,
   ).toBeLessThanOrEqual(result.clientWidth + 1);
+  expect(
+    result.offenders,
+    `${route} at ${width}px: content sits past the right edge (a clipped frame hides it)`,
+  ).toEqual([]);
 }
 
 function suite(
