@@ -12,17 +12,26 @@ test('percentile is nearest-rank', () => {
   assert.equal(percentile([], 95), undefined);
 });
 
-test('parseTimings keeps numeric ms and skips torn or foreign lines', () => {
+test('parseTimings keeps numeric ms with its outcome and skips torn or foreign lines', () => {
   assert.deepEqual(
-    parseTimings('{"ms":10}\n{"ms":\nnope\n{"ms":"x"}\n{"ms":-1}\n\n{"ms":30}\n'),
-    [10, 30],
+    parseTimings(
+      '{"ms":10}\n{"ms":\nnope\n{"ms":"x"}\n{"ms":-1}\n\n{"ms":30,"ok":true}\n{"ms":40,"ok":false}\n',
+    ),
+    [
+      { ms: 10, ok: true },
+      { ms: 30, ok: true },
+      { ms: 40, ok: false },
+    ],
   );
 });
 
-test('summarise reports samples, p50, p95 and max, and says so when nothing was timed', () => {
-  const text = summarise([100, 200, 300, 400]);
-  assert.match(text, /\| 4 \| 200 ms \| 400 ms \| 400 ms \|/);
+test('summarise reports succeeded and failed counts, and p50, p95, max of the successes only', () => {
+  const ok = (ms) => ({ ms, ok: true });
+  const text = summarise([ok(100), ok(200), ok(300), ok(400), { ms: 30_000, ok: false }]);
+  assert.match(text, /\| 4 \| 1 \| 200 ms \| 400 ms \| 400 ms \|/);
+  assert.match(text, /1 failed after 30000 ms/);
   assert.match(summarise([]), /No Approve was timed/);
+  assert.match(summarise([{ ms: 5, ok: false }]), /\| 0 \| 1 \| n\/a \| n\/a \| n\/a \|/);
 });
 
 test('the qa workflow prints the summary to the job summary and never fails on it', () => {

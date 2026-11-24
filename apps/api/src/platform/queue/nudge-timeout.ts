@@ -8,6 +8,12 @@ import type { Logger } from '@nestjs/common';
 export const NUDGE_TIMEOUT_MS = 1_000;
 
 /**
+ * How long an upload waits for its scan enqueue. Longer than a nudge: giving up here discards the upload with a 503,
+ * so a slow but reachable Valkey should still get the scan queued.
+ */
+export const SCAN_ENQUEUE_TIMEOUT_MS = 4_000;
+
+/**
  * Runs `call` and waits for it at most `timeoutMs`. Never throws: a rejection is passed to `onFailure` (when given) and
  * a timeout is logged with `what`; the call itself is left running and its late outcome is ignored.
  */

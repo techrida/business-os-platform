@@ -1,9 +1,9 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 
-import { CoreConfig } from '../config/config';
+import { AppConfig, CoreConfig } from '../config/config';
 import { SYSTEM_QUEUE } from './queue.constants';
-import { redisOptionsFromUrl } from './redis-options';
+import { producerOnlyConnection, redisOptionsFromUrl } from './redis-options';
 
 export * from './queue.constants';
 
@@ -15,8 +15,14 @@ export * from './queue.constants';
 @Module({
   imports: [
     BullModule.forRootAsync({
-      inject: [CoreConfig],
-      useFactory: (config: CoreConfig) => ({ connection: redisOptionsFromUrl(config.VALKEY_URL) }),
+      // AppConfig exists only in the API process, which never consumes jobs: its queues only add.
+      inject: [CoreConfig, { token: AppConfig, optional: true }],
+      useFactory: (config: CoreConfig, api: AppConfig | undefined) => ({
+        connection:
+          api === undefined
+            ? redisOptionsFromUrl(config.VALKEY_URL)
+            : producerOnlyConnection(config.VALKEY_URL),
+      }),
     }),
     BullModule.registerQueue({ name: SYSTEM_QUEUE }),
   ],
