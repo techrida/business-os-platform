@@ -3,6 +3,10 @@
 # Every job must pass for a pull request to merge. Nothing here is allowed to fail:
 # no step is marked as tolerating failure, on purpose.
 #
+# A pull request runs only the jobs its diff affects (job `changes`, tools/affected.mjs); a skipped job counts as
+# passed. Pushes, the weekly schedule and manual runs run everything. Only `ci required` is the required check:
+# it always reports and fails when any job failed or was cancelled.
+#
 # Every third-party action is pinned to a full commit SHA (the comment beside it names the release),
 # because a tag can be moved after the fact. Dependabot (github-actions ecosystem) can bump the SHA.
 # Container images are pinned by digest too; `infra/scripts/check-image-pins.mjs` enforces that.
@@ -16,8 +20,12 @@ on:
       - 'p*/**'
       - 'p[1-4]-main'
       - 'r6/**'
+      - 'kuu/**'
   pull_request:
   workflow_dispatch:
+  # Weekly full run: catches anything the per-pull-request selection (tools/affected.mjs) missed.
+  schedule:
+    - cron: '17 3 * * 1'
 
 # The least privilege that lets the jobs read the code. No job here writes to the repo,
 # the registry or pull requests.
@@ -36,10 +44,43 @@ env:
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
+  # Which areas does this pull request touch? Reads package.json files only (no install), so it takes seconds.
+  changes:
+    name: changes (what this run covers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.affected.outputs.full }}
+      api: ${{ steps.affected.outputs.api }}
+      workspace: ${{ steps.affected.outputs.workspace }}
+      portal: ${{ steps.affected.outputs.portal }}
+      db: ${{ steps.affected.outputs.db }}
+      web: ${{ steps.affected.outputs.web }}
+      docker: ${{ steps.affected.outputs.docker }}
+      docs-only: ${{ steps.affected.outputs.docs-only }}
+      packages: ${{ steps.affected.outputs.packages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff needs the base commit as well as the head.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Map the diff to areas
+        id: affected
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
+
   # Fast gate: types, lint, unit tests, formatting. No containers started by this repo's
   # own compose files. Note `pnpm test` runs every workspace package's `test` script.
   checks:
     name: checks (typecheck, lint, unit, format)
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -64,8 +105,22 @@ jobs:
       - name: Lint (zero warnings allowed)
         run: pnpm lint
 
+      # A pull request runs the unit tests of the changed packages and the packages that depend on them (the
+      # `packages` output, see tools/affected.mjs); everything else runs them all. Typecheck, lint and format stay
+      # whole-repo: they take about 4 minutes together and catch what selection cannot.
       - name: Unit tests
-        run: pnpm test
+        if: ${{ needs.changes.outputs.docs-only != 'true' }}
+        env:
+          FULL: ${{ needs.changes.outputs.full }}
+          AFFECTED: ${{ needs.changes.outputs.packages }}
+        run: |
+          if [ "$FULL" = "true" ]; then
+            pnpm test
+          else
+            args=()
+            for name in $AFFECTED; do args+=(--filter "$name"); done
+            pnpm "${args[@]}" -r --if-present run test
+          fi
 
       - name: Format check
         run: pnpm format:check
@@ -76,7 +131,7 @@ jobs:
 
       # Tracked files must be fit for a public repository (license fields, no private paths); same step as tools/gate.sh.
       - name: Public-repo check
-        run: node --test tools/check-public-repo.test.mjs infra/pnpm-bootstrap.test.mjs tools/qa-workflow.test.mjs && node tools/check-public-repo.mjs
+        run: node --test tools/check-public-repo.test.mjs infra/pnpm-bootstrap.test.mjs tools/qa-workflow.test.mjs tools/affected.test.mjs && node tools/check-public-repo.mjs
 
   # Scans the whole git history for committed secrets. Config: .gitleaks.toml (test fixtures only).
   # Runs the open-source gitleaks CLI directly (the gitleaks-action wrapper needs a GITLEAKS_LICENSE
@@ -117,6 +172,8 @@ jobs:
   # the tests). ubuntu-24.04 runners already have Docker, so nothing extra to install.
   e2e:
     name: e2e (db tenancy, api auth)
+    needs: changes
+    if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.db == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -148,6 +205,8 @@ jobs:
   # Builds the production Next.js app, then proves the dev-only persona pages are not in it.
   web:
     name: web (build, no dev routes)
+    needs: changes
+    if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.web == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -197,6 +256,8 @@ jobs:
   # Proves the production images still build. Nothing is pushed anywhere.
   docker:
     name: docker (build production images)
+    needs: changes
+    if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -267,3 +328,21 @@ jobs:
           push: false
           cache-from: type=gha,scope=login
           cache-to: type=gha,scope=login,mode=max
+
+  # The one required check. It always runs, so a skipped job never leaves a pull request waiting; it fails when
+  # any job failed or was cancelled, and passes when every job succeeded or was skipped.
+  ci-required:
+    name: ci required
+    if: ${{ always() }}
+    needs: [changes, checks, secrets, e2e, web, docker]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) echo "a job failed or was cancelled"; exit 1 ;;
+          esac
