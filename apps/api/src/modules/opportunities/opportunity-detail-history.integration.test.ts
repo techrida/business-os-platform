@@ -253,3 +253,139 @@ describe('stage history on the opportunity detail (R4a Q13)', () => {
     expect((await detail(mine)).stageHistory).toHaveLength(1);
   });
 });
+
+/**
+ * A sales order of the deal's quotation (owned by `quotationOwner`), in `status`. The accepted version the order points
+ * at is seeded the way credit-hold-position.integration.test.ts does; `number` stays null for a draft.
+ */
+let orderSeq = 0;
+async function orderOn(
+  opportunityId: string,
+  quotationOwner: string,
+  status: 'draft' | 'confirmed' | 'cancelled',
+): Promise<{ id: string; number: string | null }> {
+  orderSeq += 1;
+  const number = status === 'draft' ? null : `SO-2083/84-${String(orderSeq).padStart(5, '0')}`;
+  return withTx(db, scopeA, systemActor('test'), async (tx) => {
+    const one = async (q: ReturnType<typeof sql>) =>
+      (await tx.execute<{ id: string }>(q)).rows[0]!.id;
+    const quotationId = await one(
+      sql`INSERT INTO app.quotations (tenant_id, organization_id, number, customer_party_id, opportunity_id, owner_user_id)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${`QT-${randomUUID().slice(0, 8)}`},
+                  ${customers.A}, ${opportunityId}, ${quotationOwner}) RETURNING id`,
+    );
+    const versionId = await one(
+      sql`INSERT INTO app.quotation_versions (tenant_id, organization_id, quotation_id, revision_no, currency, issue_date, valid_until)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${quotationId}, 1, 'NPR', '2026-11-09', '2026-12-09')
+          RETURNING id`,
+    );
+    await tx.execute(sql`
+      UPDATE app.quotation_versions
+         SET status = 'accepted', subtotal = 1000, taxable_amount = 1000, tax_amount = 0, total = 1000,
+             fx_rate = 1, amount_npr = 1000, npr_taxable_amount = 1000,
+             content_sha256 = sha256('content'::bytea), snapshot_sha256 = sha256('snapshot'::bytea)
+       WHERE id = ${versionId}`);
+    const id = await one(sql`
+      INSERT INTO app.sales_orders (tenant_id, organization_id, number, seq, fiscal_year, customer_party_id,
+            quotation_id, quotation_version_id, status, currency, subtotal, discount_amount, taxable_amount, tax_amount,
+            total, fx_rate, amount_npr, credit_days, created_by, confirmed_at, confirmed_by, cancelled_at, cancel_reason)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${number},
+            ${status === 'draft' ? null : orderSeq}, ${status === 'draft' ? null : '2083/84'}, ${customers.A},
+            ${quotationId}, ${versionId}, ${status}, 'NPR', 1000, 0, 1000, 0, 1000, 1, 1000, 30, ${U.owner},
+            ${status === 'confirmed' ? sql`now()` : sql`NULL`}, ${status === 'confirmed' ? sql`${U.owner}::uuid` : sql`NULL`},
+            ${status === 'cancelled' ? sql`now()` : sql`NULL`}, ${status === 'cancelled' ? 'Customer withdrew' : null})
+          RETURNING id`);
+    return { id, number };
+  });
+}
+
+describe('sales orders in the deal history (R6Q22)', () => {
+  it("lists the deal's orders as dated events, oldest first, and none on a deal without orders", async () => {
+    const id = await seed();
+    expect((await detail(id)).orderHistory).toEqual([]);
+    const confirmed = await orderOn(id, U.owner, 'confirmed');
+    const cancelled = await orderOn(id, U.owner, 'cancelled');
+
+    const dto = await detail(id);
+    expect(
+      dto.orderHistory?.map(({ salesOrderId, number, event, actorName }) => ({
+        salesOrderId,
+        number,
+        event,
+        actorName,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          salesOrderId: confirmed.id,
+          number: confirmed.number,
+          event: 'drafted',
+          actorName: OWNER_NAME,
+        },
+        {
+          salesOrderId: confirmed.id,
+          number: confirmed.number,
+          event: 'confirmed',
+          actorName: OWNER_NAME,
+        },
+        {
+          salesOrderId: cancelled.id,
+          number: cancelled.number,
+          event: 'drafted',
+          actorName: OWNER_NAME,
+        },
+        {
+          salesOrderId: cancelled.id,
+          number: cancelled.number,
+          event: 'cancelled',
+          actorName: null,
+        },
+      ]),
+    );
+    expect(dto.orderHistory).toHaveLength(4);
+    const times = dto.orderHistory!.map((h) => Date.parse(h.at));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    expect(JSON.stringify(dto.orderHistory)).not.toContain(U.owner);
+  });
+
+  it('lists only the orders the reader may read: no sales_order.read, no orders; own reach, own orders', async () => {
+    const id = await seed();
+    const mine = await orderOn(id, U.owner, 'confirmed');
+    // An order of the same deal on a quotation a colleague owns, made and confirmed by that colleague.
+    const other = await orderOn(id, U.colleague, 'confirmed');
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.sales_orders SET created_by = ${U.colleague}, confirmed_by = ${U.colleague} WHERE id = ${other.id}`,
+      ),
+    );
+
+    // The deal's owner reaches only the order of the quotation they own.
+    as(U.owner, 'sales');
+    current.grants.set('sales_order.read', 'own');
+    const own = await detail(id);
+    expect(new Set(own.orderHistory?.map((h) => h.salesOrderId))).toEqual(new Set([mine.id]));
+
+    // A role that may read the deal but not sales orders gets the deal and an empty order history.
+    as(U.owner, 'sales');
+    current.grants.delete('sales_order.read');
+    const none = await detail(id);
+    expect(none.orderHistory).toEqual([]);
+    expect(none.stageHistory).toBeDefined();
+
+    // With all reach both orders show.
+    as(U.owner, 'sales');
+    current.grants.set('sales_order.read', 'all');
+    const all = await detail(id);
+    expect(new Set(all.orderHistory?.map((h) => h.salesOrderId))).toEqual(
+      new Set([mine.id, other.id]),
+    );
+  });
+
+  it('never lists the orders of another deal', async () => {
+    const a = await seed();
+    const b = await seed();
+    const onB = await orderOn(b, U.owner, 'confirmed');
+    expect((await detail(a)).orderHistory).toEqual([]);
+    expect((await detail(b)).orderHistory?.every((h) => h.salesOrderId === onB.id)).toBe(true);
+  });
+});
