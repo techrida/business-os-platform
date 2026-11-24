@@ -23,11 +23,19 @@ test('qa fixtures: issue the seeded purchase order', async ({ browser, baseURL }
     await link.click();
     await expect(page).toHaveURL(/\/procurement\/orders\/[0-9a-f-]{36}$/);
     const issue = page.getByRole('button', { name: 'Issue purchase order' });
-    if ((await issue.count()) === 0) return; // already issued
-    await issue.click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Issue purchase order' }).click();
-    await expect(issue).toHaveCount(0, { timeout: 30_000 });
-    await expect(page.getByText('Issued', { exact: true }).first()).toBeVisible();
+    // The order streams its action buttons after the heading: give them a moment before deciding it is already issued.
+    await page.waitForTimeout(3_000);
+    if ((await issue.count()) > 0) {
+      await issue.click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Issue purchase order' }).click();
+      await expect(issue).toHaveCount(0, { timeout: 30_000 });
+    }
+    const body = (await page.locator('main').innerText()).replace(/\s+/g, ' ');
+    // The proof, not the absence of a button: the page says the order is issued and offers the next step.
+    expect(body, `PO-QA-1 page after issuing: ${body.slice(0, 400)}`).toMatch(/Issued/);
+    await expect(page.getByRole('link', { name: /Receive goods|Enter bill/ }).first()).toBeVisible({
+      timeout: 15_000,
+    });
   } finally {
     await context.close();
   }
