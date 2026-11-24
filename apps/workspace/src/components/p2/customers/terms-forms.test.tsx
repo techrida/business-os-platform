@@ -61,7 +61,8 @@ const limitBox = (): HTMLInputElement | null => {
   return box instanceof HTMLInputElement ? box : null;
 };
 
-const setLimit = () => click(dialog()?.querySelector('button[role="radio"][value="limit"]') ?? null);
+const setLimit = () =>
+  click(dialog()?.querySelector('button[role="radio"][value="limit"]') ?? null);
 
 describe('a save with nothing changed (R6Q5-B)', () => {
   it('shows a neutral "Nothing changed" notice in the dialog, not a red "Not saved"', async () => {
@@ -103,7 +104,7 @@ describe('CreditLimitForm', () => {
     ).toBe('true');
     expect(dialog()!.querySelector('input[name="creditLimit"]')).toBeNull();
     await save();
-      });
+  });
 
   it('posts No limit against an empty current limit, so the server answers Nothing changed (R6Q12)', async () => {
     const action = saves('x');
