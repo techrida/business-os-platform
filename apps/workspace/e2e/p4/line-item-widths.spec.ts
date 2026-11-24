@@ -25,7 +25,8 @@ const FORMS = [
 // whatever the seed holds. A form with no record to open is a failure, not a skip: the seed must carry one.
 const LINKED_FORMS = [
   {
-    persona: 'procurement',
+    // The warehouse persona confirms receipts; procurement may not receive, so its order page has no receive link.
+    persona: 'warehouse',
     name: 'receipt',
     list: '/procurement/orders',
     link: /^\/procurement\/receipts\/new\?po=/,
@@ -44,7 +45,7 @@ const LINKED_FORMS = [
   {
     // The bare /payables/bills/new route shows no line items until an order is picked, so the form is measured the way
     // a person reaches it: the "Enter bill" link of an order (QA fixture PO-QA-1, issued by qa-fixtures.spec).
-    persona: 'finance',
+    persona: 'founder',
     name: 'bill entry for an order',
     list: '/procurement/orders',
     link: /^\/payables\/bills\/new\?po=/,

@@ -18,12 +18,8 @@ test('qa fixtures: issue the seeded purchase order', async ({ browser, baseURL }
     await page.goto('/procurement/orders');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     const link = page.getByRole('link', { name: /PO-QA-1/ }).first();
-    if ((await link.count()) === 0) {
-      test
-        .info()
-        .annotations.push({ type: 'note', description: 'PO-QA-1 is not seeded on this stack' });
-      return;
-    }
+    // No silent return: a stack without PO-QA-1 must fail here, not leave the later specs to fail without a reason.
+    await expect(link).toBeVisible();
     await link.click();
     await expect(page).toHaveURL(/\/procurement\/orders\/[0-9a-f-]{36}$/);
     const issue = page.getByRole('button', { name: 'Issue purchase order' });
