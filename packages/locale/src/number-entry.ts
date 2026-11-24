@@ -113,7 +113,11 @@ export function withinLimits(
 
 // One leading currency marker, with the space after it, and the trailing "/-" accountants write after a whole amount.
 const LEADING_MARKER = /^(?:NPR|INR|USD|Rs\.?|रू|₹|\$)\s*/i;
-const TRAILING_DASH = /\s*\/-$/;
+
+/** Drops a trailing `/-` and the space before it, in one pass (no backtracking regex on pasted text). */
+function dropTrailingDash(text: string): string {
+  return text.endsWith('/-') ? text.slice(0, -2).trimEnd() : text;
+}
 
 /**
  * What a paste becomes. Trims, drops one leading currency marker (`NPR`, `Rs.`, `रू`, `INR`, `₹`, `USD`, `$`) and a
@@ -126,7 +130,7 @@ export function normalisePastedNumber(
   limits: NumberLimits,
   bounds?: NumberBounds,
 ): NumberCheck {
-  const cleaned = text.trim().replace(LEADING_MARKER, '').replace(TRAILING_DASH, '').trim();
+  const cleaned = dropTrailingDash(text.trim().replace(LEADING_MARKER, '')).trim();
   if (cleaned === '') return refuse('empty', limits, bounds);
   if (/\s/.test(cleaned)) return refuse('space', limits, bounds);
   const plain = plainAmount(cleaned);
