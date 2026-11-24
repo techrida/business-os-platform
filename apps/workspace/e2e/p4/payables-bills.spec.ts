@@ -57,6 +57,19 @@ test('the inbox loads and bill entry works without a submission', async ({ brows
     await expect(founder.page.locator('input[type="hidden"][name="vendorPartyId"]')).toBeAttached();
     await expect(founder.page.getByRole('combobox').first()).toBeVisible();
     await expect(founder.page.locator('input[name="vendorInvoiceNo"]')).toBeVisible();
+    // No vendor and no file yet: the invoice cannot be uploaded.
+    await expect(
+      founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
+    ).toBeDisabled();
+    // A search that matches no vendor says so, and the upload stays off.
+    const vendorBox = founder.page.getByRole('combobox').first();
+    await vendorBox.fill('zzzz-no-such-vendor');
+    await expect(
+      founder.page.getByText('No vendor matches. Ask Procurement to add the vendor.'),
+    ).toBeVisible();
+    await expect(
+      founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
+    ).toBeDisabled();
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }
