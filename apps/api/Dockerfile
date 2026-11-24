@@ -8,15 +8,15 @@
 #   docker build -f apps/api/Dockerfile -t bos/api:dev .
 
 ARG NODE_IMAGE=node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
-ARG PNPM_VERSION=11.28.11
 
 # ---------------------------------------------------------------- build
 FROM ${NODE_IMAGE} AS build
-ARG PNPM_VERSION
 # CI=true stops pnpm from asking questions (there is no TTY in a build).
 ENV CI=true
-# Corepack is gone after Node 24, so pnpm comes from npm, pinned to the root packageManager.
-RUN npm install --global pnpm@${PNPM_VERSION}
+# Corepack is gone after Node 24, so pnpm comes from npm, installed from a lockfile (`npm ci`: integrity hashes).
+# infra/pnpm-bootstrap pins the version; infra/pnpm-bootstrap.test.mjs keeps it equal to the root `packageManager`.
+COPY infra/pnpm-bootstrap /pnpm-bootstrap
+RUN npm ci --prefix /pnpm-bootstrap --ignore-scripts && ln -s /pnpm-bootstrap/node_modules/.bin/pnpm /usr/local/bin/pnpm
 WORKDIR /repo
 
 # 1. Manifests first: this layer (and the install below) is reused until a dependency changes.
