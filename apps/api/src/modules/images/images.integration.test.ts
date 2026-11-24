@@ -25,20 +25,26 @@ import {
   type Scope,
 } from '@bos/contracts';
 import { createParty, createStaffUser, createTenantWithEntity, organizations } from '@bos/db';
-import { HttpException } from '@nestjs/common';
+import { type INestApplication, HttpException } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { Request, Response } from 'express';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
 import { Pool } from 'pg';
+import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
 import type { RoleCache } from '../../platform/authz/role-cache';
 import type { Db } from '../../platform/db/db.module';
 import { requestTx, systemActor, withTx } from '../../platform/db/tx';
+import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { ClamdClient } from '../../platform/documents/clamd.client';
 import type { ScanJobData } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
@@ -86,6 +92,8 @@ let documents: DocumentsService;
 let settings: SettingsService;
 let controller: ImagesController;
 let publicLogo: PublicLogoController;
+let httpApp: INestApplication;
+let baseUrl: string;
 let branding: BrandingController;
 
 const queue = { add: vi.fn().mockResolvedValue({}) };
@@ -326,6 +334,17 @@ beforeAll(async () => {
   publicLogo = new PublicLogoController(documents);
   branding = new BrandingController(settings);
 
+  // The public route over real HTTP: Nest routing, the error filter and the response headers, with no session at all.
+  const moduleRef = await Test.createTestingModule({
+    controllers: [PublicLogoController],
+    providers: [{ provide: DocumentsService, useValue: documents }],
+  }).compile();
+  httpApp = moduleRef.createNestApplication({ logger: false });
+  configureApp(httpApp);
+  httpApp.useGlobalFilters(new ErrorBodyFilter());
+  await httpApp.listen(0, '127.0.0.1');
+  baseUrl = `http://127.0.0.1:${((httpApp.getHttpServer() as Server).address() as AddressInfo).port}`;
+
   fakeClamd = await startFakeClamd();
   processor = new ScanProcessor(
     db,
@@ -356,6 +375,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  await httpApp?.close();
   await fakeClamd?.close();
   await pool?.end();
   await testDb?.drop();
@@ -869,6 +889,60 @@ describe('GET /v1/public/logo/:tenantId (R6Q20, R6Q20b)', () => {
     expect((await getPublic(a.tenantId)).status).toBe(200);
     await putAs(staff(a), 'entity_logo', a.organizationId, { documentId: null });
     expect((await getPublic(a.tenantId)).status).toBe(404);
+  });
+});
+
+describe('GET /v1/public/logo/:tenantId over HTTP (R6Q20b)', () => {
+  it('serves the current logo to a plain request with no cookie or token, with the public headers', async () => {
+    await applyLogo(a);
+    const res = await request(baseUrl)
+      .get(`/v1/public/logo/${a.tenantId}`)
+      .buffer(true)
+      .parse((r, done) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => done(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect((res.body as Buffer).equals(PNG)).toBe(true);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['cache-control']).toBe(PUBLIC_LOGO_CACHE_CONTROL);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toBe("default-src 'none'; sandbox");
+    expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(res.headers['set-cookie']).toBeUndefined();
+    const tag = res.headers.etag ?? '';
+    expect(tag).toMatch(/^"[0-9a-f-]{36}"$/);
+
+    const again = await request(baseUrl)
+      .get(`/v1/public/logo/${a.tenantId}`)
+      .set('If-None-Match', tag);
+    expect(again.status).toBe(304);
+    expect(again.text).toBe('');
+  });
+
+  it('answers a refusal as the shared 404 error body, for an unknown tenant, a tenant with no logo, and a bad id', async () => {
+    const noLogo = await freshTenant();
+    for (const id of [randomUUID(), noLogo.tenantId, 'not-a-uuid']) {
+      const res = await request(baseUrl).get(`/v1/public/logo/${id}`);
+      expect(res.status).toBe(404);
+      expect(res.headers['content-type']).toContain('application/json');
+      // A refusal is never cached as a logo.
+      expect(res.headers['cache-control'] ?? '').not.toContain('public');
+      expect((res.body as { error?: { code?: string } }).error?.code).toBeTypeOf('string');
+    }
+  });
+
+  it('has no per-document address any more: the old two-segment path is a 404', async () => {
+    const logo = await applyLogo(a);
+    const res = await request(baseUrl).get(`/v1/public/logo/${a.tenantId}/${logo}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('is read-only: only GET is routed', async () => {
+    for (const method of ['post', 'put', 'delete', 'patch'] as const) {
+      expect((await request(baseUrl)[method](`/v1/public/logo/${a.tenantId}`)).status).toBe(404);
+    }
   });
 });
 
