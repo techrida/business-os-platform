@@ -4,6 +4,6 @@
   "license": "AGPL-3.0-only",
   "description": "Installs pnpm from a lockfile (integrity hashes) so Dockerfiles and the dev-machine script do not run an unpinned `npm install -g`. Keep the version equal to the root packageManager; infra/pnpm-bootstrap.test.mjs checks it.",
   "dependencies": {
-    "pnpm": "11.28.11"
+    "pnpm": "12.22.0"
   }
 }
