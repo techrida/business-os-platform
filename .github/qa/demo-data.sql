@@ -44,7 +44,7 @@ DO $fixture$
 DECLARE
   v_tenant uuid; v_org uuid; v_dept uuid; v_cc uuid; v_proc uuid; v_vendor uuid; v_vat uuid;
   v_pr1 uuid := gen_random_uuid(); v_pr2 uuid := gen_random_uuid(); v_pr3 uuid := gen_random_uuid(); v_pr4 uuid := gen_random_uuid(); v_po2 uuid := gen_random_uuid();
-  v_exp uuid; v_doc uuid := gen_random_uuid(); v_bill uuid := gen_random_uuid(); v_fin uuid; v_rfq uuid := gen_random_uuid(); v_po uuid := gen_random_uuid();
+  v_rfq uuid := gen_random_uuid(); v_po uuid := gen_random_uuid();
 BEGIN
   SELECT o.tenant_id, o.id INTO v_tenant, v_org FROM app.organizations o WHERE o.legal_name = 'Techrida Pvt. Ltd.';
   SELECT id INTO v_dept FROM app.departments WHERE organization_id = v_org AND status = 'active' AND lower(btrim(name)) = 'operations';
@@ -53,8 +53,6 @@ BEGIN
   SELECT v.id INTO v_vendor FROM app.vendors v WHERE v.tenant_id = v_tenant AND v.status = 'approved'
      AND EXISTS (SELECT 1 FROM app.parties p WHERE p.id = v.id AND p.code = 'VEND-DEV');
   SELECT id INTO v_vat FROM app.tax_codes WHERE tenant_id = v_tenant AND code = 'VAT13';
-  SELECT id INTO v_exp FROM app.expense_accounts WHERE tenant_id = v_tenant AND organization_id = v_org AND status = 'active' ORDER BY code LIMIT 1;
-  SELECT id INTO v_fin FROM app.users WHERE tenant_id = v_tenant AND lower(email) = 'finance@dev.bos.test';
   IF v_org IS NULL OR v_dept IS NULL OR v_cc IS NULL OR v_proc IS NULL OR v_vendor IS NULL OR v_vat IS NULL THEN
     RAISE NOTICE 'procurement fixture skipped: seed rows missing (org %, dept %, cost centre %, procurement user %, vendor %, VAT %)', v_org, v_dept, v_cc, v_proc, v_vendor, v_vat;
     RETURN;
@@ -101,7 +99,7 @@ SELECT set_config('bos.actor_id', 'p4-qa-fixture-bill', true);
 DO $bill$
 DECLARE
   v_tenant uuid; v_org uuid; v_vendor uuid; v_vat uuid; v_exp uuid; v_fin uuid;
-  v_doc uuid := gen_random_uuid(); v_bill uuid := gen_random_uuid();
+  v_doc uuid := gen_random_uuid(); v_bill uuid := gen_random_uuid(); v_ver uuid := gen_random_uuid();
 BEGIN
   SELECT o.tenant_id, o.id INTO v_tenant, v_org FROM app.organizations o WHERE o.legal_name = 'Techrida Pvt. Ltd.';
   SELECT v.id INTO v_vendor FROM app.vendors v WHERE v.tenant_id = v_tenant AND v.status = 'approved'
@@ -111,8 +109,9 @@ BEGIN
   SELECT id INTO v_fin FROM app.users WHERE tenant_id = v_tenant AND lower(email) = 'finance@dev.bos.test';
   IF v_exp IS NOT NULL AND v_fin IS NOT NULL AND NOT EXISTS (SELECT 1 FROM app.vendor_bills WHERE organization_id = v_org AND vendor_invoice_no = 'QA-INV-1') THEN
     INSERT INTO app.documents (id, tenant_id, organization_id, owner_type, owner_id) VALUES (v_doc, v_tenant, v_org, 'vendor_bill_intake', v_vendor);
-    INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename, declared_mime, size_bytes, storage_key, status)
-    VALUES (v_tenant, v_org, v_doc, 1, 'invoice.pdf', 'application/pdf', 1024, v_tenant::text || '/' || gen_random_uuid()::text, 'clean');
+    INSERT INTO app.document_versions (id, tenant_id, organization_id, document_id, version, filename, declared_mime, size_bytes, storage_key, status)
+    VALUES (v_ver, v_tenant, v_org, v_doc, 1, 'invoice.pdf', 'application/pdf', 1024, v_tenant::text || '/' || gen_random_uuid()::text, 'clean');
+    UPDATE app.documents SET current_version_id = v_ver WHERE id = v_doc;
     INSERT INTO app.vendor_bills (id, tenant_id, organization_id, kind, number, vendor_id, vendor_invoice_no, invoice_date, fiscal_year, currency, document_id,
                                   status, match_status, net_total, vat_total, payable_total, fx_rate, payable_total_npr, entered_by)
     VALUES (v_bill, v_tenant, v_org, 'bill', 'BILL-QA-1', v_vendor, 'QA-INV-1', '2026-11-09', '2083/84', 'NPR', v_doc,
