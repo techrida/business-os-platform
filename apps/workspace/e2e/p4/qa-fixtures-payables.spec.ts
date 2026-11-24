@@ -139,7 +139,12 @@ test('qa fixtures: a draft payment request on a verified vendor account and an a
       const bank = finance.getByRole('combobox', { name: 'Pay from bank account', exact: true });
       await bank.click();
       await finance.getByRole('option').first().click();
-      await finance.getByRole('button', { name: 'Create draft request', exact: true }).click();
+      // Two steps: the page's button opens the review, and the review's button creates the draft.
+      await finance.getByRole('button', { name: 'Review request', exact: true }).click();
+      await finance
+        .getByRole('dialog', { name: 'Review the payment request' })
+        .getByRole('button', { name: 'Create draft request', exact: true })
+        .click();
       await expect(finance).toHaveURL(/\/payables\/payment-requests\/[0-9a-f-]{36}$/);
       await expect(
         finance.getByText('Verified vendor account snapshot', { exact: true }),

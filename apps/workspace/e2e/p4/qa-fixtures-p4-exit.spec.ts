@@ -70,6 +70,10 @@ async function raiseRequest(
   await expect(page).toHaveURL(/\/procurement\/requests\/[0-9a-f-]{36}\?created=1$/);
   const id = idFromUrl(page);
   await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Submit for approval?' })
+    .getByRole('button', { name: 'Submit for approval', exact: true })
+    .click();
   await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
   return { id, number: (await page.getByRole('heading', { level: 1 }).innerText()).trim() };
 }
