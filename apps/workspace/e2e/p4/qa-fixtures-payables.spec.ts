@@ -63,11 +63,12 @@ test('qa fixtures: a draft payment request on a verified vendor account and an a
         buffer: minimalPdf('QA fixture call-back evidence'),
       });
       const verify = finance.getByRole('button', { name: 'Verify account', exact: true });
-      // The evidence is virus-scanned first: a verify sent before the scan ends is refused, so the click is repeated.
+      // The evidence is virus-scanned first: a verify sent before the scan ends is refused ("Not verified"), so the
+      // click is repeated until the account reads as verified. The button changes its words while it works.
       await expect(async () => {
         if (await verify.isVisible()) await verify.click();
-        await expect(verify).toHaveCount(0, { timeout: 8_000 });
-      }).toPass({ timeout: 120_000 });
+        await expect(finance.getByText('Verified, in use')).toBeVisible({ timeout: 15_000 });
+      }).toPass({ timeout: 180_000 });
     });
 
     let billId = '';
