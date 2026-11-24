@@ -206,7 +206,10 @@ test('qa fixtures: one connected Journey 11 (request, RFQ, order, serialized rec
       const dialog = procurement.getByRole('dialog');
       await dialog.getByRole('button', { name: 'Issue purchase order', exact: true }).click();
       const done = dialog.getByRole('button', { name: 'Done', exact: true });
-      if (await done.isVisible({ timeout: 30_000 }).catch(() => false)) await done.click();
+      await done
+        .waitFor({ timeout: 30_000 })
+        .then(() => done.click())
+        .catch(() => undefined);
       await expect(
         procurement.getByRole('button', { name: 'Issue purchase order', exact: true }),
       ).toHaveCount(0, { timeout: 30_000 });
@@ -226,7 +229,10 @@ test('qa fixtures: one connected Journey 11 (request, RFQ, order, serialized rec
       const dialog = warehouse.getByRole('dialog');
       await dialog.getByRole('button', { name: 'Confirm receipt', exact: true }).click();
       const done = dialog.getByRole('button', { name: 'Done', exact: true });
-      if (await done.isVisible({ timeout: 30_000 }).catch(() => false)) await done.click();
+      await done
+        .waitFor({ timeout: 30_000 })
+        .then(() => done.click())
+        .catch(() => undefined);
       await expect(
         warehouse.getByRole('button', { name: 'Confirm receipt', exact: true }),
       ).toHaveCount(0, { timeout: 30_000 });
