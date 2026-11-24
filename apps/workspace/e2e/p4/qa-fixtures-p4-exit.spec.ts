@@ -110,7 +110,7 @@ async function enterQuotation(
   await page.goto(`/procurement/rfqs/${rfqId}/quotations/new`);
   await page.waitForLoadState('networkidle');
   await pickFromCombobox(page, 'Vendor', vendor.split(' ')[0] ?? vendor, vendor);
-  await page.getByLabel('Quotation document').setInputFiles({
+  await page.locator('input[type="file"]').setInputFiles({
     name: 'quotation.pdf',
     mimeType: 'application/pdf',
     buffer: minimalPdf(`QA fixture quotation of ${vendor}`),
