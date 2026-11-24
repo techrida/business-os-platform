@@ -28,3 +28,15 @@ need PORTAL_E2E_VENDOR_PO_ID "$(q "select id from app.purchase_orders where numb
 need PORTAL_E2E_VENDOR_FOREIGN_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-2'")"
 need PORTAL_E2E_VENDOR_RFQ_ID "$(q "select id from app.rfqs where number = 'RFQ-QA-1'")"
 need PORTAL_E2E_VENDOR_BILL_ID "$(q "select id from app.vendor_bills where vendor_invoice_no = 'QA-INV-1'")"
+
+# Billing fixtures (e2e/p4/qa-fixtures-billing.spec.ts): found by the marker the fixture put in each document.
+echo "BOS_E2E_INVOICES_READY=1" >> "$out"
+need BOS_E2E_INVOICE_ISSUED "$(q "select id from app.invoices where manual_reason = 'QA fixture: issued invoice' and status = 'issued'")"
+need PORTAL_E2E_INVOICE_ID "$(q "select id from app.invoices where manual_reason = 'QA fixture: issued invoice' and status = 'issued'")"
+need PORTAL_E2E_FOREIGN_INVOICE_ID "$(q "select id from app.invoices where manual_reason = 'QA fixture: invoice of another customer' and status = 'issued'")"
+need PORTAL_E2E_DRAFT_ID "$(q "select id from app.invoices where manual_reason = 'QA fixture: draft invoice' and status = 'draft'")"
+need BOS_E2E_PAYMENT_VERIFIED "$(q "select id from app.payments where bank_reference = 'QA-FIXTURE-PAYMENT' and status = 'verified'")"
+# The seeded customer the invoice and payment forms pick by name, and a small proof file written by the fixtures.
+echo "BOS_E2E_PAYMENT_CUSTOMER=Dev Customer Co" >> "$out"
+echo "BOS_E2E_INVOICE_DRAFT_CUSTOMER=Dev Customer Co" >> "$out"
+put PORTAL_E2E_PROOF_FILE "$PWD/.dev/portal-proof.pdf"
