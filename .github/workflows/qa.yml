@@ -96,7 +96,7 @@ jobs:
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
         run: |
           cd apps/workspace
-          pnpm exec playwright test --project=dev qa-fixtures.spec --output=test-results-fixtures
+          pnpm exec playwright test --project=dev p4/qa-fixtures.spec --output=test-results-fixtures
 
       - name: Playwright (workspace, dev project)
         if: ${{ matrix.mode == 'specs' }}

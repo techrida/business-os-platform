@@ -16,7 +16,7 @@ export type OutputMime = 'image/png' | 'image/jpeg';
 /** Qualities tried in order for a JPEG at each size (PNG has no quality: only the size can shrink it). */
 export const JPEG_QUALITIES = [0.88, 0.75, 0.6, 0.45] as const;
 /** Longest sides tried in order: IMAGE_MAX_SIDE_PX first, then smaller until the file fits. */
-export const SIDE_STEPS = [512, 384, 256, 192, 128, 96, 64, 48, 32] as const;
+export const SIDE_STEPS = [IMAGE_MAX_SIDE_PX, 384, 256, 192, 128, 96, 64, 48, 32] as const;
 const SNIFF_BYTES = 12;
 const DEFAULT_STEM = 'image';
 

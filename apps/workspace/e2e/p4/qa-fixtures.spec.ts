@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { signInAs } from './helpers/memo-flow';
+import { signInAs } from '../helpers/memo-flow';
 
 /**
  * Warm-up step of the qa workflow ("qa fixtures": the specs skip it). .github/qa/demo-data.sql leaves a draft purchase

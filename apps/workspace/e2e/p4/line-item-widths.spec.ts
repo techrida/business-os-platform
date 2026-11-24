@@ -30,6 +30,7 @@ const LINKED_FORMS = [
     list: '/procurement/orders',
     link: /^\/procurement\/receipts\/new\?po=/,
     open: /^\/procurement\/orders\/[0-9a-f-]{36}$/,
+    minBoxes: 1,
   },
   {
     persona: 'procurement',
@@ -37,6 +38,8 @@ const LINKED_FORMS = [
     list: '/procurement/rfqs',
     link: /^\/procurement\/rfqs\/[0-9a-f-]{36}\/quotations\/new/,
     open: /^\/procurement\/rfqs\/[0-9a-f-]{36}$/,
+    // The delivery-days box is one; the two request lines of the fixture add a price box each, so 3 proves lines show.
+    minBoxes: 3,
   },
   {
     // The bare /payables/bills/new route shows no line items until an order is picked, so the form is measured the way
@@ -46,6 +49,7 @@ const LINKED_FORMS = [
     list: '/procurement/orders',
     link: /^\/payables\/bills\/new\?po=/,
     open: /^\/procurement\/orders\/[0-9a-f-]{36}$/,
+    minBoxes: 2,
   },
 ] as const;
 
@@ -126,7 +130,7 @@ for (const form of LINKED_FORMS) {
         expect(
           result.numberBoxes,
           `${form.name} shows its line items at ${width}px`,
-        ).toBeGreaterThanOrEqual(1);
+        ).toBeGreaterThanOrEqual(form.minBoxes);
         expect(result.narrow, `${form.name} at ${width}px`).toEqual([]);
         expect(result.overflow, `${form.name} scrolls sideways at ${width}px`).toBeLessThanOrEqual(
           0,
