@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import {
   clearSelection,
@@ -9,7 +10,6 @@ import {
   toggleOptions,
 } from '../helpers/multi-select';
 import { minimalPdf } from '../helpers/pdf-fixture';
-import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
@@ -109,7 +109,7 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
   try {
     const page = finance.page;
     await page.goto('/payments/new');
-    await chooseOption(selectByLabel(page, 'Customer'), { label: customer ?? '' });
+    await pickFromCombobox(page, 'Customer', (customer ?? '').split(' ')[0] ?? '', customer ?? '');
     await page.getByLabel('Amount received').fill('2.00');
     await page.getByLabel('Bank reference').fill('E2E-self-verification-' + Date.now());
     await page.getByLabel('Add proof files').setInputFiles({

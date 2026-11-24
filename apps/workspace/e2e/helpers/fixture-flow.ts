@@ -58,3 +58,16 @@ export function recordFixtureIds(add: Record<string, string | string[]>): void {
     : {};
   writeFileSync(file, JSON.stringify({ ...known, ...add }, null, 2));
 }
+
+/** Picks a record in a search-as-you-type combobox: types `search`, clicks the first option that shows `optionText`. */
+export async function pickFromCombobox(
+  page: Page,
+  label: string,
+  search: string,
+  optionText: string,
+): Promise<void> {
+  const box = page.getByRole('combobox', { name: label, exact: true });
+  await box.click();
+  await box.fill(search);
+  await page.getByRole('option').filter({ hasText: optionText }).first().click();
+}
