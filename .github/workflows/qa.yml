@@ -98,6 +98,10 @@ jobs:
           cd apps/workspace
           pnpm exec playwright test --project=dev p4/qa-fixtures.spec --output=test-results-fixtures
 
+      # The env-gated specs (BOS_E2E_P4 and the *_ID variables) run against these fixtures instead of skipping.
+      - name: Export the fixture ids to the spec environment
+        run: bash .github/qa/export-ids.sh
+
       - name: Playwright (workspace, dev project)
         if: ${{ matrix.mode == 'specs' }}
         env:
