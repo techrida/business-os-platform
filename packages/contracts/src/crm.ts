@@ -1007,6 +1007,23 @@ export const OpportunityDtoSchema = z.object({
       }),
     )
     .optional(),
+  /**
+   * R6Q22, on the detail only: the deal's sales orders as dated events (drafted, confirmed, cancelled), oldest first,
+   * next to the stage history. Only the orders the reader may read themselves (`sales_order.read` reach) are listed,
+   * so a reader without that permission sees none. `number` is null while the order is a draft; `actorName` is null
+   * when no person is recorded (a cancellation records none).
+   */
+  orderHistory: z
+    .array(
+      z.object({
+        salesOrderId: z.guid(),
+        number: z.string().nullable(),
+        event: z.enum(['drafted', 'confirmed', 'cancelled']),
+        at: isoDateTime,
+        actorName: z.string().nullable(),
+      }),
+    )
+    .optional(),
   version: z.number().int().min(1),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
