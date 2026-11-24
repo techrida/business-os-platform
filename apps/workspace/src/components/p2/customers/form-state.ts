@@ -8,6 +8,8 @@ export interface CustomerFormState {
   errors: CustomerErrors;
   /** A refusal that is not about one field: 403, 409, 5xx or a lost connection. */
   error?: string;
+  /** Not a failure: a save with nothing changed. Shown as a neutral notice, not the red "Nothing was saved". */
+  notice?: string;
   /** The page is out of date: offer a reload instead of a retry. */
   reload?: boolean;
   /** Possible duplicates found before creating. The form turns its button into "Create anyway". */

@@ -158,9 +158,9 @@ describe('ImageUpload', () => {
     expect(input.accept).toBe('image/png,image/jpeg,image/webp');
     const title = document.getElementById(input.getAttribute('aria-labelledby')!);
     expect(title?.textContent).toBe('Replace picture');
-    expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toContain(
-      'PNG, JPEG or WebP',
-    );
+    expect(
+      document.getElementById(input.getAttribute('aria-describedby')!)?.textContent,
+    ).not.toMatch(/512\s?KB|PNG, JPEG or WebP/);
   });
 
   // U12-Q4: the customer profile card asks for the larger picture; every other caller keeps 40 px.

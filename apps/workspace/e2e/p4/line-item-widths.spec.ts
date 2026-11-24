@@ -19,18 +19,19 @@ const WIDTHS = [390, 834, 1100, 1280, 1440] as const;
 const FORMS = [
   { persona: 'procurement', route: '/procurement/requests/new' },
   { persona: 'finance', route: '/invoices/new' },
-  { persona: 'finance', route: '/payables/bills/new' },
 ] as const;
 
 // Forms that need a record: the route is the first link of that shape on a list page, so the specs follow
 // whatever the seed holds. A form with no record to open is a failure, not a skip: the seed must carry one.
 const LINKED_FORMS = [
   {
-    persona: 'procurement',
+    // The warehouse persona confirms receipts; procurement may not receive, so its order page has no receive link.
+    persona: 'warehouse',
     name: 'receipt',
     list: '/procurement/orders',
     link: /^\/procurement\/receipts\/new\?po=/,
     open: /^\/procurement\/orders\/[0-9a-f-]{36}$/,
+    minBoxes: 1,
   },
   {
     persona: 'procurement',
@@ -38,6 +39,18 @@ const LINKED_FORMS = [
     list: '/procurement/rfqs',
     link: /^\/procurement\/rfqs\/[0-9a-f-]{36}\/quotations\/new/,
     open: /^\/procurement\/rfqs\/[0-9a-f-]{36}$/,
+    // The delivery-days box is one; the two request lines of the fixture add a price box each, so 3 proves lines show.
+    minBoxes: 3,
+  },
+  {
+    // The bare /payables/bills/new route shows no line items until an order is picked, so the form is measured the way
+    // a person reaches it: the "Enter bill" link of an order (QA fixture PO-QA-1, issued by qa-fixtures.spec).
+    persona: 'founder',
+    name: 'bill entry for an order',
+    list: '/procurement/orders',
+    link: /^\/payables\/bills\/new\?po=/,
+    open: /^\/procurement\/orders\/[0-9a-f-]{36}$/,
+    minBoxes: 2,
   },
 ] as const;
 
@@ -87,14 +100,23 @@ async function findFormRoute(
     .locator('main a[href]')
     .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
   const candidates = [...new Set(records.filter((href) => form.open.test(href)))].slice(0, 12);
+  let lastSeen = `${candidates.length} records on ${form.list}`;
   for (const record of candidates) {
     await page.goto(record);
-    const hrefs = await page
-      .locator('main a[href]')
-      .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
-    const found = hrefs.find((href) => form.link.test(href));
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    // The action buttons come from the order's progress read, which streams in after the heading: look for a while.
+    let found: string | undefined;
+    for (let attempt = 0; attempt < 10 && found === undefined; attempt += 1) {
+      const hrefs = await page
+        .locator('main a[href]')
+        .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
+      found = hrefs.find((href) => form.link.test(href));
+      if (found === undefined) await page.waitForTimeout(1_000);
+    }
     if (found !== undefined) return found;
+    lastSeen = `${record}: ${(await page.locator('main').innerText()).replace(/\s+/g, ' ').slice(0, 700)}`;
   }
+  console.log(`no ${form.name} link for ${form.persona}; last page: ${lastSeen}`);
   return null;
 }
 
@@ -118,7 +140,7 @@ for (const form of LINKED_FORMS) {
         expect(
           result.numberBoxes,
           `${form.name} shows its line items at ${width}px`,
-        ).toBeGreaterThanOrEqual(1);
+        ).toBeGreaterThanOrEqual(form.minBoxes);
         expect(result.narrow, `${form.name} at ${width}px`).toEqual([]);
         expect(result.overflow, `${form.name} scrolls sideways at ${width}px`).toBeLessThanOrEqual(
           0,

@@ -1,4 +1,4 @@
-import { EMPTY_COMPANY_PROFILE, IMAGE_HINT } from '@bos/contracts';
+import { EMPTY_COMPANY_PROFILE } from '@bos/contracts';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -92,7 +92,7 @@ describe('Company profile and Number format pages', () => {
       'Quotations and invoices cannot be made into PDFs until an address is saved.',
     );
     // The logo card is the shared upload box for the organisation: no Save, no logo form.
-    expect(html).toContain(IMAGE_HINT);
+    expect(html).not.toContain('up to 512 KB');
     expect(html).toContain('aria-label="Logo"');
     expect(html).toContain(
       'Printed at the top of your quotations, invoices, purchase orders and memos.',

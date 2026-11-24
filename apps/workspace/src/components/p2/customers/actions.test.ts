@@ -295,6 +295,16 @@ describe('updateCustomerAction', () => {
     expect(res.reload).toBeUndefined();
   });
 
+  it('a save with nothing changed is a neutral notice, not an error (R6Q5)', async () => {
+    api.getCustomer.mockResolvedValue(original);
+    const f = editForm();
+    f.set('legalName', 'Old name');
+    const res = await updateCustomerAction({ key: IDEM, errors: {} }, f);
+    expect(api.updateCustomer).not.toHaveBeenCalled();
+    expect(res.error).toBeUndefined();
+    expect(res.notice).toBe('Nothing changed, so there is nothing to save.');
+  });
+
   it('saves a verified customer whose disabled country control posts nothing (R6AE)', async () => {
     api.getCustomer.mockResolvedValue(original);
     api.updateCustomer.mockResolvedValue({ ...original, industry: 'Retail' });
