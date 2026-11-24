@@ -64,7 +64,7 @@ test('submits a bill: the total is the vendor’s own text, and the answer says 
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('scan.pdf');
   await page.getByLabel('Your invoice number').fill(`E2E-${stamp()}`);
   await fillDateField(page, 'Invoice date', '2026-11-01');
-  await page.getByLabel('Total on your invoice').fill('20,18,180.00');
+  await page.getByLabel('Total on your invoice').pressSequentially('2018180.00');
   await page.getByRole('button', { name: 'Submit bill' }).click();
   const done = page.getByRole('status').filter({ hasText: 'We received your bill' });
   await expect(done).toBeVisible();

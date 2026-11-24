@@ -64,7 +64,7 @@ function TermsDialog({
 
   useEffect(() => {
     if (state.saved) toast.success(state.saved);
-    if (state.error) summaryRef.current?.focus();
+    if (state.error || state.notice) summaryRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
 
@@ -97,6 +97,11 @@ function TermsDialog({
         {Object.entries(hidden).map(([key, value]) => (
           <input key={key} type="hidden" name={key} value={value} />
         ))}
+        {state.notice && !state.error ? (
+          <Alert ref={summaryRef} tabIndex={-1} tone="info" role="status" title="Nothing changed">
+            {state.notice}
+          </Alert>
+        ) : null}
         {state.error ? (
           <Alert
             ref={summaryRef}

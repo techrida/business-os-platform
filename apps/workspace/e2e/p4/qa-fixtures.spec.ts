@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
@@ -38,3 +40,25 @@ test('qa fixtures: issue the seeded purchase order', async ({ browser, baseURL }
     await context.close();
   }
 });
+
+/**
+ * Portal specs read a stored login (storageState) of a customer and of an approved vendor. The dev personas
+ * `customer` (Dev Customer Co) and `vendor` (Dev Vendor Co, VEND-DEV) sign in to the portal through the real login;
+ * the cookies go to .dev/ (git-ignored and outside every uploaded artifact path).
+ */
+for (const key of ['customer', 'vendor'] as const) {
+  test(`qa fixtures: portal sign-in state of ${key}`, async ({ browser }) => {
+    test.setTimeout(180_000);
+    const portal = process.env.PORTAL_E2E_BASE_URL ?? 'https://portal.localhost';
+    const { context, page } = await signInAs(browser, portal, key);
+    try {
+      await page.waitForLoadState('networkidle');
+      await expect(page).toHaveURL((url) => url.origin === new URL(portal).origin);
+      await context.storageState({
+        path: path.resolve(process.cwd(), `../../.dev/portal-${key}.json`),
+      });
+    } finally {
+      await context.close();
+    }
+  });
+}

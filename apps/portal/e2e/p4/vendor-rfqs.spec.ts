@@ -49,27 +49,29 @@ test('refuses a quotation without a file or a total, naming the fields', async (
   test.skip(!rfqId, 'PORTAL_E2E_VENDOR_RFQ_ID is not set');
   await page.goto(`/vendor/rfqs/${rfqId}/quote`);
   await page.waitForLoadState('networkidle');
-  await page.getByLabel('Total of your quotation').fill('twelve');
+  await page.getByLabel('Total of your quotation').pressSequentially('twelve');
   await page.getByRole('button', { name: 'Submit quotation' }).click();
   await expect(page.getByText('Add your quotation as a PDF or a picture.')).toBeVisible();
   await expect(page.getByText(/Enter the total of your quotation/)).toBeVisible();
-  await expect(page.getByLabel('Total of your quotation')).toHaveValue('twelve');
+  // The total is a number box: letters never enter it, so what stays is empty and the refusal names it.
+  await expect(page.getByLabel('Total of your quotation')).toHaveValue('');
 });
 
-test('refuses a delivery time that is not whole days, keeping what was typed', async ({ page }) => {
+test('the delivery time takes whole days only, and the total keeps its grouping', async ({
+  page,
+}) => {
   test.skip(!rfqId, 'PORTAL_E2E_VENDOR_RFQ_ID is not set');
   await page.goto(`/vendor/rfqs/${rfqId}/quote`);
   await page.waitForLoadState('networkidle');
   await page.getByLabel('Your quotation', { exact: true }).setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('quotation.pdf');
-  await page.getByLabel('Total of your quotation').fill('20,18,180.00');
-  const delivery = page.getByLabel('Delivery time in days (optional)');
-  // inputMode=numeric is a keyboard hint; this remains a text input for server validation.
-  await delivery.fill('2w');
-  await expect(delivery).toHaveValue('2w');
-  await page.getByRole('button', { name: 'Submit quotation' }).click();
-  await expect(page.getByText(/Enter the delivery time as a whole number of days/)).toBeVisible();
-  await expect(page.getByLabel('Total of your quotation')).toHaveValue('20,18,180.00');
+  await page.getByLabel('Total of your quotation').pressSequentially('2018180.00');
+  const delivery = page.getByLabel(/^Delivery time in days/);
+  // The delivery time is a whole-number box: a letter never enters it, so "not whole days" cannot be typed.
+  await delivery.pressSequentially('2w');
+  await expect(delivery).toHaveValue('2');
+  // Nothing is submitted here: the next test sends the one real quotation.
+  await expect(page.getByLabel('Total of your quotation')).toHaveValue(/20,18,180(\.00)?/);
 });
 
 test('submits a quotation: the total is the vendor’s own text, and the answer confirms it', async ({
@@ -80,10 +82,10 @@ test('submits a quotation: the total is the vendor’s own text, and the answer 
   await page.waitForLoadState('networkidle');
   await page.getByLabel('Your quotation', { exact: true }).setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('quotation.pdf');
-  await page.getByLabel('Total of your quotation').fill('20,18,180.00');
-  await page.getByLabel('Your reference (optional)').fill(`E2E-${stamp()}`);
-  await fillDateField(page, 'Prices valid until (optional)', '2999-12-31');
-  await page.getByLabel('Delivery time in days (optional)').fill('14');
+  await page.getByLabel('Total of your quotation').pressSequentially('2018180.00');
+  await page.getByLabel(/^Your reference/).fill(`E2E-${stamp()}`);
+  await fillDateField(page, 'Prices valid until', '2999-12-31');
+  await page.getByLabel(/^Delivery time in days/).fill('14');
   await page.getByRole('button', { name: 'Submit quotation' }).click();
   await expect(page).toHaveURL(new RegExp(`/vendor/rfqs/${rfqId}/quote\\?sent=1$`));
   await expect(

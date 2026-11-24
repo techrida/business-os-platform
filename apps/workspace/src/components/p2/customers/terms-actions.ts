@@ -144,7 +144,7 @@ export async function changeOwnerAction(
   const ownerUserId = text(form, 'ownerUserId');
   if (!isGuid(ownerUserId)) return { errors: { value: OWNER_REQUIRED }, ...same };
   if (ownerUserId === text(form, 'currentOwnerUserId')) {
-    return { errors: { value: NOTHING_CHANGED }, ...same };
+    return { errors: {}, notice: NOTHING_CHANGED, ...same };
   }
 
   try {
@@ -172,7 +172,7 @@ export async function setPaymentTermAction(
   const chosen = text(form, 'paymentTermId');
   if (chosen !== '' && !isGuid(chosen)) return { errors: {}, error: INCOMPLETE, ...same };
   if (chosen === text(form, 'currentPaymentTermId')) {
-    return { errors: { value: NOTHING_CHANGED }, ...same };
+    return { errors: {}, notice: NOTHING_CHANGED, ...same };
   }
 
   try {
@@ -205,7 +205,7 @@ export async function setCreditLimitAction(
   if (!parsed.ok) return { errors: { value: parsed.error }, ...same };
   const current = text(form, 'currentCreditLimit');
   if (sameLimit(parsed.value, current === '' ? null : current)) {
-    return { errors: { value: NOTHING_CHANGED }, ...same };
+    return { errors: {}, notice: NOTHING_CHANGED, ...same };
   }
 
   try {

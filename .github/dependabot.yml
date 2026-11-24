@@ -5,10 +5,10 @@ updates:
     target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
-    # pdfjs-dist is pinned at 4.5.136 for iOS Safari 15 (see pnpm-workspace.yaml); majors are not taken by PR.
+    # pdfjs-dist is pinned at 4.5.136 for iOS Safari 15 (see pnpm-workspace.yaml); no PR may move it: 4.6+ legacy builds carry ES2022 static blocks (checked: 4.10.38 has them).
     ignore:
       - dependency-name: pdfjs-dist
-        update-types: ['version-update:semver-major']
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -34,6 +34,9 @@ updates:
     ignore:
       - dependency-name: postgres
         update-types: ['version-update:semver-major']
+      # Node 26 has no corepack, which infra/login's Dockerfile needs; the repo pins Node 24 everywhere (engines, CI). Move Node deliberately.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
     groups:
       images:
         patterns: ['*']
@@ -42,3 +45,7 @@ updates:
     target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 1
+    # pnpm 12 needs libatomic (absent from node:24-bookworm-slim) and the root packageManager and engines pin 11; move all together, never by PR.
+    ignore:
+      - dependency-name: pnpm
+        update-types: ['version-update:semver-major']
