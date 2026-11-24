@@ -398,7 +398,7 @@ const IMG_TAG = /<\s*img\b[^>]*>/gi;
 
 const RENDERED_KEYS = 'html,subject,text';
 const HTML_FORBIDDEN =
-  /<\s*(?:img|iframe|object|embed|link|form|script|video|audio|source)\b|\bsrc\s*=/i;
+  /<\s*(?:img|image|iframe|object|embed|link|form|script|video|audio|source)\b|\b(?:src|srcset|background)\s*=|\burl\s*\(/i;
 const REFERENCE_FORBIDDEN = /\bcid:|\bdata:[a-z]+\/|\b(?:javascript|vbscript):/i;
 /** A link with a scheme, anywhere in a part (text, html attribute or plain). */
 const SCHEME_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
