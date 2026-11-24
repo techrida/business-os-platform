@@ -15,7 +15,7 @@ const storageState = process.env.PORTAL_E2E_STORAGE_STATE;
 // One id, or a comma-separated list: the accept test uses a quotation up, so each `--repeat-each` run takes the next one.
 const sentIds = (process.env.PORTAL_E2E_SENT_ID ?? '').split(',').filter(Boolean);
 let sentId: string | undefined;
-test.beforeEach((_fixtures, info) => {
+test.beforeEach(({ browserName: _browser }, info) => {
   sentId = sentIds[info.repeatEachIndex] ?? sentIds.at(-1);
 });
 const foreignId = process.env.PORTAL_E2E_FOREIGN_ID;
