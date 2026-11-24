@@ -80,7 +80,7 @@ describe('(portal) layout', () => {
     const withLogo = renderToStaticMarkup(
       (await PortalLayout({ children: <p>customer page</p> })) as ReactElement,
     );
-    expect(withLogo).toContain(`src="/brand/logo/${tenantId}/${documentId}"`);
+    expect(withLogo).toContain(`src="/brand/logo/${tenantId}"`);
     expect(withLogo).toContain('alt="Techrida"');
 
     m.getBranding.mockResolvedValue({ displayName: 'Techrida', logo: null });

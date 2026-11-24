@@ -494,8 +494,7 @@ describe('no attachment and no foreign host (ADR 0023: email a portal link, neve
 
 describe('the company logo (R6Q20)', () => {
   const TENANT = '0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4';
-  const DOC = '6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10';
-  const logo = { tenantId: TENANT, documentId: DOC };
+  const logo = { tenantId: TENANT };
 
   it('is absent without a logo, so every email is as before', () => {
     for (const template of EMAIL_TEMPLATES) {
@@ -514,7 +513,7 @@ describe('the company logo (R6Q20)', () => {
       { linkPath: LINK_PATH_OF[template] },
       { ...opts, logo, companyName: 'Techrida <b>' },
     ).html;
-    const url = `${base}/brand/logo/${TENANT}/${DOC}`;
+    const url = `${base}/brand/logo/${TENANT}`;
     expect(html.match(/<img\b/g)).toHaveLength(1);
     expect(html).toContain(`<img src="${url}" alt="Techrida &lt;b&gt;"`);
     expect(buildLogoUrl(base, logo)).toBe(url);
@@ -542,13 +541,8 @@ describe('the company logo (R6Q20)', () => {
     }
   });
 
-  it('builds the address only from an http(s) base and two guids', () => {
+  it('builds the address only from an http(s) base and one guid', () => {
     expect(() => buildLogoUrl('javascript:alert(1)', logo)).toThrow(EmailTemplateError);
-    expect(() => buildLogoUrl(PORTAL, { tenantId: '../x', documentId: DOC })).toThrow(
-      EmailTemplateError,
-    );
-    expect(() => buildLogoUrl(PORTAL, { tenantId: TENANT, documentId: 'a/b' })).toThrow(
-      EmailTemplateError,
-    );
+    expect(() => buildLogoUrl(PORTAL, { tenantId: '../x' })).toThrow(EmailTemplateError);
   });
 });

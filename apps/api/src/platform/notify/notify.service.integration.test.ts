@@ -475,11 +475,11 @@ describe('the company logo in emails (R6Q20)', () => {
 
     const staff = await bodyOf('logo:staff');
     expect(staff?.body_html).toContain(
-      `<img src="https://app.example.com/brand/logo/${scope.tenantId}/${LOGO}" alt="Techrida"`,
+      `<img src="https://app.example.com/brand/logo/${scope.tenantId}" alt="Techrida"`,
     );
     const customer = await bodyOf('logo:customer');
     expect(customer?.body_html).toContain(
-      `src="https://portal.example.com/brand/logo/${scope.tenantId}/${LOGO}"`,
+      `src="https://portal.example.com/brand/logo/${scope.tenantId}"`,
     );
     // The text part stays text: no image reference.
     expect(staff?.body_text).not.toContain('brand/logo');
