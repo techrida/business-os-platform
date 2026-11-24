@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 
 import { Queue } from 'bullmq';
-import type { RedisOptions } from 'ioredis';
 import { describe, expect, it, vi } from 'vitest';
 
 import { QueueCallTimeoutError, queueCallWithin } from './nudge-timeout';
@@ -40,7 +39,7 @@ describe('queueCallWithin', () => {
   it('bounds a real bullmq queue.add against an unreachable Valkey', async () => {
     const queue = new Queue('r6q21-valkey-down', {
       connection: {
-        ...(redisOptionsFromUrl('redis://127.0.0.1:1') as RedisOptions),
+        ...redisOptionsFromUrl('redis://127.0.0.1:1'),
         retryStrategy: () => 200,
       },
     });
