@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { fillDateField } from '../helpers/date-fields';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import {
   expectParam,
@@ -67,7 +68,7 @@ test('a draft is saved with a server total, then cancelled and read-only', async
     await test.step('the form saves a draft', async () => {
       await page.goto('/procurement/requests/new');
       await page.waitForLoadState('networkidle');
-      await page.getByLabel('Needed by').fill('2026-12-31');
+      await fillDateField(page, 'Needed by', '2026-12-31');
       await chooseOption(selectByName(page, 'departmentId'), DEPARTMENT);
       await chooseOption(selectByName(page, 'costCenterId'), COST_CENTER);
       await page.getByLabel('Budget code').fill('E2E-26');

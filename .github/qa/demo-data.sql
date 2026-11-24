@@ -85,9 +85,24 @@ BEGIN
   INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
   VALUES (v_tenant, v_org, v_po, v_pr2, 1, 'goods', 'Laptop', 'pcs', '1', '79646.02', v_vat, '79646.02', '10353.98', '90000.00');
 
-  -- A draft vendor bill of one line (no PO link, so it does not depend on the order being issued): the bill page shows
-  -- its lines, totals and match panel.
-  IF v_exp IS NOT NULL AND v_fin IS NOT NULL THEN
+END
+$fixture$;
+
+-- The bill needs the finance user, who exists only after the first sign-in: its own block, so the second run (after
+-- the warm-up) adds it although the first block returned early on PR-QA-1.
+SELECT set_config('bos.actor_id', 'p4-qa-fixture-bill', true);
+DO $bill$
+DECLARE
+  v_tenant uuid; v_org uuid; v_vendor uuid; v_vat uuid; v_exp uuid; v_fin uuid;
+  v_doc uuid := gen_random_uuid(); v_bill uuid := gen_random_uuid();
+BEGIN
+  SELECT o.tenant_id, o.id INTO v_tenant, v_org FROM app.organizations o WHERE o.legal_name = 'Techrida Pvt. Ltd.';
+  SELECT v.id INTO v_vendor FROM app.vendors v WHERE v.tenant_id = v_tenant AND v.status = 'approved'
+     AND EXISTS (SELECT 1 FROM app.parties p WHERE p.id = v.id AND p.code = 'VEND-DEV');
+  SELECT id INTO v_vat FROM app.tax_codes WHERE tenant_id = v_tenant AND code = 'VAT13';
+  SELECT id INTO v_exp FROM app.expense_accounts WHERE tenant_id = v_tenant AND organization_id = v_org AND status = 'active' ORDER BY code LIMIT 1;
+  SELECT id INTO v_fin FROM app.users WHERE tenant_id = v_tenant AND lower(email) = 'finance@dev.bos.test';
+  IF v_exp IS NOT NULL AND v_fin IS NOT NULL AND NOT EXISTS (SELECT 1 FROM app.vendor_bills WHERE organization_id = v_org AND vendor_invoice_no = 'QA-INV-1') THEN
     INSERT INTO app.documents (id, tenant_id, organization_id, owner_type, owner_id) VALUES (v_doc, v_tenant, v_org, 'vendor_bill_intake', v_vendor);
     INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename, declared_mime, size_bytes, storage_key, status)
     VALUES (v_tenant, v_org, v_doc, 1, 'invoice.pdf', 'application/pdf', 1024, v_tenant::text || '/' || gen_random_uuid()::text, 'clean');
@@ -99,6 +114,6 @@ BEGIN
     VALUES (v_tenant, v_org, v_bill, 1, 'Consulting', v_exp, 1, 10000.00, 10000.00, v_vat, 1300.00);
   END IF;
 END
-$fixture$;
+$bill$;
 
 COMMIT;
