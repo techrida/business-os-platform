@@ -67,7 +67,7 @@ test('the invoice page shows lines, VAT, totals, due date and status, and no int
   await expect(page.getByRole('heading', { level: 1 })).toContainText('INV');
   await expect(page.getByRole('table', { name: /^Items/ })).toBeVisible();
   await expect(page.getByText('Taxable amount')).toBeVisible();
-  await expect(page.getByText('Due', { exact: true })).toBeVisible();
+  await expect(page.getByText('Due date', { exact: true })).toBeVisible();
   await expect(page.getByText(/^(Unpaid|Partly paid|Overdue)$/)).toBeVisible();
   expect(await page.locator('main').innerText()).not.toMatch(FORBIDDEN);
   await expect(page.getByRole('link', { name: 'Download', exact: true })).toHaveAttribute(
@@ -86,7 +86,7 @@ test('submitting a payment needs proof, then lands in the list as awaiting verif
   await expect(page.getByLabel('Amount paid')).not.toHaveValue('');
 
   // No proof yet: the server refuses and says which field.
-  await page.getByLabel('Bank reference (optional)').fill('E2E-REF-1');
+  await page.getByLabel('Bank reference').fill('E2E-REF-1');
   await page.getByRole('button', { name: 'Submit payment' }).click();
   await expect(page.getByText('Add a bank slip or receipt')).toBeVisible();
 
