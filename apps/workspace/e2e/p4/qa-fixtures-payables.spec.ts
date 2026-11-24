@@ -132,11 +132,13 @@ test('qa fixtures: a draft payment request on a verified vendor account and an a
       ).toBeVisible();
       const bill = selectByLabel(finance, 'Bill 1');
       // `?bill=` fills the first item; choose it by hand when it did not.
-      if ((await bill.innerText()).includes('Choose an approved bill')) {
-        await chooseOption(bill, { index: 1 });
+      if (!(await bill.innerText()).includes(billNumber)) {
+        await chooseOption(bill, { label: billNumber });
       }
+      // The draft must be on this fixture's bill, not another approved bill of the vendor.
+      await expect(bill).toContainText(billNumber);
       const amount = finance.getByLabel('Amount 1');
-      if ((await amount.inputValue()) === '') await amount.fill('11300.00');
+      if ((await amount.inputValue()) === '') await amount.fill('10000.00');
       const bank = finance.getByRole('combobox', { name: 'Pay from bank account', exact: true });
       await bank.click();
       await finance.getByRole('option').first().click();

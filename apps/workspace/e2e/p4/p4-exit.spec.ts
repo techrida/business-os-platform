@@ -76,8 +76,14 @@ test('procurement raises a PR, its department head alone approves, then three ve
           .getByRole('button', { name: 'Submit for approval', exact: true })
           .click();
         await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
+        // The region also lists who acted, so the route's one step is counted by its routing reason.
         await expect(
-          page.getByRole('region', { name: 'Approval', exact: true }).getByRole('listitem'),
+          page
+            .getByRole('region', { name: 'Approval', exact: true })
+            .getByRole('listitem')
+            .filter({
+              hasText: 'Base route: the head of the requesting department approves the need',
+            }),
         ).toHaveCount(1);
         return pathname;
       });
@@ -90,7 +96,12 @@ test('procurement raises a PR, its department head alone approves, then three ve
       await page.goto(requestPath);
       await expect(page.getByText('Department approved', { exact: true })).toBeVisible();
       await expect(
-        page.getByRole('region', { name: 'Approval', exact: true }).getByRole('listitem'),
+        page
+          .getByRole('region', { name: 'Approval', exact: true })
+          .getByRole('listitem')
+          .filter({
+            hasText: 'Base route: the head of the requesting department approves the need',
+          }),
       ).toHaveCount(1);
     });
 
@@ -130,7 +141,13 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
     await test.step('the purchase request links to its three-vendor RFQ and approval routes are complete', async () => {
       await page.goto(`/procurement/requests/${prId}`);
       const approval = page.getByRole('region', { name: 'Approval', exact: true });
-      await expect(approval.getByRole('listitem')).toHaveCount(1);
+      await expect(
+        approval
+          .getByRole('listitem')
+          .filter({
+            hasText: 'Base route: the head of the requesting department approves the need',
+          }),
+      ).toHaveCount(1);
       await expect(approval).toContainText('Approved on');
       await page.getByRole('link', { name: 'Open RFQ', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/procurement/rfqs/${rfqId}$`));
@@ -142,7 +159,6 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await expect(recommended).toHaveCount(1);
       await expect(recommended).toContainText('1,20,000.00');
       const commitment = page.getByRole('region', { name: 'Commitment approval', exact: true });
-      await expect(commitment.getByRole('listitem')).toHaveCount(3);
       await expect(commitment).toContainText('Approval approved');
       // The UI displays each step's routing reason; the API journey verifies its roleKey.
       const stepReasons = [
@@ -151,8 +167,9 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
         'Commitment of NPR 120,000.00 is above NPR 100,000.00',
       ];
       for (const [index, reason] of stepReasons.entries()) {
-        await expect(commitment.getByRole('listitem').nth(index)).toContainText(reason);
-        await expect(commitment.getByRole('listitem').nth(index)).toContainText('Approved');
+        const step = commitment.getByRole('listitem').filter({ hasText: reason });
+        await expect(step, `step ${index + 1}`).toHaveCount(1);
+        await expect(step).toContainText('Approved');
       }
     });
 
