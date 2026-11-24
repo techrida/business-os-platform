@@ -36,7 +36,7 @@ import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/supp
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from './pr-commitment.subject';
 import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
-import { SourcingService } from './sourcing.service';
+import { SourcingService, type QuotationLineDto } from './sourcing.service';
 import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -543,7 +543,7 @@ describe('the lines of a quotation (R6Q23)', () => {
       { prLineId: pr.secondLineId, quantity: '1', unitPrice: '0.50' },
     ]);
     const [row] = await service.comparison(rfq.id);
-    const sum = (pick: (l: (typeof row.lines)[number]) => string) =>
+    const sum = (pick: (l: QuotationLineDto) => string) =>
       (row!.lines.reduce((acc, l) => acc + Math.round(Number(pick(l)) * 100), 0) / 100).toFixed(2);
     expect(sum((l) => l.gross)).toBe(row!.subtotal);
     expect(sum((l) => l.taxAmount)).toBe(row!.taxAmount);
