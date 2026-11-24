@@ -17,16 +17,48 @@ describe('openPublicLogo (the anonymous logo fetch)', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('asks the API for the tenant logo only, with no credentials and a bounded wait', async () => {
-    const timeout = vi.spyOn(AbortSignal, 'timeout');
+  it('asks the API for the tenant logo only, with no credentials', async () => {
     await openPublicLogo(TENANT, '"etag"');
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(String(url as URL)).toBe(`http://api.internal:3001/v1/public/logo/${TENANT}`);
     expect(init?.headers).toEqual({ 'if-none-match': '"etag"' });
-    expect(init?.signal).toBeInstanceOf(AbortSignal);
-    expect(timeout).toHaveBeenCalledWith(PUBLIC_LOGO_TIMEOUT_MS);
     expect(PUBLIC_LOGO_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
-    timeout.mockRestore();
+  });
+
+  it('aborts an API that has not started answering after the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+              once: true,
+            });
+          }),
+      );
+      const pending = openPublicLogo(TENANT);
+      const settled = expect(pending).rejects.toThrow('aborted');
+      await vi.advanceTimersByTimeAsync(PUBLIC_LOGO_TIMEOUT_MS);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the timer once headers arrive, so a slow body download is not cut off', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      fetchMock.mockImplementation((_url, init) => {
+        signal = init?.signal ?? undefined;
+        return Promise.resolve(new Response('body'));
+      });
+      await openPublicLogo(TENANT);
+      await vi.advanceTimersByTimeAsync(PUBLIC_LOGO_TIMEOUT_MS * 3);
+      expect(signal?.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('cannot leave the logo path: a hostile id is one encoded segment', async () => {
