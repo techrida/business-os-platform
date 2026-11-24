@@ -5,9 +5,9 @@
 -- the line: recording a quotation defaults it to the request line's description.
 --
 -- Data written (audited as system:migration-0222): every existing vendor_quotation_lines row takes the description of
--- its request line (purchase_request_lines.description, same tenant, entity and request). Then the column is NOT NULL
--- with a non-blank CHECK. Idempotent: a row that has a description is not
--- touched. Runs as bos_owner in the migrator's one transaction, split at the breakpoint comments.
+-- its request line (purchase_request_lines.description, same tenant, entity and request; a request line whose text is blank, which the API never allowed, becomes 'Item' so the CHECK below cannot fail). Then the column is NOT NULL
+-- with a non-blank CHECK. The data statement is idempotent: a row that has a
+-- description is not touched. Runs as bos_owner in the migrator's one transaction, split at the breakpoint comments.
 
 SELECT
 	set_config('bos.actor_kind', 'system', true),
@@ -21,7 +21,7 @@ SET LOCAL lock_timeout = '5s';
 ALTER TABLE "app"."vendor_quotation_lines" ADD COLUMN "description" text;
 --> statement-breakpoint
 UPDATE "app"."vendor_quotation_lines" AS l
-SET "description" = p."description"
+SET "description" = COALESCE(NULLIF(btrim(p."description"), ''), 'Item')
 FROM "app"."purchase_request_lines" AS p
 WHERE l."description" IS NULL
 	AND p."tenant_id" = l."tenant_id"
