@@ -55,6 +55,7 @@ import {
 import { drizzleLogoStatsLookup } from './document-logo.resolver';
 import { drizzleImageOwnerLoaders, imageOwnerPolicies } from './image-owner.policies';
 import { ImagesController } from './images.controller';
+import { BrandingController } from './branding.controller';
 import { PUBLIC_LOGO_CACHE_CONTROL, PublicLogoController } from './public-logo.controller';
 import { drizzleImagePointers, ImagesService } from './images.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
@@ -85,6 +86,7 @@ let documents: DocumentsService;
 let settings: SettingsService;
 let controller: ImagesController;
 let publicLogo: PublicLogoController;
+let branding: BrandingController;
 
 const queue = { add: vi.fn().mockResolvedValue({}) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
@@ -322,6 +324,7 @@ beforeAll(async () => {
   );
 
   publicLogo = new PublicLogoController(documents);
+  branding = new BrandingController(settings);
 
   fakeClamd = await startFakeClamd();
   processor = new ScanProcessor(
@@ -819,6 +822,35 @@ describe('GET /v1/public/logo/:tenantId/:documentId (R6Q20)', () => {
     expect((await getPublic(a.tenantId, first)).status).toBe(200);
     await putAs(staff(a), 'entity_logo', a.organizationId, { documentId: null });
     expect((await getPublic(a.tenantId, first)).status).toBe(404);
+  });
+});
+
+describe('GET /v1/branding (R6Q20)', () => {
+  /** A customer principal of tenant `t`: no staff grants. */
+  const customer = (t: Tenant): Principal => ({
+    ...staff(t, 'founder'),
+    orgKind: 'customer',
+    partyId: randomUUID(),
+    roles: [],
+    grants: new Map(),
+  });
+
+  it('gives staff and a customer of the entity the same name and logo pair, and another tenant its own', async () => {
+    const logo = await uploadClean(staff(a), 'entity_logo', a.organizationId);
+    await putAs(staff(a), 'entity_logo', a.organizationId, { documentId: logo });
+    const current = (await settings.getCurrent(a, 'entity.profile')).value;
+    await withTx(db, a, systemActor('test'), (tx) =>
+      settings.set(tx, 'entity.profile', { ...current, displayName: 'Brand A' }),
+    );
+
+    const expected = { displayName: 'Brand A', logo: { tenantId: a.tenantId, documentId: logo } };
+    expect(await asCaller(staff(a), () => branding.get())).toEqual(expected);
+    expect(await asCaller(customer(a), () => branding.get())).toEqual(expected);
+    // Tenant B has set nothing: it never sees tenant A's name or logo.
+    expect((await asCaller(staff(b), () => branding.get())).logo).toBeNull();
+    expect((await asCaller(staff(b), () => branding.get())).displayName).not.toBe('Brand A');
+    // The pair it names is the one the public route serves.
+    expect((await getPublic(a.tenantId, logo)).status).toBe(200);
   });
 });
 
