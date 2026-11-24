@@ -121,14 +121,22 @@ test('qa fixtures: issued, draft and other-customer invoices and a verified paym
     });
     await test.step('the Accountant approves step one and records the payment', async () => {
       const accountant = await as('accountant');
-      await approveInboxRequest(accountant, ids.issued.slice(0, 8), 'QA fixture: checked');
-      await approveInboxRequest(accountant, ids.other.slice(0, 8), 'QA fixture: checked');
+      await approveInboxRequest(
+        accountant,
+        /Tax invoice for Dev Customer Co/,
+        'QA fixture: checked',
+      );
+      await approveInboxRequest(accountant, /Tax invoice for Acme Robotics/, 'QA fixture: checked');
       ids.payment = await recordPayment(accountant);
     });
     await test.step('the second Finance user approves step two', async () => {
       const finance2 = await as('finance2');
-      await approveInboxRequest(finance2, ids.issued.slice(0, 8), 'QA fixture: approved');
-      await approveInboxRequest(finance2, ids.other.slice(0, 8), 'QA fixture: approved');
+      await approveInboxRequest(
+        finance2,
+        /Tax invoice for Dev Customer Co/,
+        'QA fixture: approved',
+      );
+      await approveInboxRequest(finance2, /Tax invoice for Acme Robotics/, 'QA fixture: approved');
     });
     await test.step('Finance issues both invoices and verifies the payment', async () => {
       const finance = await as('finance');

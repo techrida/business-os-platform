@@ -30,7 +30,8 @@ async function makeOpportunity(page: Page): Promise<string> {
   await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
   await chooseOption(selectByName(page, 'source'), 'referral');
   const company = page.getByRole('combobox', { name: 'Company or organization', exact: true });
-  await company.fill('Dev Customer');
+  await company.click();
+  await company.pressSequentially('Dev Customer', { delay: 40 });
   await page
     .getByRole('option', { name: /Dev Customer Co/ })
     .first()
@@ -184,11 +185,7 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
     await test.step('the Accountant approves each in the inbox', async () => {
       const accountant = await as('accountant');
       for (let i = 0; i < REPEATS * Object.keys(make).length; i += 1) {
-        await approveInboxRequest(
-          accountant,
-          /Quotation \S+ revision/,
-          'QA fixture: priced and checked',
-        );
+        await approveInboxRequest(accountant, /Quotation/i, 'QA fixture: priced and checked');
       }
     });
     await test.step('Sales sends the ones the customer sees and rejects the revisable ones', async () => {
