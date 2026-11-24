@@ -61,13 +61,14 @@ BEGIN
   INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id, requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
   VALUES (v_pr1, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: office chairs', '2030-12-01', 'QA-1', 'NPR'),
          (v_pr2, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: laptops', '2030-12-01', 'QA-2', 'NPR');
-  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END,
-         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2);
-
   INSERT INTO app.purchase_request_lines (tenant_id, organization_id, purchase_request_id, line_no, description, uom, quantity, estimated_unit_price, estimated_amount)
   VALUES (v_tenant, v_org, v_pr1, 1, 'Office chair', 'pcs', 10, 4500, 45000),
          (v_tenant, v_org, v_pr1, 2, 'Desk', 'pcs', 2, 2500, 5000),
          (v_tenant, v_org, v_pr2, 1, 'Laptop', 'pcs', 1, 79646.02, 79646.02);
+
+  -- Lines first: an approved request's lines are frozen.
+  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END,
+         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2);
 
   INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, created_by)
   VALUES (v_rfq, v_tenant, v_org, v_pr1, 'RFQ-QA-1', '2030-12-15T00:00:00Z', v_proc);
