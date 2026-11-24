@@ -129,7 +129,10 @@ async function sendQuotation(page: Page, id: string): Promise<void> {
   }).toPass({ timeout: 120_000 });
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: /^Send / });
-  await chooseOption(selectByLabel(dialog, 'Send to'), { label: CONTACT_EMAIL });
+  // The dialog starts on the quotation's own contact.
+  await expect(dialog.getByRole('combobox', { name: 'Send to', exact: true })).toHaveValue(
+    CONTACT_NAME,
+  );
   await dialog.locator('footer').getByRole('button', { name: 'Send to customer' }).click();
   await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
   await dialog.getByRole('button', { name: 'Done' }).click();

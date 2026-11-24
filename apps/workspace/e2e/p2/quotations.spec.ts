@@ -3,7 +3,6 @@ import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { getJson } from '../helpers/api';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
-import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The quotation detail page, against the real stack: the summary and totals, the revisions dialog,
@@ -131,7 +130,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     const dialog = page.getByRole('dialog', { name: /^Send / });
     await expect(dialog).toContainText('never sent as a file');
 
-    const select = selectByLabel(dialog, 'Send to');
+    const select = dialog.getByRole('combobox', { name: 'Send to', exact: true });
     const message = dialog.getByLabel('Message (optional)');
     const footer = dialog.locator('footer');
     const submit = footer.getByRole('button', { name: 'Send to customer' });
@@ -140,7 +139,8 @@ test('Send gives the customer a portal link by email, never the file', async ({
     expect(initialKey).toBeTruthy();
 
     // Clear the preselected contact. Hold this request to check the pending state before validation.
-    await chooseOption(select, '');
+    await select.click();
+    await select.fill('');
     await message.fill('Thank you for considering this quotation.');
     let releaseRequest: () => void = () => {};
     const pendingRequest = new Promise<void>((resolve) => {
@@ -170,7 +170,12 @@ test('Send gives the customer a portal link by email, never the file', async ({
     await expect(message).toHaveValue('Thank you for considering this quotation.');
     await expect(key).toHaveValue(initialKey);
 
-    await chooseOption(select, { label: contact ?? '' });
+    await select.click();
+    await dialog
+      .getByRole('option')
+      .filter({ hasText: contact ?? '' })
+      .first()
+      .click();
     await submit.click();
     await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
 
