@@ -359,11 +359,26 @@ describe('sales orders in the deal history (R6Q22)', () => {
       ),
     );
 
-    // The deal's owner reaches only the order of the quotation they own.
+    // Reach is by creator or by quotation owner: an order a colleague made on the owner's quotation, and one the owner
+    // made on the colleague's quotation, both reach the owner.
+    const viaQuotation = await orderOn(id, U.owner, 'confirmed');
+    const viaCreator = await orderOn(id, U.colleague, 'confirmed');
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.sales_orders SET created_by = ${U.colleague}, confirmed_by = ${U.colleague} WHERE id = ${viaQuotation.id}`,
+      );
+      await tx.execute(
+        sql`UPDATE app.sales_orders SET created_by = ${U.owner}, confirmed_by = ${U.owner} WHERE id = ${viaCreator.id}`,
+      );
+    });
+
+    // The deal's owner reaches the orders they made or whose quotation they own, not the colleague's own.
     as(U.owner, 'sales');
     current.grants.set('sales_order.read', 'own');
     const own = await detail(id);
-    expect(new Set(own.orderHistory?.map((h) => h.salesOrderId))).toEqual(new Set([mine.id]));
+    expect(new Set(own.orderHistory?.map((h) => h.salesOrderId))).toEqual(
+      new Set([mine.id, viaQuotation.id, viaCreator.id]),
+    );
 
     // A role that may read the deal but not sales orders gets the deal and an empty order history.
     as(U.owner, 'sales');
@@ -377,7 +392,7 @@ describe('sales orders in the deal history (R6Q22)', () => {
     current.grants.set('sales_order.read', 'all');
     const all = await detail(id);
     expect(new Set(all.orderHistory?.map((h) => h.salesOrderId))).toEqual(
-      new Set([mine.id, other.id]),
+      new Set([mine.id, other.id, viaQuotation.id, viaCreator.id]),
     );
   });
 
