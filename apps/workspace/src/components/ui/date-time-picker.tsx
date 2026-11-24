@@ -17,6 +17,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 
 import { DatePicker, UnfinishedBlocker, useUnfinishedMessage } from './date-picker';
@@ -41,6 +42,15 @@ function toTime(text: string): Time | null {
     return null;
   }
 }
+
+const noSubscription = () => () => {};
+/** False in the server HTML and while hydrating, true once the browser has taken the page over. */
+const useIsClient = () =>
+  useSyncExternalStore(
+    noSubscription,
+    () => true,
+    () => false,
+  );
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -123,6 +133,11 @@ export function DateTimePicker({
   showBs,
 }: DateTimePickerProps) {
   const timeId = useId();
+  // The time field writes its separators and AM/PM from the runtime's Intl data, and Node's differs
+  // from the browser's (a narrow no-break space before AM/PM). Its server HTML would not match what
+  // the browser builds, and React would rebuild the whole page, wiping what was typed before it
+  // hydrated. So the field is drawn by the browser only; the server leaves its place empty.
+  const isClient = useIsClient();
   const rootRef = useRef<HTMLDivElement>(null);
   const [parts, setParts] = useState(() => split(value ?? defaultValue));
   // True while a time segment is cleared: the time field still shows the rest of `time`, but the
@@ -215,30 +230,34 @@ export function DateTimePicker({
           popoverContainer={popoverContainer}
           showBs={showBs}
         />
-        <TimeField
-          className={styles.time ?? ''}
-          value={fedTime}
-          onChange={(next) => update(day, next ? `${pad(next.hour)}:${pad(next.minute)}` : '')}
-          granularity="minute"
-          // The time is named by the field's own label plus "Time", and shares its hint and error.
-          {...(labelledBy === undefined
-            ? { 'aria-label': ariaLabel === undefined ? 'Time' : `${ariaLabel}, time` }
-            : { 'aria-labelledby': `${labelledBy} ${timeId}` })}
-          {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
-          isDisabled={disabled === true}
-          isReadOnly={readOnly === true}
-          isRequired={required === true}
-          isInvalid={isInvalid}
-        >
-          <Group className={pickerStyles.group ?? ''}>
-            <DateInput className={pickerStyles.input ?? ''}>
-              {(segment) => (
-                <DateSegment segment={segment} className={pickerStyles.segment ?? ''} />
-              )}
-            </DateInput>
-          </Group>
-          <TimeCompletenessWatch onChange={watchTime} />
-        </TimeField>
+        {isClient ? (
+          <TimeField
+            className={styles.time ?? ''}
+            value={fedTime}
+            onChange={(next) => update(day, next ? `${pad(next.hour)}:${pad(next.minute)}` : '')}
+            granularity="minute"
+            // The time is named by the field's own label plus "Time", and shares its hint and error.
+            {...(labelledBy === undefined
+              ? { 'aria-label': ariaLabel === undefined ? 'Time' : `${ariaLabel}, time` }
+              : { 'aria-labelledby': `${labelledBy} ${timeId}` })}
+            {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
+            isDisabled={disabled === true}
+            isReadOnly={readOnly === true}
+            isRequired={required === true}
+            isInvalid={isInvalid}
+          >
+            <Group className={pickerStyles.group ?? ''}>
+              <DateInput className={pickerStyles.input ?? ''}>
+                {(segment) => (
+                  <DateSegment segment={segment} className={pickerStyles.segment ?? ''} />
+                )}
+              </DateInput>
+            </Group>
+            <TimeCompletenessWatch onChange={watchTime} />
+          </TimeField>
+        ) : (
+          <div className={styles.time ?? ''} aria-hidden />
+        )}
         <span id={timeId} hidden>
           Time
         </span>

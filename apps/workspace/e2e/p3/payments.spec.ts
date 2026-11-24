@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import {
   clearSelection,
@@ -9,7 +10,6 @@ import {
   toggleOptions,
 } from '../helpers/multi-select';
 import { minimalPdf } from '../helpers/pdf-fixture';
-import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
@@ -109,7 +109,7 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
   try {
     const page = finance.page;
     await page.goto('/payments/new');
-    await chooseOption(selectByLabel(page, 'Customer'), { label: customer ?? '' });
+    await pickFromCombobox(page, 'Customer', (customer ?? '').split(' ')[0] ?? '', customer ?? '');
     await page.getByLabel('Amount received').fill('2.00');
     await page.getByLabel('Bank reference').fill('E2E-self-verification-' + Date.now());
     await page.getByLabel('Add proof files').setInputFiles({
@@ -137,22 +137,14 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
     await page.getByRole('button', { name: 'self-verification.pdf', exact: true }).click();
     const preview = page.getByRole('dialog', { name: 'self-verification.pdf' });
     await expect(preview.getByRole('link', { name: 'Download' })).toBeVisible();
-    if (await page.evaluate(() => navigator.pdfViewerEnabled !== false)) {
-      await expect(preview.getByTitle('Preview of self-verification.pdf')).toHaveAttribute(
-        'src',
-        /\/preview[#?]/,
-      );
-    } else {
-      await expect(preview.getByText('No preview')).toBeVisible();
-    }
+    // The shared viewer draws the PDF on a canvas.
+    await expect(preview.locator('canvas').first()).toBeVisible();
     await preview.getByRole('button', { name: 'Close', exact: true }).first().click();
-    await page.getByRole('button', { name: 'Verify payment', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Verify this payment', exact: true });
-    await dialog.getByRole('button', { name: 'Verify payment', exact: true }).click();
-    await expect(dialog.getByRole('alert')).toContainText(
-      'You recorded this payment, so someone else in Finance must verify it',
-    );
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    // The page says so in words and offers the recorder no Verify button.
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Verification requires another reviewer' }),
+    ).toContainText('You recorded this payment, so someone else must verify it');
+    await expect(page.getByRole('button', { name: 'Verify payment', exact: true })).toHaveCount(0);
     await expect(page.getByText('Awaiting verification', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { level: 1 })).not.toContainText('RCPT-');
   } finally {

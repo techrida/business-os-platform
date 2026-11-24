@@ -1,9 +1,8 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { getJson } from '../helpers/api';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
-import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The quotation detail page, against the real stack: the summary and totals, the revisions dialog,
@@ -27,7 +26,15 @@ import { chooseOption, selectByLabel } from '../helpers/select';
  * The `dev` project runs this spec through its `p2/*.spec.ts` match.
  */
 
-const fixture = (name: string): string | undefined => process.env[`BOS_E2E_QUOTATION_${name}`];
+/**
+ * A fixture variable holds one id, or a comma-separated list: the specs that use a quotation up (send, record outcome,
+ * revise) take the one at their repeat index, so `--repeat-each` finds a fresh quotation each time.
+ */
+const fixture = (name: string, info: TestInfo): string | undefined => {
+  const list = (process.env[`BOS_E2E_QUOTATION_${name}`] ?? '').split(',').filter(Boolean);
+  // One value serves every repeat (a contact address); a list needs one entry per repeat, or the test skips.
+  return list.length === 1 ? list[0] : list[info.repeatEachIndex];
+};
 
 async function open(page: Page, id: string): Promise<void> {
   await page.goto(`/quotations/${id}`);
@@ -50,8 +57,8 @@ async function withSales<T>(
 test('the detail page shows the summary, the totals and every revision in a dialog', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('SENT') ?? fixture('APPROVED');
+}, testInfo) => {
+  const id = fixture('SENT', testInfo) ?? fixture('APPROVED', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_SENT or _APPROVED is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -74,14 +81,17 @@ test('the detail page shows the summary, the totals and every revision in a dial
   });
 });
 
-test('the customer PDF downloads from one click on the link', async ({ browser, baseURL }) => {
-  const id = fixture('DOWNLOAD');
+test('the customer PDF downloads from one click on the link', async ({
+  browser,
+  baseURL,
+}, testInfo) => {
+  const id = fixture('DOWNLOAD', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_DOWNLOAD is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
     const download = page.waitForEvent('download');
     await page
-      .getByRole('link', { name: /^Download/ })
+      .getByRole('button', { name: /^Download/ })
       .first()
       .click();
     expect((await download).suggestedFilename()).toMatch(/\.pdf$/i);
@@ -91,8 +101,8 @@ test('the customer PDF downloads from one click on the link', async ({ browser, 
 test('Send is off, with its reason in words, while the PDF is not clean', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('SCANNING');
+}, testInfo) => {
+  const id = fixture('SCANNING', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_SCANNING is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -109,10 +119,10 @@ test('Send is off, with its reason in words, while the PDF is not clean', async 
 test('Send gives the customer a portal link by email, never the file', async ({
   browser,
   baseURL,
-}) => {
+}, testInfo) => {
   test.setTimeout(120_000);
-  const id = fixture('APPROVED');
-  const contact = fixture('CONTACT');
+  const id = fixture('APPROVED', testInfo);
+  const contact = fixture('CONTACT', testInfo);
   test.skip(id === undefined || contact === undefined, 'APPROVED or CONTACT is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -121,7 +131,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     const dialog = page.getByRole('dialog', { name: /^Send / });
     await expect(dialog).toContainText('never sent as a file');
 
-    const select = selectByLabel(dialog, 'Send to');
+    const select = dialog.getByRole('combobox', { name: 'Send to', exact: true });
     const message = dialog.getByLabel('Message (optional)');
     const footer = dialog.locator('footer');
     const submit = footer.getByRole('button', { name: 'Send to customer' });
@@ -130,7 +140,8 @@ test('Send gives the customer a portal link by email, never the file', async ({
     expect(initialKey).toBeTruthy();
 
     // Clear the preselected contact. Hold this request to check the pending state before validation.
-    await chooseOption(select, '');
+    await select.click();
+    await select.fill('');
     await message.fill('Thank you for considering this quotation.');
     let releaseRequest: () => void = () => {};
     const pendingRequest = new Promise<void>((resolve) => {
@@ -142,7 +153,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     });
     try {
       await submit.click();
-      await expect(dialog.getByRole('status')).toHaveText('Sending the quotation');
+      await expect(dialog.getByText('Sending the quotation')).toBeVisible();
       await expect(footer.getByRole('button', { name: 'Cancel' })).toBeDisabled();
       await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeDisabled();
       await expect(submit).toBeDisabled();
@@ -160,9 +171,14 @@ test('Send gives the customer a portal link by email, never the file', async ({
     await expect(message).toHaveValue('Thank you for considering this quotation.');
     await expect(key).toHaveValue(initialKey);
 
-    await chooseOption(select, { label: contact ?? '' });
+    await select.click();
+    await dialog
+      .getByRole('option')
+      .filter({ hasText: contact ?? '' })
+      .first()
+      .click();
     await submit.click();
-    await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
+    await expect(dialog.getByText('Sent to').first()).toBeVisible({ timeout: 30_000 });
 
     // Closing reloads the page, which now shows the new status.
     await dialog.getByRole('button', { name: 'Done' }).click();
@@ -180,13 +196,13 @@ test('Send gives the customer a portal link by email, never the file', async ({
 test('Record outcome needs evidence to accept and a comment to reject', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('SENT');
+}, testInfo) => {
+  const id = fixture('SENT', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_SENT is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
     await page.getByRole('button', { name: 'Record outcome' }).click();
-    const dialog = page.getByRole('dialog', { name: /^Record the outcome of / });
+    const dialog = page.getByRole('dialog', { name: /^Record outcome for / });
     const submit = dialog.getByRole('button', { name: 'Record outcome' });
 
     await submit.click();
@@ -194,22 +210,20 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
       dialog.getByText('Choose whether the customer accepted or rejected.'),
     ).toBeVisible();
 
-    await dialog.getByLabel('Accepted').check();
+    await dialog.getByRole('radio', { name: 'Accepted', exact: true }).click();
     await submit.click();
     await expect(
       dialog.getByText('Choose at least one kind of evidence the customer gave.'),
     ).toBeVisible();
 
-    await dialog.getByLabel('Rejected').check();
-    await dialog.getByLabel('Signed quotation').uncheck();
+    await dialog.getByRole('radio', { name: 'Rejected', exact: true }).click();
+    await dialog.getByRole('checkbox', { name: 'Signed quotation' }).uncheck();
     await submit.click();
     await expect(dialog.getByText('Say why the customer said no.', { exact: false })).toBeVisible();
 
     await dialog.getByLabel('Comment').fill('Went with a competitor.');
     await submit.click();
-    await expect(dialog.getByRole('status')).toContainText('Recorded as rejected', {
-      timeout: 30_000,
-    });
+    await expect(dialog.getByText('Recorded as rejected').first()).toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByText('Rejected by customer', { exact: true }).first()).toBeVisible();
   });
@@ -218,8 +232,8 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
 test('Revise needs a reason, then opens the new draft for editing', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('REVISABLE');
+}, testInfo) => {
+  const id = fixture('REVISABLE', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_REVISABLE is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');

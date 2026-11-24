@@ -7,6 +7,7 @@ import {
   multiSelectByLabel,
   toggleOptions,
 } from '../helpers/multi-select';
+import { minimalPdf } from '../helpers/pdf-fixture';
 
 /**
  * The P4 payables screens (bill inbox, bills, bill detail, bill entry), against the real stack.
@@ -57,6 +58,31 @@ test('the inbox loads and bill entry works without a submission', async ({ brows
     await expect(founder.page.locator('input[type="hidden"][name="vendorPartyId"]')).toBeAttached();
     await expect(founder.page.getByRole('combobox').first()).toBeVisible();
     await expect(founder.page.locator('input[name="vendorInvoiceNo"]')).toBeVisible();
+    // No vendor and no file yet: the invoice cannot be uploaded.
+    await expect(
+      founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
+    ).toBeDisabled();
+    // A file alone is not enough: with no vendor chosen the upload stays off.
+    await founder.page.locator('input[type="file"]').setInputFiles({
+      name: 'invoice.pdf',
+      mimeType: 'application/pdf',
+      buffer: minimalPdf('Bill entry'),
+    });
+    await expect(
+      founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
+    ).toBeDisabled();
+    // A search that matches no vendor says so, and the upload stays off.
+    const vendorBox = founder.page.getByRole('combobox').first();
+    await vendorBox.fill('zzzz-no-such-vendor');
+    await expect(
+      // The list's message; the same words also sit in a screen-reader status region.
+      founder.page.locator('p', {
+        hasText: 'No vendor matches. Ask Procurement to add the vendor.',
+      }),
+    ).toBeVisible();
+    await expect(
+      founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
+    ).toBeDisabled();
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

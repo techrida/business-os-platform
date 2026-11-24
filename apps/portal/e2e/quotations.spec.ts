@@ -6,13 +6,18 @@ import { expect, test } from '@playwright/test';
  *
  *   PORTAL_E2E_BASE_URL       e.g. http://localhost:3002
  *   PORTAL_E2E_STORAGE_STATE  path to a storage state of a signed-in customer user
- *   PORTAL_E2E_SENT_ID        a sent, unexpired quotation version of that customer
+ *   PORTAL_E2E_SENT_ID        a sent, unexpired quotation version of that customer (or a comma-separated list, one per repeat)
  *   PORTAL_E2E_FOREIGN_ID     a quotation version of another customer (or a draft of this one)
  *   PORTAL_E2E_EXPIRED_ID     an expired quotation version of that customer (optional)
  */
 const base = process.env.PORTAL_E2E_BASE_URL;
 const storageState = process.env.PORTAL_E2E_STORAGE_STATE;
-const sentId = process.env.PORTAL_E2E_SENT_ID;
+// One id, or a comma-separated list: the accept test uses a quotation up, so each `--repeat-each` run takes the next one.
+const sentIds = (process.env.PORTAL_E2E_SENT_ID ?? '').split(',').filter(Boolean);
+let sentId: string | undefined;
+test.beforeEach(({ browserName: _browser }, info) => {
+  sentId = sentIds[info.repeatEachIndex];
+});
 const foreignId = process.env.PORTAL_E2E_FOREIGN_ID;
 const expiredId = process.env.PORTAL_E2E_EXPIRED_ID;
 

@@ -292,7 +292,7 @@ function LimitFields({
   error: string | undefined;
   savedCount: number;
 }) {
-  const [mode, setMode] = useDraft('limit', savedCount);
+  const [mode, setMode] = useDraft(current === null ? 'none' : 'limit', savedCount);
   const [amount, setAmount] = useDraft(current ?? '', savedCount);
   const noLimit = (mode as CreditLimitMode) === 'none';
   return (

@@ -93,6 +93,25 @@ describe('submitQuoteAction', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses `2w` as a delivery time with the whole-days words, and sends nothing', async () => {
+    // The delivery box only types digits, so this reaches the action only from a hand-made request.
+    const state = await send({ deliveryDays: '2w' });
+    expect(Object.keys(state.fieldErrors ?? {})).toEqual(['deliveryDays']);
+    expect(state.fieldErrors?.deliveryDays).toMatch(/whole number of days/);
+    expect(state.key).toBe(IDEM);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-numeric total (`twelve`) and an empty total as the same field, without calling the API', async () => {
+    const words = await send({ total: 'twelve' });
+    const empty = await send({ total: '' });
+    expect(Object.keys(words.fieldErrors ?? {})).toEqual(['total']);
+    expect(Object.keys(empty.fieldErrors ?? {})).toEqual(['total']);
+    expect(words.fieldErrors?.total).toMatch(/Enter the total of your quotation/);
+    expect(words.key).toBe(IDEM);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('names each bad field and keeps the unused key, without calling the API', async () => {
     const state = await send({
       documentId: '',

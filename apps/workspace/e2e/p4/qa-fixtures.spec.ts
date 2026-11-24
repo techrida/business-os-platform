@@ -1,8 +1,10 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
+import { minimalPdf } from '../helpers/pdf-fixture';
 
 /**
  * Warm-up step of the qa workflow ("qa fixtures": the specs skip it). .github/qa/demo-data.sql leaves a draft purchase
@@ -62,3 +64,10 @@ for (const key of ['customer', 'vendor'] as const) {
     }
   });
 }
+
+/** The proof file the portal billing spec uploads: a one-page PDF with fictional text, in .dev/ with the sign-in states. */
+test('qa fixtures: portal proof file', () => {
+  const file = path.resolve(process.cwd(), '../../.dev/portal-proof.pdf');
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, minimalPdf('QA fixture bank slip'));
+});

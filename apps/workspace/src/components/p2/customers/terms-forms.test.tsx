@@ -61,6 +61,9 @@ const limitBox = (): HTMLInputElement | null => {
   return box instanceof HTMLInputElement ? box : null;
 };
 
+const setLimit = () =>
+  click(dialog()?.querySelector('button[role="radio"][value="limit"]') ?? null);
+
 describe('a save with nothing changed (R6Q5-B)', () => {
   it('shows a neutral "Nothing changed" notice in the dialog, not a red "Not saved"', async () => {
     const action = refuses({ errors: {}, notice: 'Nothing changed, so there is nothing to save.' });
@@ -84,6 +87,62 @@ describe('a save with nothing changed (R6Q5-B)', () => {
 });
 
 describe('CreditLimitForm', () => {
+  it('opens on No limit with no amount box when the customer has no limit (R6Q12)', async () => {
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={saves('x')}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={null}
+        current={null}
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    expect(
+      dialog()!.querySelector('button[role="radio"][value="none"]')?.getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(dialog()!.querySelector('input[name="creditLimit"]')).toBeNull();
+    await save();
+  });
+
+  it('posts No limit against an empty current limit, so the server answers Nothing changed (R6Q12)', async () => {
+    const action = saves('x');
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={action}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={null}
+        current={null}
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    await save();
+    const sent = action.mock.calls[0]![1];
+    expect(sent.get('limitMode')).toBe('none');
+    expect(sent.get('currentCreditLimit')).toBe('');
+  });
+
+  it('opens on Set a limit with the amount filled when the customer has one (R6Q12)', async () => {
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={saves('x')}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={2}
+        current="150000.00"
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    expect(
+      dialog()!.querySelector('button[role="radio"][value="limit"]')?.getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(limitBox()?.value).toBe('1,50,000.00');
+  });
+
   it('sends the typed amount and no version before the first save, then closes with a toast', async () => {
     const action = saves('Credit limit saved.');
     mounted = await mountForm(
@@ -98,6 +157,7 @@ describe('CreditLimitForm', () => {
     );
     await open('credit limit');
     expect(dialog()?.textContent).toContain('Credit limit with Techrida Nepal');
+    await setLimit();
     expect(dialog()?.textContent).toContain('Credit limit (NPR)');
     await fill(limitBox(), '1,00,000.00');
     await save();
@@ -126,6 +186,7 @@ describe('CreditLimitForm', () => {
       />,
     );
     await open('credit limit');
+    await setLimit();
     await fill(limitBox(), '1250000');
     expect(limitBox()?.value).toBe('12,50,000');
     expect(dialog()?.textContent?.toLowerCase()).toContain('twelve lakh fifty thousand');
@@ -146,6 +207,7 @@ describe('CreditLimitForm', () => {
       />,
     );
     await open('credit limit');
+    await setLimit();
     await fill(limitBox(), '10 50');
     expect(dialog()?.textContent).toContain(NO_SPACES);
     expect(limitBox()?.value).toBe('');
@@ -188,6 +250,7 @@ describe('CreditLimitForm', () => {
       />,
     );
     await open('credit limit');
+    await setLimit();
     await fill(limitBox(), '12.345');
     await save();
     expect(dialog()?.textContent).toContain(LIMIT_INVALID);

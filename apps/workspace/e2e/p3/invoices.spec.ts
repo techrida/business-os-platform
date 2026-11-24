@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { multiSelectByLabel } from '../helpers/multi-select';
 import { chooseOption, selectByLabel, selectByName } from '../helpers/select';
@@ -65,8 +66,8 @@ test('the detail page shows the totals the server worked out, and Finance gets t
   await as(browser, baseURL, 'finance', async ({ page }) => {
     await page.goto(`/invoices/${id ?? ''}`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Totals' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Line Items' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Invoice total' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Line breakdown' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Credit note', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: /^Credit note for / });
@@ -149,7 +150,7 @@ test.describe('invoice document preview', () => {
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
       await expect(dialog.locator('canvas').first()).toBeVisible();
-      await expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('href', path);
+      await expect(dialog.getByRole('button', { name: 'Download' })).toBeVisible();
       const preview = await response;
       expect(preview.ok()).toBe(true);
       expect(preview.headers()['content-type']).toBe('application/pdf');
@@ -171,7 +172,12 @@ test('the accountant can save, reopen, and submit a manual invoice', async ({
     await heading(page, 'Create Invoice');
 
     // Fails here, naming the option, when the disposable customer is not in the picker.
-    await chooseOption(selectByName(page, 'customerId'), { label: customerName ?? '' });
+    await pickFromCombobox(
+      page,
+      'Organization legal name',
+      (customerName ?? '').split(' ')[0] ?? '',
+      customerName ?? '',
+    );
     await chooseOption(selectByName(page, 'currency'), 'NPR');
 
     const description = `Invoice draft workflow ${Date.now()}`;
@@ -185,8 +191,8 @@ test('the accountant can save, reopen, and submit a manual invoice', async ({
     await page.getByRole('button', { name: 'Save draft invoice' }).click();
 
     await expect(page).toHaveURL(/\/invoices\/[a-f0-9-]{36}$/);
-    await expect(page.getByText(description, { exact: true })).toBeVisible();
-    await expect(page.getByText('One-time staff training', { exact: true })).toBeVisible();
+    await expect(page.getByText(description, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('One-time staff training', { exact: true }).first()).toBeVisible();
     const draftPath = new URL(page.url()).pathname;
 
     await page.goto('/invoices');
@@ -197,7 +203,7 @@ test('the accountant can save, reopen, and submit a manual invoice', async ({
     await expect(draft).toBeVisible();
     await draft.click();
     await expect(page).toHaveURL(new RegExp(draftPath + '$'));
-    await expect(page.getByText(description, { exact: true })).toBeVisible();
+    await expect(page.getByText(description, { exact: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
     const confirmation = page.getByRole('dialog', { name: /^Submit / });
     await expect(confirmation).toBeVisible();
