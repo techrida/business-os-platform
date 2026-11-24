@@ -863,6 +863,50 @@ describe('stage history (R4a Q13)', () => {
     expect(doc.querySelector('[aria-label="Opportunity stages"]')).not.toBeNull();
   });
 
+  it("lists the deal's sales orders under the stage changes, each linking to its order, and nothing when it has none", async () => {
+    mocks.getOpportunity.mockResolvedValue(
+      opportunity('quotation_sent', {
+        orderHistory: [
+          {
+            salesOrderId: '99999999-9999-4999-8999-999999999991',
+            number: null,
+            event: 'drafted',
+            at: '2026-11-10T05:00:00.000Z',
+            actorName: 'Asha Rai',
+          },
+          {
+            salesOrderId: '99999999-9999-4999-8999-999999999991',
+            number: 'SO-2083/84-00001',
+            event: 'confirmed',
+            at: '2026-11-11T05:00:00.000Z',
+            actorName: 'Asha Rai',
+          },
+          {
+            salesOrderId: '99999999-9999-4999-8999-999999999991',
+            number: 'SO-2083/84-00001',
+            event: 'cancelled',
+            at: '2026-11-12T05:00:00.000Z',
+            actorName: null,
+          },
+        ],
+      }),
+    );
+    const doc = parse(await render());
+    const rows = [...doc.querySelectorAll('[aria-label="Order events"] > li')];
+    expect(rows.map((li) => li.querySelector('span')?.textContent)).toEqual([
+      'Sales order draft drafted',
+      'Sales order SO-2083/84-00001 confirmed',
+      'Sales order SO-2083/84-00001 cancelled',
+    ]);
+    expect(rows[1]?.querySelector('a')?.getAttribute('href')).toBe(
+      '/sales-orders/99999999-9999-4999-8999-999999999991',
+    );
+    expect(rows[2]?.textContent).not.toContain(' · ');
+
+    mocks.getOpportunity.mockResolvedValue(opportunity('quotation_sent', { orderHistory: [] }));
+    expect(parse(await render()).querySelector('[aria-label="Order events"]')).toBeNull();
+  });
+
   it('says no change is recorded yet when the history is empty or absent', async () => {
     for (const stageHistory of [[], undefined]) {
       mocks.getOpportunity.mockResolvedValue(opportunity('qualified', { stageHistory }));
