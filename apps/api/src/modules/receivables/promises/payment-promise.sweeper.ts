@@ -216,7 +216,7 @@ export class PaymentPromiseSweeper {
       });
       if (assigneeUserId !== null) {
         // Bell only (OQ-30, R6Q22): the call's assignee is told in the same transaction that plans it, so a rolled-back
-        // run notifies nobody. The call's own row is the dedupe key, so a replayed transaction is a no-op. A call with
+        // run notifies nobody. Once-only delivery comes from the promise's row lock (lockDue) and this same-transaction write; the dedupe key is a backstop. A call with
         // no assignee lists for everyone who may read receivables and has nobody to ring. No email: the job has no
         // acting user to name, and the `crm.assigned` template names the person who assigned.
         await this.notify.notifyUser(tx, {

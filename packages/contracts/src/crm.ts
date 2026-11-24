@@ -1016,7 +1016,7 @@ export const OpportunityDtoSchema = z.object({
   orderHistory: z
     .array(
       z.object({
-        salesOrderId: z.string().uuid(),
+        salesOrderId: z.guid(),
         number: z.string().nullable(),
         event: z.enum(['drafted', 'confirmed', 'cancelled']),
         at: isoDateTime,
