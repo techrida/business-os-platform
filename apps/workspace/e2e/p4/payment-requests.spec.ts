@@ -7,7 +7,7 @@ import {
   multiSelectByLabel,
   toggleOptions,
 } from '../helpers/multi-select';
-import { chooseOption, optionLabels, selectByLabel } from '../helpers/select';
+import { optionLabels, selectByLabel } from '../helpers/select';
 
 test.skip(process.env.BOS_E2E_P4 !== '1', 'set BOS_E2E_P4=1 to run P4 payment requests');
 
@@ -41,19 +41,19 @@ test('new requests offer eligible bills or explain that none are available', asy
     await expect(
       signed.page.getByRole('heading', { level: 1, name: 'New payment request' }),
     ).toBeVisible();
-    const vendor = selectByLabel(signed.page, 'Vendor');
+    // The vendor field is a search box (a combobox), not a list.
+    const vendor = signed.page.getByRole('combobox', { name: 'Vendor', exact: true });
     const empty = signed.page.getByText(
       'No approved bill balances are available for a payment request.',
       { exact: false },
     );
     await expect(vendor.or(empty)).toBeVisible();
     if (await vendor.isVisible()) {
-      await expect(
-        signed.page.getByRole('button', { name: 'Create draft request' }),
-      ).toBeDisabled();
+      // Review request opens the review dialog, whose button creates the draft: nothing is created from this page.
+      await expect(signed.page.getByRole('button', { name: 'Review request' })).toBeVisible();
       await expect(selectByLabel(signed.page, 'Bill 1')).toBeDisabled();
-      // Index 0 is the "Choose a vendor" option; index 1 is the first eligible vendor.
-      await chooseOption(vendor, { index: 1 });
+      await vendor.click();
+      await signed.page.getByRole('option').first().click();
       await expect(selectByLabel(signed.page, 'Bill 1')).toBeEnabled();
       // More than the "Choose an approved bill" option alone.
       await expect
