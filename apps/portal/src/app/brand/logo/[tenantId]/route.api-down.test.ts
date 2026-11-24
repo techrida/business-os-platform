@@ -7,6 +7,7 @@ vi.mock('@/lib/env', () => ({ getEnv: () => ({ API_INTERNAL_URL: 'http://api.int
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
 
 const { GET } = await import('./route');
+const { PUBLIC_LOGO_TIMEOUT_MS } = await import('@/lib/api-branding');
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const get = () =>
@@ -39,20 +40,23 @@ describe('GET /brand/logo/[tenantId] when the API cannot answer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('gives up on an API that never answers: the fetch carries a timeout signal the route turns into a 404', async () => {
-    // A fetch that hangs until its signal fires, as the real one does.
-    fetchMock.mockImplementation(
-      (_url, init) =>
-        new Promise((_resolve, reject) => {
-          const signal = init?.signal;
-          if (signal?.aborted) reject(signal.reason as Error);
-          signal?.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
-        }),
-    );
-    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());
-    const res = await get();
-    expect(timeout).toHaveBeenCalledTimes(1);
-    expect(res.status).toBe(404);
-    timeout.mockRestore();
+  it('gives up on an API that never starts answering and answers a 404 once the timeout passes', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+              once: true,
+            });
+          }),
+      );
+      const pending = get();
+      await vi.advanceTimersByTimeAsync(PUBLIC_LOGO_TIMEOUT_MS);
+      const res = await pending;
+      expect(res.status).toBe(404);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
