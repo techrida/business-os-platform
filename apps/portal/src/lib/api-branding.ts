@@ -30,6 +30,12 @@ export function logoSrc(branding: Branding | null): string | null {
 }
 
 /**
+ * The longest the anonymous logo fetch may take. The proxy has no session and no caller who can wait: a slow API must
+ * not hold a request open, so a logo not back in this time is a 404 and the header shows the company name.
+ */
+export const PUBLIC_LOGO_TIMEOUT_MS = 5000;
+
+/**
  * `GET /v1/public/logo/:tenantId` with no token: the API serves the company's current logo and nothing else to
  * anyone. The id is an encoded path segment on a fixed path under API_INTERNAL_URL, so the request cannot leave it.
  */
@@ -40,6 +46,7 @@ export async function openPublicLogo(tenantId: string, ifNoneMatch?: string): Pr
   );
   return await fetch(url, {
     cache: 'no-store',
+    signal: AbortSignal.timeout(PUBLIC_LOGO_TIMEOUT_MS),
     ...(ifNoneMatch === undefined ? {} : { headers: { 'if-none-match': ifNoneMatch } }),
   });
 }
