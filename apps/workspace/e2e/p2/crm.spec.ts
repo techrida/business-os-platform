@@ -33,8 +33,18 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
 
   try {
     await test.step('create a lead', async () => {
+      page.on('console', (m) => console.log('BROWSER', m.type(), m.text().slice(0, 500)));
+      page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 500)));
+      page.on('framenavigated', (f) => console.log('NAV', f.url()));
       await page.goto('/leads/new');
+      await page.evaluate(() => {
+        const f = document.querySelector('form');
+        f?.addEventListener('reset', () => console.log('FORM RESET EVENT'));
+      });
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
+      console.log('TITLE AFTER FILL', await page.getByRole('textbox', { name: 'Lead title', exact: true }).inputValue());
+      await page.waitForTimeout(3000);
+      console.log('TITLE 3s LATER', await page.getByRole('textbox', { name: 'Lead title', exact: true }).inputValue());
       await chooseOption(selectByName(page, 'source'), 'referral');
       await page
         .getByRole('combobox', { name: 'Company or organization', exact: true })
