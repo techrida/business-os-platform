@@ -25,7 +25,7 @@ function fakeResponse() {
   sink.on('data', (c: Buffer) => chunks.push(c));
   const res = Object.assign(sink, {
     statusCode: 200,
-    headers: {} as Record<string, string>,
+    headers: {},
     status(code: number) {
       res.statusCode = code;
       return res;
