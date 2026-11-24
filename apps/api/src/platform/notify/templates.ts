@@ -372,10 +372,29 @@ export function buildLogoUrl(baseUrl: string, logo: EmailLogo): string {
   return `${baseUrl.replace(/\/+$/, '')}/brand/logo/${logo.tenantId.toLowerCase()}`;
 }
 
+const LOGO_IMG_STYLE =
+  'display: block; height: 40px; max-width: 200px; width: auto; border: 0; margin: 0 0 16px;';
+
 /** The one image tag an email may hold. The alt text is the (cleaned, escaped) company name, shown when images are off. */
 function logoImg(url: string, alt: string): string {
-  return `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" height="40" style="display: block; height: 40px; max-width: 200px; width: auto; border: 0; margin: 0 0 16px;">`;
+  return `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" height="40" style="${LOGO_IMG_STYLE}">`;
 }
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Matches the logo tag `logoImg` builds for `url` and nothing looser: the attributes src, alt, height and style, in
+ * that order, with exactly this src, height and style. The alt is whatever escaped text the company name gave (it
+ * holds no quote or angle bracket once escaped). Any other attribute, address or tag shape does not match.
+ */
+function logoImgPattern(url: string): RegExp {
+  return new RegExp(
+    `^<img src="${escapeRegExp(escapeHtml(url))}" alt="[^"<>]*" height="40" style="${escapeRegExp(LOGO_IMG_STYLE)}">$`,
+  );
+}
+
+/** Every image tag in `html`, however it is written: a tag whose name is `img` in any case, with optional spaces. */
+const IMG_TAG = /<\s*img\b[^>]*>/gi;
 
 const RENDERED_KEYS = 'html,subject,text';
 const HTML_FORBIDDEN =
@@ -390,14 +409,15 @@ const RELATIVE_URL_ATTR = /\b(?:href|action|formaction)\s*=\s*["']?(\/\/[^\s"'<>
  * The last line of defence, run on every rendered email: it throws unless the email is exactly
  * { subject, text, html }, has no image, file or script reference, and every link points at one of
  * `allowedHosts` (host with port, as `URL.host` gives it). The renderer cannot produce such an email
- * today; this keeps it that way when someone edits a template. `allowedLogoImg` is the one image tag the
- * renderer built for the company logo (R6Q20): it may appear once and is taken out before the image check, so
- * any other image, or a second copy of it, still throws.
+ * today; this keeps it that way when someone edits a template. `allowedLogoUrl` is the address of the
+ * company logo the renderer built (R6Q20): an email may hold one image tag, exactly the one `logoImg` writes for that
+ * address (exact attribute set, exact address), and it is taken out before the image check. Any other image, a
+ * second copy, or that tag with another attribute or address still throws.
  */
 export function assertSafeEmail(
   email: RenderedEmail,
   allowedHosts: readonly string[],
-  allowedLogoImg?: string,
+  allowedLogoUrl?: string,
 ): void {
   if (Object.keys(email).sort().join() !== RENDERED_KEYS) {
     throw new EmailTemplateError('an email is only subject, text and html: no attachments');
@@ -406,8 +426,12 @@ export function assertSafeEmail(
     throw new EmailTemplateError('the email subject must be one line');
   }
   let html = email.html;
-  if (allowedLogoImg !== undefined && html.split(allowedLogoImg).length === 2) {
-    html = html.replace(allowedLogoImg, '');
+  if (allowedLogoUrl !== undefined) {
+    const tags = html.match(IMG_TAG) ?? [];
+    const [only] = tags;
+    if (tags.length === 1 && only !== undefined && logoImgPattern(allowedLogoUrl).test(only)) {
+      html = html.replace(only, '');
+    }
   }
   if (HTML_FORBIDDEN.test(html)) {
     throw new EmailTemplateError('the email html must not embed images, files or scripts');
@@ -488,9 +512,8 @@ export function renderEmail(
       : 'You need to sign in to Business OS to see the details.';
 
   const text = [p.heading, '', ...p.lines, '', `${p.linkLabel}: ${link}`, '', note].join('\n');
-  const logoTag = opts.logo
-    ? logoImg(buildLogoUrl(baseUrl, opts.logo), clean(opts.companyName ?? ''))
-    : null;
+  const logoUrl = opts.logo ? buildLogoUrl(baseUrl, opts.logo) : null;
+  const logoTag = logoUrl === null ? null : logoImg(logoUrl, clean(opts.companyName ?? ''));
   const html = [
     '<!doctype html>',
     '<html><body style="font-family: sans-serif; line-height: 1.5; color: #1a1a1a;">',
@@ -503,6 +526,6 @@ export function renderEmail(
   ].join('\n');
 
   const rendered = { subject: p.subject, text, html };
-  assertSafeEmail(rendered, [new URL(baseUrl).host], logoTag ?? undefined);
+  assertSafeEmail(rendered, [new URL(baseUrl).host], logoUrl ?? undefined);
   return rendered;
 }
