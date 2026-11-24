@@ -32,7 +32,8 @@ import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
  */
 const fixture = (name: string, info: TestInfo): string | undefined => {
   const list = (process.env[`BOS_E2E_QUOTATION_${name}`] ?? '').split(',').filter(Boolean);
-  return list[info.repeatEachIndex] ?? list.at(-1);
+  // One value serves every repeat (a contact address); a list needs one entry per repeat, or the test skips.
+  return list.length === 1 ? list[0] : list[info.repeatEachIndex];
 };
 
 async function open(page: Page, id: string): Promise<void> {
