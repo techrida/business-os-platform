@@ -81,4 +81,28 @@ describe('BullMQ 6 against a real Valkey', () => {
     const live = await queue.getJobs([...LIVE_STATES], 0, -1);
     expect(live.map((j) => j.name)).toEqual(['scan']);
   });
+
+  it('logs in with a password over RESP3 (HELLO 3 AUTH) and runs a job', async () => {
+    const secured = await new GenericContainer('valkey/valkey:9.1-alpine')
+      .withCommand(['valkey-server', '--requirepass', 'it-secret'])
+      .withExposedPorts(6379)
+      .withWaitStrategy(Wait.forLogMessage(/Ready to accept connections/))
+      .start();
+    const queue = new Queue(`it-${randomUUID()}`, {
+      connection: redisOptionsFromUrl(
+        `redis://:it-secret@${secured.getHost()}:${secured.getMappedPort(6379)}`,
+      ),
+    });
+    try {
+      const client = (await queue.getBackend().connection.client) as unknown as {
+        ping(): Promise<string>;
+      };
+      expect(await client.ping()).toBe('PONG');
+      const job = await queue.add('work', {});
+      expect(job.id).toBeTruthy();
+    } finally {
+      await queue.close();
+      await secured.stop();
+    }
+  }, 60_000);
 });
