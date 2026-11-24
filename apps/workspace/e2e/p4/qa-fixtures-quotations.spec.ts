@@ -143,7 +143,7 @@ async function sendQuotation(page: Page, id: string): Promise<void> {
 async function rejectQuotation(page: Page, id: string): Promise<void> {
   await page.goto(`/quotations/${id}`);
   await page.getByRole('button', { name: 'Record outcome' }).click();
-  const dialog = page.getByRole('dialog', { name: /^Record the outcome of / });
+  const dialog = page.getByRole('dialog', { name: /^Record outcome for / });
   await dialog.getByRole('radio', { name: 'Rejected', exact: true }).click();
   await dialog.getByLabel('Comment').fill('QA fixture: the customer declined.');
   await dialog.getByRole('button', { name: 'Record outcome' }).click();

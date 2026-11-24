@@ -201,7 +201,7 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
     await page.getByRole('button', { name: 'Record outcome' }).click();
-    const dialog = page.getByRole('dialog', { name: /^Record the outcome of / });
+    const dialog = page.getByRole('dialog', { name: /^Record outcome for / });
     const submit = dialog.getByRole('button', { name: 'Record outcome' });
 
     await submit.click();
