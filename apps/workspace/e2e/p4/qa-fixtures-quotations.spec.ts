@@ -12,7 +12,7 @@ test.use({ actionTimeout: 30_000 });
  * in states the product only reaches one step at a time, and the ones that act on a quotation use it up. So Sales
  * qualifies and converts one lead of Dev Customer Co into an opportunity, builds the quotations through the quote
  * builder, the Accountant approves them in the inbox, and Sales sends or rejects them. Each spec that consumes a
- * quotation takes the next one on each repeat (testInfo.repeatEachIndex), so `--repeat-each=3` has three of each.
+ * quotation takes the next one on each repeat (the ones the portal accepts each sit on their own opportunity, because an acceptance wins it) (testInfo.repeatEachIndex), so `--repeat-each=3` has three of each.
  * The ids go to .dev/qa-fixture-ids.json for export-ids.sh. A fresh stack only: it makes new records each run.
  *
  * Not made here, because the product cannot reach them in a run: an expired quotation (the sweeper expires a version
@@ -176,7 +176,10 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
       opportunityId = await makeOpportunity(sales);
       for (const kind of Object.keys(make) as (keyof typeof make)[]) {
         for (let i = 0; i < REPEATS; i += 1) {
-          make[kind].push(await buildQuotation(sales, opportunityId, true));
+          // A customer's acceptance wins the opportunity, so each quotation the portal spec accepts gets its own.
+          const opportunity =
+            kind === 'portalSent' && i > 0 ? await makeOpportunity(sales) : opportunityId;
+          make[kind].push(await buildQuotation(sales, opportunity, true));
         }
       }
       draftId = await buildQuotation(sales, opportunityId, false);
