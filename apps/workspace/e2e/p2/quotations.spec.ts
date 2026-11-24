@@ -209,14 +209,14 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
       dialog.getByText('Choose whether the customer accepted or rejected.'),
     ).toBeVisible();
 
-    await dialog.getByLabel('Accepted').check();
+    await dialog.getByRole('radio', { name: 'Accepted', exact: true }).click();
     await submit.click();
     await expect(
       dialog.getByText('Choose at least one kind of evidence the customer gave.'),
     ).toBeVisible();
 
-    await dialog.getByLabel('Rejected').check();
-    await dialog.getByLabel('Signed quotation').uncheck();
+    await dialog.getByRole('radio', { name: 'Rejected', exact: true }).click();
+    await dialog.getByRole('checkbox', { name: 'Signed quotation' }).uncheck();
     await submit.click();
     await expect(dialog.getByText('Say why the customer said no.', { exact: false })).toBeVisible();
 

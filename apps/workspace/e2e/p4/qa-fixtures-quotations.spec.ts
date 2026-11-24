@@ -144,8 +144,7 @@ async function rejectQuotation(page: Page, id: string): Promise<void> {
   await page.goto(`/quotations/${id}`);
   await page.getByRole('button', { name: 'Record outcome' }).click();
   const dialog = page.getByRole('dialog', { name: /^Record the outcome of / });
-  await dialog.getByLabel('Rejected').check();
-  await dialog.getByLabel('Signed quotation').uncheck();
+  await dialog.getByRole('radio', { name: 'Rejected', exact: true }).click();
   await dialog.getByLabel('Comment').fill('QA fixture: the customer declined.');
   await dialog.getByRole('button', { name: 'Record outcome' }).click();
   await expect(dialog.getByText('Recorded as rejected').first()).toBeVisible({ timeout: 30_000 });
