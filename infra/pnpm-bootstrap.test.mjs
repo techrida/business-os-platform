@@ -23,7 +23,11 @@ test('no Dockerfile or setup script installs pnpm with an unpinned `npm install 
     'infra/scripts/dev-machine-setup.sh',
   ]) {
     const text = read(file);
-    assert.doesNotMatch(text, /npm (i|install)\b[^\n]*-g[^\n]*pnpm|npm (i|install) --global pnpm/, file);
+    assert.doesNotMatch(
+      text,
+      /npm (i|install)\b[^\n]*-g[^\n]*pnpm|npm (i|install) --global pnpm/,
+      file,
+    );
     assert.match(text, /npm ci --prefix [^\n]*pnpm-bootstrap/, file);
   }
 });
