@@ -12,3 +12,11 @@ put BOS_E2E_RFQ_PR_ID "$(q "select id from app.purchase_requests where number = 
 put BOS_E2E_BILL_ID "$(q "select id from app.vendor_bills where vendor_invoice_no = 'QA-INV-1'")"
 put BOS_E2E_DEPARTMENT_ID "$(q "select id from app.departments where status = 'active' and lower(btrim(name)) = 'operations' limit 1")"
 put BOS_E2E_COST_CENTER_ID "$(q "select id from app.cost_centers where code = 'OPERATIONS' limit 1")"
+
+# Portal specs: the stored logins written by e2e/p4/qa-fixtures.spec.ts, and the records of the dev vendor.
+put PORTAL_E2E_STORAGE_STATE "$PWD/.dev/portal-customer.json"
+put PORTAL_E2E_VENDOR_STATE "$PWD/.dev/portal-vendor.json"
+put PORTAL_E2E_VENDOR_PO_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-1'")"
+put PORTAL_E2E_VENDOR_FOREIGN_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-2'")"
+put PORTAL_E2E_VENDOR_RFQ_ID "$(q "select id from app.rfqs where number = 'RFQ-QA-1'")"
+put PORTAL_E2E_VENDOR_BILL_ID "$(q "select id from app.vendor_bills where vendor_invoice_no = 'QA-INV-1'")"

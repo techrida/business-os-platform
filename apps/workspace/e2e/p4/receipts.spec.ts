@@ -63,7 +63,7 @@ test('the receipts of an order open, and an empty receipt is refused in words', 
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'New receipt' }),
     ).toBeVisible();
-    await expect(founder.page.locator('input[name="receivedAt"]')).toHaveValue(
+    await expect(founder.page.locator('input[name="receivedAt"]').first()).toHaveValue(
       /^\d{4}-\d{2}-\d{2}$/,
     );
     await founder.page.getByRole('button', { name: 'Save draft receipt' }).click();

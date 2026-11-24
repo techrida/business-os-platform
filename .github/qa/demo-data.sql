@@ -43,7 +43,7 @@ SELECT set_config('bos.actor_id', 'p4-qa-fixture-procurement', true);
 DO $fixture$
 DECLARE
   v_tenant uuid; v_org uuid; v_dept uuid; v_cc uuid; v_proc uuid; v_vendor uuid; v_vat uuid;
-  v_pr1 uuid := gen_random_uuid(); v_pr2 uuid := gen_random_uuid(); v_pr3 uuid := gen_random_uuid();
+  v_pr1 uuid := gen_random_uuid(); v_pr2 uuid := gen_random_uuid(); v_pr3 uuid := gen_random_uuid(); v_pr4 uuid := gen_random_uuid(); v_po2 uuid := gen_random_uuid();
   v_exp uuid; v_doc uuid := gen_random_uuid(); v_bill uuid := gen_random_uuid(); v_fin uuid; v_rfq uuid := gen_random_uuid(); v_po uuid := gen_random_uuid();
 BEGIN
   SELECT o.tenant_id, o.id INTO v_tenant, v_org FROM app.organizations o WHERE o.legal_name = 'Techrida Pvt. Ltd.';
@@ -64,16 +64,18 @@ BEGIN
   INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id, requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
   VALUES (v_pr1, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: office chairs', '2030-12-01', 'QA-1', 'NPR'),
          (v_pr2, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: laptops', '2030-12-01', 'QA-2', 'NPR'),
-         (v_pr3, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: monitors', '2030-12-01', 'QA-3', 'NPR');
+         (v_pr3, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: monitors', '2030-12-01', 'QA-3', 'NPR'),
+         (v_pr4, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: keyboards', '2030-12-01', 'QA-4', 'NPR');
   INSERT INTO app.purchase_request_lines (tenant_id, organization_id, purchase_request_id, line_no, description, uom, quantity, estimated_unit_price, estimated_amount)
   VALUES (v_tenant, v_org, v_pr1, 1, 'Office chair', 'pcs', 10, 4500, 45000),
          (v_tenant, v_org, v_pr1, 2, 'Desk', 'pcs', 2, 2500, 5000),
          (v_tenant, v_org, v_pr2, 1, 'Laptop', 'pcs', 1, 79646.02, 79646.02),
-         (v_tenant, v_org, v_pr3, 1, 'Monitor', 'pcs', 4, 12000, 48000);
+         (v_tenant, v_org, v_pr3, 1, 'Monitor', 'pcs', 4, 12000, 48000),
+         (v_tenant, v_org, v_pr4, 1, 'Keyboard', 'pcs', 1, 5000, 5000);
 
   -- Lines first: an approved request's lines are frozen.
-  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 ELSE 79646.02 END,
-         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' WHEN v_pr3 THEN 'PR-QA-3' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2, v_pr3);
+  UPDATE app.purchase_requests SET status = CASE WHEN id = v_pr3 THEN 'dept_approved' ELSE 'approved' END, fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 WHEN v_pr4 THEN 5000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 WHEN v_pr4 THEN 5000.00 ELSE 79646.02 END,
+         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' WHEN v_pr3 THEN 'PR-QA-3' WHEN v_pr4 THEN 'PR-QA-4' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2, v_pr3, v_pr4);
 
   INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, created_by)
   VALUES (v_rfq, v_tenant, v_org, v_pr1, 'RFQ-QA-1', '2030-12-15T00:00:00Z', v_proc);
@@ -84,6 +86,11 @@ BEGIN
   VALUES (v_po, v_tenant, v_org, 'PO-QA-1', 900001, '2082/83', v_pr2, v_vendor, 'NPR', 30, '90000.00', 1, '90000.00', 'base', v_proc);
   INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
   VALUES (v_tenant, v_org, v_po, v_pr2, 1, 'goods', 'Laptop', 'pcs', '1', '79646.02', v_vat, '79646.02', '10353.98', '90000.00');
+  -- A second, draft order of the same vendor: the vendor portal must not show a draft ("foreign" id for its specs).
+  INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year, purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate, approved_total_npr, approved_band, created_by)
+  VALUES (v_po2, v_tenant, v_org, 'PO-QA-2', 900002, '2082/83', v_pr4, v_vendor, 'NPR', 30, '5650.00', 1, '5650.00', 'base', v_proc);
+  INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
+  VALUES (v_tenant, v_org, v_po2, v_pr4, 1, 'goods', 'Keyboard', 'pcs', '1', '5000.00', v_vat, '5000.00', '650.00', '5650.00');
 
 END
 $fixture$;

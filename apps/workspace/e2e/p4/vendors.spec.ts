@@ -4,7 +4,6 @@ import { pickCountry } from '../helpers/country';
 import { minimalPdf } from '../helpers/pdf-fixture';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { searchBox } from '../helpers/multi-select';
-import { chooseOption, selectByName } from '../helpers/select';
 
 /**
  * The P4 vendor screens, against the real stack. Not run by the unit that wrote it: it needs the
@@ -58,15 +57,15 @@ test('a vendor goes from draft to KYB review, and its maker-checker refusals rea
     await test.step('a foreign vendor is created without a PAN', async () => {
       await page.goto('/vendors/new');
       await page.getByLabel('Legal name').fill(name);
-      await chooseOption(selectByName(page, 'kind'), 'foreign');
-      // Exact role match: the Kind control's option text ("Company (registered, with a PAN)") also contains "PAN".
-      await expect(page.getByRole('textbox', { name: 'PAN', exact: true })).toHaveCount(0);
-      // The vendor's country is the Address panel's Country picker.
+      // Choosing a country outside Nepal makes the vendor foreign by itself (vendor-form.tsx setAddress): the country
+      // is picked first, because choosing the foreign kind while the country is still Nepal puts it back to a company.
       await pickCountry(
         page.getByRole('combobox', { name: 'Country', exact: true }),
         'india',
         'India',
       );
+      // Exact role match: the Kind control's option text ("Company (registered, with a PAN)") also contains "PAN".
+      await expect(page.getByRole('textbox', { name: 'PAN', exact: true })).toHaveCount(0);
       await page.getByRole('button', { name: 'Add vendor' }).click();
       await expect(page).toHaveURL(/\/vendors\/[0-9a-f-]{36}\?created=1/);
       await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
