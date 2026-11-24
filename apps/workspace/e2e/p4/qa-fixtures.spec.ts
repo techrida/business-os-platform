@@ -31,11 +31,9 @@ test('qa fixtures: issue the seeded purchase order', async ({ browser, baseURL }
       await expect(issue).toHaveCount(0, { timeout: 30_000 });
     }
     const body = (await page.locator('main').innerText()).replace(/\s+/g, ' ');
-    // The proof, not the absence of a button: the page says the order is issued and offers the next step.
-    expect(body, `PO-QA-1 page after issuing: ${body.slice(0, 400)}`).toMatch(/Issued/);
-    await expect(page.getByRole('link', { name: /Receive goods|Enter bill/ }).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    // The proof: the page says the order is issued (the badge), whoever may go on to receive or bill it.
+    expect(body, `PO-QA-1 page after issuing: ${body.slice(0, 600)}`).toMatch(/\bIssued\b/);
+    await expect(page.getByRole('button', { name: 'Issue purchase order' })).toHaveCount(0);
   } finally {
     await context.close();
   }

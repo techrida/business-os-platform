@@ -100,6 +100,7 @@ async function findFormRoute(
     .locator('main a[href]')
     .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
   const candidates = [...new Set(records.filter((href) => form.open.test(href)))].slice(0, 12);
+  let lastSeen = `${candidates.length} records on ${form.list}`;
   for (const record of candidates) {
     await page.goto(record);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -113,7 +114,9 @@ async function findFormRoute(
       if (found === undefined) await page.waitForTimeout(1_000);
     }
     if (found !== undefined) return found;
+    lastSeen = `${record}: ${(await page.locator('main').innerText()).replace(/\s+/g, ' ').slice(0, 700)}`;
   }
+  console.log(`no ${form.name} link for ${form.persona}; last page: ${lastSeen}`);
   return null;
 }
 
