@@ -910,13 +910,14 @@ export class DocumentsService {
     try {
       // Bounded (4 s, longer than a nudge: a timeout here discards the upload): with Valkey down `queue.add` never
       // answers, and the upload would hang instead of answering 202.
-      await queueCallWithin(() =>
-        this.queue.add(DOCS_SCAN_JOB, job, {
-          // The version id as job id: queueing the same version twice is a no-op, not two scans.
-          // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
-          ...SCAN_JOB_OPTIONS,
-          jobId: versionId,
-        }),
+      await queueCallWithin(
+        () =>
+          this.queue.add(DOCS_SCAN_JOB, job, {
+            // The version id as job id: queueing the same version twice is a no-op, not two scans.
+            // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
+            ...SCAN_JOB_OPTIONS,
+            jobId: versionId,
+          }),
         SCAN_ENQUEUE_TIMEOUT_MS,
       );
     } catch (error) {
