@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { expect, test } from '@playwright/test';
 
 /**
@@ -70,8 +72,22 @@ test('the invoice page shows lines, VAT, totals, due date and status, and no int
   await expect(page.getByText('Due date', { exact: true })).toBeVisible();
   await expect(page.getByText(/^(Unpaid|Partly paid|Overdue)$/)).toBeVisible();
   expect(await page.locator('main').innerText()).not.toMatch(FORBIDDEN);
-  // The shared viewer's Download is a button that fetches the file; the PDF itself is checked by the document route.
-  await expect(page.getByRole('button', { name: 'Download', exact: true })).toBeVisible();
+
+  // The shared viewer's Download is a button that fetches the PDF and saves it: take the saved file and read it.
+  const number = /INV-\d+\/\d+-\d+/.exec(
+    await page.getByRole('heading', { level: 1 }).innerText(),
+  )?.[0];
+  expect(number, 'the invoice number is in the page title').toBeDefined();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Download', exact: true }).click(),
+  ]);
+  // The saved name is the number with its slashes turned into dashes (INV-2083/84-00001 is INV-2083-84-00001.pdf).
+  expect(download.suggestedFilename()).toMatch(
+    new RegExp(`^${(number ?? '').replaceAll('/', '-')}(-copy\\d+)?\\.pdf$`),
+  );
+  const path = await download.path();
+  expect((await readFile(path)).subarray(0, 4).toString('latin1')).toBe('%PDF');
 });
 
 test('submitting a payment needs proof, then lands in the list as awaiting verification', async ({
