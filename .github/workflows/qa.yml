@@ -1,6 +1,9 @@
 # Browser QA on GitHub-hosted runners: the whole stack (containers + compiled apps, devtools profile) is brought up
 # by .github/qa/up.sh, the dev personas are seeded, and the Playwright specs of apps/workspace and apps/portal run
 # against it. Videos, screenshots and the HTML report are uploaded as artifacts.
+# A pull request runs only the browser suites its diff affects (job `changes`, tools/affected.mjs): workspace specs for
+# the workspace app and what it depends on, portal specs for the portal, both for the API. Pushes, the weekly schedule
+# and manual runs run everything. Only `qa required` is the required check; it always reports.
 # Standard runners only (free for public repositories): never switch `runs-on` to a larger runner, those are billed.
 name: qa
 
@@ -12,7 +15,10 @@ on:
         required: false
         default: ''
   push:
-    branches: [main, p4-main]
+    branches: [main, p4-main, 'r6/**', 'kuu/**']
+  # Weekly full run: catches anything the per-pull-request selection (tools/affected.mjs) missed.
+  schedule:
+    - cron: '47 3 * * 1'
   # Every pull request, with no path filter: a required "qa specs 1/2/3" check must report on a docs-only or
   # tools-only PR too, or the PR waits for it forever.
   pull_request:
@@ -29,22 +35,46 @@ env:
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
+  changes:
+    name: changes (what this run covers)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      qa-workspace: ${{ steps.affected.outputs.qa-workspace }}
+      qa-portal: ${{ steps.affected.outputs.qa-portal }}
+      qa-matrix: ${{ steps.affected.outputs.qa-matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Map the diff to areas
+        id: affected
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
+
   workspace:
     # Three shards of the specs that pass today, plus one non-blocking job for the specs in .github/qa/quarantine.txt
     # (they fail on the current code for reasons that are not the stack: see that file's history and the QA report).
     # 4 jobs per run, so with ci.yml (5) a push stays far below the 20 concurrent jobs of the free plan.
     name: qa ${{ matrix.mode }} ${{ matrix.id }}
+    needs: changes
+    # An empty matrix is an error, so a diff that touches neither app skips the job instead.
+    if: ${{ needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: ${{ matrix.mode == 'quarantined' }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { mode: specs, id: '1', shard: '1/3' }
-          - { mode: specs, id: '2', shard: '2/3' }
-          - { mode: specs, id: '3', shard: '3/3' }
-          - { mode: quarantined, id: '-', shard: '1/1' }
+      # Computed by tools/affected.mjs: the full set (specs 1/2/3 + quarantined), or one specs 1 shard that runs only the
+      # portal specs (ws: false) when only the portal is affected.
+      matrix: ${{ fromJSON(needs.changes.outputs.qa-matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -99,7 +129,7 @@ jobs:
           pnpm exec playwright test --project=dev p4/qa-fixtures.spec --output=test-results-fixtures
 
       - name: Playwright (workspace, dev project)
-        if: ${{ matrix.mode == 'specs' }}
+        if: ${{ matrix.mode == 'specs' && matrix.ws }}
         env:
           BOS_E2E_RECORD: '1'
           # The compiled devtools build carries the dev switcher and the dev shell, like `next dev`; the login is the Business OS image.
@@ -136,7 +166,7 @@ jobs:
           pnpm exec playwright test --project=dev --timeout=60000 --grep "$quarantine"
 
       - name: Portal specs (they skip themselves without their fixtures)
-        if: ${{ !cancelled() && matrix.mode == 'specs' && matrix.id == '1' }}
+        if: ${{ !cancelled() && matrix.mode == 'specs' && matrix.id == '1' && (needs.changes.outputs.qa-portal == 'true' || needs.changes.outputs.qa-workspace == 'true') }}
         env:
           PORTAL_E2E_BASE_URL: https://portal.localhost
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
@@ -194,3 +224,21 @@ jobs:
         run: |
           for f in .dev/logs/*.log .dev/compose-up.log; do echo "::group::$f"; tail -n 80 "$f" || true; echo "::endgroup::"; done
           docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml ps -a || true
+
+  # The one required check. It always runs, so a skipped suite never leaves a pull request waiting; it fails when
+  # any job failed or was cancelled, and passes when every job succeeded or was skipped.
+  qa-required:
+    name: qa required
+    if: ${{ always() }}
+    needs: [changes, workspace]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) echo "a job failed or was cancelled"; exit 1 ;;
+          esac

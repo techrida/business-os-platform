@@ -16,3 +16,19 @@ test('qa runs on every pull request: no paths or paths-ignore filter on pull_req
 test('the quarantined job stays non-blocking', () => {
   assert.match(text, /continue-on-error: \$\{\{ matrix\.mode == 'quarantined' \}\}/);
 });
+
+test('qa required always reports and needs every job; the matrix comes from the change detection', () => {
+  assert.match(
+    text,
+    /qa-required:\n {4}name: qa required\n {4}if: \$\{\{ always\(\) \}\}\n {4}needs: \[changes, workspace\]/,
+  );
+  assert.match(text, /matrix: \$\{\{ fromJSON\(needs\.changes\.outputs\.qa-matrix\) \}\}/);
+});
+
+test('ci required always reports and needs every ci job', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.match(
+    ci,
+    /ci-required:\n {4}name: ci required\n {4}if: \$\{\{ always\(\) \}\}\n {4}needs: \[changes, checks, secrets, e2e, web, docker\]/,
+  );
+});
