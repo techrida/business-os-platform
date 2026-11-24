@@ -31,7 +31,6 @@ function sources(dir: string): string[] {
 const DEFERRED = [
   'apps/portal/src/app/(portal)/payments/_components/payment-form.tsx',
   'apps/workspace/src/app/(app)/invoices/_components/invoice-filters.tsx',
-  'apps/workspace/src/components/p2/crm/lead-form.tsx',
 ];
 
 const withNativeBox = ['apps/workspace/src', 'apps/portal/src']
@@ -53,6 +52,7 @@ it('every deferred file still needs its entry', () => {
 it('the files this unit moved hold no native date input', () => {
   for (const file of [
     'apps/workspace/src/components/p2/crm/schedule-follow-up-dialog.tsx',
+    'apps/workspace/src/components/p2/crm/lead-form.tsx',
     'apps/portal/src/app/(vendor)/vendor/onboarding/upload/_components/kyc-form.tsx',
   ]) {
     expect(NATIVE.test(readFileSync(join(repo, file), 'utf8')), file).toBe(false);

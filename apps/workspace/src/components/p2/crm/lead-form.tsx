@@ -24,6 +24,7 @@ import { AddressFields } from '@/components/ui/address-fields';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { MemberPicker } from '@/components/ui/member-picker';
@@ -591,7 +592,7 @@ export function LeadForm({
 
         <Panel
           title="Schedule a follow-up"
-          description="Leave the time empty to skip it; you can plan one from the lead later."
+          description="Leave the date and time empty to skip it; you can plan one from the lead later."
         >
           <ActivityTypeButtons
             kinds={SCHEDULE_ACTIVITY_KINDS}
@@ -604,11 +605,10 @@ export function LeadForm({
           <div className={styles.formGrid}>
             <Field label="When" hint="Kathmandu time." error={err['followUpAt']}>
               {(c) => (
-                <Input
+                <DateTimePicker
                   name="followUpAt"
-                  type="datetime-local"
                   value={values['followUpAt']}
-                  onChange={set('followUpAt')}
+                  onChange={(next) => update('followUpAt', next)}
                   {...c}
                 />
               )}
