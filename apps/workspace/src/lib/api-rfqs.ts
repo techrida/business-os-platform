@@ -67,7 +67,25 @@ export const QuotationDtoSchema = z.object({
 });
 export type QuotationDto = z.infer<typeof QuotationDtoSchema>;
 
+/** One line of a quotation as the vendor quoted it; `lineNo` is its request line's number. */
+export const QuotationLineSchema = z.object({
+  id: z.guid(),
+  prLineId: z.guid(),
+  lineNo: z.number().int().min(1),
+  description: z.string(),
+  quantity: money,
+  unitPrice: money,
+  taxCode: z.string(),
+  taxRateBp: z.number().int().min(0),
+  gross: money,
+  taxAmount: money,
+  lineTotal: money,
+});
+export type QuotationLine = z.infer<typeof QuotationLineSchema>;
+
 export const ComparisonRowSchema = QuotationDtoSchema.extend({
+  /** What the vendor quoted, in request-line order; the server's gross, tax and total per line. */
+  lines: z.array(QuotationLineSchema),
   /** The quoting vendor's legal name, sent with the quotation. */
   vendorName: z.string(),
   /** The mean of the scores (two places), or null when nobody scored it yet. */

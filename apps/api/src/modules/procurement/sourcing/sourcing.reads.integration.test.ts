@@ -36,7 +36,7 @@ import { asSecondPerson, SKIP_LIVE_PUBLISHER_CHECK } from '../../../../test/supp
 import { ApprovalsService } from '../../approvals/requests.service';
 import { PrCommitmentSubject } from './pr-commitment.subject';
 import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
-import { SourcingService } from './sourcing.service';
+import { SourcingService, type QuotationLineDto } from './sourcing.service';
 import { evidenceFixture, type EvidenceFixture } from '../../evidence/evidence.fixture';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -242,7 +242,10 @@ async function vendor(): Promise<string> {
 }
 
 /** A dept_approved request of U.req in scope A with one line; returns its id and line id. */
-async function deptApprovedPr(): Promise<{ id: string; lineId: string }> {
+async function deptApprovedPr(
+  secondLine = false,
+): Promise<{ id: string; lineId: string; secondLineId: string }> {
+  const secondLineId = randomUUID();
   const id = randomUUID();
   const lineId = randomUUID();
   await exec(
@@ -258,12 +261,21 @@ async function deptApprovedPr(): Promise<{ id: string; lineId: string }> {
           description, uom, quantity, estimated_unit_price, estimated_amount)
         VALUES (${lineId}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${id}, 1, 'Laptop', 'pcs', 1, 100000, 100000)`,
   );
+  if (secondLine) {
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.purchase_request_lines (id, tenant_id, organization_id, purchase_request_id, line_no,
+            description, uom, quantity, estimated_unit_price, estimated_amount)
+          VALUES (${secondLineId}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${id}, 2, 'Docking station',
+                  'pcs', 1, 100, 100)`,
+    );
+  }
   await exec(
     scopeA,
     sql`UPDATE app.purchase_requests SET status = 'dept_approved', fx_rate = 1, estimated_total = 100000,
           estimated_total_npr = 100000, number = ${`PR-M-${id.slice(0, 8)}`} WHERE id = ${id}`,
   );
-  return { id, lineId };
+  return { id, lineId, secondLineId };
 }
 
 async function doc(): Promise<string> {
@@ -280,8 +292,8 @@ async function doc(): Promise<string> {
 const deadline = '2030-11-20T10:00:00+05:45';
 
 /** An open RFQ inviting `count` approved vendors; nobody has quoted yet. */
-async function openRfq(count: number) {
-  const pr = await deptApprovedPr();
+async function openRfq(count: number, secondLine = false) {
+  const pr = await deptApprovedPr(secondLine);
   const vendorIds: string[] = [];
   for (let i = 0; i < count; i += 1) vendorIds.push(await vendor());
   const rfq = await service.createRfq(
@@ -486,6 +498,82 @@ describe('listSubmissions', () => {
   });
 });
 
+describe('the lines of a quotation (R6Q23)', () => {
+  const record = (
+    rfqId: string,
+    vendorId: string,
+    lines: { prLineId: string; quantity: string; unitPrice: string; description?: string }[],
+  ) =>
+    evidence.upload('rfq', rfqId).then((documentId) =>
+      service.recordQuotation(
+        rfqId,
+        {
+          vendorId,
+          documentId,
+          currency: 'NPR',
+          lines: lines.map((l) => ({ ...l, taxCodeId: vatCode })),
+        },
+        randomUUID(),
+      ),
+    );
+
+  it('returns each line with the vendor description, defaulting to the request line wording', async () => {
+    as(U.proc, 'procurement');
+    const { rfq, pr, vendorIds } = await openRfq(1, true);
+    await record(rfq.id, vendorIds[0]!, [
+      { prLineId: pr.secondLineId, quantity: '2', unitPrice: '33.33' },
+      { prLineId: pr.lineId, quantity: '1', unitPrice: '1000.00', description: 'Laptop 14-inch' },
+    ]);
+    const [row] = await service.comparison(rfq.id);
+    expect(
+      row!.lines.map((l) => [l.lineNo, l.description, l.quantity, l.unitPrice, l.taxCode]),
+    ).toEqual([
+      [1, 'Laptop 14-inch', '1.0000', '1000.00', expect.any(String)],
+      [2, 'Docking station', '2.0000', '33.33', expect.any(String)],
+    ]);
+  });
+
+  it('adds the lines up to the quotation totals, rounding per line as invoices do', async () => {
+    as(U.proc, 'procurement');
+    const { rfq, pr, vendorIds } = await openRfq(1, true);
+    // Half-paisa lines: VAT 0.065 -> 0.07 on each 0.50 line, where rounding the summed net (1.00) once would give
+    // 0.13. Rounded per line, then summed, as invoices do.
+    await record(rfq.id, vendorIds[0]!, [
+      { prLineId: pr.lineId, quantity: '1', unitPrice: '0.50' },
+      { prLineId: pr.secondLineId, quantity: '1', unitPrice: '0.50' },
+    ]);
+    const [row] = await service.comparison(rfq.id);
+    const sum = (pick: (l: QuotationLineDto) => string) =>
+      (row!.lines.reduce((acc, l) => acc + Math.round(Number(pick(l)) * 100), 0) / 100).toFixed(2);
+    expect(sum((l) => l.gross)).toBe(row!.subtotal);
+    expect(sum((l) => l.taxAmount)).toBe(row!.taxAmount);
+    expect(sum((l) => l.lineTotal)).toBe(row!.total);
+    expect(row!.lines.map((l) => l.taxAmount)).toEqual(['0.07', '0.07']);
+    expect(row!.taxAmount).toBe('0.14');
+  });
+
+  it('keeps what the vendor quoted when it is recorded, with the other vendors lines apart', async () => {
+    as(U.proc, 'procurement');
+    const { rfq, pr, vendorIds } = await openRfq(2);
+    await record(rfq.id, vendorIds[0]!, [
+      {
+        prLineId: pr.lineId,
+        quantity: '1',
+        unitPrice: '900.00',
+        description: 'Refurbished laptop',
+      },
+    ]);
+    await record(rfq.id, vendorIds[1]!, [
+      { prLineId: pr.lineId, quantity: '1', unitPrice: '950.00' },
+    ]);
+    const rows = await service.comparison(rfq.id);
+    expect(rows.map((r) => r.lines.map((l) => l.description))).toEqual([
+      ['Refurbished laptop'],
+      ['Laptop'],
+    ]);
+  });
+});
+
 describe('invited vendor names (no vendor directory read)', () => {
   it('names each invited vendor on the RFQ and each quoting vendor on the comparison, for sourcing', async () => {
     as(U.proc, 'procurement');
@@ -521,6 +609,7 @@ describe('invited vendor names (no vendor directory read)', () => {
         'documentId',
         'fxRate',
         'id',
+        'lines',
         'rfqId',
         'scores',
         'subtotal',

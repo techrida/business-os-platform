@@ -481,6 +481,23 @@ describe('procurement DTOs', () => {
       expect(RecordQuotationBodySchema.safeParse({ ...record, total: '1.00' }).success).toBe(false);
     });
 
+    it('takes an optional line description, trimmed, never blank or over 500 characters', () => {
+      const withLine = (over: Record<string, unknown>) => ({
+        ...record,
+        lines: [{ ...qline, ...over }],
+      });
+      const parsed = RecordQuotationBodySchema.parse(
+        withLine({ description: '  Laptop 14-inch ' }),
+      );
+      expect(parsed.lines[0]?.description).toBe('Laptop 14-inch');
+      expect(RecordQuotationBodySchema.safeParse(withLine({ description: '   ' })).success).toBe(
+        false,
+      );
+      expect(
+        RecordQuotationBodySchema.safeParse(withLine({ description: 'x'.repeat(501) })).success,
+      ).toBe(false);
+    });
+
     it('holds quantity to 4 places and price to 2, as plain unsigned decimals', () => {
       const withLine = (over: Record<string, unknown>) => ({
         ...record,
