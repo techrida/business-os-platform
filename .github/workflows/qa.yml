@@ -13,14 +13,9 @@ on:
         default: ''
   push:
     branches: [main, p4-main]
+  # Every pull request, with no path filter: a required "qa specs 1/2/3" check must report on a docs-only or
+  # tools-only PR too, or the PR waits for it forever.
   pull_request:
-    paths:
-      - 'apps/**'
-      - 'packages/**'
-      - 'infra/**'
-      - 'tools/seed-zitadel/**'
-      - '.github/qa/**'
-      - '.github/workflows/qa.yml'
 
 permissions:
   contents: read
