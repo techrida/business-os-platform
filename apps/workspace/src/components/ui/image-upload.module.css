@@ -207,7 +207,7 @@
     background: var(--surface-default);
   }
 
-  /* The limits stay at every width (R6AC): only the "Drop a file here" half goes, since a phone has no drag. */
+  /* A phone has no drag: the "Drop a file here" line goes. */
   .dropHow {
     display: none;
   }

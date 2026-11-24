@@ -6,7 +6,7 @@
 // is virus-scanned and `GET /api/images/:id` answers 404 until it is clean, so the component shows "Scanning" and
 // polls with a backoff until the picture can be served. Once it is, the other avatars of the record on the page are
 // told to try again and the caller refreshes a second time.
-import { IMAGE_ACCEPT, IMAGE_HINT, imagePath, type ImageOwnerType } from '@bos/contracts';
+import { IMAGE_ACCEPT, imagePath, type ImageOwnerType } from '@bos/contracts';
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { announceImageReady, Avatar, type AvatarSize } from './avatar';
@@ -424,8 +424,7 @@ export function ImageUpload({
               {hasPicture ? 'Replace picture' : 'Upload picture'}
             </span>
             <span id={hintId} className={styles.dropHint}>
-              <span className={styles.dropHow}>Drop a file here or choose one. </span>
-              {IMAGE_HINT}
+              <span className={styles.dropHow}>Drop a file here or choose one.</span>
             </span>
           </span>
         </label>
