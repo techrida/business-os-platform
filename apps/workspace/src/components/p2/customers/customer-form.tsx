@@ -133,7 +133,7 @@ export function CustomerForm({
 
   // Send focus to what needs attention: the summary, else the first field that is wrong.
   useEffect(() => {
-    if (state.error || state.duplicates) summaryRef.current?.focus();
+    if (state.error || state.notice || state.duplicates) summaryRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
 
@@ -224,6 +224,12 @@ export function CustomerForm({
           <input type="hidden" name="expectedVersion" value={version} />
         </>
       )}
+
+      {state.notice && !state.error ? (
+        <Alert ref={summaryRef} tabIndex={-1} tone="info" role="status" title="Nothing changed">
+          {state.notice}
+        </Alert>
+      ) : null}
 
       {state.error ? (
         <Alert
