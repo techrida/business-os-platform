@@ -75,8 +75,11 @@ test('a draft is saved with a server total, then cancelled and read-only', async
       await page.getByLabel('Why is this needed?').fill(`E2E request ${Date.now()}`);
       await page.getByLabel('Description').fill('Office chair');
       await page.getByLabel('Unit', { exact: true }).fill('pcs');
-      await page.getByLabel('Quantity').fill('10');
-      await page.getByLabel(/Estimated unit price/).fill('4500.00');
+      await page.getByLabel('Quantity', { exact: true }).first().fill('10');
+      await page
+        .getByLabel(/Estimated unit price/)
+        .first()
+        .fill('4500.00');
       await page.getByRole('button', { name: 'Save draft' }).click();
       await expect(page).toHaveURL(/\/procurement\/requests\/[0-9a-f-]{36}\?created=1/);
       await expect(page.getByText('45,000.00').first()).toBeVisible();
