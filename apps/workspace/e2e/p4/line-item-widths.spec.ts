@@ -102,10 +102,16 @@ async function findFormRoute(
   const candidates = [...new Set(records.filter((href) => form.open.test(href)))].slice(0, 12);
   for (const record of candidates) {
     await page.goto(record);
-    const hrefs = await page
-      .locator('main a[href]')
-      .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
-    const found = hrefs.find((href) => form.link.test(href));
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    // The action buttons come from the order's progress read, which streams in after the heading: look for a while.
+    let found: string | undefined;
+    for (let attempt = 0; attempt < 10 && found === undefined; attempt += 1) {
+      const hrefs = await page
+        .locator('main a[href]')
+        .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''));
+      found = hrefs.find((href) => form.link.test(href));
+      if (found === undefined) await page.waitForTimeout(1_000);
+    }
     if (found !== undefined) return found;
   }
   return null;
