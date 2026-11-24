@@ -8,6 +8,7 @@ import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
+import { getBranding, logoSrc } from '@/lib/api-branding';
 import { getInboxCount, getUnreadCount } from '@/lib/api-kernel';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getMeOrNull, permissionsFrom } from '@/lib/live-permissions';
@@ -30,7 +31,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const roles = accountLabel(session.roles);
   // None throws: a failed read falls back to the default grouping, to initials and to the role defaults for the
   // nav. A failed or refused inbox read leaves the badge out; it never shows a zero in its place.
-  const [numberSystems, me, approvalsWaiting, unreadNotifications] = await Promise.all([
+  const [numberSystems, me, approvalsWaiting, unreadNotifications, branding] = await Promise.all([
     getNumberSystems(),
     getMeOrNull(session.accessToken),
     getInboxCount(session).then(
@@ -41,6 +42,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       ({ count }) => count,
       () => undefined,
     ),
+    // The company's name and logo for the sidebar; null (the product name) when it cannot be read.
+    getBranding(session),
   ]);
 
   // The person's name leads the user card with their roles under it; without a name the roles lead, as before.
@@ -63,6 +66,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             imageDocumentId: me?.avatarDocumentId ?? null,
             ...(me?.id ? { id: me.id } : {}),
           }}
+          brand={{ name: branding?.displayName ?? null, logoSrc: logoSrc(branding) }}
           permissions={permissionsFrom(me, session.roles)}
           counts={approvalsWaiting === undefined ? {} : { '/inbox': approvalsWaiting }}
         />
