@@ -43,7 +43,8 @@ SELECT set_config('bos.actor_id', 'p4-qa-fixture-procurement', true);
 DO $fixture$
 DECLARE
   v_tenant uuid; v_org uuid; v_dept uuid; v_cc uuid; v_proc uuid; v_vendor uuid; v_vat uuid;
-  v_pr1 uuid := gen_random_uuid(); v_pr2 uuid := gen_random_uuid(); v_rfq uuid := gen_random_uuid(); v_po uuid := gen_random_uuid();
+  v_pr1 uuid := gen_random_uuid(); v_pr2 uuid := gen_random_uuid(); v_pr3 uuid := gen_random_uuid();
+  v_exp uuid; v_doc uuid := gen_random_uuid(); v_bill uuid := gen_random_uuid(); v_fin uuid; v_rfq uuid := gen_random_uuid(); v_po uuid := gen_random_uuid();
 BEGIN
   SELECT o.tenant_id, o.id INTO v_tenant, v_org FROM app.organizations o WHERE o.legal_name = 'Techrida Pvt. Ltd.';
   SELECT id INTO v_dept FROM app.departments WHERE organization_id = v_org AND status = 'active' AND lower(btrim(name)) = 'operations';
@@ -52,6 +53,8 @@ BEGIN
   SELECT v.id INTO v_vendor FROM app.vendors v WHERE v.tenant_id = v_tenant AND v.status = 'approved'
      AND EXISTS (SELECT 1 FROM app.parties p WHERE p.id = v.id AND p.code = 'VEND-DEV');
   SELECT id INTO v_vat FROM app.tax_codes WHERE tenant_id = v_tenant AND code = 'VAT13';
+  SELECT id INTO v_exp FROM app.expense_accounts WHERE tenant_id = v_tenant AND organization_id = v_org AND status = 'active' ORDER BY code LIMIT 1;
+  SELECT id INTO v_fin FROM app.users WHERE tenant_id = v_tenant AND lower(email) = 'finance@dev.bos.test';
   IF v_org IS NULL OR v_dept IS NULL OR v_cc IS NULL OR v_proc IS NULL OR v_vendor IS NULL OR v_vat IS NULL THEN
     RAISE NOTICE 'procurement fixture skipped: seed rows missing (org %, dept %, cost centre %, procurement user %, vendor %, VAT %)', v_org, v_dept, v_cc, v_proc, v_vendor, v_vat;
     RETURN;
@@ -60,15 +63,17 @@ BEGIN
 
   INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id, requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
   VALUES (v_pr1, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: office chairs', '2030-12-01', 'QA-1', 'NPR'),
-         (v_pr2, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: laptops', '2030-12-01', 'QA-2', 'NPR');
+         (v_pr2, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: laptops', '2030-12-01', 'QA-2', 'NPR'),
+         (v_pr3, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: monitors', '2030-12-01', 'QA-3', 'NPR');
   INSERT INTO app.purchase_request_lines (tenant_id, organization_id, purchase_request_id, line_no, description, uom, quantity, estimated_unit_price, estimated_amount)
   VALUES (v_tenant, v_org, v_pr1, 1, 'Office chair', 'pcs', 10, 4500, 45000),
          (v_tenant, v_org, v_pr1, 2, 'Desk', 'pcs', 2, 2500, 5000),
-         (v_tenant, v_org, v_pr2, 1, 'Laptop', 'pcs', 1, 79646.02, 79646.02);
+         (v_tenant, v_org, v_pr2, 1, 'Laptop', 'pcs', 1, 79646.02, 79646.02),
+         (v_tenant, v_org, v_pr3, 1, 'Monitor', 'pcs', 4, 12000, 48000);
 
   -- Lines first: an approved request's lines are frozen.
-  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END,
-         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2);
+  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 WHEN v_pr3 THEN 48000.00 ELSE 79646.02 END,
+         number = CASE id WHEN v_pr1 THEN 'PR-QA-1' WHEN v_pr3 THEN 'PR-QA-3' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2, v_pr3);
 
   INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, created_by)
   VALUES (v_rfq, v_tenant, v_org, v_pr1, 'RFQ-QA-1', '2030-12-15T00:00:00Z', v_proc);
@@ -79,6 +84,20 @@ BEGIN
   VALUES (v_po, v_tenant, v_org, 'PO-QA-1', 900001, '2082/83', v_pr2, v_vendor, 'NPR', 30, '90000.00', 1, '90000.00', 'base', v_proc);
   INSERT INTO app.purchase_order_lines (tenant_id, organization_id, purchase_order_id, purchase_request_id, line_no, kind, description, uom, ordered_quantity, unit_price, tax_code_id, gross, tax_amount, line_total)
   VALUES (v_tenant, v_org, v_po, v_pr2, 1, 'goods', 'Laptop', 'pcs', '1', '79646.02', v_vat, '79646.02', '10353.98', '90000.00');
+
+  -- A draft vendor bill of one line (no PO link, so it does not depend on the order being issued): the bill page shows
+  -- its lines, totals and match panel.
+  IF v_exp IS NOT NULL AND v_fin IS NOT NULL THEN
+    INSERT INTO app.documents (id, tenant_id, organization_id, owner_type, owner_id) VALUES (v_doc, v_tenant, v_org, 'vendor_bill_intake', v_vendor);
+    INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename, declared_mime, size_bytes, storage_key, status)
+    VALUES (v_tenant, v_org, v_doc, 1, 'invoice.pdf', 'application/pdf', 1024, v_tenant::text || '/' || gen_random_uuid()::text, 'clean');
+    INSERT INTO app.vendor_bills (id, tenant_id, organization_id, kind, vendor_id, vendor_invoice_no, invoice_date, fiscal_year, currency, document_id,
+                                  status, match_status, net_total, vat_total, payable_total, fx_rate, payable_total_npr, entered_by)
+    VALUES (v_bill, v_tenant, v_org, 'bill', v_vendor, 'QA-INV-1', '2026-11-09', '2083/84', 'NPR', v_doc,
+            'draft', 'not_required', 10000.00, 1300.00, 11300.00, 1, 11300.00, v_fin);
+    INSERT INTO app.vendor_bill_lines (tenant_id, organization_id, vendor_bill_id, line_no, description, account_id, quantity, unit_price, net_amount, tax_code_id, vat_amount)
+    VALUES (v_tenant, v_org, v_bill, 1, 'Consulting', v_exp, 1, 10000.00, 10000.00, v_vat, 1300.00);
+  END IF;
 END
 $fixture$;
 
