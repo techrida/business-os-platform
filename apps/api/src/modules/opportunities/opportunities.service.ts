@@ -34,6 +34,7 @@ import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { searchPage } from '../../platform/list';
 import { LeadLostReasonsService, lostReasonRefs } from '../leads/lost-reasons.service';
 import { creditPosition, overrideCovers } from './credit-hold';
+import { orderHistoryOf } from './opportunity-orders';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -180,7 +181,7 @@ export class OpportunitiesService {
     // went ahead (a draft one is what the hold keeps waiting). In a transaction, so the ledger and the orders are
     // read under the entity's row security rather than seen as empty.
     // R4a Q13: the stage history comes with the detail, behind the same read check.
-    const { credit, ordered, history } = await withTx(
+    const { credit, ordered, history, orderHistory } = await withTx(
       this.db,
       scope,
       actor,
@@ -188,6 +189,8 @@ export class OpportunitiesService {
         credit: await creditPosition(tx, scope, row.customerId, { opportunityId: row.id }),
         ordered: await this.hasSalesOrder(tx, scope, row.id),
         history: await stageHistoryOf(tx, scope, row.id),
+        // R6Q22: the deal's sales orders the caller may read themselves, as dated events.
+        orderHistory: await orderHistoryOf(tx, scope, principal, row.id),
       }),
       READ_ONLY,
     );
@@ -223,6 +226,7 @@ export class OpportunitiesService {
         ordered,
       },
       stageHistory: toStageHistoryDto(history, actorNames),
+      orderHistory,
     };
   }
 
