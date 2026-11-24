@@ -30,8 +30,7 @@ import { type TxScope, requestTx, withTx } from '../db/tx';
 import { nudgeWithin } from '../queue/nudge-timeout';
 import { ctx } from '../tenancy/request-context';
 import { OUTBOX_DRAIN_JOB, OUTBOX_QUEUE } from './notify.constants';
-import { brandingFromProfile } from '../settings/company-branding';
-import { readSetting } from '../settings/settings.service';
+import { readBranding } from '../settings/company-branding';
 import { type EmailLogo, type EmailTemplate, renderEmail } from './templates';
 
 export interface NotifyInput {
@@ -285,8 +284,7 @@ async function brandOf(
   tx: DbTransaction,
   scope: TxScope,
 ): Promise<{ logo: EmailLogo | null; companyName: string | null }> {
-  const { value } = await readSetting(tx, scope, 'entity.profile');
-  const { logo, displayName } = brandingFromProfile(scope.tenantId, value);
+  const { logo, displayName } = await readBranding(tx, scope);
   return { logo: logo === null ? null : { tenantId: logo.tenantId }, companyName: displayName };
 }
 

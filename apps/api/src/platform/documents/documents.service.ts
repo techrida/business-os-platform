@@ -48,7 +48,7 @@ import {
   type Permission,
   type SignedLinkDto,
 } from '@bos/contracts';
-import { documents, documentVersions, organizations, scoped } from '@bos/db';
+import { documents, documentVersions, scoped } from '@bos/db';
 import { InjectQueue } from '@nestjs/bullmq';
 import {
   BadRequestException,
@@ -68,7 +68,7 @@ import type { Queue } from 'bullmq';
 import { z } from 'zod';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
-import { readSetting } from '../settings/settings.service';
+import { readDefaultEntityProfile } from '../settings/company-branding';
 import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
 import type { Principal, ResourceRef } from '../authz/can';
 import { currentPrincipal } from '../tenancy/request-context';
@@ -1346,15 +1346,9 @@ export class DocumentsService {
    */
   async openPublicLogo(tenantId: string, ifNoneMatch?: string): Promise<ImageHandle> {
     if (!Id.safeParse(tenantId).success) throw new NotFoundException(IMAGE_NOT_FOUND);
-    const [entity] = await this.db
-      .select({ id: organizations.id })
-      .from(organizations)
-      .where(and(eq(organizations.tenantId, tenantId), eq(organizations.isDefault, true)))
-      .limit(1);
-    if (entity === undefined) throw new NotFoundException(IMAGE_NOT_FOUND);
-    const profile = CompanyProfileSchema.safeParse(
-      (await readSetting(this.db, { tenantId, organizationId: entity.id }, 'entity.profile')).value,
-    );
+    const entity = await readDefaultEntityProfile(this.db, tenantId);
+    if (entity === null) throw new NotFoundException(IMAGE_NOT_FOUND);
+    const profile = CompanyProfileSchema.safeParse(entity.profile);
     const documentId = profile.success ? profile.data.logoDocumentId : null;
     if (documentId === null) throw new NotFoundException(IMAGE_NOT_FOUND);
     const [row] = await this.db
@@ -1371,6 +1365,7 @@ export class DocumentsService {
         and(
           eq(documents.tenantId, tenantId),
           eq(documentVersions.tenantId, tenantId),
+          eq(documentVersions.organizationId, entity.organizationId),
           eq(documents.id, documentId),
           eq(documents.ownerType, 'entity_logo'),
           isNull(documents.removedAt),
@@ -1382,7 +1377,7 @@ export class DocumentsService {
     if (
       row === undefined ||
       row.tenantId !== tenantId ||
-      row.organizationId !== entity.id ||
+      row.organizationId !== entity.organizationId ||
       row.ownerType !== 'entity_logo' ||
       row.removedAt !== null ||
       row.version.status !== 'clean' ||

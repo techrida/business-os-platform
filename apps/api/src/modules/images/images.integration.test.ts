@@ -332,7 +332,7 @@ beforeAll(async () => {
   );
 
   publicLogo = new PublicLogoController(documents);
-  branding = new BrandingController(settings);
+  branding = new BrandingController(db);
 
   // The public route over real HTTP: Nest routing, the error filter and the response headers, with no session at all.
   const moduleRef = await Test.createTestingModule({
@@ -972,6 +972,36 @@ describe('GET /v1/branding (R6Q20)', () => {
     expect((await asCaller(staff(b), () => branding.get())).displayName).not.toBe('Brand A');
     // The tenant it names is the address the public route serves.
     expect((await getPublic(a.tenantId)).status).toBe(200);
+  });
+});
+
+describe('the company logo with a second entity (R6Q20b)', () => {
+  it('shows the default entity logo to the second entity, and none when the default has none, never the second entity own logo', async () => {
+    const t = await freshTenant();
+    const second = randomUUID();
+    await withTx(db, t, systemActor('test'), (tx) =>
+      tx.insert(organizations).values({
+        id: second,
+        tenantId: t.tenantId,
+        organizationId: second,
+        code: 'S2',
+        name: 'Second',
+        legalName: 'Second Ltd',
+      }),
+    );
+    const own = await uploadClean(staff(t, 'founder', second), 'entity_logo', second);
+    await putAs(staff(t, 'founder', second), 'entity_logo', second, { documentId: own });
+    // The second entity has a logo, the default has none: no logo anywhere, and no broken image.
+    expect((await asCaller(staff(t, 'founder', second), () => branding.get())).logo).toBeNull();
+    expect((await getPublic(t.tenantId)).status).toBe(404);
+    // Once the default entity applies one, both entities name it and the public address serves it.
+    const main = await applyLogo(t);
+    const expected = { tenantId: t.tenantId, documentId: main };
+    expect((await asCaller(staff(t, 'founder', second), () => branding.get())).logo).toEqual(
+      expected,
+    );
+    expect((await asCaller(staff(t), () => branding.get())).logo).toEqual(expected);
+    expect((await getPublic(t.tenantId)).status).toBe(200);
   });
 });
 
