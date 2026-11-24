@@ -56,3 +56,6 @@ need BOS_E2E_QUOTATION_REVISABLE "$(fid quotationRevisable)"
 # 2026-11-24 after the Send dialog became a contact search box (clearing the box does not clear the choice). See the R6Q11 report.
 need PORTAL_E2E_SENT_ID "$(versions_of "$(fid quotationPortalSent)")"
 need PORTAL_E2E_FOREIGN_ID "$(versions_of "$(fid quotationDraft)")"
+
+# The draft payment request of e2e/p4/qa-fixtures-payables.spec.ts (verified vendor account, approved and posted bill).
+need BOS_E2E_DRAFT_PAYMENT_REQUEST_ID "$(fid paymentRequestDraft)"
