@@ -55,6 +55,7 @@ import {
 import { drizzleLogoStatsLookup } from './document-logo.resolver';
 import { drizzleImageOwnerLoaders, imageOwnerPolicies } from './image-owner.policies';
 import { ImagesController } from './images.controller';
+import { PUBLIC_LOGO_CACHE_CONTROL, PublicLogoController } from './public-logo.controller';
 import { drizzleImagePointers, ImagesService } from './images.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -83,6 +84,7 @@ let processor: ScanProcessor;
 let documents: DocumentsService;
 let settings: SettingsService;
 let controller: ImagesController;
+let publicLogo: PublicLogoController;
 
 const queue = { add: vi.fn().mockResolvedValue({}) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
@@ -318,6 +320,8 @@ beforeAll(async () => {
   controller = new ImagesController(
     new ImagesService(db, documents, settings, audit, drizzleImagePointers()),
   );
+
+  publicLogo = new PublicLogoController(documents);
 
   fakeClamd = await startFakeClamd();
   processor = new ScanProcessor(
@@ -715,6 +719,106 @@ describe('company logo variants (R6AC)', () => {
         [b.tenantId, b.organizationId, documentId],
       ),
     ).rejects.toThrow();
+  });
+});
+
+/** GET /v1/public/logo/:tenantId/:documentId with no session at all: no request store, as for a @Public route. */
+async function getPublic(
+  tenantId: string,
+  documentId: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: Buffer; headers: Record<string, string> }> {
+  const { res, body } = fakeResponse();
+  try {
+    await publicLogo.open(
+      tenantId,
+      documentId,
+      { headers } as unknown as Request,
+      res as unknown as Response,
+    );
+    return { status: res.statusCode, body: body(), headers: res.headers };
+  } catch (e) {
+    if (e instanceof HttpException) {
+      return { status: e.getStatus(), body: Buffer.alloc(0), headers: {} };
+    }
+    throw e;
+  }
+}
+
+describe('GET /v1/public/logo/:tenantId/:documentId (R6Q20)', () => {
+  it('serves the company logo to a reader with no session, with a type, a short public cache and an ETag', async () => {
+    const logo = await uploadClean(staff(a), 'entity_logo', a.organizationId);
+    const res = await getPublic(a.tenantId, logo);
+    expect(res.status).toBe(200);
+    expect(res.body.equals(PNG)).toBe(true);
+    expect(res.headers).toMatchObject({
+      'Content-Type': 'image/png',
+      'Cache-Control': PUBLIC_LOGO_CACHE_CONTROL,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': 'inline',
+    });
+    expect(PUBLIC_LOGO_CACHE_CONTROL).toBe('public, max-age=300');
+    expect(res.headers.ETag).toMatch(/^"[0-9a-f-]{36}"$/);
+  });
+
+  it('answers 304 with no body to a matching If-None-Match', async () => {
+    const logo = await uploadClean(staff(a), 'entity_logo', a.organizationId);
+    const first = await getPublic(a.tenantId, logo);
+    const again = await getPublic(a.tenantId, logo, { 'if-none-match': first.headers.ETag ?? '' });
+    expect(again.status).toBe(304);
+    expect(again.body.length).toBe(0);
+  });
+
+  it('is 404 under another tenant id, both ways round', async () => {
+    const logoA = await uploadClean(staff(a), 'entity_logo', a.organizationId);
+    const logoB = await uploadClean(staff(b), 'entity_logo', b.organizationId);
+    expect((await getPublic(b.tenantId, logoA)).status).toBe(404);
+    expect((await getPublic(a.tenantId, logoB)).status).toBe(404);
+    expect((await getPublic(b.tenantId, logoB)).status).toBe(200);
+  });
+
+  it('cannot read any other file: a variant, an avatar, a customer logo, or a plain id', async () => {
+    const onDark = await uploadClean(staff(a), 'entity_logo_on_dark', a.organizationId);
+    const onLight = await uploadClean(staff(a), 'entity_logo_on_light', a.organizationId);
+    const avatar = await uploadClean(staff(a), 'user_avatar', a.userId);
+    const customer = await uploadClean(staff(a), 'customer_logo', await partyOfA('customer_logo'));
+    const vendor = await uploadClean(staff(a), 'vendor_logo', await partyOfA('vendor_logo'));
+    for (const id of [onDark, onLight, avatar, customer, vendor, randomUUID(), a.tenantId]) {
+      expect((await getPublic(a.tenantId, id)).status).toBe(404);
+    }
+    for (const bad of ['', 'x', '../etc/passwd', '%2e%2e', '1']) {
+      expect((await getPublic(a.tenantId, bad)).status).toBe(404);
+      expect((await getPublic(bad, randomUUID())).status).toBe(404);
+    }
+  });
+
+  it('is 404 for a logo whose bytes are not scanned clean yet', async () => {
+    const created = await asCaller(staff(a), () => {
+      const { scope, actor } = requestTx();
+      return withTx(db, scope, actor, (tx) =>
+        documents.create(tx, {
+          ownerType: 'entity_logo',
+          ownerId: a.organizationId,
+          filename: 'logo.png',
+          declaredMime: 'image/png',
+          sizeBytes: PNG.length,
+        }),
+      );
+    });
+    await asCaller(staff(a), () =>
+      documents.receiveContent(created.versionId, Readable.from(PNG), PNG.length, {
+        documentId: created.documentId,
+      }),
+    );
+    expect((await getPublic(a.tenantId, created.documentId)).status).toBe(404);
+  });
+
+  it('stops serving a logo once it is replaced or removed', async () => {
+    const first = await uploadClean(staff(a), 'entity_logo', a.organizationId);
+    await putAs(staff(a), 'entity_logo', a.organizationId, { documentId: first });
+    expect((await getPublic(a.tenantId, first)).status).toBe(200);
+    await putAs(staff(a), 'entity_logo', a.organizationId, { documentId: null });
+    expect((await getPublic(a.tenantId, first)).status).toBe(404);
   });
 });
 

@@ -44,6 +44,7 @@ const EXPECTED_PUBLIC = [
   'GET /health/live',
   'GET /health/ready',
   'GET /v1/files/:token',
+  'GET /v1/public/logo/:tenantId/:documentId',
   'POST /v1/hooks/postal',
   'POST /v1/hooks/zitadel',
 ];
