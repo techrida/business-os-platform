@@ -470,7 +470,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     const totpSecret = storedTotp.get(persona.key);
     entries.push({
       key: persona.key,
-      label: persona.label ?? `${persona.givenName} ${persona.familyName}`,
+      label: `${persona.givenName} ${persona.familyName}`,
       orgKind: persona.orgKind,
       role: persona.role,
       username,

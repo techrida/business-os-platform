@@ -48,7 +48,11 @@ describe('personas', () => {
     expect(PERSONAS.slice(-2).map((p) => p.key)).toEqual(['vendor2', 'vendorpending']);
     const [second, pending] = PERSONAS.slice(-2);
     expect([second?.role, pending?.role]).toEqual(['vendor_user', 'vendor_user']);
-    expect([second?.label, pending?.label]).toEqual(['Vendor 2 (approved)', 'Vendor awaiting KYC']);
+    // The switcher button is the ZITADEL name (given + family), so that name is the plain role label.
+    expect([second, pending].map((p) => `${p?.givenName} ${p?.familyName}`)).toEqual([
+      'Vendor 2 (approved)',
+      'Vendor awaiting KYC',
+    ]);
     // Own org each: not Dev Vendor Co's, and not each other's.
     const orgKeys = new Set(PERSONAS.filter((p) => p.orgKind === 'vendor').map(personaOrgKey));
     expect(orgKeys).toEqual(new Set(['vendor', 'vendor2', 'vendorpending']));
