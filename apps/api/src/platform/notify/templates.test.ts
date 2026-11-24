@@ -6,6 +6,7 @@ import {
   EmailTemplateError,
   assertSafeEmail,
   buildLink,
+  buildLogoUrl,
   buildPortalLink,
   renderEmail,
   type EmailTemplate,
@@ -488,5 +489,66 @@ describe('no attachment and no foreign host (ADR 0023: email a portal link, neve
     ['a line break in the subject', { ...good, subject: 'a\r\nBcc: x@example.com' }],
   ])('assertSafeEmail rejects %s', (_name, email) => {
     expect(() => assertSafeEmail(email, allowed)).toThrow(EmailTemplateError);
+  });
+});
+
+describe('the company logo (R6Q20)', () => {
+  const TENANT = '0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4';
+  const DOC = '6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10';
+  const logo = { tenantId: TENANT, documentId: DOC };
+
+  it('is absent without a logo, so every email is as before', () => {
+    for (const template of EMAIL_TEMPLATES) {
+      const vars = { linkPath: LINK_PATH_OF[template] };
+      expect(renderEmail(template, vars, opts).html).not.toContain('<img');
+      expect(renderEmail(template, vars, { ...opts, logo: null }).html).not.toContain('<img');
+    }
+  });
+
+  it.each([
+    ['approval.pending', WORKSPACE],
+    ['quotation.sent', PORTAL],
+  ] as const)('%s shows one logo image on the host of its own link', (template, base) => {
+    const html = renderEmail(
+      template,
+      { linkPath: LINK_PATH_OF[template] },
+      { ...opts, logo, companyName: 'Techrida <b>' },
+    ).html;
+    const url = `${base}/brand/logo/${TENANT}/${DOC}`;
+    expect(html.match(/<img\b/g)).toHaveLength(1);
+    expect(html).toContain(`<img src="${url}" alt="Techrida &lt;b&gt;"`);
+    expect(buildLogoUrl(base, logo)).toBe(url);
+  });
+
+  it('every other image is still refused, and so is a second copy of the logo or one on a foreign host', () => {
+    const rendered = renderEmail(
+      'quotation.sent',
+      { linkPath: LINK_PATH_OF['quotation.sent'] },
+      { ...opts, logo },
+    );
+    const tag = /<img[^>]*>/.exec(rendered.html)?.[0] ?? '';
+    const hosts = [new URL(PORTAL).host];
+    expect(() => assertSafeEmail(rendered, hosts, tag)).not.toThrow();
+    // Without being told about the tag, the same email is refused.
+    expect(() => assertSafeEmail(rendered, hosts)).toThrow(EmailTemplateError);
+    for (const extra of [
+      tag,
+      `<img src="${PORTAL}/brand/logo/other.png">`,
+      '<img src="https://evil.example/x.png">',
+    ]) {
+      expect(() =>
+        assertSafeEmail({ ...rendered, html: rendered.html + extra }, hosts, tag),
+      ).toThrow(EmailTemplateError);
+    }
+  });
+
+  it('builds the address only from an http(s) base and two guids', () => {
+    expect(() => buildLogoUrl('javascript:alert(1)', logo)).toThrow(EmailTemplateError);
+    expect(() => buildLogoUrl(PORTAL, { tenantId: '../x', documentId: DOC })).toThrow(
+      EmailTemplateError,
+    );
+    expect(() => buildLogoUrl(PORTAL, { tenantId: TENANT, documentId: 'a/b' })).toThrow(
+      EmailTemplateError,
+    );
   });
 });
