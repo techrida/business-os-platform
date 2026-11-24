@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { getJson } from '../helpers/api';
 import { signInAs, type Signed } from '../helpers/memo-flow';
@@ -27,7 +27,14 @@ import { chooseOption, selectByLabel } from '../helpers/select';
  * The `dev` project runs this spec through its `p2/*.spec.ts` match.
  */
 
-const fixture = (name: string): string | undefined => process.env[`BOS_E2E_QUOTATION_${name}`];
+/**
+ * A fixture variable holds one id, or a comma-separated list: the specs that use a quotation up (send, record outcome,
+ * revise) take the one at their repeat index, so `--repeat-each` finds a fresh quotation each time.
+ */
+const fixture = (name: string, info: TestInfo): string | undefined => {
+  const list = (process.env[`BOS_E2E_QUOTATION_${name}`] ?? '').split(',').filter(Boolean);
+  return list[info.repeatEachIndex] ?? list.at(-1);
+};
 
 async function open(page: Page, id: string): Promise<void> {
   await page.goto(`/quotations/${id}`);
@@ -50,8 +57,8 @@ async function withSales<T>(
 test('the detail page shows the summary, the totals and every revision in a dialog', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('SENT') ?? fixture('APPROVED');
+}, testInfo) => {
+  const id = fixture('SENT', testInfo) ?? fixture('APPROVED', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_SENT or _APPROVED is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -74,8 +81,11 @@ test('the detail page shows the summary, the totals and every revision in a dial
   });
 });
 
-test('the customer PDF downloads from one click on the link', async ({ browser, baseURL }) => {
-  const id = fixture('DOWNLOAD');
+test('the customer PDF downloads from one click on the link', async ({
+  browser,
+  baseURL,
+}, testInfo) => {
+  const id = fixture('DOWNLOAD', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_DOWNLOAD is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -91,8 +101,8 @@ test('the customer PDF downloads from one click on the link', async ({ browser, 
 test('Send is off, with its reason in words, while the PDF is not clean', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('SCANNING');
+}, testInfo) => {
+  const id = fixture('SCANNING', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_SCANNING is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -109,10 +119,10 @@ test('Send is off, with its reason in words, while the PDF is not clean', async 
 test('Send gives the customer a portal link by email, never the file', async ({
   browser,
   baseURL,
-}) => {
+}, testInfo) => {
   test.setTimeout(120_000);
-  const id = fixture('APPROVED');
-  const contact = fixture('CONTACT');
+  const id = fixture('APPROVED', testInfo);
+  const contact = fixture('CONTACT', testInfo);
   test.skip(id === undefined || contact === undefined, 'APPROVED or CONTACT is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -180,8 +190,8 @@ test('Send gives the customer a portal link by email, never the file', async ({
 test('Record outcome needs evidence to accept and a comment to reject', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('SENT');
+}, testInfo) => {
+  const id = fixture('SENT', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_SENT is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
@@ -218,8 +228,8 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
 test('Revise needs a reason, then opens the new draft for editing', async ({
   browser,
   baseURL,
-}) => {
-  const id = fixture('REVISABLE');
+}, testInfo) => {
+  const id = fixture('REVISABLE', testInfo);
   test.skip(id === undefined, 'BOS_E2E_QUOTATION_REVISABLE is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
