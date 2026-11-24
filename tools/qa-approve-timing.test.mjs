@@ -13,7 +13,10 @@ test('percentile is nearest-rank', () => {
 });
 
 test('parseTimings keeps numeric ms and skips torn or foreign lines', () => {
-  assert.deepEqual(parseTimings('{"ms":10}\n{"ms":\nnope\n{"ms":"x"}\n{"ms":-1}\n\n{"ms":30}\n'), [10, 30]);
+  assert.deepEqual(
+    parseTimings('{"ms":10}\n{"ms":\nnope\n{"ms":"x"}\n{"ms":-1}\n\n{"ms":30}\n'),
+    [10, 30],
+  );
 });
 
 test('summarise reports samples, p50, p95 and max, and says so when nothing was timed', () => {
