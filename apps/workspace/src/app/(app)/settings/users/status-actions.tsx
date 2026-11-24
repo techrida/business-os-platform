@@ -124,7 +124,11 @@ function UnlockOrKeepLocked({
           >
             Keep locked
           </Button>
-          <Button disabled={pending} aria-busy={pending || undefined} onClick={() => void choose('unlock')}>
+          <Button
+            disabled={pending}
+            aria-busy={pending || undefined}
+            onClick={() => void choose('unlock')}
+          >
             {copy.confirm}
           </Button>
         </>
