@@ -32,7 +32,7 @@ describe('ValkeyLinkStore against a real Valkey', () => {
       expect(await store.claim('link:one', 60)).toBe(false);
       expect(await store.claim('link:two', 60)).toBe(true);
     } finally {
-      await store.onApplicationShutdown();
+      store.onApplicationShutdown();
     }
   });
 
@@ -45,7 +45,7 @@ describe('ValkeyLinkStore against a real Valkey', () => {
       expect(clients).toMatch(/resp=3/);
       expect(clients).not.toMatch(/resp=2/);
     } finally {
-      await store.onApplicationShutdown();
+      store.onApplicationShutdown();
       admin.disconnect();
     }
   });
