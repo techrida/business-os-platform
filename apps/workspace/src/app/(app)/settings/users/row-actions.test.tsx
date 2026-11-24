@@ -234,12 +234,36 @@ it('the Unlock dialog of a person locked after failed sign-ins offers Keep locke
   const keep = buttonNamed(dialog!, 'Keep locked');
   expect(keep).not.toBeNull();
   expect(dialog!.textContent).toContain('stay locked until someone unlocks them');
+  // Focus starts on Cancel, so Enter right after opening confirms nothing.
+  expect(document.activeElement?.textContent).toBe('Cancel');
   await click(keep);
   expect(actions.changeUserStatusAction).toHaveBeenCalledExactlyOnceWith(
     '00000000-0000-4000-9000-0000000000c1',
     'lock',
   );
   expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
+});
+
+it('while Keep locked is in flight every button is off, so Unlock cannot also be sent', async () => {
+  let finish!: (r: { status: 'ok'; message: string }) => void;
+  actions.changeUserStatusAction.mockReturnValue(new Promise((r) => (finish = r)));
+  const dialog = await openUnlock('failed_sign_ins');
+  await click(buttonNamed(dialog!, 'Keep locked'));
+  for (const text of ['Cancel', 'Keep locked', 'Unlock']) {
+    expect(buttonNamed(dialog!, text)!.disabled).toBe(true);
+  }
+  await click(buttonNamed(dialog!, 'Unlock'));
+  expect(actions.changeUserStatusAction).toHaveBeenCalledTimes(1);
+  await act(async () => finish({ status: 'ok', message: 'Locked' }));
+  expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
+});
+
+it('a failed Keep locked leaves the dialog open and usable', async () => {
+  actions.changeUserStatusAction.mockResolvedValue({ status: 'error', message: 'No' });
+  const dialog = await openUnlock('failed_sign_ins');
+  await click(buttonNamed(dialog!, 'Keep locked'));
+  expect(document.body.querySelector('[role="alertdialog"], [role="dialog"]')).not.toBeNull();
+  expect(buttonNamed(dialog!, 'Unlock')!.disabled).toBe(false);
 });
 
 it('the Unlock dialog still unlocks, and an admin lock offers no Keep locked', async () => {
