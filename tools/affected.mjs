@@ -198,7 +198,12 @@ function main() {
   if (!files) {
     try {
       if (!args.base) throw new Error('no --base');
-      files = git('diff', '--name-only', `${args.base}...${args.head || 'HEAD'}`).split('\n');
+      files = git(
+        'diff',
+        '--name-only',
+        '--no-renames',
+        `${args.base}...${args.head || 'HEAD'}`,
+      ).split('\n');
     } catch (error) {
       console.error(`affected: cannot diff (${error.message}); running everything`);
       files = [];
