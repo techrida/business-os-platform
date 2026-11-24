@@ -132,7 +132,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     await expect(dialog).toContainText('never sent as a file');
 
     const select = dialog.getByRole('combobox', { name: 'Send to', exact: true });
-    const message = dialog.getByLabel('Message (optional)');
+    const message = dialog.getByRole('textbox', { name: 'Message', exact: true });
     const footer = dialog.locator('footer');
     const submit = footer.getByRole('button', { name: 'Send to customer' });
     const key = dialog.locator('input[name="idempotencyKey"]');
