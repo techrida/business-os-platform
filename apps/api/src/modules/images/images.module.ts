@@ -8,6 +8,8 @@ import { DB } from '../../platform/db/db.module';
 import { DocumentsModule } from '../../platform/documents/documents.module';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { ImagesController } from './images.controller';
+import { BrandingController } from './branding.controller';
+import { PublicLogoController } from './public-logo.controller';
 import { ImageOwnerRegistrar } from './images.registrar';
 import { drizzleImagePointers, IMAGE_POINTER_STORE, ImagesService } from './images.service';
 import {
@@ -18,7 +20,7 @@ import {
 
 @Module({
   imports: [DocumentsModule, SettingsModule, AuditModule],
-  controllers: [ImagesController],
+  controllers: [ImagesController, PublicLogoController, BrandingController],
   providers: [
     ImageOwnerRegistrar,
     ImagesService,
