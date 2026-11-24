@@ -26,6 +26,7 @@ import {
 import type { DevPersona } from './db-seed.js';
 import { type DevFiles, parseEnv } from './outputs.js';
 import {
+  EXTRA_VENDORS,
   ORG_NAMES,
   PERSONAS,
   PROJECT_ROLES,
@@ -152,6 +153,15 @@ class FakeZitadel implements SeedApi {
     const user = [...this.users.values()].find((u) => u.username === username);
     if (!user) throw new Error(`no user ${username}`);
     return user.id;
+  }
+
+  /** Test helper: the org of the user with this username. */
+  orgIdOfUser(username: string): string | undefined {
+    return [...this.users.values()].find((u) => u.username === username)?.orgId;
+  }
+  /** Test helper: the roles the project is granted to this org with. */
+  grantRolesOf(orgId: string): string[] | undefined {
+    return this.grants.get(orgId);
   }
 
   getDefaultOrgId(): Promise<string> {
@@ -571,17 +581,19 @@ describe('@bos/seed-zitadel', () => {
     expect(files.data.get('k6.env')).toContain('K6_CLIENT_ID=bos-loadtest\n');
     expect(files.data.get('k6.env')).toContain(`K6_APPROVER_CLIENT_ID=${LOADTEST_APPROVER_USER}\n`);
     expect(files.data.get('k6.env')).toMatch(/^K6_APPROVER_CLIENT_SECRET=secret-\d+$/m);
-    expect(store.rows.size).toBe(3);
+    expect(store.rows.size).toBe(5);
     // ADR 0027 section 11: one TR entity; the customer and vendor IdP orgs carry their parties.
     expect(store.entity).toEqual({ code: 'TR', name: 'Techrida', legalName: 'Techrida Pvt. Ltd.' });
     expect([...store.rows.values()].map((o) => [o.kind, o.party?.code ?? null])).toEqual([
       ['staff', null],
       ['customer', 'CUST-DEV'],
       ['vendor', 'VEND-DEV'],
+      ['vendor', 'VEND-DEV2'],
+      ['vendor', 'VEND-DEVKYC'],
     ]);
-    expect(PERSONAS).toHaveLength(18);
+    expect(PERSONAS).toHaveLength(20);
     const personas = personasOf(files);
-    expect(personas).toHaveLength(18);
+    expect(personas).toHaveLength(20);
     // The Marketing department people hold the marketing project role.
     const marketingHead = await api.findAuthorization(
       api.userIdOf(personaUsername('marketinghead')),
@@ -614,7 +626,7 @@ describe('@bos/seed-zitadel', () => {
       expect(p.totpSecret).toBe(api.totpIssued.get(userId));
       expect(p.totpSecret).toMatch(/^[A-Z2-7]{32}$/);
     }
-    expect(api.calls.filter((c) => c.startsWith('verifyTotp:'))).toHaveLength(18);
+    expect(api.calls.filter((c) => c.startsWith('verifyTotp:'))).toHaveLength(20);
   });
 
   it('enables forceMfa only after every persona has TOTP, and OTP before any registration', async () => {
@@ -734,6 +746,43 @@ describe('@bos/seed-zitadel', () => {
     expect(result.changes).toContain('pinned the portal login policy on the customer org');
     const pin = api.calls.indexOf(`ensureOrgLoginPolicy:${customerOrgId}`);
     expect(pin).toBeGreaterThan(api.calls.findLastIndex((c) => c.startsWith('verifyTotp:')));
+  });
+
+  it('gives the second approved vendor and the vendor awaiting KYC an org, a project grant, a login and a switcher label each', async () => {
+    const { api, files, deps } = setup();
+    const result = await runSeed(deps);
+
+    const devVendorOrg = await api.findOrgByName(ORG_NAMES.vendor);
+    const orgs = new Set<string | undefined>([devVendorOrg]);
+    for (const extra of EXTRA_VENDORS) {
+      const orgId = await api.findOrgByName(extra.orgName);
+      expect(orgId, extra.orgName).toBeDefined();
+      orgs.add(orgId);
+      expect(result.changes).toContain(`created organization "${extra.orgName}"`);
+      // The vendor role only, like Dev Vendor Co.
+      expect(api.grantRolesOf(orgId ?? ''), extra.orgName).toEqual(['vendor_user']);
+      const username = personaUsername(extra.key);
+      expect(api.orgIdOfUser(username)).toBe(orgId);
+      const auth = await api.findAuthorization(api.userIdOf(username));
+      expect(auth?.roleKeys).toEqual(['vendor_user']);
+    }
+    expect(orgs.size).toBe(3);
+    // The shared Dev Vendor Co login did not move.
+    expect(api.orgIdOfUser(personaUsername('vendor'))).toBe(devVendorOrg);
+
+    // The switcher and `logins` read plain role labels, and each new persona has TOTP and a password.
+    const entries = personasOf(files);
+    const byKey = new Map(entries.map((p) => [p.key, p]));
+    expect(byKey.get('vendor2')?.label).toBe('Vendor 2 (approved)');
+    expect(byKey.get('vendorpending')?.label).toBe('Vendor awaiting KYC');
+    expect(byKey.get('vendor')?.label).toBe('Dev Vendor');
+    for (const key of ['vendor2', 'vendorpending']) {
+      expect(byKey.get(key)?.orgKind, key).toBe('vendor');
+      expect(byKey.get(key)?.totpSecret, key).toMatch(/^[A-Z2-7]{32}$/);
+    }
+
+    // A second run changes nothing, orgs and grants included.
+    expect((await runSeed(deps)).changes).toEqual([]);
   });
 
   it('a half-run does not pin the portal login policy; the next run does', async () => {

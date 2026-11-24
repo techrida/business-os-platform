@@ -34,15 +34,18 @@ import {
 import { seedKernelRows, setSeedActor, type DevPersona } from './db-seed.js';
 import {
   APP_NAME,
+  EXTRA_VENDORS,
   ORG_NAMES,
   PERSONAS,
   PROJECT_NAME,
   PROJECT_ROLES,
   generatePassword,
   passwordsFromFile,
+  personaOrgKey,
   personaUsername,
   renderPersonasFile,
   totpSecretsFromFile,
+  type ExtraVendorKey,
   type PersonaEntry,
   type RoleKey,
 } from './personas.js';
@@ -164,7 +167,10 @@ export const SEED_PARTIES = {
 export const STAFF_IDP_ORG_NAME = 'Techrida Staff';
 
 /** The dev stack's tenancy for the three ZITADEL orgs the seed created. */
-export function tenancySeed(orgIds: Record<OrgKind, string>): TenancySeed {
+export function tenancySeed(
+  orgIds: Record<OrgKind, string>,
+  extraVendorOrgIds: Partial<Record<ExtraVendorKey, string>> = {},
+): TenancySeed {
   return {
     entity: SEED_ENTITY,
     idpOrgs: [
@@ -181,6 +187,20 @@ export function tenancySeed(orgIds: Record<OrgKind, string>): TenancySeed {
         name: ORG_NAMES.vendor,
         party: SEED_PARTIES.vendor,
       },
+      // Skipped when the org is unknown, so a caller that has no extra vendors gets the three orgs as before.
+      ...EXTRA_VENDORS.flatMap((v): IdpOrgSeed[] => {
+        const zitadelOrgId = extraVendorOrgIds[v.key];
+        return zitadelOrgId
+          ? [
+              {
+                zitadelOrgId,
+                kind: 'vendor',
+                name: v.orgName,
+                party: { code: v.partyCode, name: v.orgName },
+              },
+            ]
+          : [];
+      }),
     ],
   };
 }
@@ -267,6 +287,20 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     }
     orgIds[kind] = id;
   }
+  // Two more vendors for dev and QA, each in an org of its own (see EXTRA_VENDORS).
+  const extraVendorOrgIds: Partial<Record<ExtraVendorKey, string>> = {};
+  for (const vendor of EXTRA_VENDORS) {
+    let id = await api.findOrgByName(vendor.orgName);
+    if (!id) {
+      id = await api.createOrg(vendor.orgName);
+      changed(`created organization "${vendor.orgName}"`);
+    }
+    extraVendorOrgIds[vendor.key] = id;
+  }
+  const orgIdOf = (key: string): string =>
+    (key in extraVendorOrgIds
+      ? extraVendorOrgIds[key as ExtraVendorKey]
+      : orgIds[key as OrgKind]) ?? '';
 
   // --- Project, its roles, and "assert roles on authentication". ---
   const project = await api.findProject(staffOrgId, PROJECT_NAME);
@@ -367,18 +401,23 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
 
   // --- Project grants: customer and vendor orgs may only use their own role. ---
   const grants = await api.listProjectGrants(projectId);
-  for (const [kind, role] of [
-    ['customer', 'customer_user'],
-    ['vendor', 'vendor_user'],
-  ] as const) {
-    const orgId = orgIds[kind];
+  const grantTargets: { orgId: string; name: string; role: RoleKey }[] = [
+    { orgId: orgIds.customer, name: ORG_NAMES.customer, role: 'customer_user' },
+    { orgId: orgIds.vendor, name: ORG_NAMES.vendor, role: 'vendor_user' },
+    ...EXTRA_VENDORS.map((v) => ({
+      orgId: orgIdOf(v.key),
+      name: v.orgName,
+      role: 'vendor_user' as const,
+    })),
+  ];
+  for (const { orgId, name, role } of grantTargets) {
     const existing = grants.find((g) => g.grantedOrgId === orgId);
     if (!existing) {
       await api.createProjectGrant(projectId, orgId, [role]);
-      changed(`granted project to ${ORG_NAMES[kind]} with role ${role}`);
+      changed(`granted project to ${name} with role ${role}`);
     } else if (!sameSet(existing.roleKeys, [role])) {
       await api.updateProjectGrant(projectId, orgId, [role]);
-      changed(`updated project grant of ${ORG_NAMES[kind]} to role ${role}`);
+      changed(`updated project grant of ${name} to role ${role}`);
     }
   }
 
@@ -406,7 +445,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   const entries: PersonaEntry[] = [];
   const personaState = new Map<string, PersonaState>();
   for (const persona of PERSONAS) {
-    const orgId = orgIds[persona.orgKind];
+    const orgId = orgIdOf(personaOrgKey(persona));
     const username = personaUsername(persona.key);
     let user = await api.findUser(orgId, username);
     let password = passwords.get(persona.key);
@@ -431,7 +470,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     const totpSecret = storedTotp.get(persona.key);
     entries.push({
       key: persona.key,
-      label: `${persona.givenName} ${persona.familyName}`,
+      label: persona.label ?? `${persona.givenName} ${persona.familyName}`,
       orgKind: persona.orgKind,
       role: persona.role,
       username,
@@ -678,7 +717,10 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   }
 
   // --- Our own tenancy tables (ADR 0027): the TR entity, the parties, ZITADEL org id -> idp_orgs. ---
-  const dbChanges = await store.upsertTenancy(tenancySeed(orgIds), correlationId);
+  const dbChanges = await store.upsertTenancy(
+    tenancySeed(orgIds, extraVendorOrgIds),
+    correlationId,
+  );
   if (dbChanges > 0) changed(`upserted ${dbChanges} tenancy row(s) (entity, parties, idp_orgs)`);
 
   // --- P1 step 8: kernel rows (deny-by-default needs grants to exist; test_memo workflow v1). ---
