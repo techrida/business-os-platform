@@ -2,9 +2,9 @@ import 'reflect-metadata';
 
 import { Queue } from 'bullmq';
 import type { RedisOptions } from 'ioredis';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { NUDGE_TIMEOUT_MS, QueueCallTimeoutError, queueCallWithin } from './nudge-timeout';
+import { QueueCallTimeoutError, queueCallWithin } from './nudge-timeout';
 import { redisOptionsFromUrl } from './redis-options';
 
 describe('queueCallWithin', () => {
@@ -16,12 +16,23 @@ describe('queueCallWithin', () => {
     await expect(queueCallWithin(() => Promise.reject(new Error('nope')))).rejects.toThrow('nope');
   });
 
-  it('rejects with QueueCallTimeoutError when the call never settles', async () => {
-    const started = Date.now();
-    await expect(queueCallWithin(() => new Promise(() => undefined), 50)).rejects.toBeInstanceOf(
-      QueueCallTimeoutError,
-    );
-    expect(Date.now() - started).toBeLessThan(1_000);
+  it('rejects with QueueCallTimeoutError exactly when the bound passes', async () => {
+    vi.useFakeTimers();
+    try {
+      let outcome: unknown = 'pending';
+      const call = queueCallWithin(() => new Promise(() => undefined), 50).catch(
+        (error: unknown) => {
+          outcome = error;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(49);
+      expect(outcome).toBe('pending');
+      await vi.advanceTimersByTimeAsync(1);
+      await call;
+      expect(outcome).toBeInstanceOf(QueueCallTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // The real thing the helper exists for: bullmq against a Valkey that is not there. Port 1 refuses connections,
@@ -35,11 +46,11 @@ describe('queueCallWithin', () => {
     });
     queue.on('error', () => undefined);
     try {
-      const started = Date.now();
-      await expect(queueCallWithin(() => queue.add('job', { a: 1 }))).rejects.toBeInstanceOf(
+      // A short bound, and no wall-clock assertion: that the call rejects at all, instead of hanging until the test
+      // times out, is what proves it is bounded. The default bound is covered by the fake-timer test above.
+      await expect(queueCallWithin(() => queue.add('job', { a: 1 }), 100)).rejects.toBeInstanceOf(
         QueueCallTimeoutError,
       );
-      expect(Date.now() - started).toBeLessThan(NUDGE_TIMEOUT_MS + 1_000);
     } finally {
       await queue.close().catch(() => undefined);
     }
