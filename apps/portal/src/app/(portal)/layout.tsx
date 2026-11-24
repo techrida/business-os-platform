@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 import { TopBar } from '@/components/portal/top-bar';
+import { getBranding, logoSrc } from '@/lib/api-branding';
 import { getSession } from '@/lib/session';
 
 /**
@@ -16,9 +17,11 @@ export default async function PortalLayout({ children }: { children: ReactNode }
   if (!session) redirect('/auth/login?returnTo=%2F');
   if (session.orgKind !== 'customer') redirect('/vendor');
 
+  const branding = await getBranding(session);
+
   return (
     <>
-      <TopBar />
+      <TopBar brand={{ name: branding?.displayName ?? null, logoSrc: logoSrc(branding) }} />
       {children}
     </>
   );
