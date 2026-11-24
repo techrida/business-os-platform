@@ -2,27 +2,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
-const openPublicLogo =
-  vi.fn<(tenantId: string, documentId: string, ifNoneMatch?: string) => Promise<Response>>();
+const openPublicLogo = vi.fn<(tenantId: string, ifNoneMatch?: string) => Promise<Response>>();
 vi.mock('@/lib/api-branding', () => ({
-  openPublicLogo: (t: string, d: string, e?: string) => openPublicLogo(t, d, e),
+  openPublicLogo: (t: string, e?: string) => openPublicLogo(t, e),
 }));
 
 const { GET } = await import('./route');
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
-const DOC = '22222222-2222-4222-8222-222222222222';
 const ETAG = '"33333333-3333-4333-8333-333333333333"';
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 
-const get = (tenantId = TENANT, documentId = DOC, headers: Record<string, string> = {}) =>
-  GET(new Request(`https://app.test/brand/logo/${tenantId}/${documentId}`, { headers }), {
-    params: Promise.resolve({ tenantId, documentId }),
+const get = (tenantId = TENANT, headers: Record<string, string> = {}) =>
+  GET(new Request(`https://app.test/brand/logo/${tenantId}`, { headers }), {
+    params: Promise.resolve({ tenantId }),
   });
 
 beforeEach(() => openPublicLogo.mockReset());
 
-describe('GET /brand/logo/[tenantId]/[documentId] (public, no session)', () => {
+describe('GET /brand/logo/[tenantId] (public, no session)', () => {
   it('serves the logo with its type, a short public cache and the ETag, and reads no session', async () => {
     openPublicLogo.mockResolvedValue(
       new Response(PNG, { headers: { 'content-type': 'image/png', etag: ETAG } }),
@@ -35,23 +33,23 @@ describe('GET /brand/logo/[tenantId]/[documentId] (public, no session)', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('set-cookie')).toBeNull();
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG);
-    expect(openPublicLogo).toHaveBeenCalledWith(TENANT, DOC, undefined);
+    expect(openPublicLogo).toHaveBeenCalledWith(TENANT, undefined);
   });
 
   it('passes If-None-Match on and answers a 304 with no body', async () => {
     openPublicLogo.mockResolvedValue(new Response(null, { status: 304, headers: { etag: ETAG } }));
-    const res = await get(TENANT, DOC, { 'if-none-match': ETAG });
-    expect(openPublicLogo).toHaveBeenCalledWith(TENANT, DOC, ETAG);
+    const res = await get(TENANT, { 'if-none-match': ETAG });
+    expect(openPublicLogo).toHaveBeenCalledWith(TENANT, ETAG);
     expect(res.status).toBe(304);
     expect(res.headers.get('etag')).toBe(ETAG);
     expect(await res.text()).toBe('');
   });
 
   it.each([
-    ['an id that is not a uuid', 'x', DOC],
-    ['a path-like id', TENANT, '..%2F..%2Fv1%2Fme'],
-  ])('is 404 for %s, without calling the API', async (_name, tenantId, documentId) => {
-    const res = await get(tenantId, documentId);
+    ['an id that is not a uuid', 'x'],
+    ['a path-like id', '..%2F..%2Fv1%2Fme'],
+  ])('is 404 for %s, without calling the API', async (_name, tenantId) => {
+    const res = await get(tenantId);
     expect(res.status).toBe(404);
     expect(openPublicLogo).not.toHaveBeenCalled();
   });

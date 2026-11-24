@@ -5,8 +5,8 @@ import { Brand } from './brand';
 
 describe('Brand (R6Q20)', () => {
   it('shows the company logo as an image named by the company, in place of the name text', () => {
-    const html = renderToStaticMarkup(<Brand name="Techrida" logoSrc="/brand/logo/t/d" />);
-    expect(html).toMatch(/<img[^>]*src="\/brand\/logo\/t\/d"[^>]*alt="Techrida"/);
+    const html = renderToStaticMarkup(<Brand name="Techrida" logoSrc="/brand/logo/t" />);
+    expect(html).toMatch(/<img[^>]*src="\/brand\/logo\/t"[^>]*alt="Techrida"/);
     expect(html).not.toContain('>Techrida<');
   });
 

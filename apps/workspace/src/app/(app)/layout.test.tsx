@@ -229,7 +229,7 @@ describe('the company logo in the sidebar', () => {
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
     expect(lastBrand()).toEqual({
       name: 'Techrida',
-      logoSrc: `/brand/logo/${tenantId}/${documentId}`,
+      logoSrc: `/brand/logo/${tenantId}`,
     });
   });
 

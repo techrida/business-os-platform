@@ -25,10 +25,12 @@ export default async function VendorLayout({ children }: { children: ReactNode }
   if (!session) redirect('/auth/login?returnTo=%2Fvendor');
   if (session.orgKind !== 'vendor') redirect('/');
 
-  const onboarding = await loadVendor(() => getVendorOnboarding(session), '/vendor');
+  // Independent reads, so neither waits for the other; getBranding never throws (null when unreadable).
+  const [onboarding, branding] = await Promise.all([
+    loadVendor(() => getVendorOnboarding(session), '/vendor'),
+    getBranding(session),
+  ]);
   if (onboarding.kind !== 'ok') return <VendorNoAccess />;
-
-  const branding = await getBranding(session);
 
   return (
     <>

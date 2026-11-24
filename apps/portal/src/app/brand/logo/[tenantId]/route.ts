@@ -17,25 +17,21 @@ const notFound = (): Response =>
   Response.json({ error: { message: 'Logo not found.' } }, { status: 404 });
 
 /**
- * `GET /brand/logo/:tenantId/:documentId`: the company logo with no session, as a same-origin proxy of the API's
+ * `GET /brand/logo/:tenantId`: the company's current logo with no session, as a same-origin proxy of the API's
  * public logo route. It exists so the header's `<img>` stays under the CSP `img-src 'self'` and so an email can name
  * an address on this app's own host. It answers an image of a known type or a 404, never anything else: whatever the
  * API says that is not the logo (an error, another type, an unreachable API) is the same 404.
  */
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ tenantId: string; documentId: string }> },
+  { params }: { params: Promise<{ tenantId: string }> },
 ): Promise<Response> {
-  const { tenantId, documentId } = await params;
-  if (!UUID.test(tenantId) || !UUID.test(documentId)) return notFound();
+  const { tenantId } = await params;
+  if (!UUID.test(tenantId)) return notFound();
 
   let file: Response;
   try {
-    file = await openPublicLogo(
-      tenantId,
-      documentId,
-      request.headers.get('if-none-match') ?? undefined,
-    );
+    file = await openPublicLogo(tenantId, request.headers.get('if-none-match') ?? undefined);
   } catch {
     return notFound();
   }
