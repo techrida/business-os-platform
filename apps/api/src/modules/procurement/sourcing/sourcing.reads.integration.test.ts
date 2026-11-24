@@ -536,10 +536,11 @@ describe('the lines of a quotation (R6Q23)', () => {
   it('adds the lines up to the quotation totals, rounding per line as invoices do', async () => {
     as(U.proc, 'procurement');
     const { rfq, pr, vendorIds } = await openRfq(1, true);
-    // 3 x 0.33 = 0.99 (VAT 0.13 after rounding) and 1 x 10.05 (VAT 1.31): rounded per line, then summed.
+    // Half-paisa lines: VAT 0.065 -> 0.07 on each 0.50 line, where rounding the summed net (1.00) once would give
+    // 0.13. Rounded per line, then summed, as invoices do.
     await record(rfq.id, vendorIds[0]!, [
-      { prLineId: pr.lineId, quantity: '3', unitPrice: '0.33' },
-      { prLineId: pr.secondLineId, quantity: '1', unitPrice: '10.05' },
+      { prLineId: pr.lineId, quantity: '1', unitPrice: '0.50' },
+      { prLineId: pr.secondLineId, quantity: '1', unitPrice: '0.50' },
     ]);
     const [row] = await service.comparison(rfq.id);
     const sum = (pick: (l: (typeof row.lines)[number]) => string) =>
@@ -547,7 +548,8 @@ describe('the lines of a quotation (R6Q23)', () => {
     expect(sum((l) => l.gross)).toBe(row!.subtotal);
     expect(sum((l) => l.taxAmount)).toBe(row!.taxAmount);
     expect(sum((l) => l.lineTotal)).toBe(row!.total);
-    expect(row!.lines.map((l) => l.taxAmount)).toEqual(['0.13', '1.31']);
+    expect(row!.lines.map((l) => l.taxAmount)).toEqual(['0.07', '0.07']);
+    expect(row!.taxAmount).toBe('0.14');
   });
 
   it('keeps what the vendor quoted when it is recorded, with the other vendors lines apart', async () => {

@@ -148,6 +148,7 @@ beforeAll(async () => {
   for (const [lineNo, description] of [
     [1, '24-port switch'],
     [2, 'Patch cables'],
+    [3, '   '],
   ] as const) {
     prLineIds.push(
       await exec(
@@ -214,8 +215,8 @@ afterAll(async () => {
 });
 
 describe('0222 vendor quotation line description', () => {
-  it('gives every existing line the description of its request line', async () => {
-    expect(await lineDescriptions()).toEqual(['24-port switch', 'Patch cables']);
+  it('gives every existing line the description of its request line (a blank one becomes Item)', async () => {
+    expect(await lineDescriptions()).toEqual(['24-port switch', 'Patch cables', 'Item']);
   });
 
   it('makes the column NOT NULL and refuses a blank description (23514)', async () => {
