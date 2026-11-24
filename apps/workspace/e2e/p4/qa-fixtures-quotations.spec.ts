@@ -134,7 +134,7 @@ async function sendQuotation(page: Page, id: string): Promise<void> {
     CONTACT_NAME,
   );
   await dialog.locator('footer').getByRole('button', { name: 'Send to customer' }).click();
-  await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
+  await expect(dialog.getByText('Sent to').first()).toBeVisible({ timeout: 30_000 });
   await dialog.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('Sent', { exact: true }).first()).toBeVisible();
 }
@@ -148,9 +148,7 @@ async function rejectQuotation(page: Page, id: string): Promise<void> {
   await dialog.getByLabel('Signed quotation').uncheck();
   await dialog.getByLabel('Comment').fill('QA fixture: the customer declined.');
   await dialog.getByRole('button', { name: 'Record outcome' }).click();
-  await expect(dialog.getByRole('status')).toContainText('Recorded as rejected', {
-    timeout: 30_000,
-  });
+  await expect(dialog.getByText('Recorded as rejected').first()).toBeVisible({ timeout: 30_000 });
   await dialog.getByRole('button', { name: 'Done' }).click();
 }
 

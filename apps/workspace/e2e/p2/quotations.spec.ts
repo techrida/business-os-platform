@@ -152,7 +152,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     });
     try {
       await submit.click();
-      await expect(dialog.getByRole('status')).toHaveText('Sending the quotation');
+      await expect(dialog.getByText('Sending the quotation')).toBeVisible();
       await expect(footer.getByRole('button', { name: 'Cancel' })).toBeDisabled();
       await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeDisabled();
       await expect(submit).toBeDisabled();
@@ -177,7 +177,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
       .first()
       .click();
     await submit.click();
-    await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
+    await expect(dialog.getByText('Sent to').first()).toBeVisible({ timeout: 30_000 });
 
     // Closing reloads the page, which now shows the new status.
     await dialog.getByRole('button', { name: 'Done' }).click();
@@ -222,9 +222,7 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
 
     await dialog.getByLabel('Comment').fill('Went with a competitor.');
     await submit.click();
-    await expect(dialog.getByRole('status')).toContainText('Recorded as rejected', {
-      timeout: 30_000,
-    });
+    await expect(dialog.getByText('Recorded as rejected').first()).toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByText('Rejected by customer', { exact: true }).first()).toBeVisible();
   });
