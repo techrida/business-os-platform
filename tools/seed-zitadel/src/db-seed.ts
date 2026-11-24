@@ -5,6 +5,7 @@
 // schema. Every statement is idempotent, and `seedKernelRows` returns 0 on a second run.
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  VENDOR_CHECKLIST_ITEM_KEYS,
   MEMO_APPROVER_DEFAULT_SPEC,
   MEMO_APPROVER_DOCUMENT_TYPE,
   WorkflowSpecSchema,
@@ -12,7 +13,7 @@ import {
 } from '@bos/contracts';
 import type pg from 'pg';
 
-import { PERSONAS, personaUsername } from './personas.js';
+import { EXTRA_VENDORS, PERSONAS, personaUsername, type ExtraVendorSpec } from './personas.js';
 import {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
@@ -833,6 +834,90 @@ async function seedDevPeopleAndVendor(
   changed += customerAccount.rowCount ?? 0;
 
   changed += await seedForeignParties(client, scope, userIdOf);
+  for (const extra of EXTRA_VENDORS) {
+    changed += await seedExtraVendor(
+      client,
+      scope,
+      extra,
+      userIdOf(VENDOR_CREATOR_KEY),
+      userIdOf(VENDOR_APPROVER_KEY),
+    );
+  }
+  return changed;
+}
+
+/** The documents every vendor owes (the API's REQUIRED_VENDOR_KEYS in verification.rules.ts); the rest are optional. */
+const EXTRA_VENDOR_REQUIRED_DOCS: readonly string[] = [
+  'pan_certificate',
+  'tax_clearance',
+  'bank_proof',
+];
+
+/**
+ * One of EXTRA_VENDORS: its vendor row on the party the tenancy step created for its org (found by code), a TR
+ * account, and, while it is pending_kyc, an editable draft KYB case with the vendor checklist (every item missing),
+ * so the portal's KYC document upload has a case to write to. An approved vendor needs no case. The dev vendor has
+ * no bank account either, so neither do these.
+ */
+async function seedExtraVendor(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  vendor: ExtraVendorSpec,
+  creatorId: string,
+  approverId: string,
+): Promise<number> {
+  const party = await client.query<{ id: string }>(
+    `SELECT id FROM app.parties WHERE tenant_id = $1 AND code = $2 AND kind = 'vendor'`,
+    [scope.tenantId, vendor.partyCode],
+  );
+  const partyId = party.rows[0]?.id;
+  if (!partyId) throw new Error(`dev seed: vendor party ${vendor.partyCode} not found`);
+  let changed = 0;
+  const row = await client.query(
+    `INSERT INTO app.vendors
+       (id, tenant_id, legal_name, kind, pan, vat_registered, country, address_line, address_city, status, created_by, approved_by)
+     SELECT p.id, p.tenant_id, p.name, 'company', $3, false, 'NP', $6, $7, $8,
+            $4::uuid, CASE WHEN $8 = 'approved' THEN $5::uuid END
+     FROM app.parties p
+     WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      scope.tenantId,
+      partyId,
+      vendor.pan,
+      creatorId,
+      approverId,
+      DEV_VENDOR_ADDRESS.line,
+      DEV_VENDOR_ADDRESS.city,
+      vendor.status,
+    ],
+  );
+  changed += row.rowCount ?? 0;
+  const account = await client.query(
+    `INSERT INTO app.vendor_accounts (tenant_id, organization_id, vendor_id, default_currency, payment_term_id)
+     SELECT $1::uuid, $2::uuid, $3::uuid, 'NPR', pt.id
+     FROM app.payment_terms pt
+     WHERE pt.tenant_id = $1::uuid AND pt.code = $4
+     ON CONFLICT (tenant_id, organization_id, vendor_id) DO NOTHING`,
+    [scope.tenantId, scope.organizationId, partyId, DEV_VENDOR_TERM],
+  );
+  changed += account.rowCount ?? 0;
+  if (vendor.status === 'pending_kyc') {
+    const checklist = VENDOR_CHECKLIST_ITEM_KEYS.map((key) => ({
+      key,
+      required: EXTRA_VENDOR_REQUIRED_DOCS.includes(key),
+      status: 'missing',
+      documentId: null,
+      expiresOn: null,
+    }));
+    const kyb = await client.query(
+      `INSERT INTO app.verification_cases (tenant_id, party_id, party_kind, status, checklist)
+       VALUES ($1::uuid, $2::uuid, 'vendor', 'draft', $3::jsonb)
+       ON CONFLICT (tenant_id, party_id) DO NOTHING`,
+      [scope.tenantId, partyId, JSON.stringify(checklist)],
+    );
+    changed += kyb.rowCount ?? 0;
+  }
   return changed;
 }
 
