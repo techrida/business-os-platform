@@ -13,7 +13,10 @@ export class ImageRefusal extends Error {
 
 export type OutputMime = 'image/png' | 'image/jpeg';
 
-const JPEG_QUALITY = 0.88;
+/** Qualities tried in order for a JPEG at each size (PNG has no quality: only the size can shrink it). */
+export const JPEG_QUALITIES = [0.88, 0.75, 0.6, 0.45] as const;
+/** Longest sides tried in order: IMAGE_MAX_SIDE_PX first, then smaller until the file fits. */
+export const SIDE_STEPS = [512, 384, 256, 192, 128, 96, 64, 48, 32] as const;
 const SNIFF_BYTES = 12;
 const DEFAULT_STEM = 'image';
 
@@ -70,7 +73,7 @@ const NOT_A_PICTURE =
 
 type DrawSurface = {
   context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
-  encode: (type: OutputMime) => Promise<Blob>;
+  encode: (type: OutputMime, quality: number) => Promise<Blob>;
 };
 
 function createSurface(width: number, height: number): DrawSurface {
@@ -81,8 +84,8 @@ function createSurface(width: number, height: number): DrawSurface {
       throw new ImageRefusal('This browser cannot shrink pictures. Try another browser.');
     return {
       context,
-      encode: (type) =>
-        canvas.convertToBlob(type === 'image/jpeg' ? { type, quality: JPEG_QUALITY } : { type }),
+      encode: (type, quality) =>
+        canvas.convertToBlob(type === 'image/jpeg' ? { type, quality } : { type }),
     };
   }
   const canvas = document.createElement('canvas');
@@ -92,13 +95,13 @@ function createSurface(width: number, height: number): DrawSurface {
   if (!context) throw new ImageRefusal('This browser cannot shrink pictures. Try another browser.');
   return {
     context,
-    encode: (type) =>
+    encode: (type, quality) =>
       new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
           (blob) =>
             blob ? resolve(blob) : reject(new ImageRefusal('This picture could not be shrunk.')),
           type,
-          type === 'image/jpeg' ? JPEG_QUALITY : undefined,
+          type === 'image/jpeg' ? quality : undefined,
         );
       }),
   };
@@ -108,6 +111,7 @@ async function render(
   bitmap: ImageBitmap,
   size: { width: number; height: number },
   type: OutputMime,
+  quality: number,
 ): Promise<Blob> {
   const { context, encode } = createSurface(size.width, size.height);
   if (type === 'image/jpeg') {
@@ -116,13 +120,15 @@ async function render(
     context.fillRect(0, 0, size.width, size.height);
   }
   context.drawImage(bitmap, 0, 0, size.width, size.height);
-  return encode(type);
+  return encode(type, quality);
 }
 
 /**
- * Checks a chosen picture and shrinks it so its longest side is at most IMAGE_MAX_SIDE_PX, re-encoded as PNG or JPEG.
+ * Checks a chosen picture and makes it fit: the longest side drops from IMAGE_MAX_SIDE_PX through smaller steps and,
+ * for a JPEG, the quality drops at each size, until the file is at most IMAGE_MAX_BYTES. PNG and WebP come out as PNG
+ * (lossless, keeps transparency, never JPEG); only their size shrinks. Any picture of any size ends up sent.
  * Throws ImageRefusal (with a message for the person) for anything that is not a PNG, JPEG or WebP by both its stated
- * type and its first bytes, that cannot be decoded, or that is still over IMAGE_MAX_BYTES after one smaller retry.
+ * type and its first bytes, that cannot be decoded, or that does not fit even at the smallest step.
  * When the stated type and the bytes name different allowed types, the bytes win.
  */
 export async function shrinkImage(file: File): Promise<File> {
@@ -143,15 +149,24 @@ export async function shrinkImage(file: File): Promise<File> {
 
   try {
     const type = outputTypeFor(sniffed);
-    const first = targetSize(bitmap.width, bitmap.height, IMAGE_MAX_SIDE_PX);
-    let blob = await render(bitmap, first, type);
-    if (blob.size > IMAGE_MAX_BYTES) {
-      const half = Math.max(1, Math.floor(Math.max(first.width, first.height) / 2));
-      blob = await render(bitmap, targetSize(bitmap.width, bitmap.height, half), type);
-      if (blob.size > IMAGE_MAX_BYTES)
-        throw new ImageRefusal('This picture is too large even after shrinking');
+    const qualities = type === 'image/jpeg' ? JPEG_QUALITIES : ([1] as const);
+    let last = '';
+    for (const side of SIDE_STEPS) {
+      const size = targetSize(bitmap.width, bitmap.height, side);
+      const key = `${size.width}x${size.height}`;
+      if (key === last) continue; // a source smaller than this step renders the same as the step before
+      last = key;
+      for (const quality of qualities) {
+        const blob = await render(bitmap, size, type, quality);
+        if (blob.size <= IMAGE_MAX_BYTES) {
+          return new File([blob], outputFileName(file.name, type), {
+            type,
+            lastModified: Date.now(),
+          });
+        }
+      }
     }
-    return new File([blob], outputFileName(file.name, type), { type, lastModified: Date.now() });
+    throw new ImageRefusal('This picture is too large to use even after shrinking it.');
   } finally {
     bitmap.close();
   }

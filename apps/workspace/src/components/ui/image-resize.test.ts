@@ -150,25 +150,63 @@ describe('shrinkImage', () => {
     expect(ops.encodes).toEqual([{ type: 'image/jpeg', quality: 0.88 }]);
   });
 
-  it('retries once at half the side when the first result is too big', async () => {
-    const { ops } = stubBrowser({ width: 1024, height: 1024 }, [IMAGE_MAX_BYTES + 1, 2000]);
+  it('steps a too-big PNG down in size until it fits, never touching quality or the format', async () => {
+    const { ops } = stubBrowser({ width: 2048, height: 2048 }, [
+      IMAGE_MAX_BYTES + 1, // 600 KB-class PNG at 512
+      IMAGE_MAX_BYTES + 1, // 384
+      2000, // 256
+    ]);
     const result = await shrinkImage(fileOf(PNG_HEAD, 'big.png', 'image/png'));
     expect(ops.draws).toEqual([
       [512, 512],
+      [384, 384],
       [256, 256],
     ]);
+    expect(ops.encodes.every((e) => e.type === 'image/png' && e.quality === undefined)).toBe(true);
+    expect(result.type).toBe('image/png');
     expect(result.size).toBe(2000);
+    expect(result.size).toBeLessThanOrEqual(IMAGE_MAX_BYTES);
   });
 
-  it('refuses a picture that is still too big after the retry and closes the bitmap', async () => {
-    const { ops, close } = stubBrowser({ width: 1024, height: 1024 }, [
-      IMAGE_MAX_BYTES + 1,
-      IMAGE_MAX_BYTES + 1,
+  it('drops a 4 MB-class JPEG quality first at 512, then the size, until it fits', async () => {
+    // 4 quality steps at 512 and at 384 all too big; the first quality at 256 fits.
+    const tooBig = Array<number>(8).fill(IMAGE_MAX_BYTES + 1);
+    const { ops } = stubBrowser({ width: 4000, height: 3000 }, [...tooBig, 90_000]);
+    const result = await shrinkImage(fileOf(JPEG_HEAD, 'photo.jpg', 'image/jpeg'));
+    expect(ops.encodes.slice(0, 4).map((e) => e.quality)).toEqual([0.88, 0.75, 0.6, 0.45]);
+    expect(ops.draws[0]).toEqual([512, 384]);
+    expect(ops.draws[4]).toEqual([384, 288]);
+    expect(ops.draws[8]).toEqual([256, 192]);
+    expect(result.type).toBe('image/jpeg');
+    expect(result.size).toBe(90_000);
+  });
+
+  it('keeps transparency: a WebP that does not fit at first comes out as PNG, never JPEG', async () => {
+    const { ops } = stubBrowser({ width: 900, height: 900 }, [IMAGE_MAX_BYTES + 1, 4000]);
+    const result = await shrinkImage(fileOf(WEBP_HEAD, 'alpha.webp', 'image/webp'));
+    expect(result.type).toBe('image/png');
+    expect(ops.encodes.every((e) => e.type === 'image/png')).toBe(true);
+    expect(ops.fills).toBe(0);
+  });
+
+  it('does not render the same size twice for a small source', async () => {
+    const { ops } = stubBrowser({ width: 100, height: 100 }, [IMAGE_MAX_BYTES + 1, 500]);
+    await shrinkImage(fileOf(PNG_HEAD, 'small.png', 'image/png'));
+    expect(ops.draws).toEqual([
+      [100, 100],
+      [96, 96],
     ]);
-    await expect(shrinkImage(fileOf(PNG_HEAD, 'big.png', 'image/png'))).rejects.toThrow(
-      new ImageRefusal('This picture is too large even after shrinking'),
+  });
+
+  it('refuses only when it cannot fit at the smallest step, and closes the bitmap', async () => {
+    const { ops, close } = stubBrowser(
+      { width: 1024, height: 1024 },
+      Array<number>(50).fill(IMAGE_MAX_BYTES + 1),
     );
-    expect(ops.encodes).toHaveLength(2);
+    await expect(shrinkImage(fileOf(PNG_HEAD, 'big.png', 'image/png'))).rejects.toThrow(
+      /too large to use even after shrinking/,
+    );
+    expect(ops.draws.at(-1)).toEqual([32, 32]);
     expect(close).toHaveBeenCalledOnce();
   });
 
