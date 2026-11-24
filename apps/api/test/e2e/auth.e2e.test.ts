@@ -273,3 +273,18 @@ describe('POST /v1/telemetry/vitals', () => {
     expectErrorBody(res, 400, 'bad_request');
   });
 });
+
+describe('the anonymous company logo: GET /v1/public/logo/:tenantId (R6Q20b)', () => {
+  it('is reached with no token through the real guard chain: a refusal is the 404 error body, never a 401', async () => {
+    const res = await t.http().get('/v1/public/logo/00000000-0000-4000-8000-000000000001');
+    expectErrorBody(res, 404, 'not_found');
+    expect(res.headers['cache-control'] ?? '').not.toContain('public');
+  });
+
+  it('does not make the per-document form, or anything else under /v1/public, a public route', async () => {
+    const tenant = '00000000-0000-4000-8000-000000000001';
+    for (const path of [`/v1/public/logo/${tenant}/${tenant}`, '/v1/public/me', '/v1/public']) {
+      expect((await t.http().get(path)).status, path).not.toBe(200);
+    }
+  });
+});
