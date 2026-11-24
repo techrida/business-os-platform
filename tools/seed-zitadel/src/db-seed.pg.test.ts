@@ -10,7 +10,11 @@ import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createParty, createTenantWithEntity } from '../../../packages/db/src/testing/fixtures.js';
+import {
+  createParty,
+  createStaffUser,
+  createTenantWithEntity,
+} from '../../../packages/db/src/testing/fixtures.js';
 import { EXTRA_VENDORS } from './personas.js';
 import {
   DEV_CUSTOMER_NAME_NORM,
@@ -685,6 +689,64 @@ describe('the extra dev vendors on Postgres (R6Q15)', () => {
         [scope.tenantId, EXTRA_VENDORS.map((v) => v.partyCode)],
       );
       expect(Number(rows[0]?.n)).toBe(0);
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+describe('a vendor made by hand and the seeded PANs on Postgres (R6Q11b)', () => {
+  /** A vendor of the tenant, made outside the seed with the given PAN. */
+  async function handMadeVendor(
+    scope: SeedScope & { idpOrgId: string },
+    pan: string,
+  ): Promise<string> {
+    const { partyId } = await createParty(owner, { tenantId: scope.tenantId, kind: 'vendor' });
+    const { userId } = await createStaffUser(owner, {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      idpOrgId: scope.idpOrgId,
+    });
+    await asFounder(scope, (client) =>
+      client.query(
+        `INSERT INTO app.vendors (id, tenant_id, legal_name, kind, pan, country, status, created_by)
+         VALUES ($1, $2, 'Hand Made Traders', 'company', $3, 'NP', 'draft', $4)`,
+        [partyId, scope.tenantId, pan, userId],
+      ),
+    );
+    return partyId;
+  }
+
+  it(
+    'names the PAN and the vendor that holds it, and writes nothing, when a hand-made vendor already has a seeded PAN',
+    async () => {
+      const scope = await devTenant();
+      const vendor = EXTRA_VENDORS[0];
+      await handMadeVendor(scope, vendor.pan);
+      await expect(seed(scope, personasFor(`pg-pan-${randomUUID().slice(0, 8)}`))).rejects.toThrow(
+        new RegExp(
+          `PAN ${vendor.pan} of ${vendor.partyCode} is already held by .*Hand Made Traders`,
+        ),
+      );
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'still re-runs when the seeded vendor exists and its PAN was changed by hand and taken by another vendor',
+    async () => {
+      const scope = await devTenant();
+      const personas = personasFor(`pg-pan2-${randomUUID().slice(0, 8)}`);
+      await seed(scope, personas);
+      const vendor = EXTRA_VENDORS[0];
+      await asFounder(scope, (client) =>
+        client.query(
+          `UPDATE app.vendors v SET pan = '999999991' FROM app.parties p
+                      WHERE p.tenant_id = v.tenant_id AND p.id = v.id AND v.tenant_id = $1 AND p.code = $2`,
+          [scope.tenantId, vendor.partyCode],
+        ),
+      );
+      await handMadeVendor(scope, vendor.pan);
+      expect(await seed(scope, personas)).toBe(0);
     },
     TEST_TIMEOUT,
   );

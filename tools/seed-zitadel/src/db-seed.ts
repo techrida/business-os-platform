@@ -867,9 +867,12 @@ export async function seedExtraVendor(
   const partyId = party.rows[0]?.id;
   if (!partyId) throw new Error(`dev seed: vendor party ${vendor.partyCode} not found`);
   // vendors_tenant_pan_unique would refuse the insert with a bare constraint name: a vendor somebody made by hand that
-  // already holds this seeded PAN is named here instead, with what to do about it.
+  // already holds this seeded PAN is named here instead, with what to do about it. Only while the seeded vendor row is
+  // still to be made: a re-run finds it (ON CONFLICT (id) DO NOTHING skips it) even if its PAN was changed since.
   const holder = await client.query<{ id: string; legal_name: string }>(
-    `SELECT id, legal_name FROM app.vendors WHERE tenant_id = $1::uuid AND pan = $2 AND id <> $3::uuid`,
+    `SELECT h.id, h.legal_name FROM app.vendors h
+     WHERE h.tenant_id = $1::uuid AND h.pan = $2 AND h.id <> $3::uuid
+       AND NOT EXISTS (SELECT 1 FROM app.vendors own WHERE own.tenant_id = $1::uuid AND own.id = $3::uuid)`,
     [scope.tenantId, vendor.pan, partyId],
   );
   if (holder.rows[0]) {
