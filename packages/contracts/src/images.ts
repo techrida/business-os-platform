@@ -46,13 +46,12 @@ export function isImageOwnerType(value: string): value is ImageOwnerType {
 export const IMAGE_MIME = ['image/png', 'image/jpeg', 'image/webp'] as const;
 export type ImageMime = (typeof IMAGE_MIME)[number];
 
-/** 512 KiB. The upload screen shrinks a picture to at most 512 px first, so real files are far smaller. */
+/** 512 KiB. The upload screen shrinks and re-encodes every picture until it fits, so this is only the safety net. */
 export const IMAGE_MAX_BYTES = 524_288;
 /** The longest side the upload screen shrinks a picture to before it is sent. */
 export const IMAGE_MAX_SIDE_PX = 512;
 
 export const IMAGE_ACCEPT = IMAGE_MIME.join(',');
-export const IMAGE_HINT = 'PNG, JPEG or WebP, up to 512 KB';
 
 /** Body of `PUT /v1/images/:ownerType/:ownerId`: make a (clean or still scanning) uploaded image current, or null to remove. */
 export const SetImageBodySchema = z.strictObject({ documentId: z.guid().nullable() });
