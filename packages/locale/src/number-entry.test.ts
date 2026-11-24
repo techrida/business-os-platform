@@ -6,6 +6,15 @@ const MONEY = { intDigits: 16, scale: 2 };
 const QTY = { intDigits: 14, scale: 4 };
 const WHOLE = { intDigits: 3, scale: 0 };
 
+describe('normalisePastedNumber on hostile text', () => {
+  it('refuses a long run of tabs inside the paste in linear time', () => {
+    const started = performance.now();
+    const out = normalisePastedNumber(`1${'\t'.repeat(200_000)}x`, MONEY);
+    expect(out).toMatchObject({ ok: false });
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
+
 describe('normalisePastedNumber', () => {
   it.each([
     ['NPR 12,50,000.00', '1250000.00'],
