@@ -110,7 +110,9 @@ export function withCurrencyDefault(
   map: NumberSystemsSetting,
   currency: Currency,
 ): NumberSystemsSetting {
-  return { ...map, [currency]: DEFAULT_NUMBER_SYSTEMS[currency] };
+  const next = { ...map };
+  for (const c of CURRENCIES) if (c === currency) next[c] = DEFAULT_NUMBER_SYSTEMS[c];
+  return next;
 }
 
 /** True when two maps choose the same system for every currency. */
