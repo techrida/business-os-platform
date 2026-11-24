@@ -53,17 +53,10 @@ test('the inbox loads and bill entry works without a submission', async ({ brows
     await expect(founder.page.getByRole('heading', { level: 1, name: 'Bill inbox' })).toBeVisible();
     await founder.page.goto('/payables/bills/new');
     await expect(founder.page.getByRole('heading', { level: 1, name: 'New bill' })).toBeVisible();
-    await expect(founder.page.getByLabel('Find a vendor', { exact: true })).toBeVisible();
-    const vendor = founder.page.getByLabel('Vendor', { exact: true });
-    await expect(
-      vendor.or(founder.page.getByText('No vendors match this search.', { exact: false })),
-    ).toBeVisible();
-    if (await vendor.isVisible()) {
-      await expect(founder.page.getByLabel('Vendor invoice number', { exact: true })).toBeVisible();
-      await expect(
-        founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
-      ).toBeDisabled();
-    }
+    // One live-search vendor box (a combobox posting vendorPartyId), then the invoice details.
+    await expect(founder.page.locator('input[type="hidden"][name="vendorPartyId"]')).toBeAttached();
+    await expect(founder.page.getByRole('combobox').first()).toBeVisible();
+    await expect(founder.page.locator('input[name="vendorInvoiceNo"]')).toBeVisible();
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

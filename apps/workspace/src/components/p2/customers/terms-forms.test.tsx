@@ -61,6 +61,28 @@ const limitBox = (): HTMLInputElement | null => {
   return box instanceof HTMLInputElement ? box : null;
 };
 
+describe('a save with nothing changed (R6Q5-B)', () => {
+  it('shows a neutral "Nothing changed" notice in the dialog, not a red "Not saved"', async () => {
+    const action = refuses({ errors: {}, notice: 'Nothing changed, so there is nothing to save.' });
+    mounted = await mountForm(
+      <CreditLimitForm
+        action={action}
+        customerId={CUSTOMER}
+        organizationId={ENTITY}
+        version={null}
+        current={null}
+        entityName="Techrida Nepal"
+      />,
+    );
+    await open('credit limit');
+    await save();
+    expect(dialog()?.textContent).toContain('Nothing changed, so there is nothing to save.');
+    expect(dialog()?.textContent).not.toContain('Not saved');
+    expect(dialog()?.querySelector('[role="alert"]')).toBeNull();
+    expect(dialog()?.querySelector('[role="status"]')).not.toBeNull();
+  });
+});
+
 describe('CreditLimitForm', () => {
   it('sends the typed amount and no version before the first save, then closes with a toast', async () => {
     const action = saves('Credit limit saved.');
