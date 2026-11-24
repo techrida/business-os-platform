@@ -44,7 +44,7 @@ test('qa fixtures: issue the seeded purchase order', async ({ browser, baseURL }
 /**
  * Portal specs read a stored login (storageState) of a customer and of an approved vendor. The dev personas
  * `customer` (Dev Customer Co) and `vendor` (Dev Vendor Co, VEND-DEV) sign in to the portal through the real login;
- * the cookies go to .dev/ (git-ignored, deleted by the credential sweep before artifacts upload).
+ * the cookies go to .dev/ (git-ignored and outside every uploaded artifact path).
  */
 for (const key of ['customer', 'vendor'] as const) {
   test(`qa fixtures: portal sign-in state of ${key}`, async ({ browser }) => {

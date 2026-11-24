@@ -187,7 +187,7 @@ jobs:
           const out=[]; for (const e of list) for (const k of ['password','totpSecret']) if (typeof e[k]==='string' && e[k].length>=8) out.push(e[k]);
           fs.writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\\n')+'\\n');"
           dirs=()
-          for d in apps/workspace/playwright-report apps/workspace/playwright-report-signin apps/workspace/test-results apps/workspace/test-results-signin apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
+          for d in apps/workspace/playwright-report apps/workspace/playwright-report-signin apps/workspace/test-results apps/workspace/test-results-signin apps/workspace/test-results-fixtures apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
           if [ "${#dirs[@]}" -gt 0 ]; then
             grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}" > "$RUNNER_TEMP/leaks.txt" || true
             if [ -s "$RUNNER_TEMP/leaks.txt" ]; then
