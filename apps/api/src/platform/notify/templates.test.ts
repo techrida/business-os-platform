@@ -525,20 +525,52 @@ describe('the company logo (R6Q20)', () => {
       { linkPath: LINK_PATH_OF['quotation.sent'] },
       { ...opts, logo },
     );
+    const url = buildLogoUrl(PORTAL, logo);
     const tag = /<img[^>]*>/.exec(rendered.html)?.[0] ?? '';
     const hosts = [new URL(PORTAL).host];
-    expect(() => assertSafeEmail(rendered, hosts, tag)).not.toThrow();
-    // Without being told about the tag, the same email is refused.
+    expect(() => assertSafeEmail(rendered, hosts, url)).not.toThrow();
+    // Without being told about the address, the same email is refused.
     expect(() => assertSafeEmail(rendered, hosts)).toThrow(EmailTemplateError);
     for (const extra of [
       tag,
       `<img src="${PORTAL}/brand/logo/other.png">`,
       '<img src="https://evil.example/x.png">',
     ]) {
-      expect(() =>
-        assertSafeEmail({ ...rendered, html: rendered.html + extra }, hosts, tag),
-      ).toThrow(EmailTemplateError);
+      expect(() => assertSafeEmail({ ...rendered, html: rendered.html + extra }, hosts, url)).toThrow(
+        EmailTemplateError,
+      );
     }
+  });
+
+  it('accepts the logo tag only in the exact shape and for the exact address it was built for', () => {
+    const rendered = renderEmail(
+      'quotation.sent',
+      { linkPath: LINK_PATH_OF['quotation.sent'] },
+      { ...opts, logo, companyName: 'Techrida' },
+    );
+    const url = buildLogoUrl(PORTAL, logo);
+    const tag = /<img[^>]*>/.exec(rendered.html)?.[0] ?? '';
+    const hosts = [new URL(PORTAL).host];
+    const swap = (html: string) => ({ ...rendered, html: rendered.html.replace(tag, html) });
+    for (const [name, forged] of [
+      ['an extra attribute', tag.replace('<img ', '<img onerror="x" ')],
+      ['a trailing attribute', tag.replace(/>$/, ' loading="lazy">')],
+      ['a query on the address', tag.replace(url, `${url}?x=1`)],
+      ['another path on the same host', tag.replace(url, `${PORTAL}/brand/logo/${TENANT}/extra`)],
+      ['another tenant', tag.replace(TENANT, '1b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4')],
+      ['an upper-case tag name', tag.replace('<img ', '<IMG ')],
+      ['a space after the bracket', tag.replace('<img ', '< img ')],
+      ['a changed height', tag.replace('height="40"', 'height="4000"')],
+      ['a changed style', tag.replace('display: block', 'position: fixed')],
+      ['a srcset', tag.replace('<img ', '<img srcset="https://evil.example/x.png 1x" ')],
+    ] as const) {
+      expect(() => assertSafeEmail(swap(forged), hosts, url), name).toThrow(EmailTemplateError);
+    }
+    expect(() => assertSafeEmail(swap(tag), hosts, url)).not.toThrow();
+    // Told a different address, the genuine tag no longer passes.
+    expect(() => assertSafeEmail(rendered, hosts, `${PORTAL}/brand/logo/${TENANT}/x`)).toThrow(
+      EmailTemplateError,
+    );
   });
 
   it('builds the address only from an http(s) base and one guid', () => {
