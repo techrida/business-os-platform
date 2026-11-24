@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { expect, type Page } from '@playwright/test';
@@ -53,9 +53,12 @@ export function idFromUrl(page: Page): string {
 export function recordFixtureIds(add: Record<string, string | string[]>): void {
   const file = path.resolve(process.cwd(), '../../.dev/qa-fixture-ids.json');
   mkdirSync(path.dirname(file), { recursive: true });
-  const known: Record<string, string | string[]> = existsSync(file)
-    ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, string | string[]>)
-    : {};
+  let known: Record<string, string | string[]> = {};
+  try {
+    known = JSON.parse(readFileSync(file, 'utf8')) as Record<string, string | string[]>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   writeFileSync(file, JSON.stringify({ ...known, ...add }, null, 2));
 }
 
