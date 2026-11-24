@@ -57,7 +57,7 @@ test('procurement raises a PR, its department head alone approves, then three ve
       await test.step('procurement saves and submits the purchase request', async () => {
         await page.goto('/procurement/requests/new');
         await page.waitForLoadState('networkidle');
-        await page.getByLabel('Needed by').fill('2030-12-31');
+        await fillDateField(page, 'Needed by', '2030-12-31');
         await chooseOption(selectByName(page, 'departmentId'), departmentId);
         await chooseOption(selectByName(page, 'costCenterId'), costCenterId);
         await page.getByLabel('Budget code').fill('P4-EXIT');

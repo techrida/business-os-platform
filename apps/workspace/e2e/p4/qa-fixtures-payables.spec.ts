@@ -94,7 +94,7 @@ test('qa fixtures: a draft payment request on a verified vendor account and an a
       await account.click();
       await enterer.getByRole('option').first().click();
       await enterer.getByRole('button', { name: 'Create bill', exact: true }).click();
-      await expect(enterer).toHaveURL(/\/payables\/bills\/[0-9a-f-]{36}$/);
+      await expect(enterer).toHaveURL(/\/payables\/bills\/[0-9a-f-]{36}(\?created=1)?$/);
       billId = idFromUrl(enterer);
       // The invoice file is scanned in the background; the submit is refused until it is clean.
       const submit = enterer.getByRole('button', { name: 'Submit for approval', exact: true });

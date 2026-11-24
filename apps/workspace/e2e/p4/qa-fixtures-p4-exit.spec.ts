@@ -55,7 +55,7 @@ async function raiseRequest(
 ): Promise<{ id: string; number: string }> {
   await page.goto('/procurement/requests/new');
   await page.waitForLoadState('networkidle');
-  await page.getByLabel('Needed by').fill('2030-12-31');
+  await fillDateField(page, 'Needed by', '2030-12-31');
   await chooseOption(selectByName(page, 'departmentId'), { label: /operations/i });
   await chooseOption(selectByName(page, 'costCenterId'), { label: /operations/i });
   await page.getByLabel('Budget code').fill('P4-EXIT');
