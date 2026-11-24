@@ -29,6 +29,7 @@ import { and, asc, eq, gt, lt, sql } from 'drizzle-orm';
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { type Actor, systemActor, type TxScope } from '../../../platform/db/tx';
+import type { NotifyService } from '../../../platform/notify/notify.service';
 import { type AssignmentCandidate, loadAssignmentParties } from '../../leads/lead-assignee';
 
 export const PAYMENT_PROMISE_QUEUE = 'payment-promise';
@@ -39,10 +40,14 @@ export const PROMISE_EVERY_MS = 60 * 60_000;
 /** Promises handled per run. A larger backlog drains over the following hours. */
 export const PROMISE_BATCH = 500;
 
+/** The Follow-ups page, where the call lists (a collection call has no page of its own). */
+export const COLLECTION_CALL_LINK = '/activities/';
+
 export const PROMISE_STORE = Symbol('PAYMENT_PROMISE_STORE');
 export const PROMISE_TX = Symbol('PAYMENT_PROMISE_TX');
 export const PROMISE_AUDIT = Symbol('PAYMENT_PROMISE_AUDIT');
 export const PROMISE_CLOCK = Symbol('PAYMENT_PROMISE_CLOCK');
+export const PROMISE_NOTIFY = Symbol('PAYMENT_PROMISE_NOTIFY');
 
 export interface PromiseCandidate {
   tenantId: string;
@@ -92,6 +97,7 @@ export type RunInTx = <T>(
   fn: (tx: DbTransaction) => Promise<T>,
 ) => Promise<T>;
 export type PromiseAudit = Pick<AuditService, 'record'>;
+export type PromiseNotify = Pick<NotifyService, 'notifyUser'>;
 export type Clock = () => Date;
 
 export type PromiseOutcome = 'missed' | 'kept' | 'skipped';
@@ -145,6 +151,7 @@ export class PaymentPromiseSweeper {
     @Inject(PROMISE_TX) private readonly runTx: RunInTx,
     @Inject(PROMISE_AUDIT) private readonly audit: PromiseAudit,
     @Inject(PROMISE_CLOCK) private readonly clock: Clock,
+    @Inject(PROMISE_NOTIFY) private readonly notify: PromiseNotify,
   ) {}
 
   /** One run over every tenant. A promise that fails is logged and left for the next run; the rest go on. */
@@ -207,6 +214,19 @@ export class PaymentPromiseSweeper {
           assigneeUserId,
         },
       });
+      if (assigneeUserId !== null) {
+        // Bell only (OQ-30, R6Q22): the call's assignee is told in the same transaction that plans it, so a rolled-back
+        // run notifies nobody. The call's own row is the dedupe key, so a replayed transaction is a no-op. A call with
+        // no assignee lists for everyone who may read receivables and has nobody to ring. No email: the job has no
+        // acting user to name, and the `crm.assigned` template names the person who assigned.
+        await this.notify.notifyUser(tx, {
+          userId: assigneeUserId,
+          title: text.subject,
+          body: text.body,
+          link: COLLECTION_CALL_LINK,
+          dedupeKey: `collection_call.planned:${activityId}`,
+        });
+      }
       await this.store.markMissed(tx, c, activityId, now);
       await this.audit.record(tx, {
         action: 'payment_promise.missed',
