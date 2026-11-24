@@ -52,6 +52,11 @@ const api = vi.hoisted(() => ({
   getPoProgress: vi.fn(),
 }));
 vi.mock('@/lib/api-purchase-orders', () => api);
+const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
+vi.mock('@/lib/api-kernel', async (original) => ({
+  ...(await original<typeof import('@/lib/api-kernel')>()),
+  getApprovalRequest: kernel.getApprovalRequest,
+}));
 const vendors = vi.hoisted(() => ({ getVendor: vi.fn(), listVendors: vi.fn() }));
 vi.mock('@/lib/api-vendors', () => vendors);
 
@@ -175,7 +180,10 @@ const detail = async (id = ID) => html(await OrderPage({ params: Promise.resolve
 beforeEach(() => {
   session.roles = ['procurement'];
   grants.live = undefined;
-  for (const fn of [...Object.values(api), ...Object.values(vendors)]) fn.mockReset();
+  for (const fn of [...Object.values(api), ...Object.values(vendors), kernel.getApprovalRequest]) {
+    fn.mockReset();
+  }
+  kernel.getApprovalRequest.mockRejectedValue(apiError(403, 'forbidden'));
   api.listPoVersions.mockResolvedValue([version(1)]);
   api.getPoProgress.mockResolvedValue(progress);
   vendors.getVendor.mockResolvedValue({ id: VENDOR, legalName: 'Himal Traders Pvt. Ltd.' });
@@ -304,6 +312,47 @@ describe('the purchase order list', () => {
 });
 
 describe('the purchase order page', () => {
+  const APPROVAL = '44444444-4444-4444-8444-444444444444';
+  const CHANGE = '55555555-5555-4555-8555-555555555555';
+
+  it('shows the approval history of the current version, and leaves it out when the approval read is refused (R6Q22)', async () => {
+    api.getPurchaseOrder.mockResolvedValue(order({ currentVersion: 2 }));
+    api.listPoVersions.mockResolvedValue([
+      version(1),
+      { ...version(2), approvalRequestId: APPROVAL },
+    ]);
+    kernel.getApprovalRequest.mockResolvedValue({
+      status: 'approved',
+      decidedAt: '2026-11-10T05:00:00.000Z',
+      steps: [{ seq: 1, reason: 'Management approves purchase orders', status: 'approved' }],
+    });
+    const out = await detail();
+    expect(kernel.getApprovalRequest).toHaveBeenCalledWith(expect.anything(), APPROVAL);
+    expect(out).toContain('Approval history');
+    expect(out).toContain('Management approves purchase orders');
+
+    kernel.getApprovalRequest.mockRejectedValue(apiError(403, 'forbidden'));
+    expect(await detail()).not.toContain('Approval history');
+  });
+
+  it('shows the waiting change of vendor approval first, and no history for an order that never went to approval', async () => {
+    api.getPurchaseOrder.mockResolvedValue(
+      order({
+        pendingVendorChange: { approvalRequestId: CHANGE, vendorId: VENDOR, total: '1.00' },
+      }),
+    );
+    api.listPoVersions.mockResolvedValue([{ ...version(1), approvalRequestId: APPROVAL }]);
+    kernel.getApprovalRequest.mockResolvedValue({ status: 'pending', decidedAt: null, steps: [] });
+    await detail();
+    expect(kernel.getApprovalRequest).toHaveBeenCalledWith(expect.anything(), CHANGE);
+
+    kernel.getApprovalRequest.mockClear();
+    api.getPurchaseOrder.mockResolvedValue(order());
+    api.listPoVersions.mockResolvedValue([version(1)]);
+    expect(await detail()).not.toContain('Approval history');
+    expect(kernel.getApprovalRequest).not.toHaveBeenCalled();
+  });
+
   it('shows the version total from the server, progress per line and a PDF link per version', async () => {
     api.getPurchaseOrder.mockResolvedValue(order({ currentVersion: 2 }));
     api.listPoVersions.mockResolvedValue([version(1), version(2)]);
