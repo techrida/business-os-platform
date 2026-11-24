@@ -16,7 +16,7 @@ const storageState = process.env.PORTAL_E2E_STORAGE_STATE;
 const sentIds = (process.env.PORTAL_E2E_SENT_ID ?? '').split(',').filter(Boolean);
 let sentId: string | undefined;
 test.beforeEach(({ browserName: _browser }, info) => {
-  sentId = sentIds[info.repeatEachIndex] ?? sentIds.at(-1);
+  sentId = sentIds[info.repeatEachIndex];
 });
 const foreignId = process.env.PORTAL_E2E_FOREIGN_ID;
 const expiredId = process.env.PORTAL_E2E_EXPIRED_ID;

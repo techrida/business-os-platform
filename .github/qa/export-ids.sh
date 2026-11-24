@@ -49,6 +49,7 @@ need E2E_OPPORTUNITY_ID "$(fid opportunity)"
 need BOS_E2E_QUOTATION_SENT "$(fid quotationStaffSent)"
 need BOS_E2E_QUOTATION_DOWNLOAD "$(fid quotationStaffSent)"
 need BOS_E2E_QUOTATION_REVISABLE "$(fid quotationRevisable)"
-# BOS_E2E_QUOTATION_APPROVED / _CONTACT stay unset: the Send spec still drives the old select and skips (see the R6Q11 report).
+# BOS_E2E_QUOTATION_APPROVED / _CONTACT stay unset, so the Send spec (p2/quotations.spec.ts "Send gives the customer a portal link") skips: it failed on
+# 2026-11-24 after the Send dialog became a contact search box (clearing the box does not clear the choice). See the R6Q11 report.
 need PORTAL_E2E_SENT_ID "$(versions_of "$(fid quotationPortalSent)")"
 need PORTAL_E2E_FOREIGN_ID "$(versions_of "$(fid quotationDraft)")"

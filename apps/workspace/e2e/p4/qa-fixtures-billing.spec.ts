@@ -89,7 +89,7 @@ async function recordPayment(page: Page): Promise<string> {
       .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
       .then(() => true)
       .catch(() => false);
-    if (opened) break;
+    if (opened || /\/payments\/[0-9a-f-]{36}$/.test(page.url())) break;
     await expect(page.getByText(/A proof file is not ready yet/)).toBeVisible();
     await page.waitForTimeout(5_000);
   }
