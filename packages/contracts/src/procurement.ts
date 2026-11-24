@@ -244,9 +244,13 @@ export const CreateRfqBodySchema = z.strictObject({
 });
 export type CreateRfqBody = z.infer<typeof CreateRfqBodySchema>;
 
-/** One quotation line against a purchase request line. Quantity has up to 4 places and price up to 2. */
+/**
+ * One quotation line against a purchase request line. Quantity has up to 4 places and price up to 2. `description`
+ * is what the vendor quoted; left out, it is the request line's description.
+ */
 export const QuotationLineBodySchema = z.strictObject({
   prLineId: z.guid(),
+  description: text(500).optional(),
   quantity: decimalText(4),
   unitPrice: decimalText(2),
   taxCodeId: z.guid(),

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { TopBar } from '@/components/portal/top-bar';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
+import { getBranding, logoSrc } from '@/lib/api-branding';
 import { getVendorOnboarding } from '@/lib/api.vendor';
 import { getSession } from '@/lib/session';
 
@@ -27,9 +28,15 @@ export default async function VendorLayout({ children }: { children: ReactNode }
   const onboarding = await loadVendor(() => getVendorOnboarding(session), '/vendor');
   if (onboarding.kind !== 'ok') return <VendorNoAccess />;
 
+  const branding = await getBranding(session);
+
   return (
     <>
-      <TopBar kind="vendor" capability={onboarding.data.capability} />
+      <TopBar
+        kind="vendor"
+        capability={onboarding.data.capability}
+        brand={{ name: branding?.displayName ?? null, logoSrc: logoSrc(branding) }}
+      />
       {children}
     </>
   );

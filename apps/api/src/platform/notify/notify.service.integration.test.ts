@@ -25,6 +25,7 @@ import { bindIdentity, bindPrincipal, runWithRequestStore } from '../tenancy/req
 import { UserMirror } from '../users/user-mirror';
 import { UsersService } from '../users/users.service';
 import { SqlUsersStore } from '../users/users.store';
+import { SettingsService } from '../settings/settings.service';
 import { NotifyService } from './notify.service';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 
@@ -425,5 +426,62 @@ describe('NotifyService reads and markRead', () => {
       status: 404,
     });
     expect(await readAt(theirs)).toBeNull();
+  });
+});
+
+describe('the company logo in emails (R6Q20)', () => {
+  const LOGO = '5c1f3b7e-2d4a-4e8b-9a6c-0f1e2d3c4b5a';
+  const bodyOf = async (dedupePrefix: string) =>
+    (
+      await appPool.query<{ body_html: string; body_text: string }>(
+        'SELECT body_html, body_text FROM app.outbox WHERE dedupe_key LIKE $1',
+        [`${dedupePrefix}%`],
+      )
+    ).rows[0];
+
+  it('puts the logo at the top of a staff email and a customer email once the profile has one, and not before', async () => {
+    const both = new NotifyService(
+      db,
+      {
+        WORKSPACE_PUBLIC_URL: 'https://app.example.com',
+        PORTAL_PUBLIC_URL: 'https://portal.example.com',
+      } as CoreConfig,
+      directory,
+      {} as Queue,
+    );
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      both.notifyUser(tx, input(ids.a, 'logo:none')),
+    );
+    expect((await bodyOf('logo:none'))?.body_html).not.toContain('<img');
+
+    await withTx(db, scope, systemActor('test'), async (tx) => {
+      const settings = new SettingsService(db);
+      const current = (await settings.getLocked(tx, 'entity.profile')).value;
+      await settings.set(tx, 'entity.profile', {
+        ...current,
+        displayName: 'Techrida',
+        logoDocumentId: LOGO,
+      });
+    });
+    await withTx(db, scope, systemActor('test'), async (tx) => {
+      await both.notifyUser(tx, input(ids.a, 'logo:staff'));
+      await both.notifyEmail(tx, {
+        toEmail: 'customer@example.com',
+        template: 'quotation.sent',
+        data: { quotationNumber: 'Q-1', customerName: 'Acme', linkPath: '/quotations/abc' },
+        dedupeKey: 'logo:customer',
+      });
+    });
+
+    const staff = await bodyOf('logo:staff');
+    expect(staff?.body_html).toContain(
+      `<img src="https://app.example.com/brand/logo/${scope.tenantId}/${LOGO}" alt="Techrida"`,
+    );
+    const customer = await bodyOf('logo:customer');
+    expect(customer?.body_html).toContain(
+      `src="https://portal.example.com/brand/logo/${scope.tenantId}/${LOGO}"`,
+    );
+    // The text part stays text: no image reference.
+    expect(staff?.body_text).not.toContain('brand/logo');
   });
 });
