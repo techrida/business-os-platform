@@ -133,7 +133,24 @@ export interface QuotationDto {
   documentId: string;
 }
 
+/** One line of a quotation as the vendor quoted it; `lineNo` is its request line's number. */
+export interface QuotationLineDto {
+  id: string;
+  prLineId: string;
+  lineNo: number;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  taxCode: string;
+  taxRateBp: number;
+  gross: string;
+  taxAmount: string;
+  lineTotal: string;
+}
+
 export interface ComparisonRow extends QuotationDto {
+  /** What the vendor quoted, in request-line order. gross, tax and total add up to the quotation's. */
+  lines: QuotationLineDto[];
   /** The quoting vendor's legal name, read with the quotation (same tenant). */
   vendorName: string;
   /** The mean of the quotation's scores (two places), or null when nobody scored it yet. */
@@ -648,6 +665,42 @@ export class SourcingService {
               ),
             )
             .orderBy(asc(vendorComparisonScores.criterion));
+    const lineRows =
+      quotes.length === 0
+        ? []
+        : await this.db
+            .select({
+              line: vendorQuotationLines,
+              lineNo: purchaseRequestLines.lineNo,
+              taxCode: taxCodes.code,
+              taxRateBp: taxCodes.rateBp,
+            })
+            .from(vendorQuotationLines)
+            .innerJoin(
+              purchaseRequestLines,
+              and(
+                eq(purchaseRequestLines.tenantId, vendorQuotationLines.tenantId),
+                eq(purchaseRequestLines.organizationId, vendorQuotationLines.organizationId),
+                eq(purchaseRequestLines.id, vendorQuotationLines.prLineId),
+              ),
+            )
+            .innerJoin(
+              taxCodes,
+              and(
+                eq(taxCodes.tenantId, vendorQuotationLines.tenantId),
+                eq(taxCodes.id, vendorQuotationLines.taxCodeId),
+              ),
+            )
+            .where(
+              scoped(scope).where(
+                vendorQuotationLines,
+                inArray(
+                  vendorQuotationLines.vendorQuotationId,
+                  quotes.map((q) => q.id),
+                ),
+              ),
+            )
+            .orderBy(asc(purchaseRequestLines.lineNo));
     return quotes
       .map((q) => {
         const own = scores.filter((s) => s.vendorQuotationId === q.id);
@@ -657,6 +710,21 @@ export class SourcingService {
             : (Number(sumMoney(own.map((s) => s.score))) / own.length).toFixed(2);
         return {
           ...toQuotationDto(q),
+          lines: lineRows
+            .filter((r) => r.line.vendorQuotationId === q.id)
+            .map((r) => ({
+              id: r.line.id,
+              prLineId: r.line.prLineId,
+              lineNo: r.lineNo,
+              description: r.line.description,
+              quantity: r.line.quantity,
+              unitPrice: r.line.unitPrice,
+              taxCode: r.taxCode,
+              taxRateBp: r.taxRateBp,
+              gross: r.line.gross,
+              taxAmount: r.line.taxAmount,
+              lineTotal: r.line.lineTotal,
+            })),
           vendorName: nameOf.get(q.id) ?? '',
           averageScore: avg,
           scores: own.map((s) => ({ criterion: s.criterion, score: s.score, comment: s.comment })),
@@ -913,7 +981,7 @@ export class SourcingService {
     }
 
     const prLines = await tx
-      .select({ id: purchaseRequestLines.id })
+      .select({ id: purchaseRequestLines.id, description: purchaseRequestLines.description })
       .from(purchaseRequestLines)
       .where(
         scoped(scope).where(
@@ -921,7 +989,7 @@ export class SourcingService {
           eq(purchaseRequestLines.purchaseRequestId, rfq.purchaseRequestId),
         ),
       );
-    const prLineIds = new Set(prLines.map((l) => l.id));
+    const prLineText = new Map(prLines.map((l) => [l.id, l.description]));
     const taxIds = [...new Set(body.lines.map((l) => l.taxCodeId))];
     const taxes = await tx
       .select({ id: taxCodes.id, rateBp: taxCodes.rateBp })
@@ -929,10 +997,15 @@ export class SourcingService {
       .where(and(eq(taxCodes.tenantId, scope.tenantId), inArray(taxCodes.id, taxIds)));
     const rateOf = new Map(taxes.map((t) => [t.id, t.rateBp]));
     const lines = body.lines.map((l) => {
-      if (!prLineIds.has(l.prLineId)) throw badRequest('A line prices no line of the request');
+      const requestText = prLineText.get(l.prLineId);
+      if (requestText === undefined) throw badRequest('A line prices no line of the request');
       const rate = rateOf.get(l.taxCodeId);
       if (rate === undefined) throw badRequest('Unknown tax code');
-      return { ...l, ...quotationLineAmounts(l.quantity, l.unitPrice, rate) };
+      return {
+        ...l,
+        description: l.description ?? requestText,
+        ...quotationLineAmounts(l.quantity, l.unitPrice, rate),
+      };
     });
     const subtotal = sumMoney(lines.map((l) => l.gross));
     const taxAmount = sumMoney(lines.map((l) => l.taxAmount));
@@ -983,6 +1056,7 @@ export class SourcingService {
         vendorQuotationId: quote.id,
         purchaseRequestId: rfq.purchaseRequestId,
         prLineId: l.prLineId,
+        description: l.description,
         quantity: l.quantity,
         unitPrice: l.unitPrice,
         taxCodeId: l.taxCodeId,

@@ -30,7 +30,8 @@ import { type TxScope, requestTx, withTx } from '../db/tx';
 import { nudgeWithin } from '../queue/nudge-timeout';
 import { ctx } from '../tenancy/request-context';
 import { OUTBOX_DRAIN_JOB, OUTBOX_QUEUE } from './notify.constants';
-import { type EmailTemplate, renderEmail } from './templates';
+import { readBranding } from '../settings/company-branding';
+import { type EmailLogo, type EmailTemplate, renderEmail } from './templates';
 
 export interface NotifyInput {
   userId: string;
@@ -109,6 +110,7 @@ export class NotifyService {
     const rendered = renderEmail(n.email.template, n.email.vars, {
       workspaceUrl: this.config.WORKSPACE_PUBLIC_URL,
       portalUrl: this.config.PORTAL_PUBLIC_URL,
+      ...(await brandOf(tx, scope)),
     });
 
     await tx
@@ -138,6 +140,7 @@ export class NotifyService {
     const rendered = renderEmail(n.template, n.data, {
       workspaceUrl: this.config.WORKSPACE_PUBLIC_URL,
       portalUrl: this.config.PORTAL_PUBLIC_URL,
+      ...(await brandOf(tx, scope)),
     });
     await tx
       .insert(outbox)
@@ -271,6 +274,18 @@ export class NotifyService {
     );
     if (updated.length === 0) throw new NotFoundException('Notification not found');
   }
+}
+
+/**
+ * The company logo and name for the email, read on the caller's own transaction (a pooled read while the transaction
+ * holds a connection can stall the pool). A profile that does not validate gives no logo, never a failure.
+ */
+async function brandOf(
+  tx: DbTransaction,
+  scope: TxScope,
+): Promise<{ logo: EmailLogo | null; companyName: string | null }> {
+  const { logo, displayName } = await readBranding(tx, scope);
+  return { logo: logo === null ? null : { tenantId: logo.tenantId }, companyName: displayName };
 }
 
 /** The scope withTx set on this transaction. Empty means the transaction was not opened with withTx. */

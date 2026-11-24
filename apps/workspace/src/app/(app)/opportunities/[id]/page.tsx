@@ -340,6 +340,41 @@ function StageHistory({ entries }: { entries: NonNullable<OpportunityDto['stageH
   );
 }
 
+const ORDER_EVENT_WORDS = {
+  drafted: 'drafted',
+  confirmed: 'confirmed',
+  cancelled: 'cancelled',
+} as const;
+
+/**
+ * The deal's sales orders as dated events, oldest first (R6Q22), under the stage changes. The server lists only the
+ * orders this person may read, so every row opens. Nothing is drawn for a deal with no order.
+ */
+function OrderHistory({ entries }: { entries: NonNullable<OpportunityDto['orderHistory']> }) {
+  if (entries.length === 0) return null;
+  return (
+    <ol className={crmStyles.timeline} aria-label="Order events">
+      {entries.map((entry, index) => (
+        <li key={`${entry.salesOrderId}-${entry.event}-${index}`} className={crmStyles.entry}>
+          <div className={crmStyles.entryHead}>
+            <span className={crmStyles.entryTitle}>
+              Sales order{' '}
+              <Link href={`/sales-orders/${encodeURIComponent(entry.salesOrderId)}`}>
+                {entry.number ?? 'draft'}
+              </Link>
+              {` ${ORDER_EVENT_WORDS[entry.event]}`}
+            </span>
+          </div>
+          <p className={crmStyles.entryWhen}>
+            <time dateTime={entry.at}>{when(entry.at)}</time>
+            {entry.actorName === null ? '' : ` · ${entry.actorName}`}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function facts(
   o: OpportunityDto,
   customerName: string,
@@ -660,8 +695,9 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         />
       </Panel>
 
-      <Panel title="Stage history" className={styles.summary}>
+      <Panel title="Deal history" className={styles.summary}>
         <StageHistory entries={opp.stageHistory ?? []} />
+        <OrderHistory entries={opp.orderHistory ?? []} />
       </Panel>
 
       <Panel title="Quotations" className={styles.records}>

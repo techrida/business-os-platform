@@ -14,6 +14,7 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/components/web-vitals', () => ({ WebVitals: () => <i data-testid="web-vitals" /> }));
 type SidebarProps = {
   user: Record<string, unknown>;
+  brand?: { name: string | null; logoSrc: string | null };
   permissions: readonly string[];
   counts?: Record<string, number>;
 };
@@ -46,6 +47,14 @@ vi.mock('@/components/shell/shell-state', () => ({
 }));
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
+const getBranding =
+  vi.fn<
+    () => Promise<{ displayName: string | null; logo: Record<string, string> | null } | null>
+  >();
+vi.mock('@/lib/api-branding', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api-branding')>()),
+  getBranding: () => getBranding(),
+}));
 const getMe = vi.fn<
   () => Promise<{
     avatarDocumentId?: string | null;
@@ -81,6 +90,8 @@ beforeEach(() => {
   getSession.mockReset();
   getMe.mockReset();
   getMe.mockResolvedValue({ avatarDocumentId: null });
+  getBranding.mockReset();
+  getBranding.mockResolvedValue(null);
   sidebarProps.mockReset();
   countsProps.mockReset();
   getInboxCount.mockReset();
@@ -203,5 +214,29 @@ describe('navigation grants in the sidebar', () => {
     expect([...(lastPermissions() ?? [])].sort()).toEqual(
       Object.keys(DEFAULT_ROLE_PERMISSIONS.finance).sort(),
     );
+  });
+});
+
+// R6Q20: the sidebar's brand lockup gets the company's logo address (the same-origin proxy) and name from the API.
+describe('the company logo in the sidebar', () => {
+  const lastBrand = () => sidebarProps.mock.calls.at(-1)?.[0].brand;
+
+  it('passes the logo proxy address and the company name', async () => {
+    const tenantId = '11111111-1111-4111-8111-111111111111';
+    const documentId = '22222222-2222-4222-8222-222222222222';
+    getSession.mockResolvedValue(staff);
+    getBranding.mockResolvedValue({ displayName: 'Techrida', logo: { tenantId, documentId } });
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(lastBrand()).toEqual({
+      name: 'Techrida',
+      logoSrc: `/brand/logo/${tenantId}`,
+    });
+  });
+
+  it('passes nothing when the branding cannot be read, so the sidebar shows the product name', async () => {
+    getSession.mockResolvedValue(staff);
+    getBranding.mockResolvedValue(null);
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(lastBrand()).toEqual({ name: null, logoSrc: null });
   });
 });

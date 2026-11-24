@@ -1,6 +1,7 @@
 // Walks every route Nest registered (not a hand-kept list) and proves that 100% of them fail closed.
 // Serves the NFR "authorization is deny-by-default" (P1 plan §1, §7 U1, finding 7):
-// - exactly five routes are public, and each authenticates itself (HMAC, signed link);
+// - exactly six routes are public: five authenticate themselves (HMAC, signed link), and GET /v1/public/logo/:tenantId
+//   is the one deliberate anonymous read (the company logo, nothing else);
 // - every other route carries @Can or @AnyAuthenticated, so none relies on the interceptor's default;
 // - no token is 401 everywhere; a staff token with no role, a customer token holding staff role
 //   names, and a role granted only in another org are all 403 on every @Can route.
@@ -44,6 +45,7 @@ const EXPECTED_PUBLIC = [
   'GET /health/live',
   'GET /health/ready',
   'GET /v1/files/:token',
+  'GET /v1/public/logo/:tenantId',
   'POST /v1/hooks/postal',
   'POST /v1/hooks/zitadel',
 ];
@@ -202,7 +204,7 @@ describe('route sweep: discovery and markers', () => {
     );
   });
 
-  it('exposes exactly the five self-authenticating public routes', () => {
+  it('exposes exactly the six public routes (five self-authenticating, plus the anonymous logo)', () => {
     const open = routes
       .filter((r) => r.kind === 'public')
       .map(label)

@@ -196,6 +196,13 @@ jobs:
           if [ "${#filter[@]}" -gt 0 ]; then extra+=(--pass-with-no-tests); fi
           pnpm --filter @bos/portal exec playwright test --repeat-each="$REPEAT_EACH" "${extra[@]}" "${filter[@]}"
 
+      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). Informational: a shared runner is too
+      # noisy for a hard limit, so this step cannot fail the job.
+      - name: Approve timing (p95 in the job summary)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
+
       # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
       - name: Remove any file that holds a persona password or TOTP secret
         if: ${{ !cancelled() }}

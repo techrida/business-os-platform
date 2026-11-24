@@ -148,6 +148,15 @@ describe('parseQuoteValues', () => {
     });
   });
 
+  it('sends a typed line description trimmed, and leaves a blank one out for the server default', () => {
+    const typed = parseQuoteValues(
+      quoteValuesFromForm(quoteForm([['lines.0.description', '  Laptop 14-inch ']])),
+    );
+    expect(typed.ok && typed.data.lines[0]).toMatchObject({ description: 'Laptop 14-inch' });
+    const blank = parseQuoteValues(quoteValuesFromForm(quoteForm([['lines.0.description', '  ']])));
+    expect(blank.ok && 'description' in (blank.data.lines[0] ?? {})).toBe(false);
+  });
+
   it('adds the optional fields only when they were typed, and delivery days as a number', () => {
     const out = parseQuoteValues(
       quoteValuesFromForm(

@@ -77,6 +77,7 @@ const quotation = {
   deliveryDays: null,
   documentId: ID_A,
   vendorName: 'Himal Traders',
+  lines: [],
   averageScore: null,
   scores: [],
 };
@@ -180,6 +181,28 @@ describe('reads', () => {
     expect(rows[0]?.totalNpr).toBe('5085000.00');
     expect(rows[0]?.averageScore).toBe('82.50');
     expect(lastCall().url).toBe(`http://api:3001/v1/procurement/rfqs/${ID_A}/quotations`);
+  });
+
+  it('reads each quotation line as the server sent it, and refuses a drifted one (502)', async () => {
+    const line = {
+      id: ID_A,
+      prLineId: ID_B,
+      lineNo: 1,
+      description: 'Laptop 14-inch',
+      quantity: '10.0000',
+      unitPrice: '450000.00',
+      taxCode: 'VAT13',
+      taxRateBp: 1300,
+      gross: '4500000.00',
+      taxAmount: '585000.00',
+      lineTotal: '5085000.00',
+    };
+    answer(reply([{ ...quotation, lines: [line] }]));
+    const rows = await getComparison(session, ID_A);
+    expect(rows[0]?.lines[0]).toEqual(line);
+    const { description: _gone, ...drifted } = line;
+    answer(reply([{ ...quotation, lines: [drifted] }]));
+    await expect(getComparison(session, ID_A)).rejects.toMatchObject({ status: 502 });
   });
 
   it('lists submissions with their scan status', async () => {
