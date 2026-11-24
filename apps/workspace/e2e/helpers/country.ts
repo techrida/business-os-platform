@@ -32,6 +32,7 @@ async function expectHighlighted(box: Locator, shown: string): Promise<void> {
     const id = await box.getAttribute('aria-activedescendant', { timeout: 1_000 });
     expect(id, 'a highlighted option').toBeTruthy();
     await expect(box.page().locator(`[id="${id}"][role="option"]`)).toContainText(shown, {
+      ignoreCase: true,
       timeout: 1_000,
     });
   }).toPass({ timeout: 10_000 });
@@ -40,7 +41,8 @@ async function expectHighlighted(box: Locator, shown: string): Promise<void> {
 /**
  * Picks a country in a phone row's flag menu (src/components/ui/phone-country-menu.tsx): the flag button opens a
  * searchable list; its search box is named `<button name> search`. Pass the button as
- * `getByRole('combobox', { name: 'Phone 2 country', exact: true })`.
+ * `getByRole('combobox', { name: 'Phone 2 country', exact: true })`. `search` must appear in the chosen country's
+ * option text (its name as shown, or its dial code without spaces, e.g. `+977`): the wait before Enter compares it.
  */
 export async function pickPhoneCountry(button: Locator, search: string): Promise<void> {
   const page = button.page();
