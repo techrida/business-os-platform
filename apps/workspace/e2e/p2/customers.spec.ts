@@ -11,8 +11,7 @@ import { searchBox } from '../helpers/multi-select';
  * once those exist; see the hand-back for the command.
  *
  * (1) The founder sees the CRM nav entries and the customer list loads, search included.
- * (2) The 403 wording is a fixme: K3 gives every staff persona `customer.read`, so no seeded persona
- *     can reach it. Add a persona without it (or a role-edit step) to turn it on.
+ * (2) The 403 wording: the warehouse persona's role holds no `customer.read`, so it reaches the words.
  * (3) The KYB queue opens a case, and deciding without a reason is refused in place.
  */
 
@@ -51,8 +50,26 @@ test('the customer list loads and searches', async ({ browser, baseURL }) => {
   }
 });
 
-test.fixme('a role without customer access sees words, not a blank page', () => {
-  // Needs a seeded staff persona with no `customer.read`; none exists after K3.
+test('a role without customer access sees words, not a blank page', async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  // The warehouse role holds no `customer.read` (packages/contracts/src/authz.ts): the page answers 403 in words.
+  const { page, context } = await signInAs(
+    browser,
+    baseURL ?? 'https://app.localhost',
+    'warehouse',
+  );
+  try {
+    await page.goto('/customers');
+    await expect(
+      page.getByRole('main').getByText('Your roles do not include organizations'),
+    ).toBeVisible();
+    await expect(page.getByRole('table')).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
 });
 
 test('a US customer without a PAN keeps its country and a contact number typed with +1', async ({
