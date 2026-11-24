@@ -549,10 +549,7 @@ export function memoPdfFileName(number: string | null, title: string): string {
       .replace(/[^\x20-\x7e]/g, '')
       .replace(/[^A-Za-z0-9]+/g, '-'),
   ).slice(0, 60);
-  const base = [
-    trimDashes(number?.replace(/[^A-Za-z0-9]+/g, '-') ?? '') || 'memo',
-    slug || null,
-  ]
+  const base = [trimDashes(number?.replace(/[^A-Za-z0-9]+/g, '-') ?? '') || 'memo', slug || null]
     .filter(Boolean)
     .join('-');
   return `${base}.pdf`;
