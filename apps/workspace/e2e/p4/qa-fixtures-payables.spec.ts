@@ -87,8 +87,8 @@ test('qa fixtures: a draft payment request on a verified vendor account and an a
       await expect(enterer.getByText('Invoice uploaded').first()).toBeVisible({
         timeout: 60_000,
       });
-      await enterer.getByLabel('Quantity').fill('1');
-      await enterer.getByLabel('Unit price').fill('10000.00');
+      await enterer.getByLabel('Quantity', { exact: true }).first().fill('1');
+      await enterer.getByLabel('Unit price', { exact: true }).first().fill('10000.00');
       await chooseOption(selectByLabel(enterer, 'VAT'), { index: 1 });
       const account = enterer.getByRole('combobox', { name: 'Expense account', exact: true });
       await account.click();
