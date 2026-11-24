@@ -12,7 +12,7 @@
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "typecheck": "pnpm -r --if-present run typecheck",
-    "lint": "node --max-old-space-size=6144 node_modules/eslint/bin/eslint.js . --max-warnings 0",
+    "lint": "node --max-old-space-size=10240 node_modules/eslint/bin/eslint.js . --max-warnings 0",
     "test": "pnpm -r --if-present run test",
     "test:e2e": "pnpm -r --if-present run test:e2e",
     "format": "prettier --write .",
