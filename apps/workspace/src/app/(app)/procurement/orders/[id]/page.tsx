@@ -29,6 +29,7 @@ import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants } from '@/lib/grants';
 import { when } from '@/lib/kernel-format';
 
+import { ApprovalHistory, loadApproval } from '../../../payables/_components/approval-history';
 import layout from '../../procurement.module.css';
 import { loadVendors, vendorName } from '../../rfqs/_lib/vendors';
 import {
@@ -63,6 +64,25 @@ function closedToReader(result: PromiseSettledResult<unknown>): boolean {
   if (result.status === 'fulfilled') return false;
   const { status } = poFailure(result.reason, 'load');
   return status === 403 || status === 404;
+}
+
+/**
+ * The approval to show as the order's history (R6Q22): the waiting change of vendor if there is one, else the current
+ * version's approval, else the latest version that went through one. Versions the person may not read give none.
+ */
+function approvalRequestOf(
+  po: PurchaseOrder,
+  versions: PromiseSettledResult<PoVersion[]>,
+): string | null {
+  if (po.pendingVendorChange) return po.pendingVendorChange.approvalRequestId;
+  if (versions.status !== 'fulfilled') return null;
+  const byNewest = [...versions.value].sort((a, b) => b.version - a.version);
+  const current = byNewest.find((v) => v.version === po.currentVersion);
+  return (
+    current?.approvalRequestId ??
+    byNewest.find((v) => v.approvalRequestId !== null)?.approvalRequestId ??
+    null
+  );
 }
 
 function PanelProblem({ what, err, retry }: { what: string; err: unknown; retry: string }) {
@@ -350,6 +370,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     getPoProgress(session, id),
   ]);
 
+  const approval = await loadApproval(session, approvalRequestOf(po, versions));
   const grants = poGrants(await getGrants(session));
   const can = orderActions(po.status, grants);
   // Only a draft changes vendor (F1-Q40 a), so only a draft the person may issue asks for the approved vendors.
@@ -555,6 +576,8 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
           ) : null}
         </Panel>
       </div>
+
+      {approval ? <ApprovalHistory approval={approval} /> : null}
 
       <Lines numberSystems={numberSystems} po={po} progress={progress} />
       {closedToReader(versions) ? null : (
