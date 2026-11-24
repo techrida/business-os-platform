@@ -100,8 +100,11 @@ test.describe('another approved vendor of the same entity', () => {
   test('gets "Page not found" for the order, the bill and the order PDF of the first vendor', async ({
     page,
   }) => {
-    await page.goto('/vendor');
-    await expect(page.getByRole('heading', { name: 'Payments' })).toBeVisible();
+    // An approved vendor of its own: it sees the order pages, and still not the first vendor's records.
+    await page.goto('/vendor/purchase-orders');
+    await expect(
+      page.getByRole('heading', { level: 1, name: 'Your purchase orders' }),
+    ).toBeVisible();
     for (const path of [`/vendor/purchase-orders/${poId}`, `/vendor/bills/${billId}`]) {
       await page.goto(path);
       await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
