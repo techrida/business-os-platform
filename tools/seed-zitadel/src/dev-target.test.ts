@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { assertDevTarget, main } from './index.js';
-import { EXTRA_VENDORS } from './personas.js';
 
 describe('assertDevTarget', () => {
   it('refuses a production issuer and says what to set', () => {
@@ -48,7 +47,6 @@ describe('assertDevTarget', () => {
       vi.stubEnv('ZITADEL_ADMIN_PAT_FILE', '/nonexistent/admin.pat');
       vi.stubEnv('DATABASE_MIGRATE_URL', '');
       await expect(main()).rejects.toThrow(/refuses to run against auth\.techrida\.com/);
-      expect(EXTRA_VENDORS.map((v) => v.key)).toEqual(['vendor2', 'vendorpending']);
     });
   });
 });

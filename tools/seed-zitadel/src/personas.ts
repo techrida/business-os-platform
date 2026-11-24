@@ -66,8 +66,6 @@ export interface PersonaSpec {
   role: RoleKey;
   /** A vendor of its own (EXTRA_VENDORS) instead of the shared Dev Vendor Co org. */
   vendorOrg?: ExtraVendorKey;
-  /** What the switcher and `logins` show; defaults to the given and family name. */
-  label?: string;
 }
 
 export const PERSONAS: readonly PersonaSpec[] = [
@@ -176,21 +174,21 @@ export const PERSONAS: readonly PersonaSpec[] = [
   // orders and logins do not change.
   {
     key: 'vendor2',
-    givenName: 'Dev',
-    familyName: 'Vendor Two',
+    // The switcher shows the name ZITADEL holds (given and family name), and `logins` the persona label, so the two
+    // names are written to read as plain role labels.
+    givenName: 'Vendor 2',
+    familyName: '(approved)',
     orgKind: 'vendor',
     role: 'vendor_user',
     vendorOrg: 'vendor2',
-    label: 'Vendor 2 (approved)',
   },
   {
     key: 'vendorpending',
-    givenName: 'Dev',
-    familyName: 'Vendor Pending',
+    givenName: 'Vendor awaiting',
+    familyName: 'KYC',
     orgKind: 'vendor',
     role: 'vendor_user',
     vendorOrg: 'vendorpending',
-    label: 'Vendor awaiting KYC',
   },
 ];
 
