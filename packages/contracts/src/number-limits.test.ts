@@ -58,6 +58,10 @@ describe('contract patterns after the refactor', () => {
     [QuantityString, '0.0001', true],
     [QuantityString, '0', false],
     [QuantityString, '1.00001', false],
+    // The wire takes plain digits only: a grouped or spaced quantity is the client's to clean (R6Q18, OQ-R5-04).
+    [QuantityString, '1,000', false],
+    [QuantityString, '1000', true],
+    [QuantityString, '10 50', false],
     [PercentFourDecimals, '100', true],
     [PercentFourDecimals, '100.0000', true],
     [PercentFourDecimals, '100.0001', false],

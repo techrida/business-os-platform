@@ -120,5 +120,6 @@
   "0196_party_phone_main_country.sql": "647ba2754e2e06684c71a5ae573469d9d0d99b7e8d6b7a352bb20d0dff0a830c",
   "0199_lead_address.sql": "fcfa8d9bdc71604fa75c67c7def39240bbd04ab33baa35befff160b2a17e2e7c",
   "0218_logo_image_stats.sql": "0835c1c65a598f8932e7ab805e057e77bd996d47daf65263d4b4a61172f70b04",
-  "0220_verification_identity_reset.sql": "24c9a4b1896d6a611ef4c34133418c0ef0770a8a2a687844e665db76e98ebad0"
+  "0220_verification_identity_reset.sql": "24c9a4b1896d6a611ef4c34133418c0ef0770a8a2a687844e665db76e98ebad0",
+  "0222_vendor_quotation_line_description.sql": "dfc98d6bb58276d996862157ae3dddf37c52bd9243d5ca17d720ef76b80a3de2"
 }

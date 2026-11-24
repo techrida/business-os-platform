@@ -113,3 +113,15 @@ export function avatarInitials(name: string): string {
 export function imagePath(documentId: string): string {
   return `/api/images/${documentId}`;
 }
+
+/**
+ * The company's face for a screen or an email (R6Q20): the display name from `entity.profile` and the current primary
+ * logo (`documentId` says which; the public read route is addressed by the tenant alone, `/v1/public/logo/:tenantId`,
+ * and always serves the current logo; the web apps proxy it as `/brand/logo/:tenantId`). Either may be null: no name or no logo set. Read by any signed-in principal
+ * (staff, customer, vendor) with `GET /v1/branding`; it carries no other profile field.
+ */
+export const BrandingSchema = z.strictObject({
+  displayName: z.string().nullable(),
+  logo: z.strictObject({ tenantId: z.guid(), documentId: z.guid() }).nullable(),
+});
+export type Branding = z.infer<typeof BrandingSchema>;

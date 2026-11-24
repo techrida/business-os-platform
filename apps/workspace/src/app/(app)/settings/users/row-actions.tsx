@@ -12,7 +12,7 @@ import { StatusAction } from './status-actions';
 import styles from './users.module.css';
 
 /** The fixed slots of a directory row, left to right. Every row renders all of them, so the columns line up. */
-export type SlotId = 'picture' | 'roles' | 'access' | 'reset' | 'lock' | 'keep' | 'toggle';
+export type SlotId = 'picture' | 'roles' | 'access' | 'reset' | 'lock' | 'toggle';
 
 export const ROW_SLOTS: readonly SlotId[] = [
   'picture',
@@ -20,7 +20,6 @@ export const ROW_SLOTS: readonly SlotId[] = [
   'access',
   'reset',
   'lock',
-  'keep',
   'toggle',
 ];
 
@@ -125,15 +124,21 @@ export function RowActions({
 
   const status = (() => {
     if (!can.canChangeStatus) {
-      return [
-        <Slot key="lock" id="lock" />,
-        <Slot key="keep" id="keep" />,
-        <Slot key="toggle" id="toggle" />,
-      ];
+      return [<Slot key="lock" id="lock" />, <Slot key="toggle" id="toggle" />];
     }
-    const live = (id: SlotId, action: Parameters<typeof StatusAction>[0]['action']) => (
+    const live = (
+      id: SlotId,
+      action: Parameters<typeof StatusAction>[0]['action'],
+      canKeepLocked = false,
+    ) => (
       <Slot key={id} id={id}>
-        <StatusAction userId={user.id} name={name} label={label} action={action} />
+        <StatusAction
+          userId={user.id}
+          name={name}
+          label={label}
+          action={action}
+          canKeepLocked={canKeepLocked}
+        />
       </Slot>
     );
     const off = (id: SlotId, text: string, reason: string) => (
@@ -144,12 +149,11 @@ export function RowActions({
     if (own) {
       return [
         off('lock', 'Lock', OWN_ACCOUNT),
-        off('keep', 'Keep locked', OWN_ACCOUNT),
         off('toggle', user.status === 'inactive' ? 'Reactivate' : 'Deactivate', OWN_ACCOUNT),
       ];
     }
     const lock = locked
-      ? live('lock', 'unlock')
+      ? live('lock', 'unlock', locked === 'failed_sign_ins')
       : user.status === 'active'
         ? live('lock', 'lock')
         : off(
@@ -158,16 +162,6 @@ export function RowActions({
             user.status === 'inactive'
               ? 'Can’t lock a deactivated user'
               : 'Can’t lock a user who hasn’t accepted their invitation yet',
-          );
-    const keep =
-      locked === 'failed_sign_ins'
-        ? live('keep', 'keepLocked')
-        : off(
-            'keep',
-            'Keep locked',
-            locked
-              ? 'This lock never ends by itself, so there is nothing to keep'
-              : 'Only for a user locked after failed sign-ins',
           );
     const toggle =
       locked || user.status === 'active'
@@ -179,7 +173,7 @@ export function RowActions({
               'Deactivate',
               'Can’t deactivate a user who hasn’t accepted their invitation yet',
             );
-    return [lock, keep, toggle];
+    return [lock, toggle];
   })();
 
   return (

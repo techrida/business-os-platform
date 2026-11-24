@@ -22,6 +22,7 @@ import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 import { getPermissionCheck } from '@/lib/live-permissions';
 
+import { qtyText } from '../../orders/_lib/model';
 import { ApprovalActions } from '../../approval-actions';
 import { ApprovalTimeline } from '../../approval-timeline';
 import layout from '../../procurement.module.css';
@@ -395,6 +396,94 @@ export default async function RfqPage({
           </Table>
         )}
       </Panel>
+
+      {quotations.length > 0 ? (
+        <Panel
+          title="What each vendor quoted"
+          description="Line by line, as recorded from the vendor's document. The gross, tax and line total are the platform's, and they add up to the totals above."
+        >
+          <div className={styles.panelForm}>
+            {quotations.map((q) => (
+              <Table
+                key={q.id}
+                className={layout.panelTable ?? ''}
+                caption={`Lines quoted by ${vendorLabel(q.vendorId)}`}
+                minWidth={760}
+              >
+                <thead>
+                  <tr>
+                    <Th align="end">#</Th>
+                    <Th>Item</Th>
+                    <Th align="end">Quantity</Th>
+                    <Th align="end">Unit price</Th>
+                    <Th align="end">Gross</Th>
+                    <Th align="end">Tax</Th>
+                    <Th align="end">Line total</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {q.lines.map((l) => (
+                    <tr key={l.id}>
+                      <Td align="end" nowrap>
+                        {l.lineNo}
+                      </Td>
+                      <Td>
+                        <span className={styles.name}>{l.description}</span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>{qtyText(l.quantity)}</span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>
+                          {money(l.unitPrice, q.currency, numberSystems)}
+                        </span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>
+                          {money(l.gross, q.currency, numberSystems)}
+                        </span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>
+                          {money(l.taxAmount, q.currency, numberSystems)}
+                        </span>
+                        <span className={styles.quiet}> {l.taxCode}</span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>
+                          {money(l.lineTotal, q.currency, numberSystems)}
+                        </span>
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <Td colSpan={4}>
+                      <strong>{vendorLabel(q.vendorId)} total</strong>
+                    </Td>
+                    <Td align="end" nowrap>
+                      <span className={styles.numeric}>
+                        {money(q.subtotal, q.currency, numberSystems)}
+                      </span>
+                    </Td>
+                    <Td align="end" nowrap>
+                      <span className={styles.numeric}>
+                        {money(q.taxAmount, q.currency, numberSystems)}
+                      </span>
+                    </Td>
+                    <Td align="end" nowrap>
+                      <span className={styles.numeric}>
+                        {money(q.total, q.currency, numberSystems)}
+                      </span>
+                    </Td>
+                  </tr>
+                </tfoot>
+              </Table>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
 
       {decide && quotations.length > 0 ? (
         <>

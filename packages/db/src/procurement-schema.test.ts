@@ -26,7 +26,12 @@ import {
   vendorQuotations,
 } from './schema/procurement.js';
 
-const SQL_TEXT = ['0033_procurement_sourcing', '0036_purchase_request_serials', '0037_cost_centers']
+const SQL_TEXT = [
+  '0033_procurement_sourcing',
+  '0036_purchase_request_serials',
+  '0037_cost_centers',
+  '0222_vendor_quotation_line_description',
+]
   .map((name) => readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), 'utf8'))
   .join('\n');
 

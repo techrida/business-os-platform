@@ -52,7 +52,10 @@ export class HealthService {
           .check('valkey')
           .attempt(async () => {
             // The queue's own connection answers; no second client is opened just for health.
-            const client = (await this.queue.client) as unknown as { ping(): Promise<string> };
+            // BullMQ 6 no longer exposes `queue.client`: the raw client sits on the backend's connection.
+            const client = (await this.queue.getBackend().connection.client) as unknown as {
+              ping(): Promise<string>;
+            };
             await client.ping();
           })
           .withTimeout(CHECK_TIMEOUT_MS),
