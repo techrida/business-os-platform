@@ -1334,6 +1334,71 @@ export class DocumentsService {
   // ------------------------------------------------------------------------------------ internals
 
   /** Signs a link to one version. Fails closed: no secret means no links, never an unsigned one. */
+  /**
+   * The bytes of a company logo for a caller with no session (R6Q20: the portal's and the workspace's header, and
+   * emails). It serves one thing only: the live `entity_logo` document of `tenantId` (never a variant, a picture,
+   * an avatar or any other file), as its newest clean version in PNG, JPEG or WebP. The tenant in the path must be
+   * the document's own tenant, so a logo id under another tenant's id is as unknown as a random id; the entity is
+   * not named because the tenant's logo is a public face of the tenant. Every refusal is the one IMAGE_NOT_FOUND 404.
+   */
+  async openPublicLogo(
+    tenantId: string,
+    documentId: string,
+    ifNoneMatch?: string,
+  ): Promise<ImageHandle> {
+    if (!Id.safeParse(tenantId).success || !Id.safeParse(documentId).success) {
+      throw new NotFoundException(IMAGE_NOT_FOUND);
+    }
+    const [row] = await this.db
+      .select({
+        ownerType: documents.ownerType,
+        tenantId: documents.tenantId,
+        removedAt: documents.removedAt,
+        version: documentVersions,
+      })
+      .from(documents)
+      .innerJoin(documentVersions, eq(documentVersions.documentId, documents.id))
+      .where(
+        and(
+          eq(documents.tenantId, tenantId),
+          eq(documentVersions.tenantId, tenantId),
+          eq(documents.id, documentId),
+          eq(documents.ownerType, 'entity_logo'),
+          isNull(documents.removedAt),
+          eq(documentVersions.status, 'clean'),
+        ),
+      )
+      .orderBy(desc(documentVersions.version))
+      .limit(1);
+    // The query already filters; the same rules again here, so a query change cannot widen what is served.
+    if (
+      row === undefined ||
+      row.tenantId !== tenantId ||
+      row.ownerType !== 'entity_logo' ||
+      row.removedAt !== null ||
+      row.version.status !== 'clean' ||
+      row.version.detectedMime === null ||
+      !(IMAGE_MIME as readonly string[]).includes(row.version.detectedMime)
+    ) {
+      throw new NotFoundException(IMAGE_NOT_FOUND);
+    }
+    if (etagMatches(ifNoneMatch, row.version.id))
+      return { notModified: true, etag: row.version.id };
+    try {
+      const stream = await this.storage.openClean(row.version.storageKey);
+      return {
+        notModified: false,
+        stream,
+        mime: row.version.detectedMime,
+        size: row.version.sizeBytes,
+        etag: row.version.id,
+      };
+    } catch (error) {
+      if (error instanceof StoredFileNotFoundError) throw new NotFoundException(IMAGE_NOT_FOUND);
+      throw error;
+    }
+  }
+
   private signLink(versionId: string): SignedLinkDto {
     try {
       const { token, expiresAt } = this.links.issue(versionId);
