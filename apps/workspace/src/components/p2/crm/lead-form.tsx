@@ -592,7 +592,7 @@ export function LeadForm({
 
         <Panel
           title="Schedule a follow-up"
-          description="Leave the time empty to skip it; you can plan one from the lead later."
+          description="Leave the date and time empty to skip it; you can plan one from the lead later."
         >
           <ActivityTypeButtons
             kinds={SCHEDULE_ACTIVITY_KINDS}
