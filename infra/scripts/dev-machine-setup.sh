@@ -49,7 +49,6 @@ fi
 # pnpm from the lockfile in infra/pnpm-bootstrap (integrity hashes), not an unpinned global install.
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 npm ci --prefix "$repo_root/infra/pnpm-bootstrap" --ignore-scripts
-mkdir -p "$HOME/.local/bin"
-ln -sf "$repo_root/infra/pnpm-bootstrap/node_modules/.bin/pnpm" "$HOME/.local/bin/pnpm"
-export PATH="$HOME/.local/bin:$PATH"
+# env.sh puts that folder on PATH (run it from the repo root); no symlink into ~/.local/bin.
+export PATH="$repo_root/infra/pnpm-bootstrap/node_modules/.bin:$PATH"
 echo "node $(node -v), pnpm $(pnpm -v), docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'needs new shell')"

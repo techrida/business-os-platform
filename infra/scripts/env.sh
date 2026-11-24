@@ -7,5 +7,7 @@ if [ -x "$HOME/.local/share/fnm/fnm" ]; then
 elif [ -x "$HOME/.local/node/bin/node" ]; then
   export PATH="$HOME/.local/node/bin:$PATH"
 fi
+# pnpm comes from infra/pnpm-bootstrap (lockfile install by dev-machine-setup.sh).
+[ -d "$PWD/infra/pnpm-bootstrap/node_modules/.bin" ] && export PATH="$PWD/infra/pnpm-bootstrap/node_modules/.bin:$PATH"
 [ -f "$PWD/.dev/caddy-root.crt" ] && export NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt"
 true
