@@ -1,5 +1,6 @@
 // Run: node --test tools/affected.test.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { affected, loadWorkspace, qaMatrix, withDependents } from './affected.mjs';
 
@@ -127,4 +128,9 @@ test('the full matrix keeps the job names qa specs 1/2/3 and qa quarantined -', 
     ['specs 1', 'specs 2', 'specs 3', 'quarantined -'],
   );
   assert.equal(qaMatrix(run('docs/a.md')).include.length, 0);
+});
+
+test('a file moved out of a gate area is still caught when both paths are listed (diff runs with --no-renames)', () => {
+  assert.equal(affected(['infra/x.sh', 'docs/x.md'], packages).full, true);
+  assert.match(readFileSync(new URL('./affected.mjs', import.meta.url), 'utf8'), /'--no-renames'/);
 });
