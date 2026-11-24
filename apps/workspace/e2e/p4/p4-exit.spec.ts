@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { approveInboxRequest } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { chooseOption, selectByName } from '../helpers/select';
 import { fillDateField } from '../helpers/date-fields';
@@ -16,8 +17,9 @@ import { fillDateField } from '../helpers/date-fields';
  * BOS_E2E_P4_EXIT_SERIALS (two comma-separated serial numbers). These must describe ONE connected
  * Journey 11: normal approved PR, three invited vendors, NPR 120000 recommended quote with three
  * approved commitment steps, fully received PO with a clean v1 PDF, confirmed two-serial receipt,
- * and an approved, matched bill. Provision these milestones separately: the ephemeral API exit
- * suite does not export live fixture IDs. Browser checkpoints alone do not prove their creation.
+ * and an approved, matched bill. The qa workflow makes them through the product screens
+ * (e2e/p4/qa-fixtures-p4-exit.spec.ts) and .github/qa/export-ids.sh exports the ids; elsewhere,
+ * provision these milestones separately. Browser checkpoints alone do not prove their creation.
  * BASE_URL/BOS_DEV_PERSONAS_FILE/BOS_E2E_CA_FILE follow the existing workspace runner.
  */
 const enabled = process.env.BOS_E2E_P4_EXIT === '1';
@@ -80,16 +82,7 @@ test('procurement raises a PR, its department head alone approves, then three ve
     await test.step('a different department-head persona approves the only step', async () => {
       const head = await signInAs(browser, appBase, 'depthead');
       opened.push(head);
-      await head.page.goto('/inbox');
-      const row = head.page
-        .getByRole('table', { name: 'Waiting approvals' })
-        .getByRole('row')
-        .filter({ hasText: number });
-      await expect(row).toHaveCount(1);
-      await row.getByRole('link').first().click();
-      await head.page.waitForLoadState('networkidle');
-      await head.page.getByRole('button', { name: 'Approve', exact: true }).click();
-      await expect(head.page).toHaveURL(/\/inbox\?decided=approve/);
+      await approveInboxRequest(head.page, number, 'Journey 11 browser approval');
       await page.goto(requestPath);
       await expect(page.getByText('Department approved', { exact: true })).toBeVisible();
       await expect(
@@ -168,11 +161,11 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
       await expect(page.getByRole('region', { name: 'Profile', exact: true })).toBeVisible();
       await page.goto(`/procurement/orders/${poId}`);
-      const pdf = page.getByRole('link', { name: 'Download of version 1', exact: true });
-      await expect(pdf).toBeVisible();
-      const href = await pdf.getAttribute('href');
-      expect(href).toBeTruthy();
-      const response = await page.request.get(href ?? '');
+      // "Download of version 1" is a button that downloads in the app; the file is the document route of the version.
+      await expect(
+        page.getByRole('button', { name: 'Download of version 1', exact: true }),
+      ).toBeVisible();
+      const response = await page.request.get(`/procurement/orders/${poId}/versions/1/document`);
       expect(response.status()).toBe(200);
       expect(response.headers()['content-type']).toContain('application/pdf');
       await page.locator('main').getByRole('link', { name: 'Receipts', exact: true }).click();

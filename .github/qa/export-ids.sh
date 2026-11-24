@@ -59,3 +59,17 @@ need PORTAL_E2E_FOREIGN_ID "$(versions_of "$(fid quotationDraft)")"
 
 # The draft payment request of e2e/p4/qa-fixtures-payables.spec.ts (verified vendor account, approved and posted bill).
 need BOS_E2E_DRAFT_PAYMENT_REQUEST_ID "$(fid paymentRequestDraft)"
+
+# Journey 11 (e2e/p4/qa-fixtures-p4-exit.spec.ts): one connected purchase chain and an open RFQ, for the p4-exit specs of
+# the workspace and the portal. The three approved seeded vendors (Dev Vendor Co, Dev Vendor Two Co, the Mumbai supplier).
+echo "BOS_E2E_P4_EXIT=1" >> "$out"
+echo "BOS_E2E_P4_EXIT_WORKSPACE_URL=https://app.localhost" >> "$out"
+need BOS_E2E_P4_EXIT_VENDOR_IDS "$(q "select string_agg(v.id::text, ',' order by p.code) from app.vendors v join app.parties p on p.id = v.id where v.status = 'approved' and p.code in ('VEND-DEV', 'VEND-DEV2', 'VEND-IN-DEV')")"
+need BOS_E2E_P4_EXIT_PR_ID "$(fid p4ExitPr)"
+need BOS_E2E_P4_EXIT_RFQ_ID "$(fid p4ExitRfq)"
+need BOS_E2E_P4_EXIT_PO_ID "$(fid p4ExitPo)"
+need BOS_E2E_P4_EXIT_RECEIPT_ID "$(fid p4ExitReceipt)"
+need BOS_E2E_P4_EXIT_BILL_ID "$(fid p4ExitBill)"
+need BOS_E2E_P4_EXIT_OPEN_RFQ_ID "$(fid p4ExitOpenRfq)"
+need BOS_E2E_P4_EXIT_SERIALS "$(fid p4ExitSerials)"
+need BOS_E2E_P4_EXIT_VENDOR_ID "$(q "select vendor_id from app.purchase_orders where id::text = '$(fid p4ExitPo)'")"
