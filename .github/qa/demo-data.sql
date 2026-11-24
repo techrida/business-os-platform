@@ -61,7 +61,7 @@ BEGIN
   INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id, requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
   VALUES (v_pr1, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: office chairs', '2030-12-01', 'QA-1', 'NPR'),
          (v_pr2, v_tenant, v_org, 'goods', v_dept, v_proc, v_cc, 'QA fixture: laptops', '2030-12-01', 'QA-2', 'NPR');
-  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN '50000.00' ELSE '79646.02' END, estimated_total_npr = CASE id WHEN v_pr1 THEN '50000.00' ELSE '79646.02' END,
+  UPDATE app.purchase_requests SET status = 'approved', fx_rate = 1, estimated_total = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END, estimated_total_npr = CASE id WHEN v_pr1 THEN 50000.00 ELSE 79646.02 END,
          number = CASE id WHEN v_pr1 THEN 'PR-QA-1' ELSE 'PR-QA-2' END WHERE id IN (v_pr1, v_pr2);
 
   INSERT INTO app.purchase_request_lines (tenant_id, organization_id, purchase_request_id, line_no, description, uom, quantity, estimated_unit_price, estimated_amount)
