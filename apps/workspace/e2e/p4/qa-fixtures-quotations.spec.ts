@@ -82,7 +82,7 @@ async function buildQuotation(page: Page, opportunityId: string, submit: boolean
   await add.getByLabel('Description').fill('QA fixture implementation');
   await add.getByLabel('Unit', { exact: true }).fill('lot');
   await add.getByRole('spinbutton', { name: 'Quantity' }).fill('1');
-  await add.getByRole('textbox', { name: /^Rate \(/ }).fill('200000');
+  await add.getByRole('textbox', { name: /^Rate \(/ }).fill('50000');
   await chooseOption(selectByLabel(add, 'Tax code'), { index: 0 });
   await add.getByRole('button', { name: 'Add line', exact: true }).click();
   await expect(page.getByRole('table', { name: 'Quotation lines' })).toContainText(
@@ -182,10 +182,14 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
       }
       draftId = await buildQuotation(sales, opportunityId, false);
     });
-    await test.step('the Accountant approves each in the inbox', async () => {
+    await test.step('the Accountant and then Finance approve each in the inbox', async () => {
       const accountant = await as('accountant');
+      const finance = await as('finance');
       for (let i = 0; i < REPEATS * Object.keys(make).length; i += 1) {
         await approveInboxRequest(accountant, /Quotation/i, 'QA fixture: priced and checked');
+      }
+      for (let i = 0; i < REPEATS * Object.keys(make).length; i += 1) {
+        await approveInboxRequest(finance, /Quotation/i, 'QA fixture: approved');
       }
     });
     await test.step('Sales sends the ones the customer sees and rejects the revisable ones', async () => {
