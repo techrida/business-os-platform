@@ -154,10 +154,11 @@ jobs:
           # An empty quarantine file must add nothing: a trailing "|" would match, and so skip, every test.
           quarantine="$(cat ../../.github/qa/quarantine.txt)"
           if [ -n "$quarantine" ]; then skip="$skip|$quarantine"; fi
-          # No quotes around the filter on purpose: an empty value must disappear, a value may hold two words.
+          # The filter is split into words by read, which never expands a * or ? against files on disk; an empty value
+          # gives no words. Each word is a Playwright file filter.
+          read -r -a filter <<< "$SPEC_FILTER"
           # The persona sign-ins already ran in the warm-up step.
-          # shellcheck disable=SC2086
-          pnpm exec playwright test --project=dev --shard="$SHARD" --repeat-each="$REPEAT_EACH" --grep-invert "$skip" $SPEC_FILTER
+          pnpm exec playwright test --project=dev --shard="$SHARD" --repeat-each="$REPEAT_EACH" --grep-invert "$skip" "${filter[@]}"
 
       - name: Playwright (quarantined specs, informational)
         if: ${{ matrix.mode == 'quarantined' }}
@@ -181,9 +182,13 @@ jobs:
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
           SPEC_FILTER: ${{ inputs.spec_filter }}
           REPEAT_EACH: ${{ inputs.repeat_each || '1' }}
-        # The same file filter and repeat count as the workspace run (a filter naming only workspace specs matches nothing
-        # here, and the step then passes with no tests).
-        run: pnpm --filter @bos/portal exec playwright test --repeat-each="$REPEAT_EACH" --pass-with-no-tests $SPEC_FILTER
+        # The same file filter and repeat count as the workspace run. A filter naming only workspace specs matches
+        # nothing here, so --pass-with-no-tests applies when a filter is set; with no filter, no tests is a failure.
+        run: |
+          read -r -a filter <<< "$SPEC_FILTER"
+          extra=()
+          if [ "${#filter[@]}" -gt 0 ]; then extra+=(--pass-with-no-tests); fi
+          pnpm --filter @bos/portal exec playwright test --repeat-each="$REPEAT_EACH" "${extra[@]}" "${filter[@]}"
 
       # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
       - name: Remove any file that holds a persona password or TOTP secret

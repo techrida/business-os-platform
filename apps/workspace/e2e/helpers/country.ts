@@ -41,7 +41,8 @@ async function expectHighlighted(box: Locator, shown: string): Promise<void> {
  * Picks a country in a phone row's flag menu (src/components/ui/phone-country-menu.tsx): the flag button opens a
  * searchable list; its search box is named `<button name> search`. Pass the button as
  * `getByRole('combobox', { name: 'Phone 2 country', exact: true })`. `search` must appear in the chosen country's
- * option text (its name as shown, or its dial code without spaces, e.g. `+977`): the wait before Enter compares it.
+ * option text (its name as shown, or its dial code without spaces, e.g. `+977`): the wait before Enter compares it,
+ * and after Enter the button's description (the chosen country's name and dial code) must hold it too.
  */
 export async function pickPhoneCountry(button: Locator, search: string): Promise<void> {
   const page = button.page();
@@ -59,4 +60,15 @@ export async function pickPhoneCountry(button: Locator, search: string): Promise
   }).toPass({ timeout: 30_000 });
   await box.press('Enter');
   await expect(button).toHaveAttribute('aria-expanded', 'false');
+  // The flag alone says nothing in text: the button's description is the chosen country's name and dial code.
+  // It must hold the search (spaces ignored), so a pick that kept the old country fails here.
+  await expect
+    .poll(async () => ((await describedBy(button)) ?? '').replace(/\s+/g, '').toLowerCase())
+    .toContain(search.replace(/\s+/g, '').toLowerCase());
+}
+
+/** The text of the element the button's `aria-describedby` points at, or null when it names none. */
+async function describedBy(button: Locator): Promise<string | null> {
+  const id = await button.getAttribute('aria-describedby');
+  return id === null ? null : await button.page().locator(`[id="${id}"]`).textContent();
 }
