@@ -40,10 +40,7 @@ export const PUBLIC_LOGO_TIMEOUT_MS = 5000;
  * anyone. The id is an encoded path segment on a fixed path under API_INTERNAL_URL, so the request cannot leave it.
  */
 export async function openPublicLogo(tenantId: string, ifNoneMatch?: string): Promise<Response> {
-  const url = new URL(
-    `/v1/public/logo/${encodeURIComponent(tenantId)}`,
-    getEnv().API_INTERNAL_URL,
-  );
+  const url = new URL(`/v1/public/logo/${encodeURIComponent(tenantId)}`, getEnv().API_INTERNAL_URL);
   return await fetch(url, {
     cache: 'no-store',
     signal: AbortSignal.timeout(PUBLIC_LOGO_TIMEOUT_MS),

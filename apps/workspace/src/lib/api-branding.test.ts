@@ -21,7 +21,7 @@ describe('openPublicLogo (the anonymous logo fetch)', () => {
     const timeout = vi.spyOn(AbortSignal, 'timeout');
     await openPublicLogo(TENANT, '"etag"');
     const [url, init] = fetchMock.mock.calls[0] ?? [];
-    expect(String(url)).toBe(`http://api.internal:3001/v1/public/logo/${TENANT}`);
+    expect(String(url as URL)).toBe(`http://api.internal:3001/v1/public/logo/${TENANT}`);
     expect(init?.headers).toEqual({ 'if-none-match': '"etag"' });
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(timeout).toHaveBeenCalledWith(PUBLIC_LOGO_TIMEOUT_MS);
@@ -31,7 +31,7 @@ describe('openPublicLogo (the anonymous logo fetch)', () => {
 
   it('cannot leave the logo path: a hostile id is one encoded segment', async () => {
     await openPublicLogo('../../v1/me');
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+    expect(String(fetchMock.mock.calls[0]?.[0] as URL)).toBe(
       'http://api.internal:3001/v1/public/logo/..%2F..%2Fv1%2Fme',
     );
   });

@@ -45,8 +45,8 @@ describe('GET /brand/logo/[tenantId] when the API cannot answer', () => {
       (_url, init) =>
         new Promise((_resolve, reject) => {
           const signal = init?.signal;
-          if (signal?.aborted) reject(signal.reason);
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          if (signal?.aborted) reject(signal.reason as Error);
+          signal?.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
         }),
     );
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());

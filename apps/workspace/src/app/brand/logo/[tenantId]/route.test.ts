@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
-const openPublicLogo =
-  vi.fn<(tenantId: string, ifNoneMatch?: string) => Promise<Response>>();
+const openPublicLogo = vi.fn<(tenantId: string, ifNoneMatch?: string) => Promise<Response>>();
 vi.mock('@/lib/api-branding', () => ({
   openPublicLogo: (t: string, e?: string) => openPublicLogo(t, e),
 }));

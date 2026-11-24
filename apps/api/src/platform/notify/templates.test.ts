@@ -536,9 +536,9 @@ describe('the company logo (R6Q20)', () => {
       `<img src="${PORTAL}/brand/logo/other.png">`,
       '<img src="https://evil.example/x.png">',
     ]) {
-      expect(() => assertSafeEmail({ ...rendered, html: rendered.html + extra }, hosts, url)).toThrow(
-        EmailTemplateError,
-      );
+      expect(() =>
+        assertSafeEmail({ ...rendered, html: rendered.html + extra }, hosts, url),
+      ).toThrow(EmailTemplateError);
     }
   });
 
