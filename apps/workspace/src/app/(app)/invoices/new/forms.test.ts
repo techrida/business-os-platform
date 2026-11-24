@@ -109,6 +109,32 @@ describe('parseManualInvoice', () => {
   });
 });
 
+describe('a typed quantity (R6Q18, OQ-R5-04)', () => {
+  it('reads 1,000 as 1000 in an invoice line, and refuses 10 50 and a decimal comma', () => {
+    const body = (quantity: string) =>
+      parseManualInvoice(values({ lines: [{ ...goodLine, quantity }] }));
+    const ok = body('1,000');
+    expect(ok.ok && ok.data.lines[0]?.quantity).toBe('1000');
+    const spaced = body('10 50');
+    expect(!spaced.ok && spaced.errors['lines.0.quantity']).toBe(NO_SPACES);
+    const comma = body('1,5');
+    expect(!comma.ok && comma.errors['lines.0.quantity']).toMatch(/Use a point/);
+  });
+
+  it('reads 1,000 as 1000 in a credit note line, and refuses 10 50', () => {
+    const note = (quantity: string) =>
+      parseCreditNote({
+        originalInvoiceId: ID,
+        reason: 'Goods returned.',
+        lines: [{ lineNo: 1, quantity }],
+      });
+    const ok = note('1,000');
+    expect(ok.ok && ok.data.lines).toEqual([{ originalLineNo: 1, quantity: '1000' }]);
+    const spaced = note('10 50');
+    expect(!spaced.ok && spaced.errors['lines.0.quantity']).toBe(NO_SPACES);
+  });
+});
+
 describe('parseCreditNote', () => {
   it('names the original invoice, the reason and the lines credited', () => {
     const out = parseCreditNote({

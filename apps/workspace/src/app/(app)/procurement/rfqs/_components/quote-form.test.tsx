@@ -128,3 +128,26 @@ describe('quotation document upload', () => {
     expect(out).not.toMatch(/already uploaded to documents/);
   });
 });
+
+describe('line description', () => {
+  it('starts each line with the request wording in an editable box that is named per line', () => {
+    const out = renderToStaticMarkup(
+      <QuoteForm
+        action={vi.fn()}
+        idempotencyKey="key"
+        rfqId="rfq"
+        mode="record"
+        vendors={[{ id: 'vendor', name: 'Vendor' }]}
+        prLines={[
+          { id: 'line', lineNo: 1, description: 'Office chair', uom: 'pcs', quantity: '1' },
+        ]}
+        taxCodes={[{ id: '22222222-2222-4222-8222-222222222222', label: 'VAT 13%' }]}
+        enabledCurrencies={['NPR']}
+        cancelHref="/procurement/rfqs/rfq"
+        reloadHref="/procurement/rfqs/rfq/quotations/new"
+      />,
+    );
+    expect(out).toMatch(/name="lines\.0\.description"[^>]*value="Office chair"/);
+    expect(out).toContain('Description');
+  });
+});

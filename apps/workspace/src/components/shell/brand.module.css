@@ -30,3 +30,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The company logo takes the place of the name: tall enough to read, never wider than the header lets it. */
+.logo {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  height: auto;
+  max-height: 28px;
+  object-fit: contain;
+}
