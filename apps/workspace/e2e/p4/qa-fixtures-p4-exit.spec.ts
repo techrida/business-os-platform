@@ -186,17 +186,21 @@ test('qa fixtures: one connected Journey 11 (request, RFQ, order, serialized rec
     });
 
     await test.step('Procurement issues the draft order the approval created', async () => {
-      await procurement.goto(`/procurement/requests/${ids['p4ExitPr']}`);
-      // The request lists its purchase order, each linked to its receipts by the order's id.
+      // The approval made the draft order of the winning vendor, NPR 120000 (the seeded draft order PO-QA-2 is 5,650).
       await expect(async () => {
-        await procurement.reload();
-        const href = await procurement
-          .locator('main a[href*="/procurement/receipts?po="]')
-          .first()
-          .getAttribute('href', { timeout: 3_000 });
-        ids['p4ExitPo'] = /po=([0-9a-f-]{36})/.exec(href ?? '')?.[1] ?? '';
-        expect(ids['p4ExitPo'], 'the request lists its purchase order').not.toBe('');
-      }).toPass({ timeout: 60_000 });
+        await procurement.goto('/procurement/orders');
+        const link = procurement
+          .getByRole('table', { name: 'Purchase orders' })
+          .getByRole('row')
+          .filter({ hasText: VENDORS[0] })
+          .filter({ hasText: '1,20,000.00' })
+          .filter({ hasText: 'Draft' })
+          .getByRole('link')
+          .first();
+        const href = await link.getAttribute('href', { timeout: 3_000 });
+        ids['p4ExitPo'] = /\/procurement\/orders\/([0-9a-f-]{36})/.exec(href ?? '')?.[1] ?? '';
+        expect(ids['p4ExitPo'], 'the approval created the draft purchase order').not.toBe('');
+      }).toPass({ timeout: 90_000 });
       await procurement.goto(`/procurement/orders/${ids['p4ExitPo']}`);
       await procurement.getByRole('button', { name: 'Issue purchase order', exact: true }).click();
       const dialog = procurement.getByRole('dialog');
