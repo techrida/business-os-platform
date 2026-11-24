@@ -140,13 +140,11 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
     // The shared viewer draws the PDF on a canvas.
     await expect(preview.locator('canvas').first()).toBeVisible();
     await preview.getByRole('button', { name: 'Close', exact: true }).first().click();
-    await page.getByRole('button', { name: 'Verify payment', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Verify this payment', exact: true });
-    await dialog.getByRole('button', { name: 'Verify payment', exact: true }).click();
-    await expect(dialog.getByRole('alert')).toContainText(
-      'You recorded this payment, so someone else in Finance must verify it',
-    );
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    // The page says so in words and offers the recorder no Verify button.
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Verification requires another reviewer' }),
+    ).toContainText('You recorded this payment, so someone else must verify it');
+    await expect(page.getByRole('button', { name: 'Verify payment', exact: true })).toHaveCount(0);
     await expect(page.getByText('Awaiting verification', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { level: 1 })).not.toContainText('RCPT-');
   } finally {
