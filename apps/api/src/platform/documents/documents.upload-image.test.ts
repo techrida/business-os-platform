@@ -238,9 +238,10 @@ describe('DocumentsService.createAndReceiveUpload', () => {
         .catch((error: unknown) => {
           outcome = error;
         });
-      // Let the receive reach the enqueue (it awaits the fakes, which settle on microtasks, not timers).
-      for (let i = 0; i < 50 && p.queue.add.mock.calls.length === 0; i += 1) {
-        await vi.advanceTimersByTimeAsync(0);
+      // Let the receive reach the enqueue. It does real I/O (type sniffing), so yield to the real event loop with
+      // setImmediate (not faked) until `add` was called; only setTimeout is faked.
+      for (let i = 0; i < 5_000 && p.queue.add.mock.calls.length === 0; i += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
       expect(p.queue.add).toHaveBeenCalledTimes(1);
 
