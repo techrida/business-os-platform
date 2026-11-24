@@ -140,6 +140,13 @@ describe('defaults per currency (D30)', () => {
     });
   });
 
+  it('writes no key for a name that is not a currency', () => {
+    const changed = { NPR: 'international', INR: 'international', USD: 'south_asian' } as const;
+    const out = withCurrencyDefault(changed, 'toString' as never);
+    expect(Object.keys(out).sort()).toEqual(['INR', 'NPR', 'USD']);
+    expect(out).toEqual(changed);
+  });
+
   it('compares two maps currency by currency', () => {
     expect(sameNumberSystems(DEFAULT_NUMBER_SYSTEMS, { ...DEFAULT_NUMBER_SYSTEMS })).toBe(true);
     expect(
