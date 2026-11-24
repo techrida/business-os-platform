@@ -29,3 +29,8 @@ updates:
     groups:
       images:
         patterns: ['*']
+  - package-ecosystem: npm
+    directory: /infra/pnpm-bootstrap
+    target-branch: p4-main
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 1
