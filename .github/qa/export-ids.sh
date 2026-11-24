@@ -24,6 +24,9 @@ put BOS_E2E_COST_CENTER_ID "$(q "select id from app.cost_centers where code = 'O
 # Portal specs: the stored logins written by e2e/p4/qa-fixtures.spec.ts, and the records of the dev vendor.
 put PORTAL_E2E_STORAGE_STATE "$PWD/.dev/portal-customer.json"
 put PORTAL_E2E_VENDOR_STATE "$PWD/.dev/portal-vendor.json"
+# vendor2 (a second approved vendor) and vendorpending (pending_kyc, with a draft KYB case): the seeder makes both, each in its own org.
+put PORTAL_E2E_VENDOR_B_STATE "$PWD/.dev/portal-vendor-b.json"
+put PORTAL_E2E_PENDING_STATE "$PWD/.dev/portal-pending.json"
 need PORTAL_E2E_VENDOR_PO_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-1'")"
 need PORTAL_E2E_VENDOR_FOREIGN_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-2'")"
 need PORTAL_E2E_VENDOR_RFQ_ID "$(q "select id from app.rfqs where number = 'RFQ-QA-1'")"
@@ -49,7 +52,8 @@ need E2E_OPPORTUNITY_ID "$(fid opportunity)"
 need BOS_E2E_QUOTATION_SENT "$(fid quotationStaffSent)"
 need BOS_E2E_QUOTATION_DOWNLOAD "$(fid quotationStaffSent)"
 need BOS_E2E_QUOTATION_REVISABLE "$(fid quotationRevisable)"
-# BOS_E2E_QUOTATION_APPROVED / _CONTACT stay unset, so the Send spec (p2/quotations.spec.ts "Send gives the customer a portal link") skips: it failed on
-# 2026-11-24 after the Send dialog became a contact search box (clearing the box does not clear the choice). See the R6Q11 report.
+# Approved and not yet sent, one per repeat, for the Send spec (p2/quotations.spec.ts); the contact is the one the fixtures send to.
+need BOS_E2E_QUOTATION_APPROVED "$(fid quotationApproved)"
+echo "BOS_E2E_QUOTATION_CONTACT=customer@dev.bos.test" >> "$out"
 need PORTAL_E2E_SENT_ID "$(versions_of "$(fid quotationPortalSent)")"
 need PORTAL_E2E_FOREIGN_ID "$(versions_of "$(fid quotationDraft)")"

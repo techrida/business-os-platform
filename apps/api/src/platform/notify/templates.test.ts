@@ -6,6 +6,7 @@ import {
   EmailTemplateError,
   assertSafeEmail,
   buildLink,
+  buildLogoUrl,
   buildPortalLink,
   renderEmail,
   type EmailTemplate,
@@ -483,10 +484,100 @@ describe('no attachment and no foreign host (ADR 0023: email a portal link, neve
       { ...good, html: `${good.html}<a href="data:text/html;base64,AAAA">x</a>` },
     ],
     ['a javascript: link', { ...good, html: '<a href="javascript:alert(1)">x</a>' }],
+    ['an <image> tag', { ...good, html: '<image srcset="//x.example/p.png">' }],
+    ['a background attribute', { ...good, html: '<td background="x.png">hi</td>' }],
+    ['a css url()', { ...good, html: '<p style="background:url(x.png)">hi</p>' }],
     ['an attachments key', { ...good, attachments: [{ filename: 'quote.pdf' }] }],
     ['an extra key', { ...good, headers: { Bcc: 'x@example.com' } }],
     ['a line break in the subject', { ...good, subject: 'a\r\nBcc: x@example.com' }],
   ])('assertSafeEmail rejects %s', (_name, email) => {
     expect(() => assertSafeEmail(email, allowed)).toThrow(EmailTemplateError);
+  });
+});
+
+describe('the company logo (R6Q20)', () => {
+  const TENANT = '0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4';
+  const logo = { tenantId: TENANT };
+
+  it('is absent without a logo, so every email is as before', () => {
+    for (const template of EMAIL_TEMPLATES) {
+      const vars = { linkPath: LINK_PATH_OF[template] };
+      expect(renderEmail(template, vars, opts).html).not.toContain('<img');
+      expect(renderEmail(template, vars, { ...opts, logo: null }).html).not.toContain('<img');
+    }
+  });
+
+  it.each([
+    ['approval.pending', WORKSPACE],
+    ['quotation.sent', PORTAL],
+  ] as const)('%s shows one logo image on the host of its own link', (template, base) => {
+    const html = renderEmail(
+      template,
+      { linkPath: LINK_PATH_OF[template] },
+      { ...opts, logo, companyName: 'Techrida <b>' },
+    ).html;
+    const url = `${base}/brand/logo/${TENANT}`;
+    expect(html.match(/<img\b/g)).toHaveLength(1);
+    expect(html).toContain(`<img src="${url}" alt="Techrida &lt;b&gt;"`);
+    expect(buildLogoUrl(base, logo)).toBe(url);
+  });
+
+  it('every other image is still refused, and so is a second copy of the logo or one on a foreign host', () => {
+    const rendered = renderEmail(
+      'quotation.sent',
+      { linkPath: LINK_PATH_OF['quotation.sent'] },
+      { ...opts, logo },
+    );
+    const url = buildLogoUrl(PORTAL, logo);
+    const tag = /<img[^>]*>/.exec(rendered.html)?.[0] ?? '';
+    const hosts = [new URL(PORTAL).host];
+    expect(() => assertSafeEmail(rendered, hosts, url)).not.toThrow();
+    // Without being told about the address, the same email is refused.
+    expect(() => assertSafeEmail(rendered, hosts)).toThrow(EmailTemplateError);
+    for (const extra of [
+      tag,
+      `<img src="${PORTAL}/brand/logo/other.png">`,
+      '<img src="https://evil.example/x.png">',
+    ]) {
+      expect(() =>
+        assertSafeEmail({ ...rendered, html: rendered.html + extra }, hosts, url),
+      ).toThrow(EmailTemplateError);
+    }
+  });
+
+  it('accepts the logo tag only in the exact shape and for the exact address it was built for', () => {
+    const rendered = renderEmail(
+      'quotation.sent',
+      { linkPath: LINK_PATH_OF['quotation.sent'] },
+      { ...opts, logo, companyName: 'Techrida' },
+    );
+    const url = buildLogoUrl(PORTAL, logo);
+    const tag = /<img[^>]*>/.exec(rendered.html)?.[0] ?? '';
+    const hosts = [new URL(PORTAL).host];
+    const swap = (html: string) => ({ ...rendered, html: rendered.html.replace(tag, html) });
+    for (const [name, forged] of [
+      ['an extra attribute', tag.replace('<img ', '<img onerror="x" ')],
+      ['a trailing attribute', tag.replace(/>$/, ' loading="lazy">')],
+      ['a query on the address', tag.replace(url, `${url}?x=1`)],
+      ['another path on the same host', tag.replace(url, `${PORTAL}/brand/logo/${TENANT}/extra`)],
+      ['another tenant', tag.replace(TENANT, '1b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4')],
+      ['an upper-case tag name', tag.replace('<img ', '<IMG ')],
+      ['a space after the bracket', tag.replace('<img ', '< img ')],
+      ['a changed height', tag.replace('height="40"', 'height="4000"')],
+      ['a changed style', tag.replace('display: block', 'position: fixed')],
+      ['a srcset', tag.replace('<img ', '<img srcset="https://evil.example/x.png 1x" ')],
+    ] as const) {
+      expect(() => assertSafeEmail(swap(forged), hosts, url), name).toThrow(EmailTemplateError);
+    }
+    expect(() => assertSafeEmail(swap(tag), hosts, url)).not.toThrow();
+    // Told a different address, the genuine tag no longer passes.
+    expect(() => assertSafeEmail(rendered, hosts, `${PORTAL}/brand/logo/${TENANT}/x`)).toThrow(
+      EmailTemplateError,
+    );
+  });
+
+  it('builds the address only from an http(s) base and one guid', () => {
+    expect(() => buildLogoUrl('javascript:alert(1)', logo)).toThrow(EmailTemplateError);
+    expect(() => buildLogoUrl(PORTAL, { tenantId: '../x' })).toThrow(EmailTemplateError);
   });
 });

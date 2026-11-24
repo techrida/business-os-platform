@@ -504,6 +504,8 @@ export const vendorQuotationLines = appSchema.table(
     /** The request of the quotation's RFQ; both FKs below run through it. */
     purchaseRequestId: uuid('purchase_request_id').notNull(),
     prLineId: uuid('pr_line_id').notNull(),
+    /** What the line quotes; defaults to the request line's description when recorded. */
+    description: text('description').notNull(),
     quantity: quantity('quantity').notNull(),
     unitPrice: money('unit_price').notNull(),
     taxCodeId: uuid('tax_code_id').notNull(),
@@ -552,6 +554,7 @@ export const vendorQuotationLines = appSchema.table(
       foreignColumns: [taxCodes.tenantId, taxCodes.id],
     }),
     index('vendor_quotation_lines_tenant_tax_code_idx').on(t.tenantId, t.taxCodeId),
+    check('vendor_quotation_lines_description_check', sql`btrim(${t.description}) <> ''`),
     check('vendor_quotation_lines_quantity_check', sql`${t.quantity} > 0`),
     check('vendor_quotation_lines_unit_price_check', sql`${t.unitPrice} >= 0`),
     check(

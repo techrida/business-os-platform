@@ -2,7 +2,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { visibleGroups } from '@/lib/nav';
 import { visibleSettingsGroups } from '@/lib/settings-nav';
 
-import { Brand } from './brand';
+import { Brand, type BrandProps } from './brand';
 import { ProfilePictureDialog } from './profile-picture-dialog';
 import { ShellNav, ShellNavSearch } from './shell-nav';
 import { CollapseToggle, DrawerCloseButton } from './shell-state';
@@ -29,10 +29,13 @@ export function Sidebar({
   user,
   permissions,
   counts = {},
+  brand = {},
 }: {
   user: SidebarUser;
   permissions: readonly string[];
   counts?: Readonly<Record<string, number>>;
+  /** The company's name and logo address (R6Q20); absent or empty shows the product name. */
+  brand?: Pick<BrandProps, 'name' | 'logoSrc'>;
 }) {
   const held = new Set(permissions);
   const can = (permission: string) => held.has(permission);
@@ -41,7 +44,7 @@ export function Sidebar({
   return (
     <div id="app-sidebar" className={styles.sidebar}>
       <div className={styles.top}>
-        <Brand />
+        <Brand name={brand.name} logoSrc={brand.logoSrc} />
         <CollapseToggle />
         <DrawerCloseButton />
       </div>

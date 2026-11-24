@@ -17,3 +17,15 @@ export function redisOptionsFromUrl(value: string): ConnectionOptions {
     ...(url.protocol === 'rediss:' ? { tls: {} } : {}),
   };
 }
+
+/**
+ * The connection of a process that only adds jobs (the API: it never consumes). With no offline queue, a command
+ * issued while Valkey is unreachable fails at once instead of waiting in ioredis for a reconnect, so adds abandoned
+ * by their timeout do not pile up there and all fire when Valkey returns. A worker must keep the default, because
+ * BullMQ's workers issue commands while they reconnect.
+ * This does not shorten bullmq's wait for the FIRST connection (a `queue.add` before it is ready stays pending);
+ * `queueCallWithin` bounds that one.
+ */
+export function producerOnlyConnection(value: string): ConnectionOptions {
+  return { ...redisOptionsFromUrl(value), enableOfflineQueue: false };
+}

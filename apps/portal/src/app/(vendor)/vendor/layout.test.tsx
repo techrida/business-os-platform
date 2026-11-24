@@ -8,6 +8,7 @@ import type { Session } from '@/lib/session';
 const m = vi.hoisted(() => ({
   getSession: vi.fn(),
   getVendorOnboarding: vi.fn(),
+  getBranding: vi.fn(),
   redirect: vi.fn((to: string): never => {
     throw new Error(`NEXT_REDIRECT ${to}`);
   }),
@@ -19,6 +20,10 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/vendor',
 }));
 vi.mock('@/lib/session', () => ({ getSession: m.getSession }));
+vi.mock('@/lib/api-branding', () => ({
+  getBranding: m.getBranding,
+  logoSrc: () => null,
+}));
 vi.mock('@/lib/api.vendor', () => ({ getVendorOnboarding: m.getVendorOnboarding }));
 
 const { default: VendorLayout } = await import('./layout');
@@ -39,6 +44,7 @@ const session = (orgKind: Session['orgKind']): Session => ({
 beforeEach(() => {
   m.getSession.mockReset();
   m.getVendorOnboarding.mockReset();
+  m.getBranding.mockReset().mockResolvedValue(null);
   m.redirect.mockClear();
 });
 
@@ -70,5 +76,19 @@ describe('(vendor) layout', () => {
     expect(m.getVendorOnboarding).toHaveBeenCalledWith(s);
     expect(html).toContain('vendor page');
     expect(html).toContain('Vendor portal');
+  });
+
+  it('reads the company branding while the onboarding read is still pending, not after it', async () => {
+    m.getSession.mockResolvedValue(session('vendor'));
+    let finishOnboarding: (value: ReturnType<typeof sampleOnboarding>) => void = () => undefined;
+    m.getVendorOnboarding.mockReturnValue(
+      new Promise((resolve) => {
+        finishOnboarding = resolve;
+      }),
+    );
+    const rendering = VendorLayout({ children: <p>vendor page</p> });
+    await vi.waitFor(() => expect(m.getBranding).toHaveBeenCalledTimes(1));
+    finishOnboarding(sampleOnboarding());
+    await rendering;
   });
 });

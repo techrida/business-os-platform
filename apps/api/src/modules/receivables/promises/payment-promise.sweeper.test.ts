@@ -87,7 +87,13 @@ function sweeperWith(store: PromiseStore) {
     scopes.push({ scope, actor });
     return fn(TX);
   };
-  return { sweeper: new PaymentPromiseSweeper(store, runTx, audit, () => NOW), audit, scopes };
+  const notify = { notifyUser: vi.fn(() => Promise.resolve()) };
+  return {
+    sweeper: new PaymentPromiseSweeper(store, runTx, audit, () => NOW, notify),
+    audit,
+    scopes,
+    notify,
+  };
 }
 
 describe('collectionAssignee', () => {
@@ -148,6 +154,34 @@ describe('PaymentPromiseSweeper', () => {
       }),
       expect.objectContaining({ action: 'payment_promise.missed', entityId: 'p-1' }),
     ]);
+  });
+
+  it('rings the bell of the call assignee in the transaction that plans it, keyed by the call', async () => {
+    const mem = memoryStore(due());
+    const { sweeper, notify } = sweeperWith(mem.store);
+    await sweeper.sweep();
+    expect(notify.notifyUser).toHaveBeenCalledTimes(1);
+    expect(notify.notifyUser).toHaveBeenCalledWith(TX, {
+      userId: FINANCE_A,
+      title: 'Collect payment for INV-2083/84-00007',
+      body: expect.stringContaining('by 2026-11-18') as string,
+      link: '/activities/',
+      dedupeKey: 'collection_call.planned:activity-1',
+    });
+  });
+
+  it('rings nobody when the call has no assignee, and nobody for a kept promise', async () => {
+    const orphan = memoryStore(due());
+    vi.mocked(orphan.store.staff).mockResolvedValueOnce([]);
+    const a = sweeperWith(orphan.store);
+    await a.sweeper.sweep();
+    expect(orphan.calls[0]?.assigneeUserId).toBeNull();
+    expect(a.notify.notifyUser).not.toHaveBeenCalled();
+
+    const kept = memoryStore(due({ invoiceOpen: false }));
+    const b = sweeperWith(kept.store);
+    await b.sweeper.sweep();
+    expect(b.notify.notifyUser).not.toHaveBeenCalled();
   });
 
   it('plans no second call when it runs again', async () => {

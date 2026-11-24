@@ -22,6 +22,7 @@ import type { Queue } from 'bullmq';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import type { Db, DbTransaction } from '../db/tx';
+import { SCAN_ENQUEUE_TIMEOUT_MS } from '../queue/nudge-timeout';
 import { DOCS_SCAN_JOB, type DocumentOwnerPolicy } from './documents.ports';
 import { DocumentsService } from './documents.service';
 import type { SignedLinks } from './signed-link';
@@ -222,6 +223,50 @@ describe('DocumentsService.createAndReceiveUpload', () => {
 
     expect(p.updates.some((u) => 'removedAt' in u)).toBe(true);
     expect(p.audit.record).toHaveBeenCalledWith(expect.anything(), removedAudit);
+  });
+
+  it('waits 4 s for a slow scan enqueue and answers the 503 only after that', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const p = pipeline();
+      // A down Valkey leaves bullmq's `queue.add` pending forever: it neither resolves nor rejects.
+      p.queue.add.mockReturnValue(new Promise(() => undefined));
+
+      let outcome: unknown = 'pending';
+      const request = p.svc
+        .createAndReceiveUpload(owner, file, { scope, actor: user })
+        .catch((error: unknown) => {
+          outcome = error;
+        });
+      // Let the receive reach the enqueue. It does real I/O (type sniffing), so yield to the real event loop with
+      // setImmediate (not faked) until `add` was called; only setTimeout is faked.
+      for (let i = 0; i < 5_000 && p.queue.add.mock.calls.length === 0; i += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(p.queue.add).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(SCAN_ENQUEUE_TIMEOUT_MS - 1);
+      expect(outcome).toBe('pending');
+
+      await vi.advanceTimersByTimeAsync(1);
+      await request;
+      expect(outcome).toBeInstanceOf(ServiceUnavailableException);
+      expect(p.updates.some((u) => 'removedAt' in u)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the upload when a slow Valkey answers the scan enqueue inside the bound', async () => {
+    const p = pipeline();
+    p.queue.add.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ id: 'job' }), 1_500)),
+    );
+
+    await expect(
+      p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
+    ).resolves.toBeDefined();
+    expect(p.updates.some((u) => 'removedAt' in u)).toBe(false);
   });
 
   it('still throws the receive error when removing the document fails too', async () => {

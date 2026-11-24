@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { approveInboxRequest, idFromUrl, recordFixtureIds } from '../helpers/fixture-flow';
 import { ensureLeadOwner } from '../helpers/lead-owner';
@@ -118,8 +118,8 @@ async function buildQuotation(page: Page, opportunityId: string, submit: boolean
   return id;
 }
 
-/** Sends an approved quotation to the seeded contact, once its PDF is clean. */
-async function sendQuotation(page: Page, id: string): Promise<void> {
+/** Opens an approved quotation and waits until Send is on, which is when its PDF is clean. */
+async function waitUntilSendable(page: Page, id: string): Promise<Locator> {
   await page.goto(`/quotations/${id}`);
   const trigger = page.getByRole('button', { name: 'Send to customer' });
   await expect(async () => {
@@ -127,6 +127,12 @@ async function sendQuotation(page: Page, id: string): Promise<void> {
     await expect(trigger).toBeVisible({ timeout: 3_000 });
     await expect(trigger).not.toHaveAttribute('aria-disabled', 'true', { timeout: 3_000 });
   }).toPass({ timeout: 120_000 });
+  return trigger;
+}
+
+/** Sends an approved quotation to the seeded contact, once its PDF is clean. */
+async function sendQuotation(page: Page, id: string): Promise<void> {
+  const trigger = await waitUntilSendable(page, id);
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: /^Send / });
   // The dialog starts on the quotation's own contact.
@@ -134,7 +140,9 @@ async function sendQuotation(page: Page, id: string): Promise<void> {
     CONTACT_NAME,
   );
   await dialog.locator('footer').getByRole('button', { name: 'Send to customer' }).click();
-  await expect(dialog.getByText('Sent to').first()).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByRole('status').filter({ hasText: 'Sent to' })).toBeVisible({
+    timeout: 30_000,
+  });
   await dialog.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('Sent', { exact: true }).first()).toBeVisible();
 }
@@ -147,7 +155,9 @@ async function rejectQuotation(page: Page, id: string): Promise<void> {
   await dialog.getByRole('radio', { name: 'Rejected', exact: true }).click();
   await dialog.getByLabel('Comment').fill('QA fixture: the customer declined.');
   await dialog.getByRole('button', { name: 'Record outcome' }).click();
-  await expect(dialog.getByText('Recorded as rejected').first()).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByRole('status').filter({ hasText: 'Recorded as rejected' })).toBeVisible({
+    timeout: 30_000,
+  });
   await dialog.getByRole('button', { name: 'Done' }).click();
 }
 
@@ -167,6 +177,8 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
     portalSent: [] as string[],
     staffSent: [] as string[],
     revisable: [] as string[],
+    // Approved and left unsent, for the Send dialog spec (p2/quotations.spec.ts), which sends it.
+    approved: [] as string[],
   };
   let opportunityId = '';
   let draftId = '';
@@ -196,6 +208,8 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
     });
     await test.step('Sales sends the ones the customer sees and rejects the revisable ones', async () => {
       const sales = await as('sales');
+      // The approved ones stay unsent, but their PDF must be clean before the Send spec reaches them.
+      for (const id of make.approved) await waitUntilSendable(sales, id);
       for (const id of [...make.portalSent, ...make.staffSent, ...make.revisable]) {
         await sendQuotation(sales, id);
       }
@@ -206,6 +220,7 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
       quotationPortalSent: make.portalSent,
       quotationStaffSent: make.staffSent,
       quotationRevisable: make.revisable,
+      quotationApproved: make.approved,
       quotationDraft: draftId,
     });
   } finally {

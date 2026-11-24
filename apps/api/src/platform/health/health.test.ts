@@ -41,11 +41,15 @@ describe('health', () => {
             : new Promise(() => undefined),
     };
     const queue = {
-      client: Promise.resolve({
-        ping: () =>
-          fakes.valkey === 'up'
-            ? Promise.resolve('PONG')
-            : Promise.reject(new Error('ECONNREFUSED')),
+      getBackend: () => ({
+        connection: {
+          client: Promise.resolve({
+            ping: () =>
+              fakes.valkey === 'up'
+                ? Promise.resolve('PONG')
+                : Promise.reject(new Error('ECONNREFUSED')),
+          }),
+        },
       }),
     };
     const moduleRef = await Test.createTestingModule({

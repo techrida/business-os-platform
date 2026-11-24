@@ -28,6 +28,7 @@ import { Queue } from 'bullmq';
 import { lockAccessRevision } from '../../modules/access-settings/access-revision';
 import { AuditService } from '../audit/audit.service';
 import { dbBusyKindOf } from '../db/busy';
+import { queueCallWithin } from '../queue/nudge-timeout';
 import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type Actor, READ_ONLY, type TxOptions, type TxScope, systemActor, withTx } from '../db/tx';
@@ -535,8 +536,8 @@ export class UserMirror implements OnApplicationShutdown {
    * job (hooks.controller.ts), so a sync that lost to concurrent writes (UserSyncContendedError) runs again.
    */
   private async enqueueSync(zitadelUserId: string): Promise<void> {
-    await this.queue
-      .add(
+    await queueCallWithin(() =>
+      this.queue.add(
         USERS_SYNC_JOB,
         { zitadelUserId },
         {
@@ -545,8 +546,8 @@ export class UserMirror implements OnApplicationShutdown {
           removeOnComplete: 100,
           removeOnFail: 500,
         },
-      )
-      .catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
+      ),
+    ).catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
   }
 
   userIdsWithRole(scope: TxScope, role: RoleKey, q?: Db | DbTransaction): Promise<string[]> {

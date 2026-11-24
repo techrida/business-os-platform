@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { TopBar } from '@/components/portal/top-bar';
 import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
+import { getBranding, logoSrc } from '@/lib/api-branding';
 import { getVendorOnboarding } from '@/lib/api.vendor';
 import { getSession } from '@/lib/session';
 
@@ -24,12 +25,20 @@ export default async function VendorLayout({ children }: { children: ReactNode }
   if (!session) redirect('/auth/login?returnTo=%2Fvendor');
   if (session.orgKind !== 'vendor') redirect('/');
 
-  const onboarding = await loadVendor(() => getVendorOnboarding(session), '/vendor');
+  // Independent reads, so neither waits for the other; getBranding never throws (null when unreadable).
+  const [onboarding, branding] = await Promise.all([
+    loadVendor(() => getVendorOnboarding(session), '/vendor'),
+    getBranding(session),
+  ]);
   if (onboarding.kind !== 'ok') return <VendorNoAccess />;
 
   return (
     <>
-      <TopBar kind="vendor" capability={onboarding.data.capability} />
+      <TopBar
+        kind="vendor"
+        capability={onboarding.data.capability}
+        brand={{ name: branding?.displayName ?? null, logoSrc: logoSrc(branding) }}
+      />
       {children}
     </>
   );

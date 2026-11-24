@@ -31,6 +31,32 @@ export type RoleKey = (typeof PROJECT_ROLES)[number];
 
 export const ORG_NAMES = { customer: 'Dev Customer Co', vendor: 'Dev Vendor Co' } as const;
 
+/**
+ * Two more vendors for dev and QA (R6Q15): each has its own ZITADEL org, party and login, so the portal specs that
+ * need "another approved vendor" or "a vendor awaiting KYC" (Know Your Business: the identity check) have a real user.
+ * They exist only through this dev seed (assertDevTarget refuses a non-local issuer; seedKernelRows writes their
+ * vendor rows only when it is handed the dev personas), never through a production path.
+ */
+export const EXTRA_VENDORS = [
+  {
+    key: 'vendor2',
+    orgName: 'Dev Vendor Two Co',
+    partyCode: 'VEND-DEV2',
+    status: 'approved',
+    /** A nine-digit Nepal PAN (vendors_pan_check), distinct from VEND-DEV's. Fictional. */
+    pan: '234567891',
+  },
+  {
+    key: 'vendorpending',
+    orgName: 'Dev Vendor Pending Co',
+    partyCode: 'VEND-DEVKYC',
+    status: 'pending_kyc',
+    pan: '345678912',
+  },
+] as const;
+export type ExtraVendorKey = (typeof EXTRA_VENDORS)[number]['key'];
+export type ExtraVendorSpec = (typeof EXTRA_VENDORS)[number];
+
 export interface PersonaSpec {
   /** Stable key, also the local part of the username. */
   key: string;
@@ -38,6 +64,8 @@ export interface PersonaSpec {
   familyName: string;
   orgKind: OrgKind;
   role: RoleKey;
+  /** A vendor of its own (EXTRA_VENDORS) instead of the shared Dev Vendor Co org. */
+  vendorOrg?: ExtraVendorKey;
 }
 
 export const PERSONAS: readonly PersonaSpec[] = [
@@ -142,7 +170,30 @@ export const PERSONAS: readonly PersonaSpec[] = [
     orgKind: 'staff',
     role: 'marketing',
   },
+  // R6Q15: a second approved vendor and a vendor still in KYC, each in an org of its own. Appended last, so earlier
+  // orders and logins do not change.
+  {
+    key: 'vendor2',
+    // The switcher shows the name ZITADEL holds (given and family name), and `logins` the persona label, so the two
+    // names are written to read as plain role labels.
+    givenName: 'Vendor 2',
+    familyName: '(approved)',
+    orgKind: 'vendor',
+    role: 'vendor_user',
+    vendorOrg: 'vendor2',
+  },
+  {
+    key: 'vendorpending',
+    givenName: 'Vendor awaiting',
+    familyName: 'KYC',
+    orgKind: 'vendor',
+    role: 'vendor_user',
+    vendorOrg: 'vendorpending',
+  },
 ];
+
+/** The key of the ZITADEL org a persona signs in under: its own vendor org, else the org of its kind. */
+export const personaOrgKey = (persona: PersonaSpec): string => persona.vendorOrg ?? persona.orgKind;
 
 /** `.test` is reserved (RFC 2606), so these addresses can never reach a real mailbox. */
 export const personaUsername = (key: string): string => `${key}@dev.bos.test`;

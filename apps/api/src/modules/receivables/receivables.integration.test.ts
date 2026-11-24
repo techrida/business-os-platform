@@ -558,6 +558,8 @@ describe('aging shows the promises to pay on open invoices', () => {
       (scope, actor, fn) => withTx(db, scope, actor, fn),
       audit,
       () => new Date('2026-11-16T06:00:00Z'),
+      // The aging is under test here, not the bell (payment-promises.integration.test.ts reads that).
+      { notifyUser: () => Promise.resolve() },
     );
     // The paid invoice's promise is kept; only the 15 Nov one is missed.
     await expect(sweeper.sweep()).resolves.toMatchObject({ missed: 1, kept: 1, failed: 0 });
