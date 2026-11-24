@@ -85,7 +85,7 @@ export class ValkeyLinkStore implements LinkStore, OnApplicationShutdown {
     }
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  onApplicationShutdown(): void {
     // disconnect, not quit: with no offline queue quit() rejects while Valkey is unreachable and leaves the socket open.
     this.redis.disconnect();
   }

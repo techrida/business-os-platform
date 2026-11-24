@@ -104,7 +104,7 @@ async function fakeAndStore(port = 0): Promise<{ fake: Fake; store: ValkeyLinkSt
   const fake = await startFake(port);
   const store = new ValkeyLinkStore(`redis://127.0.0.1:${fake.port}`);
   open.push(async () => {
-    await store.onApplicationShutdown();
+    store.onApplicationShutdown();
     for (const s of fake.sockets) s.destroy();
     await new Promise<void>((resolve) => fake.server.close(() => resolve()));
   });
@@ -143,7 +143,7 @@ describe('ValkeyLinkStore.claim', () => {
     const { port } = down;
     await new Promise<void>((resolve) => down.server.close(() => resolve()));
     const store = new ValkeyLinkStore(`redis://127.0.0.1:${port}`);
-    open.push(() => store.onApplicationShutdown());
+    open.push(() => Promise.resolve(store.onApplicationShutdown()));
 
     await expect(store.claim('dl:gone', 60)).rejects.toThrow();
 
