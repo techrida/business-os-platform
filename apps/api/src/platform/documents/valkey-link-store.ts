@@ -6,6 +6,9 @@ import { Redis, type RedisOptions } from 'ioredis';
 import { redisOptionsFromUrl } from '../queue/redis-options';
 import type { LinkStore } from './signed-link';
 
+/** How long a link claim waits to connect, and for its answer. */
+export const LINK_STORE_TIMEOUT_MS = 1_500;
+
 @Injectable()
 export class ValkeyLinkStore implements LinkStore, OnApplicationShutdown {
   private readonly redis: Redis;
@@ -17,6 +20,9 @@ export class ValkeyLinkStore implements LinkStore, OnApplicationShutdown {
       ...(redisOptionsFromUrl(valkeyUrl) as RedisOptions),
       lazyConnect: true,
       maxRetriesPerRequest: 2,
+      // A host that drops packets would otherwise hold the connect for ioredis's 10 s default.
+      connectTimeout: LINK_STORE_TIMEOUT_MS,
+      commandTimeout: LINK_STORE_TIMEOUT_MS,
     });
   }
 
