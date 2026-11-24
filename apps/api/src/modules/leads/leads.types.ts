@@ -85,8 +85,13 @@ const EDITABLE: Record<LeadField, LeadColumn> = {
 };
 
 /** "1000", "1000.0" and "1000.00" are one amount; numeric(18,2) reads back with two decimals. */
-const decimalKey = (s: string): string =>
-  s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
+const decimalKey = (s: string): string => {
+  if (!s.includes('.')) return s;
+  let end = s.length;
+  while (end > 0 && s[end - 1] === '0') end -= 1;
+  if (end > 0 && s[end - 1] === '.') end -= 1;
+  return s.slice(0, end);
+};
 
 export interface LeadFieldChange {
   field: LeadField;
