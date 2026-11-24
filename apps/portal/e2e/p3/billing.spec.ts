@@ -70,10 +70,8 @@ test('the invoice page shows lines, VAT, totals, due date and status, and no int
   await expect(page.getByText('Due date', { exact: true })).toBeVisible();
   await expect(page.getByText(/^(Unpaid|Partly paid|Overdue)$/)).toBeVisible();
   expect(await page.locator('main').innerText()).not.toMatch(FORBIDDEN);
-  await expect(page.getByRole('link', { name: 'Download', exact: true })).toHaveAttribute(
-    'href',
-    `/invoices/${invoiceId}/document`,
-  );
+  // The shared viewer's Download is a button that fetches the file; the PDF itself is checked by the document route.
+  await expect(page.getByRole('button', { name: 'Download', exact: true })).toBeVisible();
 });
 
 test('submitting a payment needs proof, then lands in the list as awaiting verification', async ({
