@@ -1,1 +1,0 @@
-receipt: every line-item control|RFQ quotation entry: every line-item control|/payables/bills/new: every line-item control

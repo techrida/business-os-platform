@@ -1,9 +1,11 @@
 # Quarantined QA specs
 
 `quarantine.txt` is one regular expression of test titles. The `qa specs` shards skip those tests; the non-blocking
-`qa quarantined` job runs them so their result and videos stay visible. Remove a title once its spec passes.
+`qa quarantined` job runs them so their result and videos stay visible. Remove a title once its spec passes. An empty
+file means nothing is quarantined: the shards skip nothing extra and the quarantined job exits at once.
 
-| Spec                                                | Why it fails today                                                                                                                                                                                                                                                                                                |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `p4/line-item-widths`: receipt, RFQ quotation entry | They open the first purchase order and RFQ on a list page and follow the receipt or quotation link. The seed holds no purchase order or RFQ, so the lists are empty. Fix: a fixture that raises a purchase request, an RFQ and a purchase order (procurement then Founder approvals), or create them in the spec. |
-| `p4/line-item-widths`: `/payables/bills/new`        | The form shows no line-item number boxes at 390 px (found 0, expected at least 2) on a fresh stack. Probably it needs a vendor or an order picked first; the spec measures the bare route. Needs a decision on what the bare route should show.                                                                   |
+Nothing is quarantined now (R6Q5). The three that were (`p4/line-item-widths`: receipt, RFQ quotation entry, bill entry)
+had no data to open: `.github/qa/demo-data.sql` now holds an approved purchase request with an open RFQ that invites the
+dev vendor, and a purchase order that the `qa fixtures` Playwright step issues through the screen. The bill form is
+measured through the order's "Enter bill" link, because the bare `/payables/bills/new` route shows no line items until
+an order is picked.

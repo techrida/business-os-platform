@@ -86,6 +86,18 @@ jobs:
       - name: Demo fixtures for the memberships the sign-ins created
         run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
 
+      # The fixture rows came from demo-data.sql; the purchase order is issued through the screen, not by SQL.
+      - name: Playwright fixtures (issue the seeded purchase order)
+        if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
+        env:
+          BOS_E2E_NEXT_DEV: '1'
+          BOS_E2E_BRANDED_LOGIN: '1'
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+        run: |
+          cd apps/workspace
+          pnpm exec playwright test --project=dev qa-fixtures.spec --output=test-results-fixtures
+
       - name: Playwright (workspace, dev project)
         if: ${{ matrix.mode == 'specs' }}
         env:
@@ -99,7 +111,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           cd apps/workspace
-          skip="persona sign-in and sign-out|$(cat ../../.github/qa/quarantine.txt)"
+          skip="persona sign-in and sign-out|qa fixtures: "
+          # An empty quarantine file must add nothing: a trailing "|" would match, and so skip, every test.
+          quarantine="$(cat ../../.github/qa/quarantine.txt)"
+          if [ -n "$quarantine" ]; then skip="$skip|$quarantine"; fi
           # No quotes around the filter on purpose: an empty value must disappear, a value may hold two words.
           # The persona sign-ins already ran in the warm-up step.
           # shellcheck disable=SC2086
@@ -116,7 +131,9 @@ jobs:
         run: |
           cd apps/workspace
           # A shorter test limit: these fail by timeout, and 4 minutes each would run the job for half an hour.
-          pnpm exec playwright test --project=dev --timeout=60000 --grep "$(cat ../../.github/qa/quarantine.txt)"
+          quarantine="$(cat ../../.github/qa/quarantine.txt)"
+          if [ -z "$quarantine" ]; then echo "Nothing is quarantined."; exit 0; fi
+          pnpm exec playwright test --project=dev --timeout=60000 --grep "$quarantine"
 
       - name: Portal specs (they skip themselves without their fixtures)
         if: ${{ !cancelled() && matrix.mode == 'specs' && matrix.id == '1' }}
