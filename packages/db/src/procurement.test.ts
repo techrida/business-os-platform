@@ -307,9 +307,9 @@ function insertQuotationLine(
   return insertReturningId(
     scope.organizationId,
     `INSERT INTO app.vendor_quotation_lines
-       (tenant_id, organization_id, vendor_quotation_id, purchase_request_id, pr_line_id, quantity, unit_price,
-        tax_code_id, gross, tax_amount, line_total)
-     VALUES ($1, $2, $3, $4, $5, 2, 1500.50, $6, 3001.00, 390.13, 3391.13) RETURNING id`,
+       (tenant_id, organization_id, vendor_quotation_id, purchase_request_id, pr_line_id, description, quantity,
+        unit_price, tax_code_id, gross, tax_amount, line_total)
+     VALUES ($1, $2, $3, $4, $5, 'Laptop', 2, 1500.50, $6, 3001.00, 390.13, 3391.13) RETURNING id`,
     [scope.tenantId, scope.organizationId, quotationId, prId, prLineId, taxCodeId],
   );
 }

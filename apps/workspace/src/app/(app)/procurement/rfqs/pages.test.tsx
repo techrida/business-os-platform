@@ -130,6 +130,7 @@ const quotation = {
   deliveryDays: 14,
   documentId: PR,
   vendorName: 'Everest Supplies Pvt Ltd',
+  lines: [],
   averageScore: null,
   scores: [],
 };
@@ -614,6 +615,42 @@ describe('scoring, recommending and committing on the detail', () => {
     // What the API already holds, as it sent it.
     expect(out).toContain('76.25');
     expect(out).toContain('80.00');
+  });
+
+  it('shows each quotation line the vendor quoted, with the totals under it', async () => {
+    const withLines = {
+      ...quotation,
+      subtotal: '3001.00',
+      taxAmount: '390.13',
+      total: '3391.13',
+      lines: [
+        {
+          id: '99999999-9999-4999-8999-999999999991',
+          prLineId: '99999999-9999-4999-8999-999999999992',
+          lineNo: 1,
+          description: 'Laptop 14-inch',
+          quantity: '2.0000',
+          unitPrice: '1500.50',
+          taxCode: 'VAT13',
+          taxRateBp: 1300,
+          gross: '3001.00',
+          taxAmount: '390.13',
+          lineTotal: '3391.13',
+        },
+      ],
+    };
+    rfqApi.getComparison.mockResolvedValue([withLines]);
+    const out = await detail();
+    expect(out).toContain('What each vendor quoted');
+    expect(out).toContain('Lines quoted by');
+    expect(out).toContain('Laptop 14-inch');
+    expect(out).toContain('VAT13');
+    expect(out).toContain('3,391.13');
+  });
+
+  it('shows no line panel while nothing is quoted', async () => {
+    rfqApi.getComparison.mockResolvedValue([]);
+    expect(await detail()).not.toContain('What each vendor quoted');
   });
 
   it('the fewer-quotations reason is always on the form and never names a fixed number', async () => {

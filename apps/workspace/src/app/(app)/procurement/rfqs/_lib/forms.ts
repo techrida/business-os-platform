@@ -154,6 +154,8 @@ export interface QuoteLineValues {
   /** Unticked lines are left out of the quotation. */
   include: boolean;
   prLineId: string;
+  /** What the vendor quoted for the line; the request line's wording unless changed. */
+  description: string;
   quantity: string;
   unitPrice: string;
   taxCodeId: string;
@@ -176,7 +178,7 @@ export interface QuoteValues {
 /** A blank quotation form with one ticked row per purchase request line, quantity pre-filled with the request's. */
 export function emptyQuoteValues(
   mode: QuoteMode,
-  prLines: readonly { id: string; quantity: string }[],
+  prLines: readonly { id: string; quantity: string; description: string }[],
 ): QuoteValues {
   return {
     mode,
@@ -192,6 +194,7 @@ export function emptyQuoteValues(
     lines: prLines.map((l) => ({
       include: true,
       prLineId: l.id,
+      description: l.description,
       quantity: l.quantity,
       unitPrice: '',
       taxCodeId: '',
@@ -211,6 +214,7 @@ export function quoteValuesFromForm(form: FormData): QuoteValues {
     .map((i) => ({
       include: str(form, `lines.${i}.include`) === 'on',
       prLineId: str(form, `lines.${i}.prLineId`),
+      description: str(form, `lines.${i}.description`),
       quantity: str(form, `lines.${i}.quantity`),
       unitPrice: str(form, `lines.${i}.unitPrice`),
       taxCodeId: str(form, `lines.${i}.taxCodeId`),
@@ -245,6 +249,7 @@ const QUOTE_WORDS: Record<string, string> = {
   unitPrice: 'Enter a unit price of 0 or more, with up to 2 decimal places.',
   taxCodeId: 'Choose the tax code for this line.',
   prLineId: 'This line does not belong to the request. Reload the page.',
+  description: 'The description can be up to 500 characters.',
 };
 
 export type ParsedQuote =
@@ -267,6 +272,8 @@ export function parseQuoteValues(input: QuoteValues): ParsedQuote {
     return [
       {
         prLineId: trim(l.prLineId),
+        // Left blank, the server uses the request line's wording.
+        ...(trim(l.description) !== '' ? { description: trim(l.description) } : {}),
         quantity: postedAmount(l.quantity),
         unitPrice: postedAmount(l.unitPrice),
         taxCodeId: trim(l.taxCodeId),

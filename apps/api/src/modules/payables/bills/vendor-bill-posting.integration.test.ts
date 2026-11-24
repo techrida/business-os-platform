@@ -490,6 +490,59 @@ describe('TDS at approval (check 16, AD14)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------- R6Q23
+
+describe('a bill of several lines posts the total derived from its lines (R6Q23)', () => {
+  it('rounds VAT and TDS per line, and the payable open item is exactly the derived payable total', async () => {
+    const vendorId = await vendor(tdsCode);
+    const line = (unitPrice: string) => ({
+      accountId: expenseAccountId,
+      quantity: '1',
+      unitPrice,
+      taxCodeId: vatCode,
+    });
+    const bill = await service.create(
+      {
+        vendorPartyId: vendorId,
+        kind: 'bill',
+        vendorInvoiceNo: `INV-${randomUUID().slice(0, 8)}`,
+        invoiceDate: '2026-11-09',
+        currency: 'NPR',
+        documentId: await doc(vendorId),
+        // Three half-paisa lines: VAT 0.065 -> 0.07 and TDS 0.0075 -> 0.01 on each, where rounding the summed net
+        // (1.50) once would give 0.20 and 0.02.
+        lines: [line('1000.00'), line('0.50'), line('0.50'), line('0.50')],
+      },
+      randomUUID(),
+    );
+    const submitted = await service.submit(bill.id, randomUUID());
+    expect(submitted.status).toBe('pending_approval');
+    // Entered: the header is the lines' sum, not a typed figure.
+    expect(await billRow(bill.id)).toMatchObject({ netTotal: '1001.50', vatTotal: '130.21' });
+
+    await approveFully(submitted.approvalRequestId!);
+
+    const row = await billRow(bill.id);
+    expect(row).toMatchObject({
+      status: 'approved',
+      netTotal: '1001.50',
+      vatTotal: '130.21',
+      tdsTotal: '15.03',
+      payableTotal: '1116.68',
+      payableTotalNpr: '1116.68',
+    });
+    const lines = await lineRows(bill.id);
+    const cents = (v: string) => Math.round(Number(v) * 100);
+    expect(lines.reduce((sum, l) => sum + cents(l.netAmount), 0)).toBe(cents(row.netTotal));
+    expect(lines.reduce((sum, l) => sum + cents(l.vatAmount), 0)).toBe(cents(row.vatTotal));
+    expect(lines.reduce((sum, l) => sum + cents(l.tdsAmount), 0)).toBe(cents(row.tdsTotal));
+    const items = await itemsOf(bill.id);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ amount: '1116.68', amountNpr: '1116.68' });
+    expect((await eventsOf(bill.id))[0]!.payload).toMatchObject({ payableTotal: '1116.68' });
+  });
+});
+
 // ---------------------------------------------------------------------------------------- check 9
 
 describe('one payable open item per approved bill (check 9)', () => {
