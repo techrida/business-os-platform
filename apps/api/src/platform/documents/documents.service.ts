@@ -71,7 +71,7 @@ import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { readDefaultEntityProfile } from '../settings/company-branding';
 import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
 import type { Principal, ResourceRef } from '../authz/can';
-import { queueCallWithin } from '../queue/nudge-timeout';
+import { queueCallWithin, SCAN_ENQUEUE_TIMEOUT_MS } from '../queue/nudge-timeout';
 import { currentPrincipal } from '../tenancy/request-context';
 import {
   AUDIT_PORT,
@@ -910,14 +910,17 @@ export class DocumentsService {
       organizationId: who.scope.organizationId,
     };
     try {
-      // Bounded: with Valkey down `queue.add` never answers, and the upload would hang instead of answering 202.
-      await queueCallWithin(() =>
-        this.queue.add(DOCS_SCAN_JOB, job, {
-          // The version id as job id: queueing the same version twice is a no-op, not two scans.
-          // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
-          ...SCAN_JOB_OPTIONS,
-          jobId: versionId,
-        }),
+      // Bounded (4 s, longer than a nudge: a timeout here discards the upload): with Valkey down `queue.add` never
+      // answers, and the upload would hang instead of answering 202.
+      await queueCallWithin(
+        () =>
+          this.queue.add(DOCS_SCAN_JOB, job, {
+            // The version id as job id: queueing the same version twice is a no-op, not two scans.
+            // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
+            ...SCAN_JOB_OPTIONS,
+            jobId: versionId,
+          }),
+        SCAN_ENQUEUE_TIMEOUT_MS,
       );
     } catch (error) {
       // The bytes are stored and the version already holds their sha256 and `quarantined`, so the file is kept
