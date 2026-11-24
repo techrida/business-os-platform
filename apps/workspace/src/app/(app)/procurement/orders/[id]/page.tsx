@@ -68,7 +68,7 @@ function closedToReader(result: PromiseSettledResult<unknown>): boolean {
 
 /**
  * The approval to show as the order's history (R6Q22): the waiting change of vendor if there is one, else the current
- * version's approval, else the latest version that went through one. Versions the person may not read give none.
+ * version's approval. An older version's approval is not shown as this order's. Versions the person may not read give none.
  */
 function approvalRequestOf(
   po: PurchaseOrder,
@@ -76,13 +76,7 @@ function approvalRequestOf(
 ): string | null {
   if (po.pendingVendorChange) return po.pendingVendorChange.approvalRequestId;
   if (versions.status !== 'fulfilled') return null;
-  const byNewest = [...versions.value].sort((a, b) => b.version - a.version);
-  const current = byNewest.find((v) => v.version === po.currentVersion);
-  return (
-    current?.approvalRequestId ??
-    byNewest.find((v) => v.approvalRequestId !== null)?.approvalRequestId ??
-    null
-  );
+  return versions.value.find((v) => v.version === po.currentVersion)?.approvalRequestId ?? null;
 }
 
 function PanelProblem({ what, err, retry }: { what: string; err: unknown; retry: string }) {
