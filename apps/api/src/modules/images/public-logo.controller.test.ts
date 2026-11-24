@@ -17,7 +17,6 @@ import { PUBLIC_LOGO_CACHE_CONTROL, PublicLogoController } from './public-logo.c
 
 const proto = PublicLogoController.prototype;
 const TENANT = '11111111-1111-4111-8111-111111111111';
-const DOC = '22222222-2222-4222-8222-222222222222';
 
 function fakeResponse() {
   const sink = new PassThrough();
@@ -39,9 +38,9 @@ function fakeResponse() {
 }
 
 describe('PublicLogoController', () => {
-  it('is one public GET at /v1/public/logo/:tenantId/:documentId and nothing else', () => {
+  it('is one public GET at /v1/public/logo/:tenantId and nothing else', () => {
     expect(Reflect.getMetadata(PATH_METADATA, PublicLogoController)).toBe('v1/public/logo');
-    expect(Reflect.getMetadata(PATH_METADATA, proto.open)).toBe(':tenantId/:documentId');
+    expect(Reflect.getMetadata(PATH_METADATA, proto.open)).toBe(':tenantId');
     expect(Reflect.getMetadata(METHOD_METADATA, proto.open)).toBe(RequestMethod.GET);
     expect(Reflect.getMetadata(IS_PUBLIC_KEY, proto.open)).toBe(true);
     expect(Reflect.getMetadata(CAN_KEY, proto.open)).toBeUndefined();
@@ -61,11 +60,10 @@ describe('PublicLogoController', () => {
     const { res, body } = fakeResponse();
     await new PublicLogoController({ openPublicLogo } as unknown as DocumentsService).open(
       TENANT,
-      DOC,
       { headers: { 'if-none-match': '"old"' } } as unknown as Request,
       res as unknown as Response,
     );
-    expect(openPublicLogo).toHaveBeenCalledWith(TENANT, DOC, '"old"');
+    expect(openPublicLogo).toHaveBeenCalledWith(TENANT, '"old"');
     expect(res.statusCode).toBe(200);
     expect(body().toString()).toBe('png');
     expect(res.headers).toMatchObject({
@@ -87,7 +85,6 @@ describe('PublicLogoController', () => {
     await expect(
       new PublicLogoController(docs as unknown as DocumentsService).open(
         TENANT,
-        DOC,
         { headers: {} } as unknown as Request,
         res as unknown as Response,
       ),

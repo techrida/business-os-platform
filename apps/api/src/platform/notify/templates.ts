@@ -10,8 +10,8 @@
 //   - no attachment, ever (ADR 0023: email a portal link, never a file). A rendered email is only
 //     { subject, text, html }, and assertSafeEmail refuses any other key, any image or file reference
 //     and any host other than the one the template links to. The one exception is the company logo (R6Q20): a
-//     single <img> whose address renderEmail builds itself, on the same host as the link, from the tenant and
-//     logo ids (buildLogoUrl). assertSafeEmail accepts that exact tag and no other.
+//     single <img> whose address renderEmail builds itself, on the same host as the link, from the tenant
+//     id (buildLogoUrl). assertSafeEmail accepts that exact tag and no other.
 // Keep the wording short and neutral: the email says "something needs you", the workspace shows the detail.
 
 import { formatCustomerDate } from '@bos/locale';
@@ -348,26 +348,28 @@ function parts(template: EmailTemplate, v: Record<string, string>): Parts {
   }
 }
 
-/** The company logo to show at the top of an email: the tenant and the document id its public route takes. */
+/**
+ * The company logo to show at the top of an email: the tenant whose public logo address it names. The address holds
+ * no document id, so an email sent long ago shows whatever logo the company has now.
+ */
 export interface EmailLogo {
   tenantId: string;
-  documentId: string;
 }
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The absolute public address of the logo: the app's own URL plus `/brand/logo/<tenantId>/<documentId>`, the
- * same-origin route that serves the API's public logo. Built from config and two guids, never from caller text.
+ * The absolute public address of the logo: the app's own URL plus `/brand/logo/<tenantId>`, the
+ * same-origin route that serves the API's public logo. Built from config and one guid, never from caller text.
  */
 export function buildLogoUrl(baseUrl: string, logo: EmailLogo): string {
   if (!/^https?:\/\/[^\s/]+/i.test(baseUrl)) {
     throw new EmailTemplateError('the logo base must be an http(s) URL');
   }
-  if (!GUID.test(logo.tenantId) || !GUID.test(logo.documentId)) {
-    throw new EmailTemplateError('the logo ids must be guids');
+  if (!GUID.test(logo.tenantId)) {
+    throw new EmailTemplateError('the logo tenant id must be a guid');
   }
-  return `${baseUrl.replace(/\/+$/, '')}/brand/logo/${logo.tenantId.toLowerCase()}/${logo.documentId.toLowerCase()}`;
+  return `${baseUrl.replace(/\/+$/, '')}/brand/logo/${logo.tenantId.toLowerCase()}`;
 }
 
 /** The one image tag an email may hold. The alt text is the (cleaned, escaped) company name, shown when images are off. */

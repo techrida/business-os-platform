@@ -24,24 +24,18 @@ export async function getBranding(session: Session): Promise<Branding | null> {
   }
 }
 
-/** The same-origin address an `<img>` uses for the logo (the proxy at `/brand/logo/:tenantId/:documentId`). */
+/** The same-origin address an `<img>` uses for the logo (the proxy at `/brand/logo/:tenantId`, always the current logo). */
 export function logoSrc(branding: Branding | null): string | null {
-  return branding?.logo
-    ? `/brand/logo/${encodeURIComponent(branding.logo.tenantId)}/${encodeURIComponent(branding.logo.documentId)}`
-    : null;
+  return branding?.logo ? `/brand/logo/${encodeURIComponent(branding.logo.tenantId)}` : null;
 }
 
 /**
- * `GET /v1/public/logo/:tenantId/:documentId` with no token: the API serves the company logo and nothing else to
- * anyone. The ids are encoded path segments on a fixed path under API_INTERNAL_URL, so the request cannot leave it.
+ * `GET /v1/public/logo/:tenantId` with no token: the API serves the company's current logo and nothing else to
+ * anyone. The id is an encoded path segment on a fixed path under API_INTERNAL_URL, so the request cannot leave it.
  */
-export async function openPublicLogo(
-  tenantId: string,
-  documentId: string,
-  ifNoneMatch?: string,
-): Promise<Response> {
+export async function openPublicLogo(tenantId: string, ifNoneMatch?: string): Promise<Response> {
   const url = new URL(
-    `/v1/public/logo/${encodeURIComponent(tenantId)}/${encodeURIComponent(documentId)}`,
+    `/v1/public/logo/${encodeURIComponent(tenantId)}`,
     getEnv().API_INTERNAL_URL,
   );
   return await fetch(url, {
