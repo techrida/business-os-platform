@@ -2,6 +2,7 @@
 // submit needs, what an approval needs, and what reopening an expired case clears.
 import {
   CHECKLIST_ITEM_KEYS,
+  REQUIRED_VENDOR_CHECKLIST_KEYS,
   VENDOR_CHECKLIST_ITEM_KEYS,
   type ChecklistItem,
   ChecklistItemSchema,
@@ -192,6 +193,14 @@ describe('the checklist by party kind', () => {
     expect(vendor.every((i) => i.status === 'missing')).toBe(true);
     expect(vendor.some((i) => i.required)).toBe(true);
     expect(vendor.some((i) => i.key === 'tax_clearance' && i.required)).toBe(true);
+  });
+
+  it('requires exactly the documents the contract lists as owed by every vendor', () => {
+    expect(
+      defaultChecklistFor('vendor')
+        .filter((i) => i.required)
+        .map((i) => i.key),
+    ).toEqual([...REQUIRED_VENDOR_CHECKLIST_KEYS]);
   });
 
   it('keeps the two key sets apart', () => {

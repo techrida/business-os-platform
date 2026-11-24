@@ -4,6 +4,7 @@
 // document that the virus scan passed.
 import {
   CHECKLIST_ITEM_KEYS,
+  REQUIRED_VENDOR_CHECKLIST_KEYS,
   VENDOR_CHECKLIST_ITEM_KEYS,
   type ChecklistItem,
   type DocumentVersionDto,
@@ -34,7 +35,7 @@ export const DEFAULT_CHECKLIST: readonly ChecklistItem[] = CHECKLIST_ITEM_KEYS.m
 
 // A vendor case cannot know yet whether the vendor is a company, a proprietor or foreign (that is V1's data),
 // so only what every vendor owes is required: PAN, a tax clearance (it lapses each fiscal year) and bank proof.
-const REQUIRED_VENDOR_KEYS: readonly ItemKey[] = ['pan_certificate', 'tax_clearance', 'bank_proof'];
+const REQUIRED_VENDOR_KEYS: readonly ItemKey[] = REQUIRED_VENDOR_CHECKLIST_KEYS;
 
 /** What a new vendor case starts with: one empty item per vendor key. */
 export const VENDOR_DEFAULT_CHECKLIST: readonly ChecklistItem[] = VENDOR_CHECKLIST_ITEM_KEYS.map(

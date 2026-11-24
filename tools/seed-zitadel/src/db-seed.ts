@@ -5,6 +5,7 @@
 // schema. Every statement is idempotent, and `seedKernelRows` returns 0 on a second run.
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  REQUIRED_VENDOR_CHECKLIST_KEYS,
   VENDOR_CHECKLIST_ITEM_KEYS,
   MEMO_APPROVER_DEFAULT_SPEC,
   MEMO_APPROVER_DOCUMENT_TYPE,
@@ -846,20 +847,13 @@ async function seedDevPeopleAndVendor(
   return changed;
 }
 
-/** The documents every vendor owes (the API's REQUIRED_VENDOR_KEYS in verification.rules.ts); the rest are optional. */
-const EXTRA_VENDOR_REQUIRED_DOCS: readonly string[] = [
-  'pan_certificate',
-  'tax_clearance',
-  'bank_proof',
-];
-
 /**
  * One of EXTRA_VENDORS: its vendor row on the party the tenancy step created for its org (found by code), a TR
  * account, and, while it is pending_kyc, an editable draft KYB case with the vendor checklist (every item missing),
  * so the portal's KYC document upload has a case to write to. An approved vendor needs no case. The dev vendor has
  * no bank account either, so neither do these.
  */
-async function seedExtraVendor(
+export async function seedExtraVendor(
   client: pg.ClientBase,
   scope: SeedScope,
   vendor: ExtraVendorSpec,
@@ -872,6 +866,18 @@ async function seedExtraVendor(
   );
   const partyId = party.rows[0]?.id;
   if (!partyId) throw new Error(`dev seed: vendor party ${vendor.partyCode} not found`);
+  // vendors_tenant_pan_unique would refuse the insert with a bare constraint name: a vendor somebody made by hand that
+  // already holds this seeded PAN is named here instead, with what to do about it.
+  const holder = await client.query<{ id: string; legal_name: string }>(
+    `SELECT id, legal_name FROM app.vendors WHERE tenant_id = $1::uuid AND pan = $2 AND id <> $3::uuid`,
+    [scope.tenantId, vendor.pan, partyId],
+  );
+  if (holder.rows[0]) {
+    throw new Error(
+      `dev seed: the PAN ${vendor.pan} of ${vendor.partyCode} is already held by the vendor "${holder.rows[0].legal_name}" ` +
+        `(${holder.rows[0].id}). Change the PAN of that vendor or delete it, then run the seed again.`,
+    );
+  }
   let changed = 0;
   const row = await client.query(
     `INSERT INTO app.vendors
@@ -905,7 +911,7 @@ async function seedExtraVendor(
   if (vendor.status === 'pending_kyc') {
     const checklist = VENDOR_CHECKLIST_ITEM_KEYS.map((key) => ({
       key,
-      required: EXTRA_VENDOR_REQUIRED_DOCS.includes(key),
+      required: (REQUIRED_VENDOR_CHECKLIST_KEYS as readonly string[]).includes(key),
       status: 'missing',
       documentId: null,
       expiresOn: null,
