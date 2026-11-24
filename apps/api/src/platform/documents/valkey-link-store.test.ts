@@ -76,6 +76,12 @@ async function startFake(port = 0): Promise<Fake> {
           // Applied now, answered late: the case where the client times out on a command the server ran.
           if (fake.stallSets) setTimeout(() => socket.write(reply), LINK_STORE_TIMEOUT_MS + 700);
           else socket.write(reply);
+        } else if (name === 'EVAL') {
+          // The release script: delete args[3] only when it holds args[4].
+          const held = fake.keys.get(args[3] ?? '');
+          const mine = held !== undefined && held === args[4];
+          if (mine) fake.keys.delete(args[3] ?? '');
+          socket.write(`:${mine ? 1 : 0}\r\n`);
         } else if (name === 'DEL') {
           socket.write(`:${fake.keys.delete(args[1] ?? '') ? 1 : 0}\r\n`);
         } else if (name === 'INFO' || name === 'CLIENT') {
@@ -120,6 +126,16 @@ describe('ValkeyLinkStore.claim', () => {
     expect(fake.keys.has('dl:slow')).toBe(false);
     fake.stallSets = false;
     await expect(store.claim('dl:slow', 60)).resolves.toBe(true);
+  }, 15_000);
+
+  it("keeps an earlier request's claim when a later claim on the same link times out", async () => {
+    const { fake, store } = await fakeAndStore();
+    await expect(store.claim('dl:used', 60)).resolves.toBe(true);
+    fake.stallSets = true;
+    await expect(store.claim('dl:used', 60)).rejects.toThrow();
+    fake.stallSets = false;
+    expect(fake.keys.has('dl:used')).toBe(true);
+    await expect(store.claim('dl:used', 60)).resolves.toBe(false);
   }, 15_000);
 
   it('applies no SET after the fact when Valkey was unreachable at claim time', async () => {
