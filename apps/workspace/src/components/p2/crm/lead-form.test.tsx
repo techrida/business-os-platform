@@ -6,7 +6,15 @@ import { hydrateRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { choose, click, fill, mountForm, settle, typeKeys } from '@/test/form-interactions';
+import {
+  choose,
+  click,
+  fill,
+  mountForm,
+  pickDate,
+  settle,
+  typeKeys,
+} from '@/test/form-interactions';
 import { countryFlag, phoneCountryButton, pickPhoneCountry } from '@/test/phone-field';
 
 import { EMAIL_OR_PHONE, parseLead } from './forms';
@@ -347,5 +355,88 @@ describe('lead form, a phone typed before the page loaded', () => {
 describe('lead form source', () => {
   it('leaves no event re-dispatch for the duplicate hint in the form', () => {
     expect(LeadForm.toString()).not.toContain('dispatchEvent');
+  });
+});
+
+describe('lead form follow-up time (R6Q12)', () => {
+  beforeEach(() => {
+    globalThis.ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  });
+
+  it('is the shared date-time picker, not a native datetime-local box', async () => {
+    const container = await mountLead(vi.fn<FormAction>());
+    expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
+    const hidden = container.querySelector('input[name="followUpAt"]');
+    expect(hidden).not.toBeNull();
+    expect(hidden?.parentElement?.querySelector('[data-type="hour"]')).not.toBeNull();
+  });
+
+  it('posts the picked time as YYYY-MM-DDTHH:mm, the form the server reads', async () => {
+    const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
+    const container = await mountLead(action);
+    await fillRequired(container);
+    await fill(boxFor(container, 'Email'), 'sunita@binford.com.np');
+    await pickDate(container, 'followUpAt', '2026-11-20T10:30');
+    await click(submitButton(container));
+    expect(action.mock.calls[0]![1].get('followUpAt')).toBe('2026-11-20T10:30');
+  });
+
+  it('keeps a half-typed date: the form is held and the typed part stays', async () => {
+    const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
+    const container = await mountLead(action);
+    await fillRequired(container);
+    await fill(boxFor(container, 'Email'), 'sunita@binford.com.np');
+    const root = container.querySelector('input[name="followUpAt"]')!.parentElement!;
+    const month = root.querySelector('[data-type="month"]')!;
+    await act(() =>
+      Promise.resolve(
+        month.dispatchEvent(
+          new InputEvent('beforeinput', {
+            data: '11',
+            inputType: 'insertText',
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      ),
+    );
+    await click(submitButton(container));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(action).not.toHaveBeenCalled();
+    expect(root.querySelector('[data-type="month"]')?.hasAttribute('data-placeholder')).toBe(false);
+  });
+
+  it('holds a date with no time, and says what is missing', async () => {
+    const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
+    const container = await mountLead(action);
+    await fillRequired(container);
+    await fill(boxFor(container, 'Email'), 'sunita@binford.com.np');
+    const root = container.querySelector('input[name="followUpAt"]')!.parentElement!;
+    for (const [type, data] of [
+      ['month', '11'],
+      ['day', '20'],
+      ['year', '2026'],
+    ] as const) {
+      await act(() =>
+        Promise.resolve(
+          root.querySelector(`[data-type="${type}"]`)!.dispatchEvent(
+            new InputEvent('beforeinput', {
+              data,
+              inputType: 'insertText',
+              bubbles: true,
+              cancelable: true,
+            }),
+          ),
+        ),
+      );
+    }
+    await click(submitButton(container));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(action).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Enter the date and time');
   });
 });

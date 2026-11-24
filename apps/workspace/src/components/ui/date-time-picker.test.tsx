@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { act, useState } from 'react';
+import { hydrateRoot } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { mountForm, submit } from '@/test/form-interactions';
@@ -267,4 +269,27 @@ it('describes the cleared day with both messages when it blocks a plain form, an
   expect(alerts()).toHaveLength(0);
   expect(mounted.container.querySelector('form')!.checkValidity()).toBe(true);
   expect(mounted.container.querySelector('[aria-invalid="true"]')).toBeNull();
+});
+
+it('leaves the time field out of the server HTML, so a page typed into before it hydrates is not rebuilt (R6Q12)', async () => {
+  // Node and the browser write the space before AM/PM differently; the server's time segments would
+  // not match the browser's, React would throw error 418 and rebuild the page, wiping typed text.
+  const node = <DateTimePicker aria-label="Due" name="dueAt" defaultValue="2026-11-21T14:30" />;
+  const html = renderToString(node);
+  expect(html).not.toContain('data-type="hour"');
+  expect(html).toContain('name="dueAt"');
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  document.body.append(container);
+  const problems: unknown[] = [];
+  await act(() => {
+    hydrateRoot(container, node, { onRecoverableError: (error) => problems.push(error) });
+    return Promise.resolve();
+  });
+  expect(problems).toEqual([]);
+  expect(container.querySelector('[data-type="hour"]')).not.toBeNull();
+  expect((container.querySelector('input[name="dueAt"]') as HTMLInputElement).value).toBe(
+    '2026-11-21T14:30',
+  );
+  container.remove();
 });
