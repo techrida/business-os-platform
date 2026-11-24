@@ -1,6 +1,6 @@
 import type { VendorPortalCapability } from '@bos/contracts';
 
-import { Brand } from '@/components/shell/brand';
+import { Brand, type BrandProps } from '@/components/shell/brand';
 import { Button } from '@/components/ui/button';
 import { VendorNav } from '@/components/vendor/vendor-nav';
 import { PORTAL_LABEL } from '@/lib/brand';
@@ -18,14 +18,17 @@ const VENDOR_PORTAL_LABEL = 'Vendor portal';
 export function TopBar({
   kind = 'customer',
   capability = 'none',
+  brand = {},
 }: {
   kind?: 'customer' | 'vendor';
   capability?: VendorPortalCapability;
+  /** The company's name and logo address (R6Q20); absent or empty shows the product name. */
+  brand?: Pick<BrandProps, 'name' | 'logoSrc'>;
 }) {
   return (
     <header className={styles.bar}>
       <div className={styles.brand}>
-        <Brand />
+        <Brand name={brand.name} logoSrc={brand.logoSrc} />
         <span className={styles.label}>
           {kind === 'vendor' ? VENDOR_PORTAL_LABEL : PORTAL_LABEL}
         </span>
