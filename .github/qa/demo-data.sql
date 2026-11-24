@@ -113,10 +113,10 @@ BEGIN
     INSERT INTO app.documents (id, tenant_id, organization_id, owner_type, owner_id) VALUES (v_doc, v_tenant, v_org, 'vendor_bill_intake', v_vendor);
     INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename, declared_mime, size_bytes, storage_key, status)
     VALUES (v_tenant, v_org, v_doc, 1, 'invoice.pdf', 'application/pdf', 1024, v_tenant::text || '/' || gen_random_uuid()::text, 'clean');
-    INSERT INTO app.vendor_bills (id, tenant_id, organization_id, kind, vendor_id, vendor_invoice_no, invoice_date, fiscal_year, currency, document_id,
+    INSERT INTO app.vendor_bills (id, tenant_id, organization_id, kind, number, vendor_id, vendor_invoice_no, invoice_date, fiscal_year, currency, document_id,
                                   status, match_status, net_total, vat_total, payable_total, fx_rate, payable_total_npr, entered_by)
-    VALUES (v_bill, v_tenant, v_org, 'bill', v_vendor, 'QA-INV-1', '2026-11-09', '2083/84', 'NPR', v_doc,
-            'draft', 'not_required', 10000.00, 1300.00, 11300.00, 1, 11300.00, v_fin);
+    VALUES (v_bill, v_tenant, v_org, 'bill', 'BILL-QA-1', v_vendor, 'QA-INV-1', '2026-11-09', '2083/84', 'NPR', v_doc,
+            'approved', 'matched', 10000.00, 1300.00, 11300.00, 1, 11300.00, v_fin);
     INSERT INTO app.vendor_bill_lines (tenant_id, organization_id, vendor_bill_id, line_no, description, account_id, quantity, unit_price, net_amount, tax_code_id, vat_amount)
     VALUES (v_tenant, v_org, v_bill, 1, 'Consulting', v_exp, 1, 10000.00, 10000.00, v_vat, 1300.00);
   END IF;
