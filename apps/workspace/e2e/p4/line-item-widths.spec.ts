@@ -19,7 +19,6 @@ const WIDTHS = [390, 834, 1100, 1280, 1440] as const;
 const FORMS = [
   { persona: 'procurement', route: '/procurement/requests/new' },
   { persona: 'finance', route: '/invoices/new' },
-  { persona: 'finance', route: '/payables/bills/new' },
 ] as const;
 
 // Forms that need a record: the route is the first link of that shape on a list page, so the specs follow
@@ -38,6 +37,15 @@ const LINKED_FORMS = [
     list: '/procurement/rfqs',
     link: /^\/procurement\/rfqs\/[0-9a-f-]{36}\/quotations\/new/,
     open: /^\/procurement\/rfqs\/[0-9a-f-]{36}$/,
+  },
+  {
+    // The bare /payables/bills/new route shows no line items until an order is picked, so the form is measured the way
+    // a person reaches it: the "Enter bill" link of an order (QA fixture PO-QA-1, issued by qa-fixtures.spec).
+    persona: 'finance',
+    name: 'bill entry for an order',
+    list: '/procurement/orders',
+    link: /^\/payables\/bills\/new\?po=/,
+    open: /^\/procurement\/orders\/[0-9a-f-]{36}$/,
   },
 ] as const;
 
