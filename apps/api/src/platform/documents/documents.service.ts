@@ -1374,7 +1374,6 @@ export class DocumentsService {
           eq(documents.id, documentId),
           eq(documents.ownerType, 'entity_logo'),
           isNull(documents.removedAt),
-          eq(documentVersions.status, 'clean'),
         ),
       )
       .orderBy(desc(documentVersions.version))

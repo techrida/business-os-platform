@@ -847,6 +847,23 @@ describe('GET /v1/public/logo/:tenantId (R6Q20, R6Q20b)', () => {
     expect((await getPublic(a.tenantId)).status).toBe(404);
   });
 
+  it('uses the same version rule as the signed-in image route: a newer version still being scanned hides the clean one before it', async () => {
+    const logo = await applyLogo(a);
+    expect((await getPublic(a.tenantId)).status).toBe(200);
+    expect((await getAs(staff(a), logo)).status).toBe(200);
+    // Version 2 arrives and is not scanned yet (images have no upload path for it, so the row is written directly).
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.execute(sql`
+        INSERT INTO app.document_versions
+          (tenant_id, organization_id, document_id, version, filename, declared_mime, size_bytes, storage_key, status)
+        SELECT tenant_id, organization_id, document_id, 2, filename, declared_mime, size_bytes,
+               tenant_id || '/' || gen_random_uuid(), 'awaiting_content'
+          FROM app.document_versions WHERE document_id = ${logo}::uuid AND version = 1`),
+    );
+    expect((await getAs(staff(a), logo)).status).toBe(404);
+    expect((await getPublic(a.tenantId)).status).toBe(404);
+  });
+
   it('stops serving a logo once it is removed', async () => {
     await applyLogo(a);
     expect((await getPublic(a.tenantId)).status).toBe(200);
