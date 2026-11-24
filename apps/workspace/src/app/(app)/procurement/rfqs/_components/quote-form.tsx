@@ -430,6 +430,24 @@ export function QuoteForm({
                         </Select>
                       )}
                     </Field>
+                    <div className={rows.full}>
+                      <Field
+                        label={lineLabel('Description')}
+                        hint="What the vendor quoted. It starts as the request's wording."
+                        error={err[`lines.${i}.description`]}
+                      >
+                        {(control) => (
+                          <Input
+                            {...control}
+                            name={`lines.${i}.description`}
+                            maxLength={500}
+                            value={line.description}
+                            onChange={(e) => setLine(i, { description: e.target.value })}
+                            disabled={!line.include}
+                          />
+                        )}
+                      </Field>
+                    </div>
                   </div>
                 </li>
               );
