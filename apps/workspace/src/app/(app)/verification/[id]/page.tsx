@@ -196,9 +196,12 @@ export default async function VerificationCasePage({
       <div className={styles.caseNotices}>
         {c.identityReset ? (
           <Alert tone="warning" role="region" aria-label="Details changed">
-            Details changed on <time dateTime={c.identityReset.at}>{when(c.identityReset.at)}</time>{' '}
-            by <span>{c.identityReset.byName ?? 'a staff member'}</span>; upload the documents
-            again.
+            {/* One element: the alert's text area is a grid, so loose text and inline parts would each take a row. */}
+            <span data-testid="details-changed-sentence">
+              Details changed on{' '}
+              <time dateTime={c.identityReset.at}>{when(c.identityReset.at)}</time> by{' '}
+              <span>{c.identityReset.byName ?? 'a staff member'}</span>; upload the documents again.
+            </span>
           </Alert>
         ) : null}
         {legacy ? (

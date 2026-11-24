@@ -163,6 +163,14 @@ describe('PaymentForm amount boxes', () => {
     expect(posted(container, 'tdsWithheld')).toBe('125000');
   });
 
+  it('keeps a typed `1,000.00` in the withheld tax, never as an empty value (R6Q4)', async () => {
+    await mount('NPR', ['NPR', 'USD']);
+    const box = boxOf(container, 'Tax withheld');
+    await fill(box, '1,000.00');
+    expect(box.value).toBe('1,000.00');
+    expect(posted(container, 'tdsWithheld')).toBe('1000');
+  });
+
   it('on a blank currency still limits digits but shows no currency code', async () => {
     await mount('INR', ['NPR', 'USD']);
     const box = boxOf(container, 'Amount paid');

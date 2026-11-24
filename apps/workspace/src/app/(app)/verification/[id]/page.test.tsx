@@ -241,6 +241,10 @@ it.each(['vendor', 'customer'] as const)(
     const html = await renderReset(kind);
     const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
     expect(text).toMatch(/Details changed on .* by Sita Founder ; upload the documents again\./);
+    // One sentence in one element: the alert's text area is a grid, so loose parts would each take their own line.
+    expect(html).toMatch(
+      /aria-label="Details changed"[^>]*>(?:(?!<\/div>).)*<div[^>]*>\s*<span data-testid="details-changed-sentence">Details changed on[\s\S]*?upload the documents again\.<\/span><\/div>/s,
+    );
     expect(text).toContain('old-registration.pdf');
     expect(text).toContain('Before the change');
     // A vendor case has no loose-file removal; a customer's keeps it.

@@ -67,21 +67,22 @@ const config = new client.Configuration(
 );
 
 type GrantResult = Awaited<ReturnType<typeof client.authorizationCodeGrant>>;
+type RefreshResult = Awaited<ReturnType<typeof client.refreshTokenGrant>>;
 
-function grantResult(fields: {
+function grantResult<T extends GrantResult | RefreshResult = GrantResult>(fields: {
   access_token: string;
   refresh_token?: string;
   id_token?: string;
   expiresIn?: number;
   sub?: string;
-}): GrantResult {
+}): T {
   const { expiresIn, sub, ...body } = fields;
   return {
     ...body,
     token_type: 'bearer',
     expiresIn: () => expiresIn,
     claims: () => (sub === undefined ? undefined : { sub }),
-  } as unknown as GrantResult;
+  } as unknown as T;
 }
 
 /** The OIDC state client. */
@@ -428,7 +429,7 @@ describe('completeLogin', () => {
 describe('refreshTokens', () => {
   it('runs a refresh grant and maps the response', async () => {
     vi.mocked(client.refreshTokenGrant).mockResolvedValue(
-      grantResult({ access_token: 'at2', refresh_token: 'rt2', expiresIn: 120 }),
+      grantResult<RefreshResult>({ access_token: 'at2', refresh_token: 'rt2', expiresIn: 120 }),
     );
     await expect(refreshTokens('rt1')).resolves.toEqual({
       accessToken: 'at2',

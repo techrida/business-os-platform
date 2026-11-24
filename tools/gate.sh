@@ -72,7 +72,7 @@ dev_tools_boundary() {
 
 # Tracked files must be fit for a public repository (no internal files or private paths; AGPL license fields).
 public_repo_check() {
-  node --test tools/check-public-repo.test.mjs && node tools/check-public-repo.mjs
+  node --test tools/check-public-repo.test.mjs infra/pnpm-bootstrap.test.mjs tools/qa-workflow.test.mjs && node tools/check-public-repo.mjs
 }
 
 step install pnpm install --frozen-lockfile

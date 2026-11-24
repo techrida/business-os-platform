@@ -6,7 +6,7 @@
 // is virus-scanned and `GET /api/images/:id` answers 404 until it is clean, so the component shows "Scanning" and
 // polls with a backoff until the picture can be served. Once it is, the other avatars of the record on the page are
 // told to try again and the caller refreshes a second time.
-import { IMAGE_ACCEPT, IMAGE_HINT, imagePath, type ImageOwnerType } from '@bos/contracts';
+import { IMAGE_ACCEPT, imagePath, type ImageOwnerType } from '@bos/contracts';
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { announceImageReady, Avatar, type AvatarSize } from './avatar';
@@ -129,6 +129,8 @@ export function ImageUpload({
   });
 
   const [busy, setBusy] = useState(false);
+  /** Why the last upload was refused, kept in the field's message line after the toast is gone. */
+  const [problem, setProblem] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [over, setOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -210,12 +212,17 @@ export function ImageUpload({
     if (!editable || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    setProblem(null);
+    const refuse = (message: string) => {
+      setProblem(message);
+      toast.error(message);
+    };
     try {
       let picture: File;
       try {
         picture = await shrinkImage(file);
       } catch (err) {
-        toast.error(
+        refuse(
           err instanceof ImageRefusal
             ? err.message
             : 'This picture could not be read. Try another file.',
@@ -229,11 +236,11 @@ export function ImageUpload({
         // No Content-Type header: the browser writes the multipart boundary and the length.
         response = await fetch(`/api/images/${ownerType}/${ownerId}`, { method: 'POST', body });
       } catch {
-        toast.error(OFFLINE);
+        refuse(OFFLINE);
         return;
       }
       if (!response.ok) {
-        toast.error(await refusalMessage(response, UPLOAD_FAILED));
+        refuse(await refusalMessage(response, UPLOAD_FAILED));
         return;
       }
       let documentId: unknown;
@@ -243,7 +250,7 @@ export function ImageUpload({
         documentId = undefined;
       }
       if (typeof documentId !== 'string' || !documentId) {
-        toast.error(UPLOAD_FAILED);
+        refuse(UPLOAD_FAILED);
         return;
       }
       toast.success('Picture uploaded', { description: 'It appears once its virus scan is done.' });
@@ -269,6 +276,7 @@ export function ImageUpload({
     }
     stopWatch();
     setScanningId(null);
+    setProblem(null);
     toast.success('Picture removed');
     onChangeRef.current(null);
     return true;
@@ -416,8 +424,7 @@ export function ImageUpload({
               {hasPicture ? 'Replace picture' : 'Upload picture'}
             </span>
             <span id={hintId} className={styles.dropHint}>
-              <span className={styles.dropHow}>Drop a file here or choose one. </span>
-              {IMAGE_HINT}
+              <span className={styles.dropHow}>Drop a file here or choose one.</span>
             </span>
           </span>
         </label>
@@ -442,6 +449,12 @@ export function ImageUpload({
           destructive
           onConfirm={remove}
         />
+      ) : null}
+
+      {problem ? (
+        <p role="status" className={styles.problem}>
+          {problem}
+        </p>
       ) : null}
     </div>
   );

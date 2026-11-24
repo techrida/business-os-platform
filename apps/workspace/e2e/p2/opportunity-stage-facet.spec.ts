@@ -11,6 +11,7 @@ import {
   toggleOptions,
 } from '../helpers/multi-select';
 import { chooseOption, selectByName } from '../helpers/select';
+import { ensureLeadOwner } from '../helpers/lead-owner';
 
 async function moveStage(page: Page, value: string, label: string) {
   if (value === 'contacted') {
@@ -56,13 +57,14 @@ async function createOpportunity(page: Page, name: string) {
   await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(name);
   await chooseOption(selectByName(page, 'source'), 'referral');
   await page
-    .getByRole('textbox', { name: 'Company or organization', exact: true })
+    .getByRole('combobox', { name: 'Company or organization', exact: true })
     .fill(`${name} Company`);
   await page.getByLabel('Contact person').fill(name);
   // A lead needs an email or at least one phone number.
   await page
     .getByRole('textbox', { name: 'Email', exact: true })
     .fill(`${randomUUID()}@example.test`);
+  await ensureLeadOwner(page);
   await page.getByRole('button', { name: 'Create lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
   await moveStage(page, 'contacted', 'Contacted');
@@ -76,8 +78,11 @@ async function createOpportunity(page: Page, name: string) {
   const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });
   await dialog.getByLabel('Address', { exact: true }).fill('Main Road');
   await dialog.getByLabel('City', { exact: true }).fill('Kathmandu');
+  // Three steps: organisation, contact, deal.
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click();
   // A conversion always names a contact with an email (there is no "No contact" any more).
   await dialog.getByLabel('Email', { exact: true }).fill(`${randomUUID()}@example.test`);
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click();
   await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
   await expect(page).toHaveURL(/\/opportunities\/[\da-f-]+$/);
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();

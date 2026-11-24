@@ -124,7 +124,7 @@ export async function updateVendorAction(
   const parsed = parseUpdateVendor(readVendorValues(form), original, seen);
   if (!parsed.ok) {
     return 'nothingChanged' in parsed
-      ? { key, errors: {}, error: 'Nothing has changed, so there is nothing to save.' }
+      ? { key, errors: {}, notice: 'Nothing changed, so there is nothing to save.' }
       : { key, errors: parsed.errors };
   }
 

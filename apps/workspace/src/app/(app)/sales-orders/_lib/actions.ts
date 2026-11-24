@@ -138,7 +138,31 @@ async function takenBy(
 }
 
 /** `POST /v1/sales-orders`: confirm an accepted quotation version, then open the new order. */
-export async function confirmOrderAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+export async function confirmOrderAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const result = await confirmOrder(prev, form);
+  if (!('orderId' in result)) return result;
+  revalidatePath('/sales-orders');
+  // `redirect` throws, so it stays outside the try block.
+  redirect(`/sales-orders/${encodeURIComponent(result.orderId)}`);
+}
+
+/**
+ * The same call from the draft's own page: the order is already open there, so it answers `done` instead of
+ * redirecting to the page it is on. The dialog then refreshes the page and puts focus on its heading (a redirect
+ * to the same address left focus on `<body>`).
+ */
+export async function confirmDraftAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const result = await confirmOrder(prev, form);
+  if (!('orderId' in result)) return result;
+  revalidatePath('/sales-orders');
+  revalidatePath(`/sales-orders/${result.orderId}`);
+  return { key: keyOf(form), done: true };
+}
+
+async function confirmOrder(
+  _prev: ActionState,
+  form: FormData,
+): Promise<ActionState | { orderId: string }> {
   const session = await requireStaffSession('/sales-orders');
   const key = keyOf(form);
 
@@ -158,9 +182,7 @@ export async function confirmOrderAction(_prev: ActionState, form: FormData): Pr
     const creditHold = await creditHoldOf(session, err, parsed.body.quotationVersionId);
     return { ...failed(err, key), ...(creditHold ? { creditHold } : {}) };
   }
-  revalidatePath('/sales-orders');
-  // `redirect` throws, so it stays outside the try block.
-  redirect(`/sales-orders/${encodeURIComponent(orderId)}`);
+  return { orderId };
 }
 
 /** `POST /v1/sales-orders/:id/schedule-lines/:lineId/mark-billable`. The dialog reloads the page when closed. */

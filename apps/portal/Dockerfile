@@ -7,8 +7,10 @@
 # so the runtime image has no pnpm, no source and no dev dependencies.
 
 FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS build
-# Corepack is deprecated, so pnpm comes from npm. Keep the version equal to the root `packageManager`.
-RUN npm i -g pnpm@11.28.11
+# Corepack is deprecated, so pnpm comes from npm, installed from a lockfile (`npm ci`: integrity hashes).
+# infra/pnpm-bootstrap pins the version; infra/pnpm-bootstrap.test.mjs keeps it equal to the root `packageManager`.
+COPY infra/pnpm-bootstrap /pnpm-bootstrap
+RUN npm ci --prefix /pnpm-bootstrap --ignore-scripts && ln -s /pnpm-bootstrap/node_modules/.bin/pnpm /usr/local/bin/pnpm
 WORKDIR /repo
 ENV NEXT_TELEMETRY_DISABLED=1 CI=1
 

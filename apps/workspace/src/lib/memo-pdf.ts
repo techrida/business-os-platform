@@ -533,18 +533,23 @@ export async function renderMemoPdf(
   return { bytes, substituted, pages };
 }
 
+function trimDashes(s: string): string {
+  let start = 0;
+  let end = s.length;
+  while (start < end && s[start] === '-') start += 1;
+  while (end > start && s[end - 1] === '-') end -= 1;
+  return s.slice(start, end);
+}
+
 /** The file name offered by the browser: ASCII only, so every browser and file system keeps it intact. */
 export function memoPdfFileName(number: string | null, title: string): string {
-  const slug = title
-    .normalize('NFKD')
-    .replace(/[^\x20-\x7e]/g, '')
-    .replace(/[^A-Za-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-  const base = [
-    number?.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'memo',
-    slug || null,
-  ]
+  const slug = trimDashes(
+    title
+      .normalize('NFKD')
+      .replace(/[^\x20-\x7e]/g, '')
+      .replace(/[^A-Za-z0-9]+/g, '-'),
+  ).slice(0, 60);
+  const base = [trimDashes(number?.replace(/[^A-Za-z0-9]+/g, '-') ?? '') || 'memo', slug || null]
     .filter(Boolean)
     .join('-');
   return `${base}.pdf`;

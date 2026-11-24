@@ -53,7 +53,7 @@ const MAIL_TIMEOUT_MS = 60_000;
 async function approve(page: Page, comment: string): Promise<void> {
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Approve request' });
-  await dialog.getByLabel('Comment (optional)', { exact: true }).fill(comment);
+  await dialog.getByPlaceholder('Anything the requester should know').fill(comment);
   await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
   await expect(page.getByText('Your approval was recorded.')).toBeVisible();
@@ -109,7 +109,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
     await test.step('sales cannot approve their own memo: inbox says so, and the request has no Approve button', async () => {
       await sales.goto('/inbox');
       await expect(sales.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
-      await expect(sales.getByRole('alert')).toHaveCount(0);
+      await expect(sales.getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(0);
       await expect(inboxRow(sales, title)).toHaveCount(0);
 
       // The request itself may be read by its requester (approvals.requests.read, own scope), but
@@ -143,7 +143,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
       await founder.goto(`/memos/${memoId}`);
       await expect(async () => {
         await founder.reload();
-        await expect(founder.getByText('Approved', { exact: true })).toBeVisible({
+        await expect(founder.getByText('Approved', { exact: true }).first()).toBeVisible({
           timeout: 3_000,
         });
       }).toPass({ timeout: 30_000 });
@@ -193,26 +193,26 @@ test('memo exit: a memo goes through the two approvals its author named, with em
       await finance.goto(`/memos/${memoId}`);
       const timeline = finance.getByRole('region', { name: 'Audit timeline' });
       await expect(timeline).toBeVisible();
-      // Labels are the audit action names made readable (`approvals.approve` -> "Approvals approve").
-      // P3's memo page shows the historical `test_memos.*` actions under the product name
-      // (`test_memos.insert` -> "Memo insert"); see auditLabel in memos/[id]/page.tsx.
+      // Labels are the audit action names in plain language (kernel-ui.ts: `approvals.approve` -> "Approved").
+      // The memo page shows the historical `test_memos.*` actions under the product name
+      // (`test_memos.insert` -> "Memo created").
       // The memo page lists events for the memo itself and for its approval request.
-      await expect(timeline.getByText('Memo insert', { exact: true })).toHaveCount(1);
-      await expect(timeline.getByText('Approvals submit', { exact: true })).toHaveCount(1);
-      await expect(timeline.getByText('Approvals approve', { exact: true })).toHaveCount(2);
+      await expect(timeline.getByText('Memo created', { exact: true })).toHaveCount(1);
+      await expect(timeline.getByText('Submitted for approval', { exact: true })).toHaveCount(1);
+      await expect(timeline.getByText('Approved', { exact: true })).toHaveCount(2);
       // Created -> submitted -> approved on the memo, so at least two updates.
       expect(
-        await timeline.getByText('Memo update', { exact: true }).count(),
+        await timeline.getByText('Memo updated', { exact: true }).count(),
         'memo status changes in the trail',
       ).toBeGreaterThanOrEqual(2);
       expect(
-        await timeline.getByText('Approval requests update', { exact: true }).count(),
+        await timeline.getByText('Approval request updated', { exact: true }).count(),
         'request status changes in the trail',
       ).toBeGreaterThanOrEqual(1);
 
       // Sales has no audit.read, so the same page explains why the trail is empty for them.
       await sales.goto(`/memos/${memoId}`);
-      await expect(sales.getByText('Approved', { exact: true })).toBeVisible();
+      await expect(sales.getByText('Approved', { exact: true }).first()).toBeVisible();
       await expect(
         sales.getByText('The audit trail is only open to roles with audit access', {
           exact: false,

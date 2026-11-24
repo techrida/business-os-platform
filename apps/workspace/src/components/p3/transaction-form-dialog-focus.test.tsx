@@ -20,7 +20,7 @@ vi.mock('@/app/(app)/sales-orders/[id]/release-delivery-action', () => ({
   releaseDeliveryAction: done,
 }));
 vi.mock('@/app/(app)/sales-orders/_lib/actions', () => ({
-  confirmOrderAction: done,
+  confirmDraftAction: done,
   markBillableAction: done,
 }));
 

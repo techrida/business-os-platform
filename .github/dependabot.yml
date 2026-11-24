@@ -5,6 +5,10 @@ updates:
     target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
+    # pdfjs-dist is pinned at 4.5.136 for iOS Safari 15 (see pnpm-workspace.yaml); majors are not taken by PR.
+    ignore:
+      - dependency-name: pdfjs-dist
+        update-types: ['version-update:semver-major']
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -26,6 +30,15 @@ updates:
     target-branch: p4-main
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 3
+    # A Postgres major changes the on-disk format of existing volumes: upgrade it deliberately, never by PR.
+    ignore:
+      - dependency-name: postgres
+        update-types: ['version-update:semver-major']
     groups:
       images:
         patterns: ['*']
+  - package-ecosystem: npm
+    directory: /infra/pnpm-bootstrap
+    target-branch: p4-main
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 1

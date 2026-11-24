@@ -158,9 +158,9 @@ describe('ImageUpload', () => {
     expect(input.accept).toBe('image/png,image/jpeg,image/webp');
     const title = document.getElementById(input.getAttribute('aria-labelledby')!);
     expect(title?.textContent).toBe('Replace picture');
-    expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toContain(
-      'PNG, JPEG or WebP',
-    );
+    expect(
+      document.getElementById(input.getAttribute('aria-describedby')!)?.textContent,
+    ).not.toMatch(/512\s?KB|PNG, JPEG or WebP/);
   });
 
   // U12-Q4: the customer profile card asks for the larger picture; every other caller keeps 40 px.
@@ -280,6 +280,22 @@ describe('ImageUpload', () => {
     expect(toasts.error).toHaveBeenCalledWith('You cannot change this picture.');
     expect(onChange).not.toHaveBeenCalled();
     expect(document.querySelector('[role="status"]')?.textContent).not.toContain('Scanning');
+  });
+
+  it('keeps the server refusal in the field message line after the toast, and clears it on the next pick (R6Q4)', async () => {
+    resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        json(413, { error: { message: 'The picture is too large. Use one up to 512 KB.' } }),
+      ),
+    );
+    mounted = await mountForm(picker());
+    await choose(png());
+    const line = () => document.querySelector('p[role="status"]');
+    expect(document.body.textContent).toContain('The picture is too large. Use one up to 512 KB.');
+    expect(line()?.textContent).toBe('The picture is too large. Use one up to 512 KB.');
+    await choose(png());
+    expect(document.body.textContent).not.toContain('Use one up to 512 KB.');
   });
 
   it('polls the scan on the backoff schedule and, after a minute, stops and says so once', async () => {
