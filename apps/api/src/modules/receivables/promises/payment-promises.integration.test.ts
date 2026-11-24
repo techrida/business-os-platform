@@ -206,7 +206,7 @@ describe('a missed promise to pay (F1-Q33)', () => {
       `SELECT user_id, title, link FROM app.notifications WHERE tenant_id = $1 AND dedupe_key = $2`,
       [h.tenantId, `collection_call.planned:${stored?.collectionActivityId}`],
     );
-    expect(bell.rows as unknown[]).toEqual([
+    expect(bell.rows).toEqual([
       {
         user_id: finance,
         title: expect.stringMatching(/^Collect payment for INV-/) as string,
