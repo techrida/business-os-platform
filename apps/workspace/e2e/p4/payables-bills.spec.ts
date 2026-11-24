@@ -73,7 +73,14 @@ test('the inbox loads and bill entry works without a submission', async ({ brows
     ).toBeDisabled();
     // A search that matches no vendor says so, and the upload stays off.
     const vendorBox = founder.page.getByRole('combobox').first();
+    // A long vendor list is searched on the server: the message must come from that answer, not from the box's
+    // first filtering of the page's own short list. A short list never asks, so the wait ends without an answer.
+    const answered = founder.page
+      .waitForResponse((res) => res.url().includes('/payables/vendor-search'), { timeout: 5_000 })
+      .catch(() => null);
     await vendorBox.fill('zzzz-no-such-vendor');
+    await answered;
+    await expect(founder.page.getByRole('option')).toHaveCount(0);
     await expect(
       // The list's message; the same words also sit in a screen-reader status region.
       founder.page.locator('p', {

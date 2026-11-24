@@ -108,6 +108,9 @@ describe('submitQuoteAction', () => {
     expect(Object.keys(words.fieldErrors ?? {})).toEqual(['total']);
     expect(Object.keys(empty.fieldErrors ?? {})).toEqual(['total']);
     expect(words.fieldErrors?.total).toMatch(/Enter the total of your quotation/);
+    expect(empty.fieldErrors?.total).toMatch(/Enter the total of your quotation/);
+    expect(empty.fieldErrors?.total).toBe(words.fieldErrors?.total);
+    expect(empty.key).toBe(IDEM);
     expect(words.key).toBe(IDEM);
     expect(fetchMock).not.toHaveBeenCalled();
   });
