@@ -40,3 +40,16 @@ need BOS_E2E_PAYMENT_VERIFIED "$(q "select id from app.payments where bank_refer
 echo "BOS_E2E_PAYMENT_CUSTOMER=Dev Customer Co" >> "$out"
 echo "BOS_E2E_INVOICE_DRAFT_CUSTOMER=Dev Customer Co" >> "$out"
 put PORTAL_E2E_PROOF_FILE "$PWD/.dev/portal-proof.pdf"
+
+# Quotation fixtures (e2e/p4/qa-fixtures-quotations.spec.ts): the fixture records quotation ids in .dev/qa-fixture-ids.json.
+fid() { node -p "const v = require('./.dev/qa-fixture-ids.json')['$1']; Array.isArray(v) ? v.join(',') : (v || '')"; }
+# The portal links a quotation by its current version, not by the quotation.
+versions_of() { q "select string_agg(current_version_id::text, ',' order by array_position(string_to_array('$1', ','), id::text)) from app.quotations where id::text = any(string_to_array('$1', ','))"; }
+need E2E_OPPORTUNITY_ID "$(fid opportunity)"
+need BOS_E2E_QUOTATION_APPROVED "$(fid quotationApproved)"
+need BOS_E2E_QUOTATION_SENT "$(fid quotationStaffSent)"
+need BOS_E2E_QUOTATION_DOWNLOAD "$(fid quotationStaffSent)"
+need BOS_E2E_QUOTATION_REVISABLE "$(fid quotationRevisable)"
+need BOS_E2E_QUOTATION_CONTACT "customer@dev.bos.test"
+need PORTAL_E2E_SENT_ID "$(versions_of "$(fid quotationPortalSent)")"
+need PORTAL_E2E_FOREIGN_ID "$(versions_of "$(fid quotationDraft)")"

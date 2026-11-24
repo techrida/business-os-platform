@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { expect, type Page } from '@playwright/test';
 
 /**
@@ -11,7 +14,7 @@ import { expect, type Page } from '@playwright/test';
  */
 export async function approveInboxRequest(
   page: Page,
-  needle: string,
+  needle: string | RegExp,
   comment: string,
 ): Promise<void> {
   await page.goto('/inbox');
@@ -41,4 +44,17 @@ export function idFromUrl(page: Page): string {
   )?.[1];
   if (id === undefined) throw new Error(`No id in ${page.url()}`);
   return id;
+}
+
+/**
+ * Where fixtures leave the ids of what they made, for .github/qa/export-ids.sh (git-ignored, with the sign-in states).
+ * Ids only. Read, merged and written back, so a later fixture file adds keys without losing earlier ones.
+ */
+export function recordFixtureIds(add: Record<string, string | string[]>): void {
+  const file = path.resolve(process.cwd(), '../../.dev/qa-fixture-ids.json');
+  mkdirSync(path.dirname(file), { recursive: true });
+  const known: Record<string, string | string[]> = existsSync(file)
+    ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, string | string[]>)
+    : {};
+  writeFileSync(file, JSON.stringify({ ...known, ...add }, null, 2));
 }
