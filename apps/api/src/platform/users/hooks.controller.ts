@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { Public } from '../auth/public.decorator';
 import { AppConfig } from '../config/config';
+import { queueCallWithin } from '../queue/nudge-timeout';
 import { verifyZitadelSignature } from './signature';
 import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
 import { UsersStore } from './users.store';
@@ -84,8 +85,8 @@ export class HooksController {
 
     // ZITADEL ignores our answer and never retries, so an enqueue failure is logged, not thrown:
     // the reconcile job picks the change up within 10 minutes.
-    await this.queue
-      .add(
+    await queueCallWithin(() =>
+      this.queue.add(
         USERS_SYNC_JOB,
         { zitadelUserId: e.aggregateID },
         {
@@ -94,7 +95,7 @@ export class HooksController {
           removeOnComplete: 100,
           removeOnFail: 500,
         },
-      )
-      .catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
+      ),
+    ).catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
   }
 }

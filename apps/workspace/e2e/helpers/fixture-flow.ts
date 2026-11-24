@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { expect, type Page } from '@playwright/test';
@@ -32,9 +32,21 @@ export async function approveInboxRequest(
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Approve request' });
   await dialog.getByPlaceholder('Anything the requester should know').fill(comment);
+  const clicked = Date.now();
   await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
   await expect(page.getByText('Your approval was recorded.')).toBeVisible();
+  recordApproveTiming(Date.now() - clicked);
+}
+
+/**
+ * Appends how long one Approve took (click to the decided page) to the file .github/qa/approve-timing.mjs reads for the
+ * qa job summary. Timings only, no ids and no names; the file is git-ignored with the rest of `.dev/`.
+ */
+function recordApproveTiming(ms: number): void {
+  const file = path.resolve(process.cwd(), '../../.dev/qa-approve-timings.jsonl');
+  mkdirSync(path.dirname(file), { recursive: true });
+  appendFileSync(file, `${JSON.stringify({ ms })}\n`);
 }
 
 /** The id in the current `/<section>/<uuid>` path. */

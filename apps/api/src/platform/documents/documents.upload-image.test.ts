@@ -224,6 +224,20 @@ describe('DocumentsService.createAndReceiveUpload', () => {
     expect(p.audit.record).toHaveBeenCalledWith(expect.anything(), removedAudit);
   });
 
+  it('answers the 503 within two seconds when Valkey never answers the scan enqueue', async () => {
+    const p = pipeline();
+    // A down Valkey leaves bullmq's `queue.add` pending forever: it neither resolves nor rejects.
+    p.queue.add.mockReturnValue(new Promise(() => undefined));
+
+    const started = Date.now();
+    await expect(
+      p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(p.updates.some((u) => 'removedAt' in u)).toBe(true);
+  });
+
   it('still throws the receive error when removing the document fails too', async () => {
     const p = pipeline();
     p.queue.add.mockRejectedValue(new Error('valkey down'));
