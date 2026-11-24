@@ -92,7 +92,7 @@ test('the invoice page shows lines, VAT, totals, due date and status, and no int
 
 test('submitting a payment needs proof, then lands in the list as awaiting verification', async ({
   page,
-}) => {
+}, testInfo) => {
   test.skip(!invoiceId || !proofFile, 'PORTAL_E2E_INVOICE_ID and PORTAL_E2E_PROOF_FILE not set');
   await page.goto(`/invoices/${invoiceId}`);
   await page.getByRole('link', { name: 'Submit a payment' }).click();
@@ -100,7 +100,8 @@ test('submitting a payment needs proof, then lands in the list as awaiting verif
   await expect(page.getByLabel('Amount paid')).not.toHaveValue('');
 
   // No proof yet: the server refuses and says which field.
-  await page.getByLabel('Bank reference').fill('E2E-REF-1');
+  // One reference per run and per repeat, so the test never relies on the API accepting a repeated reference.
+  await page.getByLabel('Bank reference').fill(`E2E-REF-${Date.now()}-${testInfo.repeatEachIndex}`);
   await page.getByRole('button', { name: 'Submit payment' }).click();
   await expect(page.getByText('Add a bank slip or receipt')).toBeVisible();
 
