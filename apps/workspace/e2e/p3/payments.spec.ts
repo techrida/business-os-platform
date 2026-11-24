@@ -137,14 +137,8 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
     await page.getByRole('button', { name: 'self-verification.pdf', exact: true }).click();
     const preview = page.getByRole('dialog', { name: 'self-verification.pdf' });
     await expect(preview.getByRole('link', { name: 'Download' })).toBeVisible();
-    if (await page.evaluate(() => navigator.pdfViewerEnabled !== false)) {
-      await expect(preview.getByTitle('Preview of self-verification.pdf')).toHaveAttribute(
-        'src',
-        /\/preview[#?]/,
-      );
-    } else {
-      await expect(preview.getByText('No preview')).toBeVisible();
-    }
+    // The shared viewer draws the PDF on a canvas.
+    await expect(preview.locator('canvas').first()).toBeVisible();
     await preview.getByRole('button', { name: 'Close', exact: true }).first().click();
     await page.getByRole('button', { name: 'Verify payment', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Verify this payment', exact: true });

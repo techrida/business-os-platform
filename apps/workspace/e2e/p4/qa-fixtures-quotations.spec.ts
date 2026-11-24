@@ -167,7 +167,6 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
     portalSent: [] as string[],
     staffSent: [] as string[],
     revisable: [] as string[],
-    approved: [] as string[],
   };
   let opportunityId = '';
   let draftId = '';
@@ -204,7 +203,6 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
       quotationPortalSent: make.portalSent,
       quotationStaffSent: make.staffSent,
       quotationRevisable: make.revisable,
-      quotationApproved: make.approved,
       quotationDraft: draftId,
     });
   } finally {
