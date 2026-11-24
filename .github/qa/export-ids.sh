@@ -24,6 +24,9 @@ put BOS_E2E_COST_CENTER_ID "$(q "select id from app.cost_centers where code = 'O
 # Portal specs: the stored logins written by e2e/p4/qa-fixtures.spec.ts, and the records of the dev vendor.
 put PORTAL_E2E_STORAGE_STATE "$PWD/.dev/portal-customer.json"
 put PORTAL_E2E_VENDOR_STATE "$PWD/.dev/portal-vendor.json"
+# vendor2 (a second approved vendor) and vendorpending (pending_kyc, with a draft KYB case): the seeder makes both, each in its own org.
+put PORTAL_E2E_VENDOR_B_STATE "$PWD/.dev/portal-vendor-b.json"
+put PORTAL_E2E_PENDING_STATE "$PWD/.dev/portal-pending.json"
 need PORTAL_E2E_VENDOR_PO_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-1'")"
 need PORTAL_E2E_VENDOR_FOREIGN_ID "$(q "select id from app.purchase_orders where number = 'PO-QA-2'")"
 need PORTAL_E2E_VENDOR_RFQ_ID "$(q "select id from app.rfqs where number = 'RFQ-QA-1'")"

@@ -3,6 +3,7 @@
 import {
   DEFAULT_ROLE_PERMISSIONS,
   PanVatNoSchema,
+  VENDOR_CHECKLIST_ITEM_KEYS,
   WorkflowSpecSchema,
   nepalPanProblem,
   phoneProblem,
@@ -34,6 +35,7 @@ import {
   setSeedActor,
 } from './db-seed.js';
 import { PgTenancyStore, SEED_PARTIES, tenancySeed } from './index.js';
+import { EXTRA_VENDORS } from './personas.js';
 import {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
@@ -854,6 +856,102 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     expect(party?.text).toContain("kind = 'vendor'");
   });
 
+  it('seeds the second vendor as approved and the vendor awaiting KYC as pending_kyc, each on its own party, PAN and TR account', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const vendors = calls.filter((c) => c.text.includes('INTO app.vendors'));
+    // VEND-DEV, the two extra vendors, then the foreign vendor.
+    const byParty = (id: string) => vendors.find((c) => c.values[1] === id);
+    const second = byParty('party-VEND-DEV2');
+    const pending = byParty('party-VEND-DEVKYC');
+    expect(second?.values).toEqual([
+      'tenant-1',
+      'party-VEND-DEV2',
+      '234567891',
+      'u-proc',
+      'u-mgmt',
+      'Teku Road 4',
+      'Kathmandu',
+      'approved',
+    ]);
+    expect(pending?.values).toEqual([
+      'tenant-1',
+      'party-VEND-DEVKYC',
+      '345678912',
+      'u-proc',
+      'u-mgmt',
+      'Teku Road 4',
+      'Kathmandu',
+      'pending_kyc',
+    ]);
+    // Only an approved vendor gets approved_by (vendors_approval_check), and a re-run inserts nothing twice.
+    expect(second?.text).toContain("CASE WHEN $8 = 'approved' THEN $5::uuid END");
+    expect(second?.text).toContain('ON CONFLICT (id) DO NOTHING');
+    // Both parties are looked up by code and kind, the codes the tenancy step writes.
+    const parties = calls
+      .filter((c) => c.text.startsWith('SELECT id FROM app.parties') && c.text.includes("'vendor'"))
+      .map((c) => c.values[1]);
+    expect(parties).toEqual(expect.arrayContaining(['VEND-DEV2', 'VEND-DEVKYC']));
+    for (const v of EXTRA_VENDORS) {
+      expect(SEED_PARTIES.vendor.code).not.toBe(v.partyCode);
+      const account = calls.find(
+        (c) =>
+          c.text.includes('INTO app.vendor_accounts') && c.values[2] === `party-${v.partyCode}`,
+      );
+      expect(account?.values, v.key).toEqual([
+        'tenant-1',
+        'org-1',
+        `party-${v.partyCode}`,
+        'NET30',
+      ]);
+    }
+  });
+
+  it('gives only the vendor awaiting KYC a draft KYB case with the vendor checklist, every item missing and the three owed documents required', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const cases = writesTo(calls, 'verification_cases');
+    expect(cases).toHaveLength(1);
+    const kyb = cases[0];
+    expect(kyb?.values[0]).toBe('tenant-1');
+    expect(kyb?.values[1]).toBe('party-VEND-DEVKYC');
+    expect(kyb?.text).toContain("'vendor', 'draft'");
+    expect(kyb?.text).toContain('ON CONFLICT (tenant_id, party_id) DO NOTHING');
+    const checklist = JSON.parse(String(kyb?.values[2])) as {
+      key: string;
+      required: boolean;
+      status: string;
+      documentId: string | null;
+    }[];
+    expect(checklist.map((i) => i.key)).toEqual([...VENDOR_CHECKLIST_ITEM_KEYS]);
+    expect(checklist.every((i) => i.status === 'missing' && i.documentId === null)).toBe(true);
+    expect(checklist.filter((i) => i.required).map((i) => i.key)).toEqual([
+      'pan_certificate',
+      'tax_clearance',
+      'bank_proof',
+    ]);
+    // The portal upload needs a pan_certificate item to attach to.
+    expect(checklist.some((i) => i.key === 'pan_certificate')).toBe(true);
+  });
+
+  it('writes neither extra vendor, nor a KYB case, without the dev personas (the production path)', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope);
+    expect(writesTo(calls, 'vendors')).toEqual([]);
+    expect(writesTo(calls, 'verification_cases')).toEqual([]);
+    expect(JSON.stringify(calls.map((c) => c.values))).not.toMatch(/VEND-DEV2|VEND-DEVKYC/);
+  });
+
+  it('pins the extra vendors party codes to the ones the tenancy step writes', () => {
+    const ids = { staff: 's', customer: 'c', vendor: 'v' };
+    const seed = tenancySeed(ids, { vendor2: 'o2', vendorpending: 'o3' });
+    for (const v of EXTRA_VENDORS) {
+      expect(seed.idpOrgs.find((o) => o.party?.code === v.partyCode)?.kind).toBe('vendor');
+    }
+    // No extra org ids: the three orgs as before.
+    expect(tenancySeed(ids).idpOrgs).toHaveLength(3);
+  });
+
   it('seeds CUST-DEV (Dev Customer Co) as an active NPR customer owned by sales, with primary contact and TR account', async () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope, personas);
@@ -997,7 +1095,8 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope, personas);
     const vendors = writesTo(calls, 'vendors');
-    expect(vendors).toHaveLength(2);
+    // VEND-DEV, this one, then the two extra vendors (their own tests are above).
+    expect(vendors).toHaveLength(4);
     expect(vendors[1]?.values).toEqual([
       'tenant-1',
       'party-VEND-IN-DEV',

@@ -11,6 +11,7 @@ import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createParty, createTenantWithEntity } from '../../../packages/db/src/testing/fixtures.js';
+import { EXTRA_VENDORS } from './personas.js';
 import {
   DEV_CUSTOMER_NAME_NORM,
   DEV_CUSTOMER_PARTY_CODE,
@@ -48,6 +49,9 @@ async function devTenant(): Promise<SeedScope & { idpOrgId: string }> {
     kind: 'vendor',
     code: DEV_VENDOR_PARTY_CODE,
   });
+  for (const extra of EXTRA_VENDORS) {
+    await createParty(owner, { tenantId: tenant.tenantId, kind: 'vendor', code: extra.partyCode });
+  }
   await createParty(owner, {
     tenantId: tenant.tenantId,
     kind: 'customer',
@@ -362,8 +366,9 @@ describe('dev people step on Postgres', () => {
          LEFT JOIN app.vendor_accounts va
            ON va.tenant_id = v.tenant_id AND va.vendor_id = v.id AND va.organization_id = $2
          WHERE v.tenant_id = $1
+           AND v.id NOT IN (SELECT id FROM app.parties WHERE tenant_id = $1 AND code = ANY($3::text[]))
          ORDER BY v.country DESC`,
-        [scope.tenantId, scope.organizationId],
+        [scope.tenantId, scope.organizationId, EXTRA_VENDORS.map((v) => v.partyCode)],
       );
       expect(vendors.rows).toHaveLength(2);
       expect(vendors.rows[0]).toMatchObject({
@@ -609,6 +614,77 @@ describe('reseed keeps Founder grants', () => {
 
       // And the run after that is a no-op.
       expect(await seed(scope)).toBe(0);
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+describe('the extra dev vendors on Postgres (R6Q15)', () => {
+  it(
+    'makes vendor 2 approved and the vendor awaiting KYC pending_kyc with an editable KYB case, and a re-run changes nothing',
+    async () => {
+      const scope = await devTenant();
+      const personas = personasFor(`pg-vendors-${randomUUID().slice(0, 8)}`);
+      expect(await seed(scope, personas)).toBeGreaterThan(0);
+
+      const rows = await owner.query<{
+        code: string;
+        status: string;
+        pan: string;
+        approved: boolean;
+        has_account: boolean;
+        case_status: string | null;
+        checklist: { key: string; required: boolean; status: string }[] | null;
+      }>(
+        `SELECT p.code, v.status, v.pan, v.approved_by IS NOT NULL AS approved,
+                EXISTS (SELECT 1 FROM app.vendor_accounts va
+                        WHERE va.tenant_id = v.tenant_id AND va.vendor_id = v.id AND va.organization_id = $2) AS has_account,
+                c.status AS case_status, c.checklist
+         FROM app.vendors v
+         JOIN app.parties p ON p.tenant_id = v.tenant_id AND p.id = v.id
+         LEFT JOIN app.verification_cases c ON c.tenant_id = v.tenant_id AND c.party_id = v.id
+         WHERE v.tenant_id = $1 AND p.code = ANY($3::text[])
+         ORDER BY p.code`,
+        [scope.tenantId, scope.organizationId, EXTRA_VENDORS.map((v) => v.partyCode)],
+      );
+      const bySeed = Object.fromEntries(rows.rows.map((r) => [r.code, r]));
+      const approvedVendor = bySeed['VEND-DEV2'];
+      const pendingVendor = bySeed['VEND-DEVKYC'];
+      expect(approvedVendor).toMatchObject({
+        status: 'approved',
+        pan: '234567891',
+        approved: true,
+        has_account: true,
+        case_status: null,
+      });
+      expect(pendingVendor).toMatchObject({
+        status: 'pending_kyc',
+        pan: '345678912',
+        approved: false,
+        has_account: true,
+        case_status: 'draft',
+      });
+      const pan = pendingVendor?.checklist?.find((i) => i.key === 'pan_certificate');
+      expect(pan).toMatchObject({ required: true, status: 'missing' });
+
+      const audited = await auditCount(scope.tenantId);
+      expect(await seed(scope, personas)).toBe(0);
+      expect(await auditCount(scope.tenantId)).toBe(audited);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    'writes neither extra vendor when no dev personas are passed (the production path)',
+    async () => {
+      const scope = await devTenant();
+      await seed(scope);
+      const { rows } = await owner.query<{ n: string }>(
+        `SELECT count(*) AS n FROM app.vendors v JOIN app.parties p ON p.tenant_id = v.tenant_id AND p.id = v.id
+         WHERE v.tenant_id = $1 AND p.code = ANY($2::text[])`,
+        [scope.tenantId, EXTRA_VENDORS.map((v) => v.partyCode)],
+      );
+      expect(Number(rows[0]?.n)).toBe(0);
     },
     TEST_TIMEOUT,
   );
