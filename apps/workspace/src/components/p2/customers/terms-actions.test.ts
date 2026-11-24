@@ -121,9 +121,9 @@ describe('setCreditLimitAction', () => {
       creditLimit: '1,00,000',
       currentCreditLimit: '100000.00',
     });
-    expect(same.errors.value).toBe(NOTHING_CHANGED);
+    expect(same.notice).toBe(NOTHING_CHANGED);
     const stillNone = await limit({ limitMode: 'none', currentCreditLimit: '' });
-    expect(stillNone.errors.value).toBe(NOTHING_CHANGED);
+    expect(stillNone.notice).toBe(NOTHING_CHANGED);
     expect(api.updateCustomerTerms).not.toHaveBeenCalled();
   });
 
@@ -261,7 +261,7 @@ describe('setPaymentTermAction', () => {
 
   it('refuses choosing the term already set', async () => {
     const out = await term({ paymentTermId: TERM, currentPaymentTermId: TERM });
-    expect(out.errors.value).toBe(NOTHING_CHANGED);
+    expect(out.notice).toBe(NOTHING_CHANGED);
     expect(api.updateCustomerTerms).not.toHaveBeenCalled();
   });
 });
@@ -294,7 +294,7 @@ describe('changeOwnerAction', () => {
 
   it('asks for a person, and refuses the current owner again', async () => {
     expect((await owner({ ownerUserId: '' })).errors.value).toMatch(/choose who owns/i);
-    expect((await owner({ ownerUserId: PERSON })).errors.value).toBe(NOTHING_CHANGED);
+    expect((await owner({ ownerUserId: PERSON })).notice).toBe(NOTHING_CHANGED);
     expect(api.updateCustomer).not.toHaveBeenCalled();
   });
 

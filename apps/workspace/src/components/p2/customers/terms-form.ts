@@ -27,6 +27,8 @@ export interface TermsEditState {
    * the next Save would land there. The dialog stays open to read the message, cancel and reload.
    */
   entityChanged?: boolean;
+  /** Not a failure: a save with nothing changed. Shown as a neutral notice in the dialog. */
+  notice?: string;
   /** A short confirmation, shown as a toast. */
   saved?: string;
   savedCount: number;
@@ -56,7 +58,7 @@ export function staleMessage(field: TermsField): string {
 export const ENTITY_CHANGED =
   'You switched to another legal entity since this page loaded, so nothing was saved. Reload the page to see the terms of the entity you act for now, then save again.';
 
-export const NOTHING_CHANGED = 'Nothing has changed, so there is nothing to save.';
+export const NOTHING_CHANGED = 'Nothing changed, so there is nothing to save.';
 export const INCOMPLETE = 'This form is incomplete. Reload the page and try again.';
 export const CUSTOMER_GONE =
   'This customer is no longer available. Reload the page to see where it went.';
