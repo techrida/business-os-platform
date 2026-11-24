@@ -348,13 +348,15 @@ export const SWEEP_EVERY_MS = 10 * 60_000;
 export const SWEEP_STALE_MS = 15 * 60_000;
 /** One sweep re-queues at most this many versions per list, so a long outage cannot flood the queue at once. */
 const SWEEP_BATCH = 200;
-/** Job states that mean "a worker will still look at this version". */
-const LIVE_STATES = [
+/**
+ * Job states that mean "a worker will still look at this version". BullMQ 6 has no `paused` job
+ * state: the jobs of a paused queue are reported as `waiting`.
+ */
+export const LIVE_STATES = [
   'active',
   'waiting',
   'delayed',
   'prioritized',
-  'paused',
   'waiting-children',
 ] as const;
 
