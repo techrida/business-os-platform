@@ -65,7 +65,8 @@ test('the inbox loads and bill entry works without a submission', async ({ brows
     const vendorBox = founder.page.getByRole('combobox').first();
     await vendorBox.fill('zzzz-no-such-vendor');
     await expect(
-      founder.page.getByText('No vendor matches. Ask Procurement to add the vendor.'),
+      // The list's message; the same words also sit in a screen-reader status region.
+      founder.page.locator('p', { hasText: 'No vendor matches. Ask Procurement to add the vendor.' }),
     ).toBeVisible();
     await expect(
       founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
