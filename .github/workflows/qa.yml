@@ -117,7 +117,7 @@ jobs:
         run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
 
       # The fixture rows came from demo-data.sql; the purchase order is issued through the screen, not by SQL.
-      - name: Playwright fixtures (issue the seeded purchase order)
+      - name: Playwright fixtures (documents made through the product screens)
         if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
         env:
           BOS_E2E_NEXT_DEV: '1'
@@ -126,7 +126,7 @@ jobs:
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
         run: |
           cd apps/workspace
-          pnpm exec playwright test --project=dev p4/qa-fixtures.spec --output=test-results-fixtures
+          pnpm exec playwright test --project=dev p4/qa-fixtures --output=test-results-fixtures
 
       # The env-gated specs (BOS_E2E_P4 and the *_ID variables) run against these fixtures instead of skipping.
       - name: Export the fixture ids to the spec environment
