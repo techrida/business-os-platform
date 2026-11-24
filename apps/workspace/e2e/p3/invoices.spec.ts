@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { multiSelectByLabel } from '../helpers/multi-select';
 import { chooseOption, selectByLabel, selectByName } from '../helpers/select';
@@ -171,7 +172,12 @@ test('the accountant can save, reopen, and submit a manual invoice', async ({
     await heading(page, 'Create Invoice');
 
     // Fails here, naming the option, when the disposable customer is not in the picker.
-    await chooseOption(selectByName(page, 'customerId'), { label: customerName ?? '' });
+    await pickFromCombobox(
+      page,
+      'Organization legal name',
+      (customerName ?? '').split(' ')[0] ?? '',
+      customerName ?? '',
+    );
     await chooseOption(selectByName(page, 'currency'), 'NPR');
 
     const description = `Invoice draft workflow ${Date.now()}`;

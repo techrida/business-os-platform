@@ -2,6 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 
+test.use({ actionTimeout: 30_000 });
+
 /**
  * Warm-up step of the qa workflow ("qa fixtures": the specs skip it). The KYB queue spec (p2/customers.spec) opens a
  * case that is waiting for review and skips when the queue is empty. Sales creates a fictional customer, starts its

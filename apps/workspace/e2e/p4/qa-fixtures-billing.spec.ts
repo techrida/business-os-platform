@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { approveInboxRequest, idFromUrl } from '../helpers/fixture-flow';
+import { approveInboxRequest, idFromUrl, pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { minimalPdf } from '../helpers/pdf-fixture';
 import { chooseOption, selectByLabel, selectByName } from '../helpers/select';
@@ -13,6 +13,9 @@ import { chooseOption, selectByLabel, selectByName } from '../helpers/select';
  * approves step two, Finance issues; the Accountant records a payment, Finance verifies it. export-ids.sh finds each
  * document by the marker text in its reason or bank reference. A fresh stack only: it makes new documents each run.
  */
+// An action that finds nothing fails in half a minute, not at the end of the test.
+test.use({ actionTimeout: 30_000 });
+
 const CUSTOMER = 'Dev Customer Co';
 const OTHER_CUSTOMER = 'Acme Robotics Inc';
 const ISSUED_REASON = 'QA fixture: issued invoice';
@@ -24,7 +27,12 @@ async function draftInvoice(page: Page, customer: string, reason: string): Promi
   await page.goto('/invoices/new');
   await expect(page.getByRole('heading', { level: 1, name: 'Create Invoice' })).toBeVisible();
   await page.waitForLoadState('networkidle');
-  await chooseOption(selectByName(page, 'customerId'), { label: customer });
+  await pickFromCombobox(
+    page,
+    'Organization legal name',
+    customer.split(' ')[0] ?? customer,
+    customer,
+  );
   await chooseOption(selectByName(page, 'currency'), 'NPR');
   await page.getByLabel('Why is there no sales order?').fill(reason);
   await page.getByLabel('Description (line 1)').fill('QA fixture training');
@@ -63,7 +71,7 @@ async function issueInvoice(page: Page, id: string): Promise<void> {
 
 async function recordPayment(page: Page): Promise<string> {
   await page.goto('/payments/new');
-  await chooseOption(selectByLabel(page, 'Customer'), { label: CUSTOMER });
+  await pickFromCombobox(page, 'Customer', 'Dev Customer', CUSTOMER);
   await page.getByLabel('Amount received').fill('5000.00');
   await page.getByLabel('Bank reference').fill(PAYMENT_REFERENCE);
   await page.getByLabel('Add proof files').setInputFiles({

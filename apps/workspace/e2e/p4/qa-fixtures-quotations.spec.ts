@@ -5,6 +5,8 @@ import { ensureLeadOwner } from '../helpers/lead-owner';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { chooseOption, selectByName, selectByLabel } from '../helpers/select';
 
+test.use({ actionTimeout: 30_000 });
+
 /**
  * Warm-up step of the qa workflow ("qa fixtures": the specs skip it). The quotation specs of both apps need quotations
  * in states the product only reaches one step at a time, and the ones that act on a quotation use it up. So Sales

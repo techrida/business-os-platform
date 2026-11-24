@@ -1,8 +1,8 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { minimalPdf } from '../helpers/pdf-fixture';
-import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The staff Record payment form, against the real stack. Not run by the unit that wrote it: it needs
@@ -28,7 +28,7 @@ test.skip(CUSTOMER === undefined, 'BOS_E2E_PAYMENT_CUSTOMER is not set');
 /** Chooses the customer whose option text starts with the name in the env var. */
 async function pickCustomer(page: Page): Promise<void> {
   // Fails here, naming the option, when the customer is not in the picker.
-  await chooseOption(selectByLabel(page, 'Customer'), { label: CUSTOMER ?? '' });
+  await pickFromCombobox(page, 'Customer', (CUSTOMER ?? '').split(' ')[0] ?? '', CUSTOMER ?? '');
 }
 
 async function open(browser: Parameters<typeof signInAs>[0], base: string, persona: string) {
