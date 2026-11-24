@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LeadForm } from '@/components/p2/crm/lead-form';
 import { parseLead } from '@/components/p2/crm/forms';
 import type { FormAction } from '@/components/p2/crm/types';
-import { choose, click, fill, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, pickDate } from '@/test/form-interactions';
 
 const ME = '11111111-1111-4111-8111-111111111111';
 const RAM = '22222222-2222-4222-8222-222222222222';
@@ -112,7 +112,7 @@ it('preselects nobody else when the signed-in user is not placed in the owner li
   const mounted = await mountLead(OWNERS, undefined);
   try {
     const { container } = mounted;
-    await fill(container.querySelector('[name="followUpAt"]'), '2026-12-01T10:30');
+    await pickDate(container, 'followUpAt', '2026-12-01T10:30');
     const parsed = parseLead(await mounted.send());
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.fieldErrors));
     expect(parsed.data).not.toHaveProperty('ownerUserId');
@@ -236,7 +236,7 @@ it('sends the scheduled follow-up with its type, Kathmandu time and the owner as
     const { container } = mounted;
     await choose(container, 'ownerUserId', 'Sita Rai');
     await click(container.querySelector('[role="radio"][data-kind="meeting"]'));
-    await fill(container.querySelector('[name="followUpAt"]'), '2026-12-01T10:30');
+    await pickDate(container, 'followUpAt', '2026-12-01T10:30');
     await fill(container.querySelector('[name="followUpSubject"]'), 'Walk through the proposal');
 
     const data = await mounted.send();
@@ -261,7 +261,7 @@ it('keeps a chosen assignee when the owner changes afterwards', async () => {
     const { container } = mounted;
     await choose(container, 'followUpAssigneeUserId', 'Ram Thapa');
     await choose(container, 'ownerUserId', 'Sita Rai');
-    await fill(container.querySelector('[name="followUpAt"]'), '2026-12-01T10:30');
+    await pickDate(container, 'followUpAt', '2026-12-01T10:30');
 
     const parsed = parseLead(await mounted.send());
     expect(parsed).toMatchObject({
