@@ -16,9 +16,25 @@ export async function pickCountry(box: Locator, search: string, shown: string): 
     await box.fill(search);
     await expect(box).toHaveAttribute('aria-expanded', 'true', { timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
+  await expectHighlighted(box, shown);
   await box.press('Enter');
   await expect(box).toHaveAttribute('aria-expanded', 'false');
   await expect(box).toHaveValue(shown);
+}
+
+/**
+ * Waits until the list's highlighted option (the one `aria-activedescendant` points at) is the searched country.
+ * Enter takes the highlighted option, so pressing it earlier takes whatever was highlighted before the search
+ * rendered (or nothing) and the box keeps its old country.
+ */
+async function expectHighlighted(box: Locator, shown: string): Promise<void> {
+  await expect(async () => {
+    const id = await box.getAttribute('aria-activedescendant', { timeout: 1_000 });
+    expect(id, 'a highlighted option').toBeTruthy();
+    await expect(box.page().locator(`[id="${id}"][role="option"]`)).toContainText(shown, {
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 10_000 });
 }
 
 /**
@@ -35,6 +51,7 @@ export async function pickPhoneCountry(button: Locator, search: string): Promise
     await expect(box).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
   await box.fill(search);
+  await expectHighlighted(box, search);
   await box.press('Enter');
   await expect(button).toHaveAttribute('aria-expanded', 'false');
 }
