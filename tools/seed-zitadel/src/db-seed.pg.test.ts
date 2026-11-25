@@ -712,7 +712,14 @@ describe('a vendor made by hand and the seeded PANs on Postgres (R6Q11b)', () =>
       client.query(
         `INSERT INTO app.vendors (id, tenant_id, legal_name, kind, pan, country, status, created_by)
          VALUES ($1, $2, 'Hand Made Traders', $5, $3, $6, 'draft', $4)`,
-        [partyId, scope.tenantId, pan, userId, foreign ? 'foreign' : 'company', foreign ? 'IN' : 'NP'],
+        [
+          partyId,
+          scope.tenantId,
+          pan,
+          userId,
+          foreign ? 'foreign' : 'company',
+          foreign ? 'IN' : 'NP',
+        ],
       ),
     );
     return partyId;
