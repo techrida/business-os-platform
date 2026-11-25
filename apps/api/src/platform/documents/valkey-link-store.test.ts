@@ -158,3 +158,21 @@ describe('ValkeyLinkStore.claim', () => {
     expect(back.commands).not.toContain('SET');
   }, 15_000);
 });
+
+describe('claims that arrive while Valkey is not there share one wait (R6Q24)', () => {
+  it('puts one ready listener on the connection for a burst of claims, and removes it after', async () => {
+    // Port 1 refuses connections: every claim waits for a connection that does not come, then fails.
+    const store = new ValkeyLinkStore('redis://127.0.0.1:1');
+    const redis = (store as unknown as { redis: { listenerCount(e: string): number } }).redis;
+    try {
+      const claims = Array.from({ length: 25 }, (_, i) => store.claim(`burst-${i}`, 60));
+      const settled = Promise.allSettled(claims);
+      expect(redis.listenerCount('ready')).toBe(1);
+      const results = await settled;
+      expect(results.every((r) => r.status === 'rejected')).toBe(true);
+      expect(redis.listenerCount('ready')).toBe(0);
+    } finally {
+      store.onApplicationShutdown();
+    }
+  }, 15_000);
+});
