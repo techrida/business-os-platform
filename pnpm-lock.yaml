@@ -124,7 +124,7 @@ catalogs:
       specifier: ^16.4.6
       version: 16.4.6
     fast-check:
-      specifier: ^4.10.3
+      specifier: ^4.11.0
       version: 4.11.0
     file-type:
       specifier: ^22.3.0
@@ -136,7 +136,7 @@ catalogs:
       specifier: ^6.1.0
       version: 6.1.0
     ioredis-mock:
-      specifier: ^8.13.0
+      specifier: ^8.13.1
       version: 8.13.1
     jose:
       specifier: ^6.2.18
@@ -223,7 +223,7 @@ catalogs:
       specifier: ~6.0.3
       version: 6.0.3
     typescript-eslint:
-      specifier: ^8.73.0
+      specifier: ^8.74.0
       version: 8.74.0
     unplugin-swc:
       specifier: ^2.0.0
