@@ -282,8 +282,17 @@ test('qa fixtures: one connected Journey 11 (request, RFQ, order, serialized rec
       await approveInboxRequest(await people.as('accountant'), billNumber, 'QA fixture: checked');
       const finance2 = await people.as('finance2');
       await approveInboxRequest(finance2, billNumber, 'QA fixture: approved');
-      await finance2.goto(`/payables/bills/${ids['p4ExitBill']}`);
-      await expect(finance2.getByText('Approved', { exact: true }).first()).toBeVisible();
+      // The bill's own status badge sits in the page header beside the title. Not the first "Approved" on the page: the
+      // approval history repeats the word for each step, and the Accountant's step reads it before the bill does.
+      await expect(async () => {
+        await finance2.goto(`/payables/bills/${ids['p4ExitBill']}`);
+        await expect(
+          finance2
+            .getByRole('heading', { level: 1 })
+            .locator('..')
+            .getByText('Approved', { exact: true }),
+        ).toBeVisible({ timeout: 3_000 });
+      }).toPass({ timeout: 30_000 });
     });
 
     await test.step('a second approved request gets an RFQ that stays open for the dev vendor', async () => {
