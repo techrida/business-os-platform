@@ -44,7 +44,8 @@ test('procurement raises a PR, its department head alone approves, then three ve
     !departmentId || !costCenterId || vendorIds.length !== 3,
     'set BOS_E2E_DEPARTMENT_ID, BOS_E2E_COST_CENTER_ID and BOS_E2E_P4_EXIT_VENDOR_IDS (3 approved vendors)',
   );
-  test.setTimeout(240_000);
+  // Two persona sign-ins (each waits for a fresh TOTP window), the request, its approval and the RFQ.
+  test.setTimeout(480_000);
   expect(new Set(vendorIds).size, 'three distinct invited vendors').toBe(3);
   const opened: Signed[] = [];
   const appBase = baseURL ?? 'https://app.localhost';
@@ -78,12 +79,9 @@ test('procurement raises a PR, its department head alone approves, then three ve
         await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
         // The region also lists who acted, so the route's one step is counted by its routing reason.
         await expect(
-          page
-            .getByRole('region', { name: 'Approval', exact: true })
-            .getByRole('listitem')
-            .filter({
-              hasText: 'Base route: the head of the requesting department approves the need',
-            }),
+          page.getByRole('region', { name: 'Approval', exact: true }).getByRole('listitem').filter({
+            hasText: 'Base route: the head of the requesting department approves the need',
+          }),
         ).toHaveCount(1);
         return pathname;
       });
@@ -96,12 +94,9 @@ test('procurement raises a PR, its department head alone approves, then three ve
       await page.goto(requestPath);
       await expect(page.getByText('Department approved', { exact: true })).toBeVisible();
       await expect(
-        page
-          .getByRole('region', { name: 'Approval', exact: true })
-          .getByRole('listitem')
-          .filter({
-            hasText: 'Base route: the head of the requesting department approves the need',
-          }),
+        page.getByRole('region', { name: 'Approval', exact: true }).getByRole('listitem').filter({
+          hasText: 'Base route: the head of the requesting department approves the need',
+        }),
       ).toHaveCount(1);
     });
 
@@ -142,11 +137,9 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await page.goto(`/procurement/requests/${prId}`);
       const approval = page.getByRole('region', { name: 'Approval', exact: true });
       await expect(
-        approval
-          .getByRole('listitem')
-          .filter({
-            hasText: 'Base route: the head of the requesting department approves the need',
-          }),
+        approval.getByRole('listitem').filter({
+          hasText: 'Base route: the head of the requesting department approves the need',
+        }),
       ).toHaveCount(1);
       await expect(approval).toContainText('Approved on');
       await page.getByRole('link', { name: 'Open RFQ', exact: true }).click();
