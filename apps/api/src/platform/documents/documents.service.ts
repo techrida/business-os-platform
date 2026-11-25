@@ -71,7 +71,11 @@ import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { readDefaultEntityProfile } from '../settings/company-branding';
 import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
 import type { Principal, ResourceRef } from '../authz/can';
-import { queueCallWithin, SCAN_ENQUEUE_TIMEOUT_MS } from '../queue/nudge-timeout';
+import {
+  queueCallWithin,
+  retryWhileNotWriteable,
+  SCAN_ENQUEUE_TIMEOUT_MS,
+} from '../queue/nudge-timeout';
 import { currentPrincipal } from '../tenancy/request-context';
 import {
   AUDIT_PORT,
@@ -910,16 +914,22 @@ export class DocumentsService {
       organizationId: who.scope.organizationId,
     };
     try {
-      // Bounded (4 s, longer than a nudge: a timeout here discards the upload): with Valkey down `queue.add` never
-      // answers, and the upload would hang instead of answering 202.
+      // Bounded (4 s, longer than a nudge: a timeout here leaves the scan to the sweeper and answers 202): with Valkey
+      // down `queue.add` never answers, and the upload would hang instead. While Valkey is reconnecting the producer
+      // connection (no offline queue) refuses the add at once with "stream isn't writeable": that is tried again until
+      // the same 4 s are up, so a short reconnect does not defer the scan.
       await queueCallWithin(
         () =>
-          this.queue.add(DOCS_SCAN_JOB, job, {
-            // The version id as job id: queueing the same version twice is a no-op, not two scans.
-            // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
-            ...SCAN_JOB_OPTIONS,
-            jobId: versionId,
-          }),
+          retryWhileNotWriteable(
+            () =>
+              this.queue.add(DOCS_SCAN_JOB, job, {
+                // The version id as job id: queueing the same version twice is a no-op, not two scans.
+                // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
+                ...SCAN_JOB_OPTIONS,
+                jobId: versionId,
+              }),
+            SCAN_ENQUEUE_TIMEOUT_MS,
+          ),
         SCAN_ENQUEUE_TIMEOUT_MS,
       );
     } catch (error) {
