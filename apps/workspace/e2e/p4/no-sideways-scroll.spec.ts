@@ -5,8 +5,10 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
 /**
  * No page may scroll sideways on a phone or a tablet (Kuu, round 6 decision OQ-R6-04). One case per page and
  * width: the page loads, its heading shows, the network settles, and the document is no wider than the window
- * (1 px of rounding allowed). The inbox, every list page, the procurement pages and the vendor portal home, at
- * 390 px (phone) and 834 px (tablet). Against the real stack: staff pages as the founder, the portal as the vendor.
+ * (1 px of rounding allowed). The inbox, every list page, the procurement pages, the vendor portal (home at 390 px
+ * and 834 px; its purchase orders, bills and RFQs lists at 834 px) and the customer portal (home and invoices list,
+ * both widths). Against the real stack: staff pages as the founder, the portal as the vendor and the customer.
+ * Page-less tests at the bottom prove the detector itself fires on an overflowing page.
  *
  * A failure names the page, the width and the widest elements past the right edge, and attaches a full-page
  * screenshot (it lands in the Playwright report artifact of the qa run).
@@ -38,7 +40,14 @@ const STAFF_PAGES = [
   '/receivables/aging',
 ] as const;
 
-const PORTAL_PAGES = ['/vendor'] as const;
+const VENDOR_PORTAL_PAGES = ['/vendor'] as const;
+/** Lists of the vendor portal, checked at the tablet width only. */
+const VENDOR_PORTAL_TABLET_PAGES = [
+  '/vendor/purchase-orders',
+  '/vendor/bills',
+  '/vendor/rfqs',
+] as const;
+const CUSTOMER_PORTAL_PAGES = ['/', '/invoices'] as const;
 
 interface Overflow {
   scrollWidth: number;
@@ -119,11 +128,17 @@ async function checkFits(
   ).toEqual([]);
 }
 
+/** The portal is the app's sibling origin: app.<host> becomes portal.<host>. */
+function portalOrigin(appBase: string): string {
+  return appBase.replace('//app.', '//portal.');
+}
+
 function suite(
   title: string,
   persona: string,
   origin: (appBase: string) => string,
   routes: readonly string[],
+  widths: readonly number[] = WIDTHS,
 ) {
   test.describe(title, () => {
     let signed: Signed;
@@ -138,7 +153,7 @@ function suite(
     });
 
     for (const route of routes) {
-      for (const width of WIDTHS) {
+      for (const width of widths) {
         test(`${route} at ${width}px does not scroll sideways`, async () => {
           await checkFits(signed.page, test.info(), route, width);
         });
@@ -148,10 +163,52 @@ function suite(
 }
 
 suite('no sideways scroll: staff pages', 'founder', (appBase) => appBase, STAFF_PAGES);
-// The portal is the app's sibling origin: app.<host> becomes portal.<host>.
+suite('no sideways scroll: vendor portal', 'vendor', portalOrigin, VENDOR_PORTAL_PAGES);
 suite(
-  'no sideways scroll: vendor portal',
+  'no sideways scroll: vendor portal lists',
   'vendor',
-  (appBase) => appBase.replace('//app.', '//portal.'),
-  PORTAL_PAGES,
+  portalOrigin,
+  VENDOR_PORTAL_TABLET_PAGES,
+  [834],
 );
+suite('no sideways scroll: customer portal', 'customer', portalOrigin, CUSTOMER_PORTAL_PAGES);
+
+test.describe('the offender detector fires (R6Q24)', () => {
+  const frame = (inner: string) =>
+    `<!doctype html><html><body style="margin:0"><h1>Fixture</h1>${inner}</body></html>`;
+
+  test('a page wider than the window fails the check', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.setContent(
+      frame('<div id="wide" style="width:1200px;height:40px;background:#ccc"></div>'),
+    );
+    const result = await measure(page);
+    expect(result.scrollWidth).toBeGreaterThan(result.clientWidth + 1);
+    expect(result.offenders.join(' ')).toContain('div#wide');
+  });
+
+  test('content a clipped shell hides still counts as an offender', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.setContent(
+      frame(
+        '<div style="overflow:clip"><div id="hidden-wide" style="width:1200px;height:40px"></div></div>',
+      ),
+    );
+    const result = await measure(page);
+    expect(result.scrollWidth).toBeLessThanOrEqual(result.clientWidth + 1);
+    expect(result.offenders.join(' ')).toContain('div#hidden-wide');
+  });
+
+  test('a frame that scrolls sideways on purpose, and a page that fits, pass', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.setContent(
+      frame(
+        '<div style="overflow-x:auto;width:100%"><div style="width:1200px;height:40px"></div></div>' +
+          '<div style="width:300px;height:40px"></div>',
+      ),
+    );
+    const result = await measure(page);
+    expect(result.scrollWidth).toBeLessThanOrEqual(result.clientWidth + 1);
+    expect(result.offenders).toEqual([]);
+  });
+});
