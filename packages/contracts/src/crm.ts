@@ -1198,6 +1198,15 @@ export const VENDOR_CHECKLIST_ITEM_KEYS = [
   'proprietor_citizenship',
   'foreign_registration',
 ] as const;
+/**
+ * The documents every vendor owes, whatever its kind: the PAN, a tax clearance (it lapses each fiscal year) and bank proof.
+ * The API's new vendor case marks these required (verification.rules.ts) and the dev seed marks them on a seeded case.
+ */
+export const REQUIRED_VENDOR_CHECKLIST_KEYS = [
+  'pan_certificate',
+  'tax_clearance',
+  'bank_proof',
+] as const satisfies readonly (typeof VENDOR_CHECKLIST_ITEM_KEYS)[number][];
 export const VERIFICATION_PARTY_KINDS = ['customer', 'vendor'] as const;
 export const VerificationPartyKindSchema = z.enum(VERIFICATION_PARTY_KINDS);
 export type VerificationPartyKind = z.infer<typeof VerificationPartyKindSchema>;

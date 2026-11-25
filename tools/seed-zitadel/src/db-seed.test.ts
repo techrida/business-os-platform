@@ -7,6 +7,7 @@ import {
   WorkflowSpecSchema,
   nepalPanProblem,
   phoneProblem,
+  REQUIRED_VENDOR_CHECKLIST_KEYS,
   type CountryCode,
 } from '@bos/contracts';
 import { readFileSync } from 'node:fs';
@@ -31,6 +32,7 @@ import {
   DEV_FOREIGN_VENDOR,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
+  seedExtraVendor,
   seedKernelRows,
   setSeedActor,
 } from './db-seed.js';
@@ -930,8 +932,28 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       'tax_clearance',
       'bank_proof',
     ]);
+    // The required keys are the contract's, the same list the API's new vendor case uses.
+    expect(checklist.filter((i) => i.required).map((i) => i.key)).toEqual([
+      ...REQUIRED_VENDOR_CHECKLIST_KEYS,
+    ]);
     // The portal upload needs a pan_certificate item to attach to.
     expect(checklist.some((i) => i.key === 'pan_certificate')).toBe(true);
+  });
+
+  it('names the vendor and the PAN when a vendor made by hand already holds a seeded PAN, instead of failing on the unique index', async () => {
+    const vendor = EXTRA_VENDORS[0];
+    const { client, calls } = fakeClient((call) => {
+      if (call.text.startsWith('SELECT id FROM app.parties'))
+        return { rows: [{ id: `party-${String(call.values[1])}` }] };
+      if (call.text.startsWith('SELECT h.id, h.legal_name FROM app.vendors'))
+        return { rows: [{ id: 'hand-made-1', legal_name: 'Hand Made Traders' }] };
+      return { rowCount: 1 };
+    });
+    await expect(seedExtraVendor(client, scope, vendor, 'creator-1', 'approver-1')).rejects.toThrow(
+      new RegExp(`PAN ${vendor.pan} of ${vendor.partyCode} is already held by .*Hand Made Traders`),
+    );
+    // Nothing is written once the holder is found.
+    expect(calls.some((c) => c.text.startsWith('INSERT'))).toBe(false);
   });
 
   it('writes neither extra vendor, nor a KYB case, without the dev personas (the production path)', async () => {

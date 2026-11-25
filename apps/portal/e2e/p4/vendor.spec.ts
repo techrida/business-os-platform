@@ -11,6 +11,7 @@ import { expect, test } from '@playwright/test';
  *   PORTAL_E2E_VENDOR_BILL_ID      a bill of that vendor
  *   PORTAL_E2E_VENDOR_FOREIGN_ID   a purchase order id of another vendor (or a draft of this one)
  *   PORTAL_E2E_PENDING_STATE       storage state of a vendor in pending_kyc (optional)
+ *   PORTAL_E2E_VENDOR_B_STATE      storage state of a second approved vendor of the same entity (optional)
  */
 const base = process.env.PORTAL_E2E_BASE_URL;
 const storageState = process.env.PORTAL_E2E_VENDOR_STATE;
@@ -18,6 +19,7 @@ const poId = process.env.PORTAL_E2E_VENDOR_PO_ID;
 const billId = process.env.PORTAL_E2E_VENDOR_BILL_ID;
 const foreignId = process.env.PORTAL_E2E_VENDOR_FOREIGN_ID;
 const pendingState = process.env.PORTAL_E2E_PENDING_STATE;
+const vendorBState = process.env.PORTAL_E2E_VENDOR_B_STATE;
 
 test.skip(!base || !storageState, 'PORTAL_E2E_BASE_URL and PORTAL_E2E_VENDOR_STATE are not set');
 if (storageState) test.use({ storageState, baseURL: base });
@@ -87,5 +89,28 @@ test.describe('a vendor still in onboarding', () => {
     await expect(
       page.getByRole('heading', { name: 'Your vendor account cannot use this page' }),
     ).toBeVisible();
+  });
+});
+
+test.describe('another approved vendor of the same entity', () => {
+  test.skip(!vendorBState, 'PORTAL_E2E_VENDOR_B_STATE is not set');
+  test.skip(!poId || !billId, 'PORTAL_E2E_VENDOR_PO_ID and PORTAL_E2E_VENDOR_BILL_ID are not set');
+  if (vendorBState) test.use({ storageState: vendorBState, baseURL: base });
+
+  test('gets "Page not found" for the order, the bill and the order PDF of the first vendor', async ({
+    page,
+  }) => {
+    // An approved vendor of its own: it sees the order pages, and still not the first vendor's records.
+    await page.goto('/vendor/purchase-orders');
+    await expect(
+      page.getByRole('heading', { level: 1, name: 'Your purchase orders' }),
+    ).toBeVisible();
+    for (const path of [`/vendor/purchase-orders/${poId}`, `/vendor/bills/${billId}`]) {
+      await page.goto(path);
+      await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
+    }
+    const pdf = await page.request.get(`/vendor/purchase-orders/${poId}/pdf`);
+    expect(pdf.status()).toBe(404);
+    expect(await pdf.text()).toBe('Purchase order not found.');
   });
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  REQUIRED_VENDOR_CHECKLIST_KEYS,
+  VENDOR_CHECKLIST_ITEM_KEYS,
   ActivityDtoSchema,
   ActivityKindSchema,
   UpdateLeadBodySchema,
@@ -871,5 +873,18 @@ describe('credit override tied to one quotation version (R5 FU10)', () => {
     expect(CreditHoldDtoSchema.safeParse({ ...hold, override: overrideWithout }).success).toBe(
       false,
     );
+  });
+});
+
+describe('REQUIRED_VENDOR_CHECKLIST_KEYS', () => {
+  it('names the three documents every vendor owes, each a key of the vendor checklist', () => {
+    expect([...REQUIRED_VENDOR_CHECKLIST_KEYS]).toEqual([
+      'pan_certificate',
+      'tax_clearance',
+      'bank_proof',
+    ]);
+    for (const key of REQUIRED_VENDOR_CHECKLIST_KEYS) {
+      expect((VENDOR_CHECKLIST_ITEM_KEYS as readonly string[]).includes(key)).toBe(true);
+    }
   });
 });

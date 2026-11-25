@@ -63,9 +63,9 @@ test('vendor quotation and invoice uploads reach the actual workspace inboxes wi
       await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText(
         'p4-exit-quotation.pdf',
       );
-      await page.getByLabel('Total of your quotation').fill('1,20,000.00');
-      await page.getByLabel('Your reference (optional)').fill(reference);
-      await page.getByLabel('Delivery time in days (optional)').fill('14');
+      await page.getByLabel('Total of your quotation').pressSequentially('120000.00');
+      await page.getByLabel(/^Your reference/).fill(reference);
+      await page.getByLabel(/^Delivery time in days/).fill('14');
       await page.getByRole('button', { name: 'Submit quotation', exact: true }).click();
       await expect(
         page.getByRole('status').filter({ hasText: 'We received your quotation' }),
@@ -93,7 +93,10 @@ test('vendor quotation and invoice uploads reach the actual workspace inboxes wi
       await page.goto(`/vendor/purchase-orders/${poId}`);
       await page.getByRole('link', { name: 'Submit a bill', exact: true }).click();
       await page.waitForLoadState('networkidle');
-      await expect(page.getByLabel('Purchase order (optional)')).toHaveValue(poId ?? '');
+      // The app's dropdown keeps its value in a hidden input of the same name.
+      await expect(page.locator('input[type="hidden"][name="purchaseOrderId"]')).toHaveValue(
+        poId ?? '',
+      );
       await page.getByLabel('Your bill', { exact: true }).setInputFiles({
         name: 'p4-exit-invoice.pdf',
         mimeType: 'application/pdf',
@@ -108,7 +111,7 @@ test('vendor quotation and invoice uploads reach the actual workspace inboxes wi
         new Date(),
       );
       await fillDateField(page, 'Invoice date', today);
-      await page.getByLabel('Total on your invoice').fill('1,20,000.00');
+      await page.getByLabel('Total on your invoice').pressSequentially('120000.00');
       await page.getByRole('button', { name: 'Submit bill', exact: true }).click();
       await expect(
         page.getByRole('status').filter({ hasText: 'We received your bill' }),
