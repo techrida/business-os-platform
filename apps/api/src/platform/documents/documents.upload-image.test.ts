@@ -240,7 +240,10 @@ describe('DocumentsService.createAndReceiveUpload', () => {
         });
       // Let the receive reach the enqueue. It does real I/O (type sniffing), so yield to the real event loop with
       // setImmediate (not faked) until `add` was called; only setTimeout is faked.
-      for (let i = 0; i < 5_000 && p.queue.add.mock.calls.length === 0; i += 1) {
+      // A real-time bound, not an iteration count: on a loaded runner the sniffing I/O takes longer than any fixed
+      // number of immediates (the old count of 5000 ran out in 50 ms on GitHub).
+      const until = Date.now() + 10_000;
+      while (p.queue.add.mock.calls.length === 0 && Date.now() < until) {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
       expect(p.queue.add).toHaveBeenCalledTimes(1);
@@ -266,6 +269,22 @@ describe('DocumentsService.createAndReceiveUpload', () => {
     await expect(
       p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
     ).resolves.toBeDefined();
+    expect(p.updates.some((u) => 'removedAt' in u)).toBe(false);
+  });
+
+  it('queues the scan once Valkey is back inside the bound after refusing the add while it reconnected (R6Q24)', async () => {
+    const p = pipeline();
+    const refused = () =>
+      new Error("Stream isn't writeable and enableOfflineQueue options is false");
+    p.queue.add
+      .mockRejectedValueOnce(refused())
+      .mockRejectedValueOnce(refused())
+      .mockResolvedValue({ id: 'job' });
+
+    await expect(
+      p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
+    ).resolves.toBeDefined();
+    expect(p.queue.add).toHaveBeenCalledTimes(3);
     expect(p.updates.some((u) => 'removedAt' in u)).toBe(false);
   });
 

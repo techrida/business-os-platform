@@ -2,7 +2,7 @@ import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { getJson } from '../helpers/api';
 import { signInAs, type Signed } from '../helpers/memo-flow';
-import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
+import { listMessages, mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
 
 /**
  * The quotation detail page, against the real stack: the summary and totals, the revisions dialog,
@@ -179,6 +179,8 @@ test('Send gives the customer a portal link by email, never the file', async ({
       .filter({ hasText: contact ?? '' })
       .first()
       .click();
+    // The fixtures send other quotations to the same contact: only a mail that arrives after this click is this one's.
+    const before = new Set((await listMessages()).map((m) => m.ID));
     await submit.click();
     await expect(dialog.getByRole('status').filter({ hasText: 'Sent to' })).toBeVisible({
       timeout: 30_000,
@@ -188,7 +190,10 @@ test('Send gives the customer a portal link by email, never the file', async ({
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByText('Sent', { exact: true }).first()).toBeVisible();
 
-    const mail = await waitForMessage((m) => sentTo(m, contact ?? ''), `a mail to ${contact}`);
+    const mail = await waitForMessage(
+      (m) => sentTo(m, contact ?? '') && !before.has(m.ID),
+      `a new mail to ${contact}`,
+    );
     const full = await getJson<{ Attachments?: unknown[]; Text?: string }>(
       `${mailOrigin()}/api/v1/message/${mail.ID}`,
     );
