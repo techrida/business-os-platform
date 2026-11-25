@@ -188,9 +188,12 @@ test('qa fixtures: quotations for the portal and the quotation screens', async (
       opportunityId = await makeOpportunity(sales);
       for (const kind of Object.keys(make) as (keyof typeof make)[]) {
         for (let i = 0; i < REPEATS; i += 1) {
-          // A customer's acceptance wins the opportunity, so each quotation the portal spec accepts gets its own.
+          // A customer's acceptance wins the opportunity, so each quotation the portal spec accepts, and each approved
+          // one the Send spec sends (a portal accept could win the opportunity and refuse a later Send), gets its own.
           const opportunity =
-            kind === 'portalSent' && i > 0 ? await makeOpportunity(sales) : opportunityId;
+            (kind === 'portalSent' || kind === 'approved') && i > 0
+              ? await makeOpportunity(sales)
+              : opportunityId;
           make[kind].push(await buildQuotation(sales, opportunity, true));
         }
       }
