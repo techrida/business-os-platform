@@ -21,6 +21,7 @@ import {
   DEV_CUSTOMER_PARTY_CODE,
   DEV_FOREIGN_CUSTOMER,
   DEV_FOREIGN_VENDOR,
+  DEV_VENDOR_PAN,
   DEV_VENDOR_PARTY_CODE,
   type DevPersona,
   type SeedScope,
@@ -699,6 +700,7 @@ describe('a vendor made by hand and the seeded PANs on Postgres (R6Q11b)', () =>
   async function handMadeVendor(
     scope: SeedScope & { idpOrgId: string },
     pan: string,
+    foreign = false,
   ): Promise<string> {
     const { partyId } = await createParty(owner, { tenantId: scope.tenantId, kind: 'vendor' });
     const { userId } = await createStaffUser(owner, {
@@ -709,8 +711,8 @@ describe('a vendor made by hand and the seeded PANs on Postgres (R6Q11b)', () =>
     await asFounder(scope, (client) =>
       client.query(
         `INSERT INTO app.vendors (id, tenant_id, legal_name, kind, pan, country, status, created_by)
-         VALUES ($1, $2, 'Hand Made Traders', 'company', $3, 'NP', 'draft', $4)`,
-        [partyId, scope.tenantId, pan, userId],
+         VALUES ($1, $2, 'Hand Made Traders', $5, $3, $6, 'draft', $4)`,
+        [partyId, scope.tenantId, pan, userId, foreign ? 'foreign' : 'company', foreign ? 'IN' : 'NP'],
       ),
     );
     return partyId;
@@ -726,6 +728,21 @@ describe('a vendor made by hand and the seeded PANs on Postgres (R6Q11b)', () =>
         new RegExp(
           `PAN ${vendor.pan} of ${vendor.partyCode} is already held by .*Hand Made Traders`,
         ),
+      );
+    },
+    TEST_TIMEOUT,
+  );
+
+  it.each([
+    ['VEND-DEV', DEV_VENDOR_PARTY_CODE, DEV_VENDOR_PAN, false],
+    ['the foreign vendor', DEV_FOREIGN_VENDOR.code, DEV_FOREIGN_VENDOR.pan, true],
+  ])(
+    'names the PAN and its holder for %s too (R6Q24)',
+    async (_name, partyCode, pan, foreign) => {
+      const scope = await devTenant();
+      await handMadeVendor(scope, pan, foreign);
+      await expect(seed(scope, personasFor(`pg-pan3-${randomUUID().slice(0, 8)}`))).rejects.toThrow(
+        new RegExp(`PAN ${pan} of ${partyCode} is already held by .*Hand Made Traders`),
       );
     },
     TEST_TIMEOUT,
