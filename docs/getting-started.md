@@ -8,7 +8,7 @@ Install these tools before you start:
 
 - Linux or Ubuntu on WSL2. On WSL2, keep your clone on the native Linux filesystem rather than a mounted Windows drive so Docker binds and file watchers stay fast and reliable.
 - Node.js 24 (`>=24.0.0`, see `.nvmrc`).
-- pnpm 11 (`11.28.11`, pinned in `package.json`).
+- pnpm 11 (`11.29.0`, pinned in `package.json`).
 - Docker Engine with Compose v2 (`docker compose`).
 - OpenSSL (used to generate random local secrets).
 
