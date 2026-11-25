@@ -104,8 +104,11 @@ test('procurement raises a PR, its department head alone approves, then three ve
       await page.getByRole('link', { name: 'Start RFQ', exact: true }).click();
       await page.waitForLoadState('networkidle');
       await fillDateField(page, 'Quotation deadline', '2030-12-01', '17:00');
-      for (const id of vendorIds)
-        await page.locator(`input[name="vendorIds"][value="${id}"]`).check();
+      // The checkboxes are the app's own control (the form input is hidden); the list offers exactly the approved
+      // vendors, and the three ids above are the ones the stack seeds.
+      const offered = page.getByRole('group', { name: /Invited vendors/ }).getByRole('checkbox');
+      await expect(offered).toHaveCount(vendorIds.length);
+      for (const box of await offered.all()) await box.check();
       await page.getByRole('button', { name: 'Open RFQ', exact: true }).click();
       await expect(page).toHaveURL(/\/procurement\/rfqs\/[0-9a-f-]{36}\?created=1$/);
       await expect(page.getByText('Invited vendors (3)', { exact: true })).toBeVisible();
