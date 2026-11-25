@@ -136,6 +136,18 @@ jobs:
       - name: Export the fixture ids to the spec environment
         run: bash .github/qa/export-ids.sh
 
+      # With a spec filter set both Playwright steps pass with no tests, so a mistyped filter would pass silently: print how
+      # many tests each step runs and fail when the filter matched none in either suite (.github/qa/spec-counts.mjs).
+      - name: Spec filter matches at least one test
+        if: ${{ inputs.spec_filter != '' && matrix.mode == 'specs' }}
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+          SPEC_FILTER: ${{ inputs.spec_filter }}
+          REPEAT_EACH: ${{ inputs.repeat_each || '1' }}
+          SHARD: ${{ matrix.shard }}
+        run: node .github/qa/spec-counts.mjs
+
       - name: Playwright (workspace, dev project)
         if: ${{ matrix.mode == 'specs' && matrix.ws }}
         env:
