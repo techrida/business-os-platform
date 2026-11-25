@@ -4,10 +4,10 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "description": "Business OS platform monorepo (apps/api, apps/workspace, packages/*, tools/*).",
-  "packageManager": "pnpm@11.28.11",
+  "packageManager": "pnpm@11.29.0",
   "engines": {
     "node": ">=24.0.0",
-    "pnpm": ">=11.28.11 <12"
+    "pnpm": ">=11.29.0 <12"
   },
   "scripts": {
     "build": "pnpm -r --if-present run build",
