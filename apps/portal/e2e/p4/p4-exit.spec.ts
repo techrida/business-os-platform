@@ -93,7 +93,10 @@ test('vendor quotation and invoice uploads reach the actual workspace inboxes wi
       await page.goto(`/vendor/purchase-orders/${poId}`);
       await page.getByRole('link', { name: 'Submit a bill', exact: true }).click();
       await page.waitForLoadState('networkidle');
-      await expect(page.getByLabel(/^Purchase order/)).toHaveValue(poId ?? '');
+      // The app's dropdown keeps its value in a hidden input of the same name.
+      await expect(page.locator('input[type="hidden"][name="purchaseOrderId"]')).toHaveValue(
+        poId ?? '',
+      );
       await page.getByLabel('Your bill', { exact: true }).setInputFiles({
         name: 'p4-exit-invoice.pdf',
         mimeType: 'application/pdf',
