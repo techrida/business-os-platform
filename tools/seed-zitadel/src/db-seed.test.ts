@@ -945,7 +945,7 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     const { client, calls } = fakeClient((call) => {
       if (call.text.startsWith('SELECT id FROM app.parties'))
         return { rows: [{ id: `party-${String(call.values[1])}` }] };
-      if (call.text.startsWith('SELECT id, legal_name FROM app.vendors'))
+      if (call.text.startsWith('SELECT h.id, h.legal_name FROM app.vendors'))
         return { rows: [{ id: 'hand-made-1', legal_name: 'Hand Made Traders' }] };
       return { rowCount: 1 };
     });
