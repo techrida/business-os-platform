@@ -240,7 +240,10 @@ describe('DocumentsService.createAndReceiveUpload', () => {
         });
       // Let the receive reach the enqueue. It does real I/O (type sniffing), so yield to the real event loop with
       // setImmediate (not faked) until `add` was called; only setTimeout is faked.
-      for (let i = 0; i < 5_000 && p.queue.add.mock.calls.length === 0; i += 1) {
+      // A real-time bound, not an iteration count: on a loaded runner the sniffing I/O takes longer than any fixed
+      // number of immediates (the old count of 5000 ran out in 50 ms on GitHub).
+      const until = Date.now() + 10_000;
+      while (p.queue.add.mock.calls.length === 0 && Date.now() < until) {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
       expect(p.queue.add).toHaveBeenCalledTimes(1);
