@@ -582,7 +582,7 @@ export const DEV_DEPARTMENTS: readonly DevDepartment[] = [
   },
 ];
 /** A nine-digit Nepal PAN (vendors_pan_check). Fictional: the dev vendor is not a real company. */
-const DEV_VENDOR_PAN = '123456789';
+export const DEV_VENDOR_PAN = '123456789';
 /** The vendor party the tenancy step creates (SEED_PARTIES.vendor in index.ts; a test pins the two together). */
 export const DEV_VENDOR_PARTY_CODE = 'VEND-DEV';
 const DEV_VENDOR_TERM = 'NET30';
@@ -732,6 +732,7 @@ async function seedDevPeopleAndVendor(
   );
   const partyId = party.rows[0]?.id;
   if (!partyId) throw new Error(`dev seed: vendor party ${DEV_VENDOR_PARTY_CODE} not found`);
+  await refuseHeldPan(client, scope, partyId, DEV_VENDOR_PAN, DEV_VENDOR_PARTY_CODE);
   const vendor = await client.query(
     `INSERT INTO app.vendors
        (id, tenant_id, legal_name, kind, pan, vat_registered, country, address_line, address_city, status, created_by, approved_by)
@@ -848,6 +849,32 @@ async function seedDevPeopleAndVendor(
 }
 
 /**
+ * vendors_tenant_pan_unique would refuse a seeded vendor's insert with a bare constraint name: a vendor somebody made by
+ * hand that already holds the seeded PAN is named here instead, with what to do about it. Only while the seeded vendor
+ * row is still to be made: a re-run finds it (ON CONFLICT (id) DO NOTHING skips it) even if its PAN was changed since.
+ */
+async function refuseHeldPan(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  partyId: string,
+  pan: string,
+  partyCode: string,
+): Promise<void> {
+  const holder = await client.query<{ id: string; legal_name: string }>(
+    `SELECT h.id, h.legal_name FROM app.vendors h
+     WHERE h.tenant_id = $1::uuid AND h.pan = $2 AND h.id <> $3::uuid
+       AND NOT EXISTS (SELECT 1 FROM app.vendors own WHERE own.tenant_id = $1::uuid AND own.id = $3::uuid)`,
+    [scope.tenantId, pan, partyId],
+  );
+  if (holder.rows[0]) {
+    throw new Error(
+      `dev seed: the PAN ${pan} of ${partyCode} is already held by the vendor "${holder.rows[0].legal_name}" ` +
+        `(${holder.rows[0].id}). Change the PAN of that vendor or delete it, then run the seed again.`,
+    );
+  }
+}
+
+/**
  * One of EXTRA_VENDORS: its vendor row on the party the tenancy step created for its org (found by code), a TR
  * account, and, while it is pending_kyc, an editable draft KYB case with the vendor checklist (every item missing),
  * so the portal's KYC document upload has a case to write to. An approved vendor needs no case. The dev vendor has
@@ -866,21 +893,7 @@ export async function seedExtraVendor(
   );
   const partyId = party.rows[0]?.id;
   if (!partyId) throw new Error(`dev seed: vendor party ${vendor.partyCode} not found`);
-  // vendors_tenant_pan_unique would refuse the insert with a bare constraint name: a vendor somebody made by hand that
-  // already holds this seeded PAN is named here instead, with what to do about it. Only while the seeded vendor row is
-  // still to be made: a re-run finds it (ON CONFLICT (id) DO NOTHING skips it) even if its PAN was changed since.
-  const holder = await client.query<{ id: string; legal_name: string }>(
-    `SELECT h.id, h.legal_name FROM app.vendors h
-     WHERE h.tenant_id = $1::uuid AND h.pan = $2 AND h.id <> $3::uuid
-       AND NOT EXISTS (SELECT 1 FROM app.vendors own WHERE own.tenant_id = $1::uuid AND own.id = $3::uuid)`,
-    [scope.tenantId, vendor.pan, partyId],
-  );
-  if (holder.rows[0]) {
-    throw new Error(
-      `dev seed: the PAN ${vendor.pan} of ${vendor.partyCode} is already held by the vendor "${holder.rows[0].legal_name}" ` +
-        `(${holder.rows[0].id}). Change the PAN of that vendor or delete it, then run the seed again.`,
-    );
-  }
+  await refuseHeldPan(client, scope, partyId, vendor.pan, vendor.partyCode);
   let changed = 0;
   const row = await client.query(
     `INSERT INTO app.vendors
@@ -1022,6 +1035,7 @@ async function seedForeignParties(
   const v = DEV_FOREIGN_VENDOR;
   const vendorParty = await seedBareParty(client, scope, 'vendor', v);
   changed += vendorParty.changed;
+  await refuseHeldPan(client, scope, vendorParty.partyId, v.pan, v.code);
   const vendor = await client.query(
     `INSERT INTO app.vendors
        (id, tenant_id, legal_name, kind, pan, vat_registered, country, address_line, address_city, status, created_by, approved_by)
