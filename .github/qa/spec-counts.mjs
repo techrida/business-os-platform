@@ -25,7 +25,10 @@ export function decide({ filter, wsTotal, portalTotal }) {
   if (!set) return { ok: true, message: 'No spec filter: every spec runs.' };
   const message = `Spec filter "${filter.trim()}" matches ${wsTotal} workspace and ${portalTotal} portal tests.`;
   if (wsTotal === 0 && portalTotal === 0) {
-    return { ok: false, message: `${message} It matched nothing in either suite: check the spelling.` };
+    return {
+      ok: false,
+      message: `${message} It matched nothing in either suite: check the spelling.`,
+    };
   }
   return { ok: true, message };
 }
@@ -37,7 +40,8 @@ function listTotal(cwd, args) {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const n = parseTotal(out);
-  if (n === undefined) throw new Error(`no "Total: N tests" line in the playwright --list output of ${cwd}`);
+  if (n === undefined)
+    throw new Error(`no "Total: N tests" line in the playwright --list output of ${cwd}`);
   return n;
 }
 
@@ -59,7 +63,9 @@ function main() {
   const wsTotal = listTotal(ws, wsArgs) * repeat;
   if (process.env.SHARD) {
     const inShard = listTotal(ws, [...wsArgs, `--shard=${process.env.SHARD}`]) * repeat;
-    console.log(`Workspace step, shard ${process.env.SHARD}: ${inShard} of ${wsTotal} matching tests.`);
+    console.log(
+      `Workspace step, shard ${process.env.SHARD}: ${inShard} of ${wsTotal} matching tests.`,
+    );
   }
   const portalTotal = listTotal(`${root}apps/portal`, words) * repeat;
   console.log(`Portal step: ${portalTotal} matching tests.`);
