@@ -131,7 +131,7 @@ jobs:
 
       # Tracked files must be fit for a public repository (license fields, no private paths); same step as tools/gate.sh.
       - name: Public-repo check
-        run: node --test tools/check-public-repo.test.mjs infra/pnpm-bootstrap.test.mjs tools/qa-workflow.test.mjs tools/affected.test.mjs tools/qa-approve-timing.test.mjs && node tools/check-public-repo.mjs
+        run: node --test tools/check-public-repo.test.mjs infra/pnpm-bootstrap.test.mjs tools/qa-workflow.test.mjs tools/affected.test.mjs tools/qa-approve-timing.test.mjs tools/qa-spec-counts.test.mjs && node tools/check-public-repo.mjs
 
   # Scans the whole git history for committed secrets. Config: .gitleaks.toml (test fixtures only).
   # Runs the open-source gitleaks CLI directly (the gitleaks-action wrapper needs a GITLEAKS_LICENSE
