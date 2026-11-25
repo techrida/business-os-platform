@@ -3,7 +3,12 @@ import 'reflect-metadata';
 import { Queue } from 'bullmq';
 import { describe, expect, it, vi } from 'vitest';
 
-import { QueueCallTimeoutError, queueCallWithin } from './nudge-timeout';
+import {
+  isStreamNotWriteable,
+  QueueCallTimeoutError,
+  queueCallWithin,
+  retryWhileNotWriteable,
+} from './nudge-timeout';
 import { redisOptionsFromUrl } from './redis-options';
 
 describe('queueCallWithin', () => {
@@ -54,4 +59,59 @@ describe('queueCallWithin', () => {
       await queue.close().catch(() => undefined);
     }
   }, 15_000);
+});
+
+describe('retryWhileNotWriteable (R6Q24: a short Valkey reconnect must not defer the scan)', () => {
+  const refused = () => new Error("Stream isn't writeable and enableOfflineQueue options is false");
+
+  it('recognises the ioredis refusal and nothing else', () => {
+    expect(isStreamNotWriteable(refused())).toBe(true);
+    expect(isStreamNotWriteable(new Error('Connection is closed.'))).toBe(false);
+    expect(isStreamNotWriteable("Stream isn't writeable")).toBe(false);
+  });
+
+  it('tries again after a refusal and returns the value of the first call that works', async () => {
+    vi.useFakeTimers();
+    try {
+      const call = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(refused())
+        .mockRejectedValueOnce(refused())
+        .mockResolvedValue('queued');
+      const result = retryWhileNotWriteable(call, 4_000);
+      await vi.advanceTimersByTimeAsync(200);
+      await expect(result).resolves.toBe('queued');
+      expect(call).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('throws any other error at once, without a second try', async () => {
+    const call = vi.fn<() => Promise<string>>().mockRejectedValue(new Error('WRONGTYPE'));
+    await expect(retryWhileNotWriteable(call, 4_000)).rejects.toThrow('WRONGTYPE');
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up with the last refusal when the deadline passes', async () => {
+    vi.useFakeTimers();
+    try {
+      const call = vi
+        .fn<() => Promise<string>>()
+        .mockImplementation(() => Promise.reject(refused()));
+      let outcome: unknown = 'pending';
+      const result = retryWhileNotWriteable(call, 1_000).catch((e: unknown) => {
+        outcome = e;
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(outcome).toBe('pending');
+      await vi.advanceTimersByTimeAsync(600);
+      await result;
+      expect(isStreamNotWriteable(outcome)).toBe(true);
+      expect(call.mock.calls.length).toBeGreaterThan(5);
+      expect(call.mock.calls.length).toBeLessThanOrEqual(11);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

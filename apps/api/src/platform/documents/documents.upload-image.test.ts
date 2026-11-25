@@ -269,6 +269,22 @@ describe('DocumentsService.createAndReceiveUpload', () => {
     expect(p.updates.some((u) => 'removedAt' in u)).toBe(false);
   });
 
+  it('queues the scan once Valkey is back inside the bound after refusing the add while it reconnected (R6Q24)', async () => {
+    const p = pipeline();
+    const refused = () =>
+      new Error("Stream isn't writeable and enableOfflineQueue options is false");
+    p.queue.add
+      .mockRejectedValueOnce(refused())
+      .mockRejectedValueOnce(refused())
+      .mockResolvedValue({ id: 'job' });
+
+    await expect(
+      p.svc.createAndReceiveUpload(owner, file, { scope, actor: user }),
+    ).resolves.toBeDefined();
+    expect(p.queue.add).toHaveBeenCalledTimes(3);
+    expect(p.updates.some((u) => 'removedAt' in u)).toBe(false);
+  });
+
   it('still throws the receive error when removing the document fails too', async () => {
     const p = pipeline();
     p.queue.add.mockRejectedValue(new Error('valkey down'));

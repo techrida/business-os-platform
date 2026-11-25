@@ -8,8 +8,9 @@ import type { Logger } from '@nestjs/common';
 export const NUDGE_TIMEOUT_MS = 1_000;
 
 /**
- * How long an upload waits for its scan enqueue. Longer than a nudge: giving up here discards the upload with a 503,
- * so a slow but reachable Valkey should still get the scan queued.
+ * How long an upload waits for its scan enqueue. Longer than a nudge: giving up here leaves the scan to the stuck-scan
+ * sweeper (the receive still answers 202 and keeps the bytes), so a slow but reachable Valkey, or one that is
+ * reconnecting, should still get the scan queued now.
  */
 export const SCAN_ENQUEUE_TIMEOUT_MS = 4_000;
 
@@ -77,5 +78,32 @@ export async function queueCallWithin<T>(
     ]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** The ioredis error of a command sent while the socket is down and the offline queue is off (the API's producer connection). */
+export function isStreamNotWriteable(error: unknown): boolean {
+  return error instanceof Error && /stream isn't writeable/i.test(error.message);
+}
+
+/**
+ * Runs `call` and, while it fails with the "stream isn't writeable" error of a Valkey that is reconnecting (the producer
+ * connection has no offline queue, so the command was refused before it was sent), tries again every `pauseMs` until
+ * `deadlineMs` have passed; then the last error is thrown. Any other error is thrown at once. Only for calls that are
+ * safe to repeat: a refused command was never sent, and the scan's job id makes a repeated add a no-op anyway.
+ */
+export async function retryWhileNotWriteable<T>(
+  call: () => Promise<T>,
+  deadlineMs: number,
+  pauseMs: number = 100,
+): Promise<T> {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    try {
+      return await call();
+    } catch (error) {
+      if (!isStreamNotWriteable(error) || Date.now() + pauseMs >= deadline) throw error;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, pauseMs));
   }
 }
