@@ -67,9 +67,21 @@ export class ValkeyLinkStore implements LinkStore, OnApplicationShutdown {
     }
   }
 
+  /** The wait for a connection that is under way, shared by every claim that arrives meanwhile. */
+  private connecting: Promise<void> | undefined;
+
   /** Waits (at most LINK_STORE_TIMEOUT_MS) for a usable connection; with no offline queue, a command needs one. */
-  private async ready(): Promise<void> {
-    if (this.redis.status === 'ready') return;
+  private ready(): Promise<void> {
+    if (this.redis.status === 'ready') return Promise.resolve();
+    // One wait, one 'ready' listener and one timer for all concurrent claims: a burst of downloads while Valkey is down
+    // must not pile a listener and a timer on the connection per request.
+    this.connecting ??= this.waitUntilReady().finally(() => {
+      this.connecting = undefined;
+    });
+    return this.connecting;
+  }
+
+  private async waitUntilReady(): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onReady: (() => void) | undefined;
     try {
