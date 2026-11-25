@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 
 import { AppConfig, CoreConfig } from '../config/config';
 import { SYSTEM_QUEUE } from './queue.constants';
+import { isStreamNotWriteable } from './nudge-timeout';
 import { producerOnlyConnection, redisOptionsFromUrl } from './redis-options';
 
 export * from './queue.constants';
@@ -12,8 +13,9 @@ const logger = new Logger('QueueModule');
 
 /**
  * Closes a queue and never throws. With Valkey away a close (a QUIT) is refused by the producer connection ("stream isn't
- * writeable": it has no offline queue), which bullmq does not count as a connection error, so the refusal would fail the
- * whole API shutdown. The error is logged and the socket is dropped instead.
+ * writeable": it has no offline queue), which bullmq does not count as a connection error, so the refusal is rethrown,
+ * logged as an error and leaves the reconnecting socket open. Here the refusal is a warning and the socket is dropped;
+ * any other close error is logged as an error (it is not a Valkey outage) and the socket is dropped too.
  */
 export async function closeQueueQuietly(
   close: () => Promise<void>,
@@ -22,9 +24,12 @@ export async function closeQueueQuietly(
   try {
     await close();
   } catch (error) {
-    logger.warn(
-      `closing a queue failed (Valkey is away?), dropping its connection: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (isStreamNotWriteable(error)) {
+      logger.warn(
+        `closing a queue was refused (Valkey is away), dropping its connection: ${message}`,
+      );
+    } else logger.error(`closing a queue failed, dropping its connection: ${message}`);
     try {
       await disconnect();
     } catch {
@@ -37,7 +42,8 @@ const TOLERANT_CLOSE = Symbol.for('bos.queue.tolerant-close');
 
 /**
  * Makes `Queue.close()` of every queue (the ones @nestjs/bullmq closes at shutdown) go through closeQueueQuietly. The
- * queues are built inside @nestjs/bullmq with bullmq's own class, so this cannot be a subclass. Idempotent.
+ * queues are built inside @nestjs/bullmq with bullmq's own class, captured when each module registers its queue, so a
+ * subclass (BullModule.queueClass) would depend on import order; the prototype patch does not. Idempotent.
  */
 export function installTolerantQueueClose(): void {
   const proto = Queue.prototype as unknown as Record<symbol, boolean> & { close(): Promise<void> };
