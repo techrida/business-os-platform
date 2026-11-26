@@ -20,12 +20,14 @@ const quarantined: FileView = {
 };
 
 const fetchMock = vi.fn();
-let result: ReturnType<typeof useDocumentScan> | undefined;
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 
 function Probe() {
-  result = useDocumentScan('/api/scan', quarantined, true);
-  return null;
+  const scan = useDocumentScan('/api/scan', quarantined, true);
+  return createElement('span', {
+    'data-status': scan.file?.status,
+    'data-finished': String(scan.finished),
+  });
 }
 
 function answer(status: FileView['status']) {
@@ -50,7 +52,6 @@ beforeEach(() => {
 afterEach(async () => {
   await mounted?.unmount();
   mounted = undefined;
-  result = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -77,8 +78,9 @@ it('shows the result at the first check when the scan has finished, and stops as
   answer('clean');
   mounted = await mountForm(createElement(Probe));
   await advance(500);
-  expect(result?.file.status).toBe('clean');
-  expect(result?.finished).toBe(true);
+  const probe = document.querySelector('span');
+  expect(probe?.getAttribute('data-status')).toBe('clean');
+  expect(probe?.getAttribute('data-finished')).toBe('true');
   await advance(30_000);
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
