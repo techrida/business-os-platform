@@ -440,7 +440,7 @@ services:
   migrate:
     profiles: [app]
     image: bos/api:dev
-    command: ['node', 'packages/db/dist/migrate.js']
+    command: ['node', 'node_modules/@bos/db/dist/migrate.js']
     environment:
       DATABASE_MIGRATE_URL: postgresql://bos_owner:${BOS_DB_OWNER_PASSWORD}@postgres:5432/bos
       LOG_LEVEL: ${LOG_LEVEL:-info}
