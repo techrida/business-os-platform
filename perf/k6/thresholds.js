@@ -5,9 +5,8 @@
 // Its request is GET /v1/me, which answers from the request context (JWT check plus a cached org
 // lookup) and never queries Postgres. So a pass proves token validation, tenancy context and the HTTP
 // stack are fast; it says nothing about database read latency.
-// TODO(P1): add a DB-touching authenticated GET scenario (first list/detail route, e.g. the approvals
-// inbox) tagged kind:db_read with its own thresholds. No such route exists in P0: the only API routes are
-// /v1/me, POST /v1/telemetry/vitals and /health.
+// The database-read gate is db-reads.js (`pnpm perf:db-reads`, buildDbReadsThresholds below): the approvals
+// inbox count and the quotation list and detail, on seeded data (perf/seed/).
 // The environment variable names below keep their old K6_READ_* spelling because compose, package.json
 // and .env.example set them; renaming those is a separate change.
 //
@@ -37,7 +36,13 @@ export const NFR = {
   // P1 (approvals.js): the real approve action and the route preview.
   approveP95Ms: numberFromEnv('K6_APPROVE_P95_MS', 300),
   previewP95Ms: numberFromEnv('K6_PREVIEW_P95_MS', 200),
+  // Database reads (db-reads.js), ADR 0011: reads p95 under 300 ms and p99 under 800 ms.
+  dbReadP95Ms: numberFromEnv('K6_DB_READ_P95_MS', 300),
+  dbReadP99Ms: numberFromEnv('K6_DB_READ_P99_MS', 800),
 };
+
+/** The `name` tags of the reads db-reads.js measures, one per endpoint. */
+export const DB_READ_NAMES = ['inbox_count', 'quotation_list', 'quotation_detail'];
 
 /**
  * k6 thresholds. `{kind:auth_overhead}` selects only the GET /v1/me requests (see the note at the top:
@@ -77,4 +82,23 @@ export function buildApprovalsThresholds() {
     http_req_failed: [`rate<${NFR.failedRate}`],
     checks: ['rate>0.99'],
   };
+}
+
+/**
+ * Gates for `pnpm perf:db-reads`, selected by the `name` tag db-reads.js puts on each read (DB_READ_NAMES). As in
+ * buildApprovalsThresholds, each name also has a `count>0` threshold so a mistyped tag fails the gate instead of
+ * leaving an empty metric that passes.
+ */
+export function buildDbReadsThresholds() {
+  const thresholds = {};
+  for (const name of DB_READ_NAMES) {
+    thresholds[`http_req_duration{name:${name}}`] = [
+      `p(95)<${NFR.dbReadP95Ms}`,
+      `p(99)<${NFR.dbReadP99Ms}`,
+    ];
+    thresholds[`http_reqs{name:${name}}`] = ['count>0'];
+  }
+  thresholds.http_req_failed = [`rate<${NFR.failedRate}`];
+  thresholds.checks = ['rate>0.99'];
+  return thresholds;
 }
