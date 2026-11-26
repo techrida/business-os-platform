@@ -25,6 +25,17 @@ function serviceBlock(name: string): string {
   return lines.slice(start, end === -1 ? undefined : end).join('\n');
 }
 
+describe('compose passes the pool statement limit', () => {
+  it.each([
+    ['api', 30_000],
+    ['worker', 120_000],
+  ])('%s gets %i ms by default, the same as the application default', (service, ms) => {
+    expect(serviceBlock(service)).toContain(
+      `DB_POOL_STATEMENT_TIMEOUT_MS: \${DB_POOL_STATEMENT_TIMEOUT_MS:-${ms}}`,
+    );
+  });
+});
+
 describe('compose passes the database timeouts', () => {
   it.each(['api', 'worker'])('%s gets all three, with the application defaults', (service) => {
     const block = serviceBlock(service);
