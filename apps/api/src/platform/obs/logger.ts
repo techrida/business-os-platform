@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { Params } from 'nestjs-pino';
-import { stdTimeFunctions } from 'pino';
+import { DrizzleQueryError } from 'drizzle-orm';
+import { stdSerializers, stdTimeFunctions } from 'pino';
 
 import type { CoreConfig, ServiceName } from '../config/config';
 import { newCorrelationId } from './correlation';
@@ -40,30 +41,84 @@ export function genReqId(req: CorrelatedRequest, _res?: ServerResponse): string 
   return id;
 }
 
-/**
- * Routes whose query string carries personal data. The lead duplicates lookup sends the typed
- * email, phone, name and company as query parameters.
- */
-const QUERY_FREE_PATH_PREFIXES = ['/v1/leads/duplicates'];
+type LoggedRequest = { url?: unknown; query?: unknown; headers?: unknown };
 
-type LoggedRequest = { url?: unknown; query?: unknown };
+/** The part of a URL before `?`. A query string carries customer values (search terms, emails, tokens). */
+export function cutAtQuery(url: string): string {
+  const queryAt = url.indexOf('?');
+  return queryAt === -1 ? url : url.slice(0, queryAt);
+}
 
 /**
- * pino-http request serializer, run on pino's already-serialized request. For the routes above
- * it cuts the url at `?` and drops the parsed `query` (Express sets it, and the std serializer
- * copies it). The path compares lower-cased without trailing slashes, as Express routes it
- * (case-insensitive, non-strict), so `/V1/Leads/Duplicates/?email=` is cut too. Every other
- * request is returned as is.
+ * pino-http request serializer, run on pino's already-serialized request. Every logged request keeps its
+ * path only: the url is cut at `?`, the parsed `query` (Express sets it, and the std serializer copies it)
+ * is dropped, and so is the query of the referer header, which is a URL of the page that made the call.
  */
 export function serializeLoggedRequest<T extends LoggedRequest>(req: T): T {
-  if (typeof req.url !== 'string') return req;
-  const queryAt = req.url.indexOf('?');
-  const path = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
-  const routed = path.toLowerCase().replace(/\/+$/, '');
-  if (!QUERY_FREE_PATH_PREFIXES.some((prefix) => routed.startsWith(prefix))) return req;
-  req.url = path;
+  if (typeof req.url === 'string') req.url = cutAtQuery(req.url);
   delete req.query;
+  const headers = req.headers;
+  if (typeof headers === 'object' && headers !== null && 'referer' in headers) {
+    const referer = (headers as { referer?: unknown }).referer;
+    if (typeof referer === 'string') (headers as { referer: string }).referer = cutAtQuery(referer);
+  }
   return req;
+}
+
+/**
+ * A Drizzle query error says `Failed query: <sql>\nparams: <values>` in its message, so its message and stack
+ * (which starts with the message) carry the customer values the statement was run with. This keeps the query
+ * text and drops everything from `params:` up to the stack frames (or the end of the text).
+ */
+export function scrubQueryParams(text: string): string {
+  return text.replace(/(Failed query: [\s\S]*?)\nparams: [\s\S]*?(?=\n {4}at |$)/g, '$1');
+}
+
+/**
+ * What to log for an error: the message and the stack, with no statement values. A Drizzle query error
+ * logs its query text and its cause's stack (the Postgres error, which names the constraint but not the row
+ * values); any other error logs its own message and stack, scrubbed the same way.
+ */
+export function describeErrorForLog(error: unknown): { message: string; stack: string | undefined } {
+  if (error instanceof DrizzleQueryError) {
+    const cause = error.cause instanceof Error ? error.cause : undefined;
+    return {
+      message: `Failed query: ${error.query}`,
+      stack: cause?.stack === undefined ? undefined : scrubQueryParams(cause.stack),
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      message: scrubQueryParams(error.message),
+      stack: error.stack === undefined ? undefined : scrubQueryParams(error.stack),
+    };
+  }
+  return { message: scrubQueryParams(String(error)), stack: undefined };
+}
+
+function scrubLogValue(value: unknown): unknown {
+  if (typeof value === 'string') return scrubQueryParams(value);
+  if (value instanceof Error) return value;
+  if (typeof value !== 'object' || value === null) return value;
+  const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  for (const key of ['msg', 'message', 'stack']) {
+    if (typeof out[key] === 'string') out[key] = scrubQueryParams(out[key]);
+  }
+  return out;
+}
+
+/**
+ * pino's error serializer, scrubbed: used for `{ err }` bindings, so a Drizzle query error passed to the root
+ * logger (the worker's processors log through it) never writes its params.
+ */
+function serializeLoggedError(error: Error): Record<string, unknown> {
+  const out = stdSerializers.err(error) as unknown as Record<string, unknown>;
+  // pino copies an error's own properties, and a Drizzle query error has the bound values in `params`.
+  delete out['params'];
+  for (const key of ['message', 'stack']) {
+    if (typeof out[key] === 'string') out[key] = scrubQueryParams(out[key]);
+  }
+  return out;
 }
 
 /** nestjs-pino settings: JSON to stdout, redaction, correlation id as the request id. */
@@ -76,7 +131,14 @@ export function buildLoggerParams(config: CoreConfig, service: ServiceName): Par
       formatters: { level: (label) => ({ level: label }) },
       redact: { paths: REDACT_PATHS, censor: '[Redacted]' },
       genReqId,
-      serializers: { req: serializeLoggedRequest },
+      serializers: { req: serializeLoggedRequest, err: serializeLoggedError },
+      // Every worker and sweeper log line goes through here, whatever it was handed: a string or object that
+      // quotes a Drizzle query error loses its `params:` tail before it is written.
+      hooks: {
+        logMethod(args, method) {
+          return method.apply(this, args.map(scrubLogValue) as Parameters<typeof method>);
+        },
+      },
       // Probes hit these every few seconds; logging each one buries real traffic.
       autoLogging: { ignore: (req) => req.url === '/health/live' },
     },
