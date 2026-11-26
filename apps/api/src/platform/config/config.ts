@@ -39,6 +39,9 @@ const coreShape = (service: ServiceName) => ({
   // table lock (then 55P03, answered as 503 db_busy), and how long a transaction may sit idle before
   // the server ends its session. No 0 (off): a blank value would coerce to it silently.
   DB_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(5_000),
+  // How long one statement may run inside withTx (SET LOCAL statement_timeout via set_config), then 57014,
+  // answered as 503 db_busy. Same floor and no-0 rule as the lock timeout.
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(15_000),
   DB_IDLE_IN_TX_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(30_000),
   VALKEY_URL: z
     .string()
@@ -126,6 +129,16 @@ function kernelProblems(required: readonly string[]) {
       if (cfg[key] === undefined) {
         ctx.addIssue({ code: 'custom', path: [key], message: 'is required in production' });
       }
+    }
+    // The SMTP URL carries the relay password. Production sends it only over TLS from the first byte
+    // (smtps://); the plain smtp:// scheme is for the dev mailbox.
+    const smtp = cfg['SMTP_URL'];
+    if (typeof smtp === 'string' && !smtp.toLowerCase().startsWith('smtps:')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SMTP_URL'],
+        message: 'must use smtps:// in production (the plain smtp:// scheme is not encrypted)',
+      });
     }
   };
 }
@@ -218,7 +231,8 @@ const apiShape = {
   // At least 32 characters when present; blank counts as unset (as in .env.example or compose `${VAR:-}`);
   // required in production (kernelProblems).
   DOCS_LINK_SECRET: blankAsUnset.pipe(z.string().min(32).optional()),
-  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnsetRaw,
+  // At least 32 characters when present (a short HMAC key is brute-forceable); blank still counts as unset.
+  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnsetRaw.pipe(z.string().min(32).optional()),
   // Shared secret for the Postal bounce webhook (HMAC-SHA256 of the raw body). Optional on purpose,
   // like the ZITADEL key: with no secret the hook answers 401 to everyone (deny by default).
   // Blank counts as unset so an empty `POSTAL_WEBHOOK_SECRET=` line (as in .env.example) does not block startup.
@@ -451,6 +465,7 @@ export abstract class CoreConfig {
   abstract readonly METRICS_PORT: number;
   abstract readonly DATABASE_URL: string;
   abstract readonly DB_LOCK_TIMEOUT_MS: number;
+  abstract readonly DB_STATEMENT_TIMEOUT_MS: number;
   abstract readonly DB_IDLE_IN_TX_TIMEOUT_MS: number;
   abstract readonly VALKEY_URL: string;
   abstract readonly FILES_ROOT: string;
