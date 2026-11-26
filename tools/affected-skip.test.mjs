@@ -2,7 +2,10 @@
 // The same-commit skip is the gate: a wrong skip would let an untested commit pass. These tests run the real selector
 // against a local stand-in for the Actions API, with fixtures for every run state it must never skip on.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createServer } from 'node:http';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -57,7 +60,7 @@ test('nothingToRun selects nothing at all', () => {
 
 // The selector as the workflow runs it, against a fake Actions API.
 let server;
-let base;
+let apiBase;
 let answer = { status: 200, body: { workflow_runs: [] } };
 const requests = [];
 
@@ -68,7 +71,7 @@ before(async () => {
     res.end(JSON.stringify(answer.body));
   });
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
-  base = `http://127.0.0.1:${server.address().port}`;
+  apiBase = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => server.close());
 
@@ -77,18 +80,29 @@ function select({ event, runs, status = 200, extra = {}, files = 'apps/portal/sr
   requests.length = 0;
   const script = fileURLToPath(new URL('./affected.mjs', import.meta.url));
   return new Promise((ok, fail) => {
-    const child = spawn(process.execPath, [script, '--files', files, '--event', event], {
-      env: {
-        PATH: process.env.PATH,
-        GITHUB_API_URL: base,
-        GITHUB_REPOSITORY: 'org/repo',
-        GITHUB_TOKEN: 'test-token',
-        GITHUB_RUN_ID: '99',
-        BOS_SKIP_SHA: SHA,
-        BOS_SKIP_WORKFLOW: 'ci.yml',
-        ...extra,
+    const child = spawn(
+      process.execPath,
+      [
+        script,
+        '--files',
+        files,
+        '--event',
+        event,
+        ...(event === 'pull_request' ? ['--base', 'HEAD', '--head', 'HEAD'] : []),
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          GITHUB_API_URL: apiBase,
+          GITHUB_REPOSITORY: 'org/repo',
+          GITHUB_TOKEN: 'test-token',
+          GITHUB_RUN_ID: '99',
+          BOS_SKIP_SHA: SHA,
+          BOS_SKIP_WORKFLOW: 'ci.yml',
+          ...extra,
+        },
       },
-    });
+    );
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.on('error', fail);
@@ -144,6 +158,96 @@ test('a scheduled or manual run never skips, even with a green push run of the s
     assert.equal(r.lines.skip, 'false', event);
     assert.equal(r.lines.full, 'true', event);
     assert.equal(requests.length, 0, `${event} does not even ask`);
+  }
+});
+
+// The workflows pass --base and --head and no --files; a scheduled or manual run has both empty. Run exactly that.
+async function selectDiff({ event, base, head, cwd }) {
+  answer = { status: 200, body: { workflow_runs: [run({})] } };
+  requests.length = 0;
+  const dir = cwd ?? mkdtempSync(path.join(tmpdir(), 'affected-skip-'));
+  mkdirSync(path.join(dir, 'tools'), { recursive: true });
+  copyFileSync(
+    fileURLToPath(new URL('./affected.mjs', import.meta.url)),
+    path.join(dir, 'tools/affected.mjs'),
+  );
+  const out = await new Promise((ok, fail) => {
+    const child = spawn(
+      process.execPath,
+      [path.join(dir, 'tools/affected.mjs'), '--base', base, '--head', head],
+      {
+        cwd: dir,
+        env: {
+          PATH: process.env.PATH,
+          GITHUB_EVENT_NAME: event,
+          GITHUB_API_URL: apiBase,
+          GITHUB_REPOSITORY: 'org/repo',
+          GITHUB_TOKEN: 'test-token',
+          GITHUB_RUN_ID: '99',
+          BOS_SKIP_SHA: SHA,
+          BOS_SKIP_WORKFLOW: 'ci.yml',
+        },
+      },
+    );
+    let text = '';
+    child.stdout.on('data', (d) => (text += d));
+    child.on('error', fail);
+    child.on('close', () => ok(text));
+  });
+  if (!cwd) rmSync(dir, { recursive: true, force: true });
+  return {
+    skip: /^skip=(.*)$/m.exec(out)?.[1],
+    full: /^full=(.*)$/m.exec(out)?.[1],
+    asked: requests.length,
+  };
+}
+
+test('a scheduled or manual run with an empty --base and --head never skips, the way the workflows call it', async () => {
+  for (const event of ['schedule', 'workflow_dispatch']) {
+    const r = await selectDiff({ event, base: '', head: '' });
+    assert.deepEqual([r.skip, r.full, r.asked], ['false', 'true', 0], event);
+  }
+  // A push has no base either, and may skip.
+  const push = await selectDiff({ event: 'push', base: '', head: '' });
+  assert.deepEqual([push.skip, push.asked], ['true', 1]);
+});
+
+test('a pull request skips only when its base is an ancestor of its head, so the merge result is the head itself', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'affected-skip-git-'));
+  const git = (...a) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], {
+      cwd: dir,
+      encoding: 'utf8',
+    }).trim();
+  try {
+    git('init', '-q', '-b', 'main');
+    writeFileSync(path.join(dir, 'a.txt'), '1');
+    git('add', '.');
+    git('commit', '-qm', 'one');
+    const base = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(dir, 'a.txt'), '2');
+    git('commit', '-qam', 'two');
+    const head = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-b', 'side', base);
+    writeFileSync(path.join(dir, 'b.txt'), '3');
+    git('add', '.');
+    git('commit', '-qm', 'side');
+    const diverged = git('rev-parse', 'HEAD');
+    const fast = await selectDiff({ event: 'pull_request', base, head, cwd: dir });
+    assert.deepEqual([fast.skip, fast.asked], ['true', 1], 'up to date with its base');
+    const behind = await selectDiff({
+      event: 'pull_request',
+      base: head,
+      head: diverged,
+      cwd: dir,
+    });
+    assert.deepEqual(
+      [behind.skip, behind.asked],
+      ['false', 0],
+      'the base moved on: the merge is untested',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -249,6 +249,15 @@ function readQuarantine() {
   return existsSync(file) ? readFileSync(file, 'utf8') : '';
 }
 
+function isAncestor(base, head) {
+  try {
+    git('merge-base', '--is-ancestor', base, head);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function git(...args) {
   return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' });
 }
@@ -292,7 +301,15 @@ async function main() {
   const workflow = process.env.BOS_SKIP_WORKFLOW;
   const repo = process.env.GITHUB_REPOSITORY;
   const token = process.env.GITHUB_TOKEN;
-  if (sha && workflow && repo && token && ['push', 'pull_request'].includes(event)) {
+  // Decided from the event the run really has: the "cannot diff" fallback above rewrites `event`, and a scheduled or
+  // manual run (no --base) must never skip. A pull request run tests the merge of its head into the base, which is the
+  // head's own tree only when the base is an ancestor of the head: otherwise a green push run of the head proves nothing.
+  const mayAsk =
+    args.event === 'push' ||
+    (args.event === 'pull_request' &&
+      Boolean(args.base && args.head) &&
+      isAncestor(args.base, args.head));
+  if (sha && workflow && repo && token && mayAsk) {
     try {
       const runs = await greenPushRuns({ repo, token, workflow, sha });
       if (sameCommitGreen({ runs, sha, currentRunId: process.env.GITHUB_RUN_ID }))
