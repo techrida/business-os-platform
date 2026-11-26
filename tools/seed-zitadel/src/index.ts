@@ -14,7 +14,7 @@
 // webhook target and its user-event execution (user sync, ADR 0019), the kernel rows in the DB
 // (role grants, `test_memo` workflow v1, INR peg) and, last, retiring the first-instance human admin
 // once the Founder can log in with MFA (NFR security: no shared break-glass password left behind).
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -118,6 +118,15 @@ export const ACCESS_TOKEN_LIFETIME = '900s';
  */
 export const PORTAL_APP_NAME = 'Business OS portal';
 export const PORTAL_ENV_FILE = 'zitadel-portal.env';
+/**
+ * The seed output that holds secrets (provisioner token, Actions signing key). compose lists it for `api` and
+ * `worker` only; `zitadel.env`, which the web apps read too, keeps ids and never a TOKEN or KEY entry.
+ */
+export const API_ENV_FILE = 'zitadel-api.env';
+export const API_SECRET_KEYS = [
+  'ZITADEL_PROVISIONER_TOKEN',
+  'ZITADEL_ACTIONS_SIGNING_KEY',
+] as const;
 
 /** Everything the seed calls on ZITADEL: the P0 surface plus the P1 and K8 additions. */
 export type SeedApi = ZitadelApi & ZitadelP1Api & ZitadelInstanceApi;
@@ -242,6 +251,8 @@ export interface SeedDeps {
 }
 
 export interface SeedResult {
+  /** The staff org's ZITADEL id; `--finalize` needs it to find the bootstrap service account. */
+  staffOrgId: string;
   changes: string[];
   /** Problems the seed could not fix by itself; each line names the manual step. Not a change. */
   warnings: string[];
@@ -613,7 +624,10 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   // --- P1 step 5: the provisioner PAT, the API's credential for invites and user sync. ZITADEL
   // shows a PAT once, so reuse the stored one while the user still has a PAT (after
   // `stack:nuke` the new provisioner has none, and the stored token is dead). ---
-  const oldZitadelEnv = parseEnv(await files.read('zitadel.env'));
+  // Stacks seeded before the split still hold both secrets in zitadel.env: read them from there when the new
+  // file has none, so the first run after the split moves them instead of losing them (ZITADEL shows each once).
+  const legacyZitadelEnv = parseEnv(await files.read('zitadel.env'));
+  const oldZitadelEnv = { ...legacyZitadelEnv, ...parseEnv(await files.read(API_ENV_FILE)) };
   let provisionerToken = oldZitadelEnv['ZITADEL_PROVISIONER_TOKEN'];
   const provisionerPats = await api.listPats(provisioner.id, staffOrgId);
   if (!provisionerToken || provisionerPats.length === 0) {
@@ -643,7 +657,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
       if (!signingKey) {
         // ZITADEL returns the key only on create or update, and the client has no update call.
         warn(
-          `Actions target ${WEBHOOK_TARGET_NAME} exists but .dev/zitadel.env has no ` +
+          `Actions target ${WEBHOOK_TARGET_NAME} exists but .dev/${API_ENV_FILE} has no ` +
             'ZITADEL_ACTIONS_SIGNING_KEY, so the API rejects every webhook. Delete the target in the ' +
             'ZITADEL console (Actions > Targets), then run `pnpm seed` again.',
         );
@@ -701,9 +715,14 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     ZITADEL_CUSTOMER_ORG_ID: orgIds.customer,
     ZITADEL_VENDOR_ORG_ID: orgIds.vendor,
   };
-  zitadelEnv['ZITADEL_PROVISIONER_TOKEN'] = provisionerToken;
-  // Only when known: a lost key stays absent, so the file renders the same on every run.
-  if (signingKey) zitadelEnv['ZITADEL_ACTIONS_SIGNING_KEY'] = signingKey;
+  // The secrets go to their own file, read by api and worker only (compose.yaml). Only when known: a lost
+  // key stays absent, so the file renders the same on every run. Written BEFORE zitadel.env: on a stack that
+  // still has the secrets in zitadel.env, a failure between the two writes must not leave them in neither.
+  const apiEnv: Record<string, string> = { ZITADEL_PROVISIONER_TOKEN: provisionerToken };
+  if (signingKey) apiEnv['ZITADEL_ACTIONS_SIGNING_KEY'] = signingKey;
+  if (await files.write(API_ENV_FILE, renderEnv(apiEnv))) {
+    changed(`wrote .dev/${API_ENV_FILE}`);
+  }
   if (await files.write('zitadel.env', renderEnv(zitadelEnv))) {
     changed('wrote .dev/zitadel.env');
   }
@@ -774,7 +793,44 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     },
   );
 
-  return { changes, warnings, token };
+  return { staffOrgId, changes, warnings, token };
+}
+
+export interface FinalizeDeps {
+  api: Pick<SeedApi, 'findUser' | 'deactivateUser'>;
+  staffOrgId: string;
+  /** Path of the bootstrap service account's token file (`ZITADEL_ADMIN_PAT_FILE`). */
+  patFile: string;
+  /** Deletes the token file; a file that is already gone is not an error. */
+  removeFile: (path: string) => Promise<void>;
+  log: (line: string) => void;
+}
+
+/**
+ * Production only (`--finalize`): the bootstrap service account `bos-bootstrap-sa` is IAM_OWNER and its token
+ * file sits in a volume. After the seed has done everything, deactivate the account and delete the file. Dev and
+ * testrun never run this: their volumes survive a redeploy and the next seed needs the token again.
+ * Order: deactivate first, then delete. If the deactivate call fails the file is kept, so the run can be repeated.
+ */
+export async function finalizeBootstrap(deps: FinalizeDeps): Promise<string[]> {
+  const { api, staffOrgId, patFile, removeFile, log } = deps;
+  const done: string[] = [];
+  const account = await api.findUser(staffOrgId, BOOTSTRAP_SA_USER);
+  if (!account) {
+    // The lookup does not filter by state, so "not found" means the account is not where we looked. Deleting the
+    // token file now could leave a live IAM_OWNER token in ZITADEL with no file to show for it.
+    throw new Error(
+      `finalize refused: ${BOOTSTRAP_SA_USER} was not found in the staff org, so its token file is kept.`,
+    );
+  }
+  if (await api.deactivateUser(account.id)) {
+    done.push(`deactivated ${BOOTSTRAP_SA_USER}`);
+  } else {
+    log(`finalize: ${BOOTSTRAP_SA_USER} was already deactivated`);
+  }
+  await removeFile(patFile);
+  done.push(`deleted ${patFile}`);
+  return done;
 }
 
 export interface RetireDeps {
@@ -1113,7 +1169,8 @@ export async function main(): Promise<void> {
   // First, before any file or network access: guard the URL the seed writes to, and the issuer it records.
   assertDevTarget(apiBase, process.env);
   assertDevTarget(issuer, process.env);
-  const patFile = process.env['ZITADEL_ADMIN_PAT_FILE'] ?? '/zitadel/bootstrap/admin.pat';
+  const finalize = process.argv.includes('--finalize');
+  const patFile = process.env['ZITADEL_ADMIN_PAT_FILE'] ?? '/zitadel/admin/admin.pat';
   const personasFile = process.env['BOS_DEV_PERSONAS_FILE'] ?? '.dev/personas.json';
   const workspaceUrl = (process.env['WORKSPACE_PUBLIC_URL'] ?? 'https://app.localhost').replace(
     /\/+$/,
@@ -1145,6 +1202,22 @@ export async function main(): Promise<void> {
     // Repeated at the end on purpose: these are manual steps and must not scroll away.
     console.warn(`ATTENTION: ${result.warnings.length} manual step(s) needed:`);
     for (const line of result.warnings) console.warn(`  ! ${line}`);
+  }
+  if (finalize) {
+    if (result.warnings.length > 0) {
+      throw new Error(
+        '--finalize refused: the manual steps above still need the bootstrap token. Do them, run the seed again, then finalize.',
+      );
+    }
+    for (const line of await finalizeBootstrap({
+      api,
+      staffOrgId: result.staffOrgId,
+      patFile,
+      removeFile: (path) => rm(path, { force: true }),
+      log: (line) => console.log(line),
+    })) {
+      console.log(`finalize: ${line}`);
+    }
   }
 }
 

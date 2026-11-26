@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
  * `Tax invoice draft`. The stored notification is not changed.
  */
 export async function GET(): Promise<Response> {
-  const session = await routeSession();
+  const session = await routeSession({ slide: false });
   if (session instanceof Response) return session;
   try {
     const notifications = await listNotifications(session, { limit: 30 });

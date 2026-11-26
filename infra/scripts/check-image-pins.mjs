@@ -7,7 +7,7 @@
 // (`caddy:2.11-alpine@sha256:<64 hex>`) cannot. Checked:
 //   - every `image:` line in infra/compose/*.yaml and *.yml
 //   - every `FROM` line in every Dockerfile / Dockerfile.* in the repo
-//   - the image of every `docker run` in infra/scripts/*.sh and perf/k6/*.sh (a command wrapped
+//   - the image of every `docker run` in infra/scripts/*.sh, infra/backup/*.sh and perf/k6/*.sh (a command wrapped
 //     with `\` continuations counts as one command; comment lines are skipped)
 // Allowed without a digest:
 //   - `bos/*` images in compose and in `docker run`: built from this repo
@@ -157,7 +157,7 @@ function main() {
     const name = file.split(/[\\/]/).pop();
     const isDockerfile = name === 'Dockerfile' || name.startsWith('Dockerfile.');
     const isCompose = /^infra\/compose\/[^/]+\.ya?ml$/.test(rel(file));
-    const isShell = /^(infra\/scripts|perf\/k6)\/[^/]+\.sh$/.test(rel(file));
+    const isShell = /^(infra\/scripts|infra\/backup|perf\/k6)\/[^/]+\.sh$/.test(rel(file));
     if (!isDockerfile && !isCompose && !isShell) continue;
     const text = readFileSync(file, 'utf8');
     if (isShell) {

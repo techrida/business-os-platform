@@ -8,10 +8,10 @@ vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 vi.mock('@/lib/oidc', () => ({ refreshTokens: vi.fn() }));
 
 // Only the cookie lookup is replaced; the real API client reads both counts through a stubbed fetch.
-const getSession = vi.fn<() => Promise<Session | null>>();
+const getSession = vi.fn<(options?: { slide?: boolean }) => Promise<Session | null>>();
 vi.mock('@/lib/session', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/session')>()),
-  getSession: () => getSession(),
+  getSession: (options?: { slide?: boolean }) => getSession(options),
 }));
 
 const { GET } = await import('./route');
@@ -73,6 +73,12 @@ afterEach(() => {
 });
 
 describe('GET /api/shell/counts', () => {
+  it('reads the session without sliding it: the badge poll must not keep a tab signed in', async () => {
+    api({ [INBOX_COUNT]: () => count(1), [UNREAD_COUNT]: () => count(1) });
+    await GET();
+    expect(getSession).toHaveBeenCalledWith({ slide: false });
+  });
+
   it('returns both counts, read as the signed-in user', async () => {
     api({ [INBOX_COUNT]: () => count(4), [UNREAD_COUNT]: () => count(2) });
 

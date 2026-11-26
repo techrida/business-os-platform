@@ -111,7 +111,8 @@ pnpm seed
 
 `pnpm seed` is idempotent and writes generated OIDC client IDs, webhook keys, and development personas to git-ignored files under `.dev/`:
 
-- `.dev/zitadel.env` (OIDC issuer, audience, Workspace client ID, provisioner token, actions signing key)
+- `.dev/zitadel.env` (OIDC issuer, audience, Workspace client ID, organisation ids; no secrets)
+- `.dev/zitadel-api.env` (provisioner token and actions signing key; read by the API and the worker only)
 - `.dev/zitadel-portal.env` (Portal client ID)
 - `.dev/personas.json` (development persona definitions used by the dev-only account switcher)
 - `.dev/k6.env` (machine-user credentials for `pnpm perf:load`)
@@ -139,13 +140,15 @@ source .dev/zitadel.env
 set +a
 ```
 
-Start each service in its own terminal:
+Start each service in its own terminal. The API and the worker also need the identity secrets, so load `.dev/zitadel-api.env` in those two terminals only (the web apps never get it):
 
 ```bash
 # Terminal 1: NestJS HTTP API (listens on 0.0.0.0:3001)
+set -a; source .dev/zitadel-api.env; set +a
 pnpm --filter @bos/api start:dev
 
 # Terminal 2: BullMQ background worker (metrics on :9465)
+set -a; source .dev/zitadel-api.env; set +a
 pnpm --filter @bos/api start:worker
 
 # Terminal 3: Staff Workspace (bind 0.0.0.0 so Caddy can reach it)

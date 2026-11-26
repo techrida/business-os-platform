@@ -4,7 +4,7 @@
 // BOS_DEV_BOOTSTRAP_TOKEN_FILE=.dev/admin.pat \
 // BOS_DEV_LOGIN_CLIENT_TOKEN_FILE=.dev/login-client.pat \
 // node --env-file=.dev/zitadel.env infra/scripts/dev-login-client.mjs
-// Copy admin.pat out of the matching local stack's bootstrap volume first; never print it.
+// Copy admin.pat out of the matching local stack's zitadel-admin volume first; never print it.
 // Set BOS_DEV_LOGIN_CLIENT_TOKEN_FILE in the next dev process, then restart it.
 import { readFile, writeFile } from 'node:fs/promises';
 

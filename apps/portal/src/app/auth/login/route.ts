@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 
-import { beginLogin, LOGIN_COOKIE, LOGIN_COOKIE_MAX_AGE } from '@/lib/oidc';
+import { beginLogin, LOGIN_COOKIE, LOGIN_COOKIE_MAX_AGE, SIGNED_OUT_COOKIE } from '@/lib/oidc';
 import { checkLoginRateLimit } from '@/lib/rate-limit';
 import { safeReturnTo } from '@/lib/session';
 
@@ -40,8 +40,11 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const params = new URL(req.url).searchParams;
+  const jar = await cookies();
   const loginHint = parseLoginHint(params.get('login_hint'));
-  const prompt = parsePrompt(params.get('prompt'));
+  // After a sign-out that could not end the ZITADEL session, ask for the credentials again whatever the link said:
+  // `prompt=none` or the account chooser would otherwise sign the person straight back in (R2-001).
+  const prompt = jar.get(SIGNED_OUT_COOKIE)?.value ? 'login' : parsePrompt(params.get('prompt'));
   // Spread instead of `key: undefined`: the tsconfig has exactOptionalPropertyTypes on.
   const { url, binding } = await beginLogin({
     ...(loginHint !== undefined && { loginHint }),
@@ -51,7 +54,7 @@ export async function GET(req: Request): Promise<Response> {
   });
   // CR-01: the callback only completes in the browser holding this cookie. SameSite=Lax still
   // sends it on the top-level GET redirect back from ZITADEL.
-  (await cookies()).set(LOGIN_COOKIE, binding, {
+  jar.set(LOGIN_COOKIE, binding, {
     httpOnly: true,
     secure: true,
     sameSite: 'lax',
