@@ -247,11 +247,13 @@ jobs:
           if [ "${#filter[@]}" -gt 0 ]; then extra+=(--pass-with-no-tests); fi
           pnpm --filter @bos/portal exec playwright test --repeat-each="$REPEAT_EACH" "${extra[@]}" "${filter[@]}"
 
-      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). Informational: a shared runner is too
-      # noisy for a hard limit, so this step cannot fail the job.
-      - name: Approve timing (p95 in the job summary)
+      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
+      # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
+      # the limit without a commit.
+      - name: Approve timing (p95 in the job summary, limit 80 ms)
         if: ${{ !cancelled() }}
-        continue-on-error: true
+        env:
+          BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
         run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
 
       # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
