@@ -52,7 +52,12 @@ describe('the connection pool options', () => {
           service,
           env:
             service === 'api'
-              ? { ...ENV, OIDC_ISSUER: 'https://auth.example.com', OIDC_AUDIENCE: 'aud', OIDC_CLIENT_ID: 'c' }
+              ? {
+                  ...ENV,
+                  OIDC_ISSUER: 'https://auth.example.com',
+                  OIDC_AUDIENCE: 'aud',
+                  OIDC_CLIENT_ID: 'c',
+                }
               : ENV,
         }),
         DbModule,

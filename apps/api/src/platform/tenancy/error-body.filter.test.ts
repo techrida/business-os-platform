@@ -970,7 +970,10 @@ describe('database busy errors on the HTTP boundary', () => {
   });
 
   it('logs the query text and the cause stack of a 500 query error, never its params', () => {
-    const cause = pgError('23505', 'duplicate key value violates unique constraint "customers_email_key"');
+    const cause = pgError(
+      '23505',
+      'duplicate key value violates unique constraint "customers_email_key"',
+    );
     const exception = new DrizzleQueryError(
       'insert into customers (email) values ($1)',
       ['secret@example.com'],

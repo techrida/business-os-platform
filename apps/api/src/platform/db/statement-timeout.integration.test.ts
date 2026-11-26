@@ -54,7 +54,9 @@ describe('withTx statement limit', () => {
     configureTx({ statementTimeoutMs: 300 });
     const scope = await newScope();
     const started = performance.now();
-    const failure = await withTx(db, scope, actor(), (tx) => tx.execute(sql`select pg_sleep(3)`)).then(
+    const failure = await withTx(db, scope, actor(), (tx) =>
+      tx.execute(sql`select pg_sleep(3)`),
+    ).then(
       () => undefined,
       (error: unknown) => error,
     );

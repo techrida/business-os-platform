@@ -79,7 +79,10 @@ export function scrubQueryParams(text: string): string {
  * logs its query text and its cause's stack (the Postgres error, which names the constraint but not the row
  * values); any other error logs its own message and stack, scrubbed the same way.
  */
-export function describeErrorForLog(error: unknown): { message: string; stack: string | undefined } {
+export function describeErrorForLog(error: unknown): {
+  message: string;
+  stack: string | undefined;
+} {
   if (error instanceof DrizzleQueryError) {
     const cause = error.cause instanceof Error ? error.cause : undefined;
     return {

@@ -136,7 +136,9 @@ describe('database error values in logs', () => {
 
   it('describeErrorForLog keeps the query text and the cause stack, not the params', () => {
     const described = describeErrorForLog(queryError);
-    expect(described.message).toBe('Failed query: insert into customers (email, phone) values ($1, $2)');
+    expect(described.message).toBe(
+      'Failed query: insert into customers (email, phone) values ($1, $2)',
+    );
     expect(described.stack).toContain('customers_email_key');
     expect(JSON.stringify(described)).not.toContain('secret@example.com');
   });

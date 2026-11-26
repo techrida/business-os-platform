@@ -5,7 +5,7 @@ import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
 
-import { Queue, QueueEvents, Worker, type WorkerOptions } from 'bullmq';
+import { Queue, QueueEvents, Worker, type Job, type WorkerOptions } from 'bullmq';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -37,8 +37,7 @@ describe('docs.scan queue concurrency', () => {
 
   it('declares a concurrency of 3 on the processor', () => {
     const declared = Reflect.getMetadata(WORKER_METADATA, ScanProcessor) as
-      | Partial<WorkerOptions>
-      | undefined;
+      Partial<WorkerOptions> | undefined;
     expect(declared?.concurrency).toBe(3);
   });
 
@@ -63,7 +62,7 @@ describe('docs.scan queue concurrency', () => {
 
     const queue = new Queue(`it-scan-${randomUUID()}`, { connection });
     const events = new QueueEvents(queue.name, { connection });
-    const worker = new Worker(queue.name, (job) => processor.process(job), {
+    const worker = new Worker(queue.name, (job: Job<ScanJobData>) => processor.process(job), {
       ...declared,
       connection,
     });

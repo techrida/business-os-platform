@@ -227,7 +227,9 @@ describe('P1 kernel settings', () => {
 
   it('refuses a plain smtp:// SMTP_URL in production, in the api and the worker, and keeps it for dev and test', () => {
     const plain = 'smtp://relay-user:relay-pw@smtp.example.com:587';
-    const expected = ['SMTP_URL: must use smtps:// in production (the plain smtp:// scheme is not encrypted)'];
+    const expected = [
+      'SMTP_URL: must use smtps:// in production (the plain smtp:// scheme is not encrypted)',
+    ];
     const list = problems(() => loadAppConfig({ ...prod, SMTP_URL: plain }));
     expect(list).toEqual(expected);
     expect(list.join('\n')).not.toContain('relay-pw');

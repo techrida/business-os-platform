@@ -84,8 +84,11 @@ export async function withTx<T>(
 ): Promise<T> {
   requireNonEmpty(actor.id, 'actor.id');
   requireNonEmpty(actor.correlationId, 'actor.correlationId');
-  const { lockTimeoutMs, statementTimeoutMs: defaultStatementTimeoutMs, idleInTxTimeoutMs } =
-    txTimeouts();
+  const {
+    lockTimeoutMs,
+    statementTimeoutMs: defaultStatementTimeoutMs,
+    idleInTxTimeoutMs,
+  } = txTimeouts();
   const statementTimeoutMs = options?.statementTimeoutMs ?? defaultStatementTimeoutMs;
   const observer = txObserver();
   const started = performance.now();
