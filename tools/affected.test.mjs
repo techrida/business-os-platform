@@ -51,6 +51,48 @@ test('apps/workspace only: workspace and its specs, not the portal or the API te
   assert.equal(qaMatrix(r, { quarantine: 'x' }).include.length, 3);
 });
 
+const images = (r) => ({
+  api: r['docker-api'],
+  workspace: r['docker-workspace'],
+  portal: r['docker-portal'],
+  login: r['docker-login'],
+});
+
+test('each production image is built only when its own app is affected', () => {
+  assert.deepEqual(images(run('apps/workspace/src/x.ts')), {
+    api: false,
+    workspace: true,
+    portal: false,
+    login: false,
+  });
+  assert.deepEqual(images(run('apps/portal/src/a.tsx')), {
+    api: false,
+    workspace: false,
+    portal: true,
+    login: false,
+  });
+  assert.deepEqual(images(run('apps/api/src/x.ts')), {
+    api: true,
+    workspace: false,
+    portal: false,
+    login: false,
+  });
+  // A shared package reaches the apps that depend on it, and only those.
+  const pdf = images(run('packages/pdf-viewer/src/x.ts'));
+  assert.deepEqual([pdf.workspace, pdf.portal, pdf.api], [true, true, false]);
+});
+
+test('a docs-only diff builds no image; everything builds all four, the login image included', () => {
+  assert.deepEqual(Object.values(images(run('docs/a.md'))), [false, false, false, false]);
+  assert.deepEqual(Object.values(images(run('pnpm-lock.yaml'))), [true, true, true, true]);
+  assert.deepEqual(Object.values(images(affected(['docs/a.md'], packages, { event: 'push' }))), [
+    true,
+    true,
+    true,
+    true,
+  ]);
+});
+
 test('apps/api: both browser suites run, because both apps serve from the API', () => {
   const r = run('apps/api/src/x.ts');
   assert.deepEqual(

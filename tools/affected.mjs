@@ -98,6 +98,10 @@ const ALL = {
   portal: true,
   db: true,
   docker: true,
+  'docker-api': true,
+  'docker-workspace': true,
+  'docker-portal': true,
+  'docker-login': true,
   web: true,
   'qa-workspace': true,
   'qa-portal': true,
@@ -147,6 +151,12 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
     db,
     web: workspace || portal,
     docker: api || workspace || portal,
+    // One flag per production image, so an app-only change does not rebuild the others. The login image is built from
+    // infra/, which is a shared root: only a run of everything rebuilds it.
+    'docker-api': api,
+    'docker-workspace': workspace,
+    'docker-portal': portal,
+    'docker-login': false,
     // Both apps talk to the API, so an API change needs both browser suites; an app change needs its own.
     'qa-workspace': workspace || api,
     'qa-portal': portal || api,

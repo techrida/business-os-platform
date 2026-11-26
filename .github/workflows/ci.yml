@@ -57,6 +57,10 @@ jobs:
       db: ${{ steps.affected.outputs.db }}
       web: ${{ steps.affected.outputs.web }}
       docker: ${{ steps.affected.outputs.docker }}
+      docker-api: ${{ steps.affected.outputs.docker-api }}
+      docker-workspace: ${{ steps.affected.outputs.docker-workspace }}
+      docker-portal: ${{ steps.affected.outputs.docker-portal }}
+      docker-login: ${{ steps.affected.outputs.docker-login }}
       docs-only: ${{ steps.affected.outputs.docs-only }}
       packages: ${{ steps.affected.outputs.packages }}
     steps:
@@ -268,6 +272,7 @@ jobs:
       # The build context is the repo root (the Dockerfiles need pnpm-lock.yaml and packages/*).
       # Each image has its own cache scope so one image's layers don't evict the other's.
       - name: Build api image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-api == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -278,6 +283,7 @@ jobs:
 
       # load: true keeps the image in the runner's Docker so the next step can look inside it.
       - name: Build workspace image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-workspace == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -293,6 +299,7 @@ jobs:
       # the image's own Node against the image's .next folder. It exits 1 on a dev route, and 2 when the folder
       # is not a finished build, which fails the step too.
       - name: Check no dev routes in the workspace image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-workspace == 'true' }}
         run: |
           docker run --rm \
             -v "$PWD/apps/workspace/scripts/check-no-dev-routes.mjs:/check/check-no-dev-routes.mjs:ro" \
@@ -302,6 +309,7 @@ jobs:
 
       # Same shape as the workspace image, with its own cache scope. Not loaded or tagged: nothing inspects it yet.
       - name: Build portal image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-portal == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -311,6 +319,7 @@ jobs:
           cache-to: type=gha,scope=portal,mode=max
 
       - name: Test Login V2 forms
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-login == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -321,6 +330,7 @@ jobs:
           cache-to: type=gha,scope=login-test,mode=max
 
       - name: Build Login V2 image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-login == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .

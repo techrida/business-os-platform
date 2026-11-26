@@ -69,3 +69,31 @@ test('the portal specs run on the job the matrix marks, and the shard lists are 
 test('no workflow still talks about three shards', () => {
   assert.doesNotMatch(text, /specs 1\/2\/3|Three shards|1\/3/);
 });
+
+test('every image build step in ci.yml is gated on its own image output (or a full run)', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const docker = ci.slice(ci.indexOf('\n  docker:'), ci.indexOf('\n  ci-required:'));
+  const steps = docker.split('\n      - ').slice(1);
+  const gated = (name, image) => {
+    const step = steps.find((s) => s.startsWith(`name: ${name}`));
+    assert.ok(step, name);
+    assert.match(
+      step,
+      new RegExp(
+        `if: \\$\\{\\{ needs\\.changes\\.outputs\\.full == 'true' \\|\\| needs\\.changes\\.outputs\\.docker-${image} == 'true' \\}\\}`,
+      ),
+      name,
+    );
+  };
+  gated('Build api image', 'api');
+  gated('Build workspace image', 'workspace');
+  gated('Check no dev routes in the workspace image', 'workspace');
+  gated('Build portal image', 'portal');
+  gated('Test Login V2 forms', 'login');
+  gated('Build Login V2 image', 'login');
+  for (const image of ['api', 'workspace', 'portal', 'login'])
+    assert.match(
+      ci,
+      new RegExp(`docker-${image}: \\$\\{\\{ steps\\.affected\\.outputs\\.docker-${image} \\}\\}`),
+    );
+});
