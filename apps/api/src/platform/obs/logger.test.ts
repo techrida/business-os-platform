@@ -137,6 +137,17 @@ describe('database error values in logs', () => {
     expect(output()).not.toContain('secret@example.com');
   });
 
+  it('drops the params of a query error that pino copies into msg (nestjs-pino logger.error(message, stack) shape)', () => {
+    const { logger, output } = buildLogger();
+    logger.error({ err: new Error(queryError.message) }, undefined);
+    logger.error({ err: queryError });
+    logger.error(queryError);
+    logger.error({ failure: queryError }, 'job failed');
+    expect(output()).toContain('insert into customers');
+    expect(output()).not.toContain('secret@example.com');
+    expect(output()).not.toContain('9800000000');
+  });
+
   it('describeErrorForLog keeps the query text and the cause stack, not the params', () => {
     const described = describeErrorForLog(queryError);
     expect(described.message).toBe(

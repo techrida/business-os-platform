@@ -102,13 +102,30 @@ export function describeErrorForLog(error: unknown): {
   return { message: scrubQueryParams(String(error)), stack: undefined };
 }
 
+/**
+ * A copy of an error with nothing from the statement in it: a Drizzle query error becomes `Failed query: <sql>`
+ * and its cause's stack; any other error is scrubbed of a quoted `params:` tail. pino copies `err.message` into
+ * the line's `msg` after the log hook has run, so the message itself has to be clean, not only the serialized err.
+ */
+function scrubError(error: Error): Error {
+  const described = describeErrorForLog(error);
+  const copy = new Error(described.message);
+  copy.name = error instanceof DrizzleQueryError ? 'DrizzleQueryError' : error.name;
+  if (described.stack !== undefined) copy.stack = described.stack;
+  return copy;
+}
+
 function scrubLogValue(value: unknown): unknown {
   if (typeof value === 'string') return scrubQueryParams(value);
-  if (value instanceof Error) return value;
+  if (value instanceof Error) return scrubError(value);
   if (typeof value !== 'object' || value === null) return value;
   const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
   for (const key of ['msg', 'message', 'stack']) {
     if (typeof out[key] === 'string') out[key] = scrubQueryParams(out[key]);
+  }
+  // An error under `err` or any other key.
+  for (const [key, inner] of Object.entries(out)) {
+    if (inner instanceof Error) out[key] = scrubError(inner);
   }
   return out;
 }
