@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { Redis, type RedisOptions } from 'ioredis';
 import { cookies } from 'next/headers';
+import { cache } from 'react';
 import { z } from 'zod';
 
 import { getEnv } from './env';
@@ -369,7 +370,12 @@ export interface GetSessionOptions {
   slide?: boolean;
 }
 
-async function readSessionOncePerRender(slide: boolean): Promise<Session | null> {
+/**
+ * React's `cache` shares one result per server render, so a layout and its pages that each ask
+ * for the session read Valkey once. The argument is a boolean, so both variants cache by value.
+ * Outside a render (Route Handlers, tests) it calls through.
+ */
+const readSessionOncePerRender = cache(async (slide: boolean): Promise<Session | null> => {
   const id = (await cookies()).get(SESSION_COOKIE)?.value;
   // Validate before building a Redis key from browser input.
   if (!id || !SESSION_ID_PATTERN.test(id)) return null;
@@ -378,7 +384,7 @@ async function readSessionOncePerRender(slide: boolean): Promise<Session | null>
   const raw = await readSessionValue(id, started);
   if (raw === null) return null;
   return resolveRecord(id, raw, started, slide);
-}
+});
 
 /**
  * GET of the session record, with one retry after waiting for the client to be ready again
