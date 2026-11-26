@@ -164,29 +164,22 @@ describe('the account picture in the sidebar', () => {
 });
 
 describe('approvals badge in the sidebar', () => {
-  it('passes the waiting count for the inbox link', async () => {
+  it('renders without waiting for the badge numbers: the layout never reads them', async () => {
     getSession.mockResolvedValue(staff);
-    getInboxCount.mockResolvedValue({ count: 4 });
+    // On the old code the layout awaited these and hung here.
+    getInboxCount.mockReturnValue(new Promise(() => undefined));
+    getUnreadCount.mockReturnValue(new Promise(() => undefined));
     renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
-    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: { '/inbox': 4 } }));
-    // The live poller starts from the same number, and both first-paint counts are read in the layout.
+    expect(getInboxCount).not.toHaveBeenCalled();
+    expect(getUnreadCount).not.toHaveBeenCalled();
+  });
+
+  it('passes no number, so no badge shows and the poller reads once on arrival', async () => {
+    getSession.mockResolvedValue(staff);
+    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
+    expect(sidebarProps.mock.calls[0]?.[0].counts).toBeUndefined();
     expect(countsProps).toHaveBeenCalledTimes(1);
-    expect(countsProps.mock.calls[0]?.[0]).toEqual({ initialInbox: 4, initialNotifications: 2 });
-  });
-
-  it('shows no badge, not a zero, when the read is refused', async () => {
-    getSession.mockResolvedValue(staff);
-    getInboxCount.mockRejectedValue(new Error('403'));
-    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
-    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: {} }));
-    expect(countsProps.mock.calls[0]?.[0].initialInbox).toBeUndefined();
-  });
-
-  it('shows a zero count as a zero when the read succeeds', async () => {
-    getSession.mockResolvedValue(staff);
-    getInboxCount.mockResolvedValue({ count: 0 });
-    renderToStaticMarkup((await AppLayout({ children: <p>page</p> })) as ReactElement);
-    expect(sidebarProps).toHaveBeenCalledWith(expect.objectContaining({ counts: { '/inbox': 0 } }));
+    expect(countsProps.mock.calls[0]?.[0]).toEqual({});
   });
 });
 
