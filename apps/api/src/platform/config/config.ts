@@ -43,6 +43,15 @@ const coreShape = (service: ServiceName) => ({
   // answered as 503 db_busy. Same floor and no-0 rule as the lock timeout.
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(15_000),
   DB_IDLE_IN_TX_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(30_000),
+  // The pool's own limit, for a statement outside withTx (a read on the bare pool): the server cancels it
+  // after this long (57014). The API gives 30 s; the worker keeps a longer 120 s for its sweeps and seals.
+  // The client-side query_timeout is this plus 5 s, so the server's cancel always lands first.
+  DB_POOL_STATEMENT_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(3_600_000)
+    .default(service === 'worker' ? 120_000 : 30_000),
   VALKEY_URL: z
     .string()
     .refine(urlWithProtocol(['redis:', 'rediss:']), 'must be a redis:// or rediss:// URL'),
@@ -467,6 +476,7 @@ export abstract class CoreConfig {
   abstract readonly DB_LOCK_TIMEOUT_MS: number;
   abstract readonly DB_STATEMENT_TIMEOUT_MS: number;
   abstract readonly DB_IDLE_IN_TX_TIMEOUT_MS: number;
+  abstract readonly DB_POOL_STATEMENT_TIMEOUT_MS: number;
   abstract readonly VALKEY_URL: string;
   abstract readonly FILES_ROOT: string;
   abstract readonly CLAMD_HOST: string;

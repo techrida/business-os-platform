@@ -8,8 +8,9 @@ import {
   type OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { createDb, runtimePoolOptions, warmPool } from '@bos/db';
 import { type NodePgDatabase, drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 
 import { CoreConfig } from '../config/config';
 import { MetricsService } from '../obs/metrics.service';
@@ -66,10 +67,21 @@ export class DbMetrics implements OnModuleInit, OnApplicationShutdown {
   }
 }
 
-/** Closes the pool on shutdown so the process can exit and Postgres sees clean disconnects. */
+/** Connections opened at start and kept: the pool's `min` (runtimePoolOptions). */
+const WARM_CONNECTIONS = 4;
+
+/**
+ * Warms the pool at start and closes it on shutdown, so the process can exit and Postgres sees clean
+ * disconnects. The warm-up does not wait for the database: the boot goes on, and a database that is down
+ * shows up on the first real query and on /health, as before.
+ */
 @Injectable()
-export class PoolLifecycle implements OnApplicationShutdown {
+export class PoolLifecycle implements OnModuleInit, OnApplicationShutdown {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  onModuleInit(): void {
+    void warmPool(this.pool, WARM_CONNECTIONS);
+  }
 
   async onApplicationShutdown(): Promise<void> {
     await this.pool.end();
@@ -89,16 +101,15 @@ export class PoolLifecycle implements OnApplicationShutdown {
       useFactory: (config: CoreConfig): Pool => {
         configureTx({
           lockTimeoutMs: config.DB_LOCK_TIMEOUT_MS,
+          statementTimeoutMs: config.DB_STATEMENT_TIMEOUT_MS,
           idleInTxTimeoutMs: config.DB_IDLE_IN_TX_TIMEOUT_MS,
         });
-        const pool = new Pool({
-          connectionString: config.DATABASE_URL,
-          // 10 connections per process: api + worker stay well under Postgres' max_connections=100.
-          max: 10,
-          idleTimeoutMillis: 30_000,
-          // Fail a query that cannot get a connection instead of queueing it forever.
-          connectionTimeoutMillis: 5_000,
-        });
+        // The one pool factory (packages/db client.ts): the same options for the API and the worker, with the
+        // server-side statement limit that suits each (30 s, 120 s).
+        const { pool } = createDb(
+          config.DATABASE_URL,
+          runtimePoolOptions(config.DB_POOL_STATEMENT_TIMEOUT_MS),
+        );
         // An idle client dropping (Postgres restart) emits 'error' on the pool; unhandled it
         // would crash the process. The pool replaces the client on its own.
         pool.on('error', (error) =>
