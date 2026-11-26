@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useId, useRef, type ReactNode } from 'react';
+import { useActionState, useId, useRef, type ComponentProps, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, type DialogSize } from '@/components/ui/dialog';
@@ -8,12 +8,18 @@ import {
   ErrorSummary,
   PendingLine,
   useFocusOnProblem,
+  useRefreshAfterAction,
 } from '@/components/p2/quotations/action-dialog';
 
 import type { ActionState } from './orders/_lib/state';
 import styles from './procurement.module.css';
 
-export function ProcurementActionDialog({
+/** Keyed on the render's idempotency key: the refresh after a success starts a fresh form instead of keeping "done". */
+export function ProcurementActionDialog(props: ComponentProps<typeof ProcurementActionForm>) {
+  return <ProcurementActionForm key={props.idempotencyKey} {...props} />;
+}
+
+function ProcurementActionForm({
   triggerLabel,
   triggerVariant = 'secondary',
   title,
@@ -54,6 +60,7 @@ export function ProcurementActionDialog({
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrapRef, summaryRef);
   const done = state.done !== undefined;
+  const refreshAfterAction = useRefreshAfterAction();
 
   return (
     <Dialog
@@ -64,7 +71,7 @@ export function ProcurementActionDialog({
       locked={pending}
       closeOnOutsideClick={fields === undefined}
       onOpenChange={(open) => {
-        if (!open && done) window.location.reload();
+        if (!open && done) refreshAfterAction();
       }}
       footer={
         done ? (

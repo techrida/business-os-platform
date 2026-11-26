@@ -126,6 +126,7 @@ export function AcceptancePanel({
       actions={
         awaiting && evidence.can.confirm ? (
           <ConfirmEvidenceDialog
+            key={`${version.id}:${version.version}`}
             quotationId={quotationId}
             versionId={version.id}
             number={number}

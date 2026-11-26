@@ -29,7 +29,7 @@ afterEach(() => {
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({ redirect: vi.fn(), useRouter: () => ({ refresh: vi.fn() }) }));
 
 // Open the real dialog and render its portal inline to inspect the contents in the Node renderer.
 vi.mock('@radix-ui/react-dialog', async (importOriginal) => {

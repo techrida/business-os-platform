@@ -1,12 +1,23 @@
 'use client';
 
-import { useEffect, type ReactNode, type RefObject } from 'react';
+import { useRouter } from 'next/navigation';
+import { startTransition, useCallback, useEffect, type ReactNode, type RefObject } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 
 import styles from './actions.module.css';
+
+/**
+ * Re-renders the server page after an action dialog closes on success, in a transition, so the record's new version and
+ * history arrive without reloading the document. The forms that call this are keyed on the record version (or the
+ * render's idempotency key), so the next action starts from the new expected version, never the one just used.
+ */
+export function useRefreshAfterAction(): () => void {
+  const router = useRouter();
+  return useCallback(() => startTransition(() => router.refresh()), [router]);
+}
 
 /** The quotation action dialogs share a fixed submit footer and refresh after a confirmed change. */
 export function ActionDialog({
@@ -34,6 +45,7 @@ export function ActionDialog({
   blocked?: boolean | undefined;
   children: ReactNode;
 }) {
+  const refreshAfterAction = useRefreshAfterAction();
   return (
     <Dialog
       trigger={<Button variant={triggerVariant}>{triggerLabel}</Button>}
@@ -41,7 +53,7 @@ export function ActionDialog({
       description={intro}
       locked={pending}
       onOpenChange={(open) => {
-        if (!open && done) window.location.reload();
+        if (!open && done) refreshAfterAction();
       }}
       footer={
         done ? (
