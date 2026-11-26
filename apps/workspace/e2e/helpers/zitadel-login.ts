@@ -51,7 +51,7 @@ const TOTP_MIN_REMAINING_S = 3;
  * hash of the secret, never the secret. `BOS_E2E_TOTP_STATE_DIR` moves it (the unit test does).
  */
 const totpStateDir = (): string =>
-  process.env.BOS_E2E_TOTP_STATE_DIR ?? path.resolve(process.cwd(), '../../.dev/totp-windows');
+  process.env.BOS_E2E_TOTP_STATE_DIR ?? path.resolve(__dirname, '../../../../.dev/totp-windows');
 const totpStateFile = (secret: string): string =>
   path.join(
     totpStateDir(),
