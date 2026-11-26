@@ -83,10 +83,16 @@ export class SealProcessor extends WorkerHost {
         // last row. But the audit fallback needs bos.organization_id for any write to a tenant-scoped table
         // (ADR 0027), so the scope is the tenant's default entity: there is at most one per tenant, which
         // keeps reruns identical.
-        const result = await withTx(this.db, { tenantId, organizationId }, actor, (tx) =>
-          tx.execute<{ sealed: boolean; last_seq: string | null }>(
-            sql`SELECT sealed, last_seq FROM audit.seal(${tenantId}::uuid, ${month}::date)`,
-          ),
+        // Sealing hashes a whole month of the tenant's chain: slow on purpose, so 5 minutes, not the 15 s default.
+        const result = await withTx(
+          this.db,
+          { tenantId, organizationId },
+          actor,
+          (tx) =>
+            tx.execute<{ sealed: boolean; last_seq: string | null }>(
+              sql`SELECT sealed, last_seq FROM audit.seal(${tenantId}::uuid, ${month}::date)`,
+            ),
+          { statementTimeoutMs: 300_000 },
         );
         if (result.rows[0]?.sealed === true) {
           sealed += 1;

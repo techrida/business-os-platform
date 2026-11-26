@@ -191,7 +191,8 @@ export class InvoiceVatRegisterService {
         };
         return { from, to, rows, totals, nprTotal };
       },
-      READ_ONLY,
+      // A register over a whole period reads every issued document of it: slow on purpose, so 60 s, not the 15 s default.
+      { ...READ_ONLY, statementTimeoutMs: 60_000 },
     );
   }
 }
