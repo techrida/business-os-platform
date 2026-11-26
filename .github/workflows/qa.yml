@@ -61,6 +61,14 @@ jobs:
         with:
           node-version: 24
 
+      # The selector decides what is tested, so a pull request must not be able to edit it. The copy on the base commit
+      # replaces the one in the checkout; a change to tools/ or .github/ runs everything under that copy anyway.
+      - name: Use the selector from the base commit
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git show "$BASE_SHA:tools/affected.mjs" > tools/affected.mjs
+
       - name: Map the diff to areas
         id: affected
         env:

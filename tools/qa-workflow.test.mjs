@@ -135,3 +135,22 @@ test('ci.yml: checks and secrets do not run when the same-commit skip applies', 
     );
   }
 });
+
+test('a pull request runs the selector from its base commit, never its own copy', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  for (const [file, source] of [
+    ['ci.yml', ci],
+    ['qa.yml', text],
+  ]) {
+    const use = source.indexOf('- name: Use the selector from the base commit');
+    const map = source.indexOf('- name: Map the diff to areas');
+    assert.ok(
+      use > 0 && use < map,
+      `${file}: the base copy is put in place before the selector runs`,
+    );
+    const step = source.slice(use, map);
+    assert.match(step, /if: \$\{\{ github\.event_name == 'pull_request' \}\}/, file);
+    assert.match(step, /git show "\$BASE_SHA:tools\/affected\.mjs" > tools\/affected\.mjs/, file);
+    assert.match(step, /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/, file);
+  }
+});
