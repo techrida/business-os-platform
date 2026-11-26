@@ -315,6 +315,58 @@ describe('GET /auth/callback', () => {
     expect(res.headers.get('location')).toBe('https://app.localhost/orders');
   });
 
+  it('deletes the session record this browser already held before it creates the new one', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-2');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    await call('?code=c&state=s');
+
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+    expect(m.destroySession.mock.invocationCallOrder[0]).toBeLessThan(
+      m.createSession.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('does not delete anything when the browser held no session, and keeps the old one when sign-in fails', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-2');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    await call('?code=c&state=s');
+    expect(m.destroySession).not.toHaveBeenCalled();
+
+    m.completeLogin.mockRejectedValue(new Error('bad code'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    await call('?code=c&state=s');
+    expect(m.destroySession).not.toHaveBeenCalled();
+  });
+
+  it('still signs in when the old record cannot be deleted, and logs only the error name', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-2');
+    m.destroySession.mockRejectedValue(
+      Object.assign(new Error(`del ws:sess:secret-key ${ACCESS}`), { name: 'ReplyError' }),
+    );
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    const res = await call('?code=c&state=s');
+
+    expect(m.setSessionCookie).toHaveBeenCalledWith('sid-2');
+    expect(res.status).toBe(303);
+    const logged = JSON.stringify(warn.mock.calls);
+    expect(logged).toContain('ReplyError');
+    expect(logged).not.toContain('secret-key');
+    expect(logged).not.toContain(ACCESS);
+  });
+
   it('clears the signed-out marker once the person has signed in again', async () => {
     m.completeLogin.mockResolvedValue({ tokens, sub: 'user-1', returnTo: '/' });
     m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });

@@ -3,7 +3,13 @@ import { cookies } from 'next/headers';
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
 import { completeLogin, LOGIN_COOKIE } from '@/lib/oidc';
-import { createSession, safeReturnTo, setSessionCookie } from '@/lib/session';
+import {
+  createSession,
+  destroySession,
+  safeReturnTo,
+  SESSION_COOKIE,
+  setSessionCookie,
+} from '@/lib/session';
 
 // Copied from apps/workspace (dedupe later).
 export const runtime = 'nodejs';
@@ -32,6 +38,22 @@ const VENDOR_HOME = '/vendor';
 function vendorReturnTo(returnTo: string): string {
   const safe = safeReturnTo(returnTo);
   return safe === VENDOR_HOME || /^\/vendor[/?#]/.test(safe) ? safe : VENDOR_HOME;
+}
+
+/** Best effort: a failed delete must not block the sign-in. The old record dies with its TTL. */
+async function destroyPreviousSession(previousId: string | undefined): Promise<void> {
+  if (!previousId) return;
+  try {
+    await destroySession(previousId);
+  } catch (err) {
+    // Only the error name: ioredis errors carry the command arguments.
+    console.warn(
+      JSON.stringify({
+        event: 'auth.previous_session_destroy_failed',
+        error: err instanceof Error ? err.name : 'unknown',
+      }),
+    );
+  }
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -73,6 +95,9 @@ export async function GET(req: Request): Promise<Response> {
     if (me.orgKind === 'staff') return redirectTo('/use-workspace');
     if (me.orgKind !== 'customer' && me.orgKind !== 'vendor') return redirectTo('/not-available');
     if (!me.partyId) return redirectTo('/no-access');
+    // Fixation and leftovers: the record this browser held before (a different user, or the same
+    // one signing in again) is deleted before the new one exists, so it cannot outlive the sign-in.
+    await destroyPreviousSession(jar.get(SESSION_COOKIE)?.value);
     const id = await createSession({
       sub,
       orgId: me.organizationId,
