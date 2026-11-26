@@ -374,6 +374,38 @@ test('clamav is not on the edge network and has an egress-only network for signa
   }
 });
 
+test('no service other than api and worker gets the token or key by environment or a .dev mount', () => {
+  for (const [file, doc] of Object.entries(allFiles)) {
+    for (const [name, svc] of Object.entries(doc.services ?? {})) {
+      if (name === 'api' || name === 'worker') continue;
+      for (const key of envKeys(svc)) {
+        assert.doesNotMatch(
+          key,
+          /^ZITADEL_(PROVISIONER_TOKEN|ACTIONS_SIGNING_KEY)$/,
+          `${file}: ${name} sets ${key}`,
+        );
+      }
+      // seed-zitadel writes .dev; nobody else mounts the directory or the repo root (which contains it).
+      if (name === 'seed-zitadel') continue;
+      for (const m of mounts(svc)) {
+        assert.doesNotMatch(
+          String(m.source),
+          /(^|\/)\.dev$|^\.\.\/\.\.\/?$|^\.\.\/\.\.$/,
+          `${file}: ${name} mounts ${m.source}`,
+        );
+      }
+    }
+  }
+});
+
+test('only the login service and zitadel-api mount the bootstrap volume', () => {
+  const holders = Object.entries(base.services)
+    .filter(([, svc]) => mounts(svc).some((m) => m.source === 'zitadel-bootstrap'))
+    .map(([name]) => name)
+    .sort();
+  assert.deepEqual(holders, ['zitadel-api', 'zitadel-login']);
+});
+
 test('the worker does not hold the document link secret', () => {
   assert.equal(envKeys(service(base, 'worker')).includes('DOCS_LINK_SECRET'), false);
   assert.ok(

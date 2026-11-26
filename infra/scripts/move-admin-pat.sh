@@ -75,7 +75,14 @@ if [[ -f "$DEV_DIR/zitadel.env" ]] && grep -qE "$SECRET_KEYS" "$DEV_DIR/zitadel.
     grep -E "$SECRET_KEYS" "$DEV_DIR/zitadel.env" >"$DEV_DIR/zitadel-api.env"
     log "wrote $DEV_DIR/zitadel-api.env"
   else
-    log "$DEV_DIR/zitadel-api.env already exists; kept as is"
+    # An existing file wins, but only when it holds every secret zitadel.env is about to lose.
+    for key in $(grep -oE "$SECRET_KEYS" "$DEV_DIR/zitadel.env" | tr -d '='); do
+      grep -q "^$key=" "$DEV_DIR/zitadel-api.env" || {
+        log "$DEV_DIR/zitadel-api.env exists but has no $key; leaving both files alone. Merge by hand, then run again."
+        exit 1
+      }
+    done
+    log "$DEV_DIR/zitadel-api.env already exists and holds the same keys; kept as is"
   fi
   grep -vE "$SECRET_KEYS" "$DEV_DIR/zitadel.env" >"$DEV_DIR/zitadel.env.tmp" || true
   mv -f "$DEV_DIR/zitadel.env.tmp" "$DEV_DIR/zitadel.env"
