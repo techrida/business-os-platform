@@ -6,6 +6,12 @@
 //
 // A changed workspace package marks itself and every package that depends on it (the pnpm
 // `--filter "...[base]"` rule), read straight from the package.json files, so no install is needed.
+// Same-commit skip (CI and QA): a push or pull_request run whose head commit already has a push-event run of the same
+// workflow that finished with `success` selects nothing, so a commit that is fully green never runs twice. It reads the
+// Actions API (env BOS_SKIP_SHA, BOS_SKIP_WORKFLOW, GITHUB_REPOSITORY, GITHUB_TOKEN, GITHUB_RUN_ID) and never keys on
+// check-run names: a pull request's `checks` job is green after testing a subset. It does not skip on a run that is in
+// progress, failed, cancelled or missing, on a run from a pull request (it may have tested only the affected part), or
+// on a scheduled or manual run. An API error means no skip.
 // Fail safe: a shared root, a gate script, infrastructure, @bos/contracts, @bos/db, or any path this script cannot
 // place, runs everything. Events other than pull_request (push, schedule, workflow_dispatch) always run everything.
 import { execFileSync } from 'node:child_process';
@@ -92,17 +98,65 @@ export function withDependents(changed, packages) {
 }
 
 const ALL = {
+  skip: false,
   full: true,
   api: true,
   workspace: true,
   portal: true,
   db: true,
   docker: true,
+  'docker-api': true,
+  'docker-workspace': true,
+  'docker-portal': true,
+  'docker-login': true,
   web: true,
   'qa-workspace': true,
   'qa-portal': true,
   'docs-only': false,
 };
+
+// Did a push-event run of this workflow already finish green for this commit? `runs` is the `workflow_runs` array of the
+// Actions API; the API is asked for exactly these runs, and they are checked again here so a loose answer cannot skip.
+export function sameCommitGreen({ runs, sha, currentRunId }) {
+  if (!sha) return false;
+  return runs.some(
+    (r) =>
+      r.event === 'push' &&
+      r.status === 'completed' &&
+      r.conclusion === 'success' &&
+      r.head_sha === sha &&
+      String(r.id) !== String(currentRunId),
+  );
+}
+
+// An empty selection: every job is skipped and `ci required` / `qa required` still report success.
+export function nothingToRun(reason) {
+  return {
+    ...Object.fromEntries(Object.keys(ALL).map((k) => [k, false])),
+    skip: true,
+    reason,
+    packages: [],
+  };
+}
+
+async function greenPushRuns({ repo, token, workflow, sha }) {
+  const api = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const query = new URLSearchParams({
+    head_sha: sha,
+    event: 'push',
+    status: 'success',
+    per_page: '100',
+  });
+  const response = await fetch(`${api}/repos/${repo}/actions/workflows/${workflow}/runs?${query}`, {
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${token}`,
+      'x-github-api-version': '2022-11-28',
+    },
+  });
+  if (!response.ok) throw new Error(`the Actions API answered ${response.status}`);
+  return (await response.json()).workflow_runs ?? [];
+}
 
 export function affected(files, packages, { event = 'pull_request' } = {}) {
   const everything = (reason, packageNames = packages.map((p) => p.name)) => ({
@@ -140,6 +194,7 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
   const portal = set.has('@bos/portal');
   const db = set.has('@bos/db');
   return {
+    skip: false,
     full: false,
     api,
     workspace,
@@ -147,6 +202,12 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
     db,
     web: workspace || portal,
     docker: api || workspace || portal,
+    // One flag per production image, so an app-only change does not rebuild the others. The login image is built from
+    // infra/, which is a shared root: only a run of everything rebuilds it.
+    'docker-api': api,
+    'docker-workspace': workspace,
+    'docker-portal': portal,
+    'docker-login': false,
     // Both apps talk to the API, so an API change needs both browser suites; an app change needs its own.
     'qa-workspace': workspace || api,
     'qa-portal': portal || api,
@@ -156,20 +217,45 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
   };
 }
 
-// The Playwright matrix for qa.yml: `ws` says whether the shard also runs the workspace specs.
-export function qaMatrix(result) {
+// The Playwright matrix for qa.yml. `ws` says whether the job also runs the workspace specs; `list` names the file list
+// (.github/qa/<list>.txt) of its share of them; `portal` marks the one job that runs the portal specs: shard B, the
+// lighter one (shard A holds 77 s more workspace test time, measured 2026-11-26). The non-blocking `quarantined` job is
+// only added when .github/qa/quarantine.txt has content: with nothing quarantined it would bring up the whole stack just
+// to print "Nothing is quarantined.".
+export function qaMatrix(result, { quarantine = '' } = {}) {
   const include = [];
   if (result['qa-workspace']) {
     include.push(
-      { mode: 'specs', id: '1', shard: '1/3', ws: true },
-      { mode: 'specs', id: '2', shard: '2/3', ws: true },
-      { mode: 'specs', id: '3', shard: '3/3', ws: true },
-      { mode: 'quarantined', id: '-', shard: '1/1', ws: true },
+      { mode: 'specs', id: '1', shard: '1/2', list: 'shard-a', ws: true, portal: false },
+      { mode: 'specs', id: '2', shard: '2/2', list: 'shard-b', ws: true, portal: true },
     );
+    if (quarantine.trim() !== '')
+      include.push({ mode: 'quarantined', id: '-', shard: '1/1', ws: true, portal: false });
   } else if (result['qa-portal']) {
-    include.push({ mode: 'specs', id: '1', shard: '1/3', ws: false });
+    include.push({
+      mode: 'specs',
+      id: '2',
+      shard: '2/2',
+      list: 'shard-b',
+      ws: false,
+      portal: true,
+    });
   }
   return { include };
+}
+
+function readQuarantine() {
+  const file = join(REPO_ROOT, '.github/qa/quarantine.txt');
+  return existsSync(file) ? readFileSync(file, 'utf8') : '';
+}
+
+function isAncestor(base, head) {
+  try {
+    git('merge-base', '--is-ancestor', base, head);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function git(...args) {
@@ -190,7 +276,7 @@ function parseArgs(argv) {
   return out;
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const packages = loadWorkspace();
   let files = args.files;
@@ -210,8 +296,29 @@ function main() {
       event = 'pull_request';
     }
   }
-  const result = affected(files, packages, { event });
-  const matrix = qaMatrix(result);
+  let result = affected(files, packages, { event });
+  const sha = process.env.BOS_SKIP_SHA;
+  const workflow = process.env.BOS_SKIP_WORKFLOW;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GITHUB_TOKEN;
+  // Decided from the event the run really has: the "cannot diff" fallback above rewrites `event`, and a scheduled or
+  // manual run (no --base) must never skip. A pull request run tests the merge of its head into the base, which is the
+  // head's own tree only when the base is an ancestor of the head: otherwise a green push run of the head proves nothing.
+  const mayAsk =
+    args.event === 'push' ||
+    (args.event === 'pull_request' &&
+      Boolean(args.base && args.head) &&
+      isAncestor(args.base, args.head));
+  if (sha && workflow && repo && token && mayAsk) {
+    try {
+      const runs = await greenPushRuns({ repo, token, workflow, sha });
+      if (sameCommitGreen({ runs, sha, currentRunId: process.env.GITHUB_RUN_ID }))
+        result = nothingToRun(`${sha.slice(0, 9)} already passed ${workflow} on a push run`);
+    } catch (error) {
+      console.error(`affected: cannot read earlier runs (${error.message}); running as selected`);
+    }
+  }
+  const matrix = qaMatrix(result, { quarantine: readQuarantine() });
   const lines = {
     ...Object.fromEntries(
       Object.entries(result)
@@ -233,4 +340,4 @@ function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

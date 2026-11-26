@@ -18,7 +18,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['./src/test/vitest-setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts', 'next.config.test.ts'],
     exclude: ['e2e/**', 'node_modules/**'],
     // The gate shares one machine with other units; render-heavy files exceeded 5 s under load.
     testTimeout: 15_000,

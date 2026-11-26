@@ -1,9 +1,20 @@
 // Run: node --test tools/qa-approve-timing.test.mjs
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-import { parseTimings, percentile, summarise } from '../.github/qa/approve-timing.mjs';
+import {
+  DEFAULT_P95_LIMIT_MS,
+  limitFrom,
+  parseTimings,
+  percentile,
+  summarise,
+  verdict,
+} from '../.github/qa/approve-timing.mjs';
 
 test('percentile is nearest-rank', () => {
   const v = Array.from({ length: 20 }, (_, i) => i + 1);
@@ -34,10 +45,72 @@ test('summarise reports succeeded and failed counts, and p50, p95, max of the su
   assert.match(summarise([{ ms: 5, ok: false }]), /\| 0 \| 1 \| n\/a \| n\/a \| n\/a \|/);
 });
 
-test('the qa workflow prints the summary to the job summary and never fails on it', () => {
+test('the limit is 80 ms p95, judged on the successful Approves only', () => {
+  assert.equal(DEFAULT_P95_LIMIT_MS, 80);
+  const ok = (ms) => ({ ms, ok: true });
+  const fast = Array.from({ length: 20 }, (_, i) => ok(40 + i)); // 40..59 ms
+  assert.equal(verdict(fast).ok, true);
+  assert.equal(verdict([...fast, ok(80)]).ok, true, 'exactly at the limit passes');
+  const slow = Array.from({ length: 20 }, (_, i) => ok(70 + i)); // p95 = 88 ms
+  const over = verdict(slow);
+  assert.equal(over.ok, false);
+  assert.equal(over.p95, 88);
+  // A failed Approve is not in the percentile; a run with no success has nothing to judge.
+  assert.equal(verdict([...fast, { ms: 30_000, ok: false }]).ok, true);
+  assert.equal(verdict([]).ok, true);
+  assert.equal(verdict([{ ms: 30_000, ok: false }]).ok, true);
+  assert.equal(verdict(slow, 100).ok, true, 'the limit can be passed in');
+});
+
+test('limitFrom reads a positive number and falls back to 80', () => {
+  assert.equal(limitFrom('120'), 120);
+  for (const bad of [undefined, '', 'x', '0', '-5']) assert.equal(limitFrom(bad), 80, String(bad));
+});
+
+test('the summary says whether the p95 is within the limit or fails the job', () => {
+  const ok = (ms) => ({ ms, ok: true });
+  assert.match(summarise([ok(50), ok(60)]), /p95 60 ms is within the limit of 80 ms/);
+  assert.match(
+    summarise([ok(50), ok(200)]),
+    /p95 200 ms is over the limit of 80 ms: the job fails/,
+  );
+  assert.match(summarise([]), /No Approve was timed/);
+});
+
+test('the command exits 1 over the limit and 0 within it or with no timings', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'approve-timing-'));
+  const script = fileURLToPath(new URL('../.github/qa/approve-timing.mjs', import.meta.url));
+  const run = (rows, env = {}) => {
+    const file = path.join(dir, 'timings.jsonl');
+    writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n'));
+    return spawnSync(process.execPath, [script, file], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, ...env },
+    });
+  };
+  try {
+    assert.equal(run([{ ms: 50, ok: true }]).status, 0);
+    const slow = run([{ ms: 200, ok: true }]);
+    assert.equal(slow.status, 1);
+    assert.match(slow.stdout, /over the limit of 80 ms/);
+    assert.match(slow.stderr, /::error::Approve p95 200 ms is over the limit of 80 ms/);
+    assert.equal(run([{ ms: 200, ok: true }], { BOS_APPROVE_P95_LIMIT_MS: '250' }).status, 0);
+    assert.equal(run([]).status, 0);
+    const missing = spawnSync(process.execPath, [script, path.join(dir, 'nope.jsonl')], {
+      encoding: 'utf8',
+    });
+    assert.equal(missing.status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the qa workflow prints the summary to the job summary and fails the job over the limit', () => {
   const qa = readFileSync(new URL('../.github/workflows/qa.yml', import.meta.url), 'utf8');
-  const step = qa.slice(qa.indexOf('- name: Approve timing (p95 in the job summary)'));
+  const start = qa.indexOf('- name: Approve timing');
+  const step = qa.slice(start, qa.indexOf('\n      - name:', start + 10));
   assert.match(step, /approve-timing\.mjs/);
   assert.match(step, /GITHUB_STEP_SUMMARY/);
-  assert.match(step.slice(0, step.indexOf('\n      - name:', 10)), /continue-on-error: true/);
+  assert.doesNotMatch(step, /continue-on-error/);
+  assert.match(step, /BOS_APPROVE_P95_LIMIT_MS: \$\{\{ vars\.QA_APPROVE_P95_LIMIT_MS \}\}/);
 });

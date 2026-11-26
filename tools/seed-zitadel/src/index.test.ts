@@ -5,6 +5,7 @@ import {
   BOOTSTRAP_SA_USER,
   DEFAULT_ADMIN_USERNAME,
   DEFAULT_WEBHOOK_URL,
+  finalizeBootstrap,
   FOUNDER_ORG_ROLE,
   LOADTEST_APPROVER_USER,
   PORTAL_APP_NAME,
@@ -571,8 +572,21 @@ describe('@bos/seed-zitadel', () => {
     expect(result.warnings).toEqual([]);
     expect(await api.listProjectRoles()).toHaveLength(PROJECT_ROLES.length);
     expect(await api.listProjectRoles()).toContain('accountant');
-    expect([...files.data.keys()].sort()).toEqual(['k6.env', 'personas.json', 'zitadel.env']);
+    expect([...files.data.keys()].sort()).toEqual([
+      'k6.env',
+      'personas.json',
+      'zitadel-api.env',
+      'zitadel.env',
+    ]);
     expect(files.data.get('zitadel.env')).toContain('OIDC_CLIENT_ID=client-1');
+    // zitadel.env is read by the web apps too: ids only, no TOKEN or KEY entry (U1-01).
+    for (const key of Object.keys(parseEnv(files.data.get('zitadel.env')))) {
+      expect(key).not.toMatch(/TOKEN|KEY|SECRET|PASSWORD/);
+    }
+    expect(Object.keys(parseEnv(files.data.get('zitadel-api.env'))).sort()).toEqual([
+      'ZITADEL_ACTIONS_SIGNING_KEY',
+      'ZITADEL_PROVISIONER_TOKEN',
+    ]);
     // The API's azp allow-list: the workspace app plus both k6 machine users, or the perf gates get 401.
     expect(parseEnv(files.data.get('zitadel.env'))['OIDC_ALLOWED_AZP']).toBe(
       'client-1,bos-loadtest,bos-loadtest-approver',
@@ -818,9 +832,9 @@ describe('@bos/seed-zitadel', () => {
 
     const entries = JSON.parse(before) as PersonaEntry[];
     const secrets = entries.flatMap((p) => [p.password, p.totpSecret ?? 'missing-totp']);
-    const zitadelEnv = files.data.get('zitadel.env') ?? '';
-    secrets.push(/^ZITADEL_PROVISIONER_TOKEN=(.*)$/m.exec(zitadelEnv)?.[1] ?? 'missing');
-    secrets.push(/^ZITADEL_ACTIONS_SIGNING_KEY=(.*)$/m.exec(zitadelEnv)?.[1] ?? 'missing');
+    const apiEnv = files.data.get('zitadel-api.env') ?? '';
+    secrets.push(/^ZITADEL_PROVISIONER_TOKEN=(.*)$/m.exec(apiEnv)?.[1] ?? 'missing');
+    secrets.push(/^ZITADEL_ACTIONS_SIGNING_KEY=(.*)$/m.exec(apiEnv)?.[1] ?? 'missing');
     const k6 = files.data.get('k6.env') ?? '';
     secrets.push(/^K6_CLIENT_SECRET=(.*)$/m.exec(k6)?.[1] ?? 'missing');
     secrets.push(/^K6_APPROVER_CLIENT_SECRET=(.*)$/m.exec(k6)?.[1] ?? 'missing');
@@ -994,6 +1008,69 @@ describe('@bos/seed-zitadel', () => {
     });
   });
 
+  describe('--finalize (production only)', () => {
+    it('deactivates the bootstrap service account, then deletes admin.pat', async () => {
+      const { api, deps } = setup();
+      const result = await runSeed(deps);
+      const removed: string[] = [];
+      const done = await finalizeBootstrap({
+        api,
+        staffOrgId: result.staffOrgId,
+        patFile: '/zitadel/admin/admin.pat',
+        removeFile: (path) => {
+          removed.push(path);
+          return Promise.resolve();
+        },
+        log: () => undefined,
+      });
+      expect(api.deactivated.has(api.userIdOf(BOOTSTRAP_SA_USER))).toBe(true);
+      expect(removed).toEqual(['/zitadel/admin/admin.pat']);
+      expect(done).toEqual([
+        `deactivated ${BOOTSTRAP_SA_USER}`,
+        'deleted /zitadel/admin/admin.pat',
+      ]);
+    });
+
+    it('keeps the file and fails when the bootstrap account is not found', async () => {
+      const { api, deps } = setup();
+      const result = await runSeed(deps);
+      const removed: string[] = [];
+      await expect(
+        finalizeBootstrap({
+          api,
+          staffOrgId: `${result.staffOrgId}-elsewhere`,
+          patFile: '/zitadel/admin/admin.pat',
+          removeFile: (path) => {
+            removed.push(path);
+            return Promise.resolve();
+          },
+          log: () => undefined,
+        }),
+      ).rejects.toThrow(/not found/);
+      expect(removed).toEqual([]);
+    });
+
+    it('keeps the file when the deactivate call fails, so the run can be repeated', async () => {
+      const { api, deps } = setup();
+      const result = await runSeed(deps);
+      api.deactivateUser = () => Promise.reject(new Error('boom'));
+      const removed: string[] = [];
+      await expect(
+        finalizeBootstrap({
+          api,
+          staffOrgId: result.staffOrgId,
+          patFile: '/zitadel/admin/admin.pat',
+          removeFile: (path) => {
+            removed.push(path);
+            return Promise.resolve();
+          },
+          log: () => undefined,
+        }),
+      ).rejects.toThrow('boom');
+      expect(removed).toEqual([]);
+    });
+  });
+
   describe('P1 step 5: provisioner PAT', () => {
     it('grants both org roles, issues one PAT on the first run and reuses it after', async () => {
       const { api, files, deps } = setup();
@@ -1006,19 +1083,20 @@ describe('@bos/seed-zitadel', () => {
       expect(api.patsIssued).toBe(1);
       // Expiry is now + 1 year, from the pinned clock.
       expect(api.calls).toContain(`addPat:${provisionerId}:2027-11-08T10:00:00.000Z`);
-      const env = files.data.get('zitadel.env') ?? '';
+      const env = files.data.get('zitadel-api.env') ?? '';
       expect(env).toMatch(/^ZITADEL_PROVISIONER_TOKEN=pat-token-pat-\d+$/m);
+      expect(files.data.get('zitadel.env')).not.toContain('ZITADEL_PROVISIONER_TOKEN');
 
       const second = await runSeed(deps);
       expect(second.changes).toEqual([]);
       expect(api.patsIssued).toBe(1);
-      expect(files.data.get('zitadel.env')).toBe(env);
+      expect(files.data.get('zitadel-api.env')).toBe(env);
     });
 
-    it('issues a new PAT when zitadel.env lost it or ZITADEL no longer lists one', async () => {
+    it('issues a new PAT when zitadel-api.env lost it or ZITADEL no longer lists one', async () => {
       const { api, files, deps } = setup();
       await runSeed(deps);
-      files.data.delete('zitadel.env');
+      files.data.delete('zitadel-api.env');
       await runSeed(deps);
       expect(api.patsIssued).toBe(2);
 
@@ -1081,28 +1159,46 @@ describe('@bos/seed-zitadel', () => {
         endpoint: DEFAULT_WEBHOOK_URL,
       });
       const targetId = api.targets[0]?.id ?? '';
-      const env = files.data.get('zitadel.env') ?? '';
+      const env = files.data.get('zitadel-api.env') ?? '';
       expect(env).toContain(`ZITADEL_ACTIONS_SIGNING_KEY=signing-${targetId}\n`);
+      expect(files.data.get('zitadel.env')).not.toContain('ZITADEL_ACTIONS_SIGNING_KEY');
       expect(logs).toContain('Actions execution condition accepted: {"event":{"group":"user"}}');
 
       const second = await runSeed(deps);
       expect(second.changes).toEqual([]);
       expect(second.warnings).toEqual([]);
       expect(api.targets).toHaveLength(1);
-      expect(files.data.get('zitadel.env')).toBe(env);
+      expect(files.data.get('zitadel-api.env')).toBe(env);
       expect(api.calls.filter((c) => c === `setUserEventExecution:${targetId}`)).toHaveLength(2);
     });
 
     it('warns loudly when the target exists but the signing key is lost', async () => {
       const { api, files, deps } = setup();
       await runSeed(deps);
-      files.data.delete('zitadel.env');
+      files.data.delete('zitadel-api.env');
       const result = await runSeed(deps);
       expect(api.targets).toHaveLength(1);
       expect(result.warnings).toEqual([
         expect.stringMatching(/no ZITADEL_ACTIONS_SIGNING_KEY.*Delete the target/),
       ]);
-      expect(files.data.get('zitadel.env')).not.toContain('ZITADEL_ACTIONS_SIGNING_KEY');
+      expect(files.data.get('zitadel-api.env')).not.toContain('ZITADEL_ACTIONS_SIGNING_KEY');
+    });
+
+    it('moves both secrets out of a legacy zitadel.env without issuing anything new', async () => {
+      const { api, files, deps } = setup();
+      await runSeed(deps);
+      const apiEnv = files.data.get('zitadel-api.env') ?? '';
+      const patsBefore = api.patsIssued;
+      const targetsBefore = api.targets.length;
+      // A stack seeded before the split: one file with ids and secrets, no zitadel-api.env.
+      files.data.delete('zitadel-api.env');
+      files.data.set('zitadel.env', `${files.data.get('zitadel.env') ?? ''}${apiEnv}`);
+      const result = await runSeed(deps);
+      expect(result.warnings).toEqual([]);
+      expect(api.patsIssued).toBe(patsBefore);
+      expect(api.targets).toHaveLength(targetsBefore);
+      expect(files.data.get('zitadel-api.env')).toBe(apiEnv);
+      expect(files.data.get('zitadel.env')).not.toMatch(/TOKEN|SIGNING_KEY/);
     });
 
     it('warns when ZITADEL_WEBHOOK_URL differs from the stored target endpoint', async () => {
