@@ -330,6 +330,19 @@ describe('GET /auth/callback', () => {
     );
   });
 
+  it('deletes the previous record even when this sign-in is refused with 403 (no project role)', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockRejectedValue(new ApiError(403, 'forbidden'));
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    const res = await call('?code=c&state=s');
+
+    expect(res.headers.get('location')).toBe('https://app.localhost/no-access');
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+  });
+
   it('does not delete anything when the browser held no session, and keeps the old one when sign-in fails', async () => {
     m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
     m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });

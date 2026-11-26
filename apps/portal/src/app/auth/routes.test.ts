@@ -294,6 +294,19 @@ describe('GET /auth/callback', () => {
     );
   });
 
+  it('deletes the previous record even when this sign-in is turned away (staff on the portal)', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ ...CUSTOMER_ME, orgKind: 'staff', partyId: null });
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    const res = await call('?code=c&state=s');
+
+    expect(res.headers.get('location')).toBe('https://portal.localhost/use-workspace');
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+  });
+
   it('does not delete anything when the browser held no session, and keeps the old one when sign-in fails', async () => {
     m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
     m.getMe.mockResolvedValue(CUSTOMER_ME);

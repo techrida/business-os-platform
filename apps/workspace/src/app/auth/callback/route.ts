@@ -76,11 +76,12 @@ export async function GET(req: Request): Promise<Response> {
 
     // Throws before any token request when the binding cookie is missing or foreign.
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
+    // Fixation and leftovers: the login succeeded at the identity provider, so the record this browser held
+    // before (another user, or the same one again) goes now, before anything below can send the person
+    // elsewhere (no access, wrong app) and leave that record alive.
+    await destroyPreviousSession(jar.get(SESSION_COOKIE)?.value);
     // The API is the authority on org and roles, not the token claims.
     const me = await getMe({ accessToken: tokens.accessToken });
-    // Fixation and leftovers: the record this browser held before (a different user, or the same
-    // one signing in again) is deleted before the new one exists, so it cannot outlive the sign-in.
-    await destroyPreviousSession(jar.get(SESSION_COOKIE)?.value);
     const id = await createSession({
       sub,
       orgId: me.organizationId,
