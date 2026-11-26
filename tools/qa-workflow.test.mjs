@@ -1,5 +1,5 @@
 // Run: node --test tools/qa-workflow.test.mjs
-// A required "qa specs 1/2/3" check must report on every pull request, so the pull_request trigger has no filter.
+// The required `qa required` check must report on every pull request, so the pull_request trigger has no filter.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -47,4 +47,25 @@ test('the tools tests run from a glob that includes tools/policy, in ci.yml and 
     assert.match(line, /"tools\/policy\/\*\.test\.mjs"/, name);
     assert.doesNotMatch(line, /tools\/(affected|qa-[a-z-]+|check-public-repo)\.test\.mjs/, name);
   }
+});
+
+test('the workspace step runs its shard from a file list; a spec filter falls back to Playwright --shard', () => {
+  const step = text.slice(text.indexOf('- name: Playwright (workspace, dev project)'));
+  const run = step.slice(0, step.indexOf('\n      - name:', 10));
+  assert.match(run, /LIST: \$\{\{ matrix\.list \}\}/);
+  assert.match(run, /mapfile -t targets < "\.\.\/\.\.\/\.github\/qa\/\$LIST\.txt"/);
+  assert.match(run, /--shard="\$SHARD"/);
+});
+
+test('the portal specs run on the job the matrix marks, and the shard lists are checked before the stack comes up', () => {
+  assert.match(
+    text,
+    /- name: Portal specs[^\n]*\n {8}if: \$\{\{ !cancelled\(\) && matrix\.mode == 'specs' && matrix\.portal \}\}/,
+  );
+  const check = text.indexOf('node .github/qa/spec-counts.mjs --lists');
+  assert.ok(check > 0 && check < text.indexOf('bash .github/qa/up.sh'));
+});
+
+test('no workflow still talks about three shards', () => {
+  assert.doesNotMatch(text, /specs 1\/2\/3|Three shards|1\/3/);
 });

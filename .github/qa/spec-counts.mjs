@@ -5,6 +5,11 @@
 // themselves.
 // Counts come from `playwright test --list`, which applies the same file filters and --grep-invert as the real run.
 // Run by the qa workflow: node .github/qa/spec-counts.mjs  (env: SPEC_FILTER, SHARD, REPEAT_EACH, WS_STEP)
+//
+// `--lists` is the other mode: the two shards of the workspace run are the explicit file lists .github/qa/shard-a.txt and
+// shard-b.txt (balanced by measured duration, 2026-11-26: both about 1007 s of test time, the portal specs add 77 s to
+// shard B). The check fails when a spec file that the `dev` project runs is in no list or in both, or a list names a file
+// that no longer exists, so a new spec can never silently stop running.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +38,45 @@ export function decide({ filter, wsTotal, portalTotal }) {
   return { ok: true, message };
 }
 
+/** The spec files (relative to the e2e folder) named in a `playwright test --list` output. */
+export function parseSpecFiles(listOutput) {
+  const files = new Set();
+  for (const m of listOutput.matchAll(/([\w./-]+\.spec\.ts):\d+:\d+/g)) files.add(m[1]);
+  return files;
+}
+
+/** The files each list names, as e2e-relative paths (the lists hold `e2e/...`, ready to pass to playwright). */
+function relative(entry) {
+  return entry.trim().replace(/^e2e\//, '');
+}
+
+/**
+ * Every spec file the run executes is in exactly one list, and every list entry is a spec file the run executes.
+ * `lists` maps a list name to its lines; blank lines are ignored.
+ */
+export function checkLists({ specFiles, lists }) {
+  const problems = [];
+  const owner = new Map();
+  for (const [name, lines] of Object.entries(lists)) {
+    for (const line of lines.filter((l) => l.trim() !== '')) {
+      const file = relative(line);
+      if (owner.has(file))
+        problems.push(`${file} is listed twice (${owner.get(file)} and ${name})`);
+      else owner.set(file, name);
+      if (!specFiles.has(file)) problems.push(`${file} (${name}) is not a spec the run executes`);
+    }
+  }
+  for (const file of [...specFiles].sort())
+    if (!owner.has(file)) problems.push(`${file} is in no shard list`);
+  return { ok: problems.length === 0, problems };
+}
+
+/** The --grep-invert of the workspace step: persona sign-ins ran in the warm-up, quarantined specs stay out. */
+export function skipPattern(quarantine) {
+  const skip = 'persona sign-in and sign-out|qa fixtures: ';
+  return quarantine.trim() ? `${skip}|${quarantine.trim()}` : skip;
+}
+
 function listTotal(cwd, args) {
   const out = execFileSync('pnpm', ['exec', 'playwright', 'test', '--list', ...args], {
     cwd,
@@ -45,8 +89,38 @@ function listTotal(cwd, args) {
   return n;
 }
 
+function checkShardLists(root) {
+  const ws = `${root}apps/workspace`;
+  const quarantine = readFileSync(`${root}.github/qa/quarantine.txt`, 'utf8');
+  const out = execFileSync(
+    'pnpm',
+    [
+      'exec',
+      'playwright',
+      'test',
+      '--list',
+      '--project=dev',
+      '--grep-invert',
+      skipPattern(quarantine),
+    ],
+    { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  const lists = {};
+  for (const name of ['shard-a', 'shard-b'])
+    lists[name] = readFileSync(`${root}.github/qa/${name}.txt`, 'utf8').split('\n');
+  const verdict = checkLists({ specFiles: parseSpecFiles(out), lists });
+  for (const problem of verdict.problems) console.log(`::error::${problem}`);
+  console.log(
+    verdict.ok
+      ? 'Every workspace spec is in exactly one shard list.'
+      : 'The shard lists and the specs disagree: fix .github/qa/shard-a.txt and shard-b.txt.',
+  );
+  if (!verdict.ok) process.exit(1);
+}
+
 function main() {
   const root = fileURLToPath(new URL('../../', import.meta.url));
+  if (process.argv.includes('--lists')) return checkShardLists(root);
   const filter = process.env.SPEC_FILTER ?? '';
   const words = filter.split(/\s+/).filter(Boolean);
   const repeat = Number(process.env.REPEAT_EACH || '1');
@@ -55,9 +129,7 @@ function main() {
     return;
   }
   // The same --grep-invert as the workspace step: the persona sign-ins ran in the warm-up, quarantined specs stay out.
-  let skip = 'persona sign-in and sign-out|qa fixtures: ';
-  const quarantine = readFileSync(`${root}.github/qa/quarantine.txt`, 'utf8').trim();
-  if (quarantine) skip += `|${quarantine}`;
+  const skip = skipPattern(readFileSync(`${root}.github/qa/quarantine.txt`, 'utf8'));
   const ws = `${root}apps/workspace`;
   const wsArgs = ['--project=dev', '--grep-invert', skip, ...words];
   const wsTotal = listTotal(ws, wsArgs) * repeat;

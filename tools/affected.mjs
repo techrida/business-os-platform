@@ -156,21 +156,29 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
   };
 }
 
-// The Playwright matrix for qa.yml: `ws` says whether the shard also runs the workspace specs. The non-blocking
-// `quarantined` job is only added when .github/qa/quarantine.txt has content: with nothing quarantined it would
-// bring up the whole stack just to print "Nothing is quarantined.".
+// The Playwright matrix for qa.yml. `ws` says whether the job also runs the workspace specs; `list` names the file list
+// (.github/qa/<list>.txt) of its share of them; `portal` marks the one job that runs the portal specs: shard B, the
+// lighter one (shard A holds 77 s more workspace test time, measured 2026-11-26). The non-blocking `quarantined` job is
+// only added when .github/qa/quarantine.txt has content: with nothing quarantined it would bring up the whole stack just
+// to print "Nothing is quarantined.".
 export function qaMatrix(result, { quarantine = '' } = {}) {
   const include = [];
   if (result['qa-workspace']) {
     include.push(
-      { mode: 'specs', id: '1', shard: '1/3', ws: true },
-      { mode: 'specs', id: '2', shard: '2/3', ws: true },
-      { mode: 'specs', id: '3', shard: '3/3', ws: true },
+      { mode: 'specs', id: '1', shard: '1/2', list: 'shard-a', ws: true, portal: false },
+      { mode: 'specs', id: '2', shard: '2/2', list: 'shard-b', ws: true, portal: true },
     );
     if (quarantine.trim() !== '')
-      include.push({ mode: 'quarantined', id: '-', shard: '1/1', ws: true });
+      include.push({ mode: 'quarantined', id: '-', shard: '1/1', ws: true, portal: false });
   } else if (result['qa-portal']) {
-    include.push({ mode: 'specs', id: '1', shard: '1/3', ws: false });
+    include.push({
+      mode: 'specs',
+      id: '2',
+      shard: '2/2',
+      list: 'shard-b',
+      ws: false,
+      portal: true,
+    });
   }
   return { include };
 }
