@@ -273,9 +273,16 @@ describe.skipIf(!enabled)('getSession against a real Valkey that drops the conne
     expect(performance.now() - started).toBeLessThan(3500);
 
     // One structured line: where, how long, what kind; nothing from the error itself.
-    const lines = vi
+    // The client's own `error` events (dropped connection, refused reconnect) log one more line each, by
+    // error name only; they are not this request's line, so they are set aside.
+    const allLines = vi
       .mocked(console.warn)
       .mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    const clientErrors = allLines.filter((l) => l.event === 'valkey.client_error');
+    for (const line of clientErrors) {
+      expect(Object.keys(line).sort()).toEqual(['client', 'error', 'event']);
+    }
+    const lines = allLines.filter((l) => l.event !== 'valkey.client_error');
     expect(lines).toEqual([
       expect.objectContaining({
         event: 'session.valkey_error',
