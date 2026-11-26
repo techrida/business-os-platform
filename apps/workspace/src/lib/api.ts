@@ -3,6 +3,7 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 
 import { dropUnknownGrants, type MeResponse, MeResponseSchema } from '@bos/contracts';
+import { headers as requestHeaders } from 'next/headers';
 
 import { getEnv } from './env';
 import type { Session } from './session';
@@ -38,6 +39,50 @@ function apiUrl(path: string): URL {
   return url;
 }
 
+/** A web-to-API call gets this long unless the caller passes its own signal. */
+export const API_TIMEOUT_MS = 15_000;
+
+/** The API's correlation id rule, so a reused id is never refused or replaced there. */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
+
+/** What the browser's own request told the BFF, as Caddy passed it on. Empty outside a request. */
+async function incomingContext(): Promise<{
+  requestId?: string;
+  forwardedFor?: string;
+  userAgent?: string;
+}> {
+  let incoming: Headers;
+  try {
+    incoming = await requestHeaders();
+  } catch {
+    // Outside a request scope (a script, a test): there is no browser request to describe.
+    return {};
+  }
+  const requestId = incoming.get('x-request-id');
+  const forwardedFor = incoming.get('x-forwarded-for');
+  const userAgent = incoming.get('user-agent');
+  return {
+    ...(requestId !== null && REQUEST_ID_PATTERN.test(requestId) ? { requestId } : {}),
+    ...(forwardedFor ? { forwardedFor } : {}),
+    ...(userAgent ? { userAgent } : {}),
+  };
+}
+
+/**
+ * What a call that outlasted its deadline looks like to the callers: the same 503 `db_busy` refusal
+ * the API sends when it is overloaded, so the existing "busy, try again" handling shows it.
+ */
+function timeoutAsBusy(requestId: string): ApiError {
+  return new ApiError(503, `API did not answer within ${API_TIMEOUT_MS / 1000} s`, {
+    error: {
+      code: 'db_busy',
+      message: 'The platform is busy. Try again in a moment.',
+      correlationId: requestId,
+      details: { retryAfterSeconds: 1 },
+    },
+  });
+}
+
 /** Async so a bad path rejects the promise instead of throwing synchronously at the call site. */
 async function authedFetch(
   accessToken: string,
@@ -47,10 +92,29 @@ async function authedFetch(
   const url = apiUrl(path);
   const headers = new Headers(init?.headers);
   headers.set('authorization', `Bearer ${accessToken}`);
-  // A fresh id per call; a UUID fits the API's `^[A-Za-z0-9-]{8,64}$` correlation id rule.
-  headers.set('x-request-id', randomUUID());
-  // Responses are per user: never let Next's data cache keep or share them.
-  return await fetch(url, { ...init, headers, cache: 'no-store' });
+  const incoming = await incomingContext();
+  // One id per browser request, so the web log, the API log and the audit row line up. A UUID fits
+  // the API's `^[A-Za-z0-9-]{8,64}$` correlation id rule. Without an incoming id, a fresh one.
+  const requestId = incoming.requestId ?? randomUUID();
+  headers.set('x-request-id', requestId);
+  // The API trusts one proxy hop (this one), so it reads the address as the last entry of this header.
+  // Set or dropped here, never passed through from the caller's `init`, which could forge it.
+  headers.delete('x-forwarded-for');
+  headers.delete('user-agent');
+  if (incoming.forwardedFor !== undefined) headers.set('x-forwarded-for', incoming.forwardedFor);
+  if (incoming.userAgent !== undefined) headers.set('user-agent', incoming.userAgent);
+  const ownSignal = init?.signal ?? undefined;
+  const signal = ownSignal ?? AbortSignal.timeout(API_TIMEOUT_MS);
+  try {
+    // Responses are per user: never let Next's data cache keep or share them.
+    return await fetch(url, { ...init, headers, signal, cache: 'no-store' });
+  } catch (err) {
+    // Only our own deadline becomes the busy refusal; a caller's abort stays the caller's.
+    if (ownSignal === undefined && err instanceof Error && err.name === 'TimeoutError') {
+      throw timeoutAsBusy(requestId);
+    }
+    throw err;
+  }
 }
 
 /** Calls the API as the session's user. Errors never include the token. */
