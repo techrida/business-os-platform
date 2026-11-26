@@ -714,6 +714,8 @@ services:
     user: '0' # admin.pat in the zitadel-admin volume is root-owned
     working_dir: /repo
     # ASSUMPTION: U6 builds tools/seed-zitadel to dist/index.js. Override the command if it runs through tsx.
+    # Production only, as the last step: `... run --rm seed-zitadel node tools/seed-zitadel/dist/index.js --finalize`
+    # also deactivates bos-bootstrap-sa and deletes admin.pat. Dev and testrun never do: the next seed needs the token.
     command: ['node', 'tools/seed-zitadel/dist/index.js']
     environment:
       OIDC_ISSUER: https://${AUTH_HOST:-auth.localhost}
