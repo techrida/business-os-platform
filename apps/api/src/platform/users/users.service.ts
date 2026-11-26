@@ -69,6 +69,14 @@ export class UsersService extends UserDirectory {
     return this.mirror.userIdsWithRole(scope, role, q);
   }
 
+  override userIdsWithRoles(
+    scope: TxScope,
+    roles: readonly RoleKey[],
+    q?: Db | DbTransaction,
+  ): Promise<Map<RoleKey, string[]>> {
+    return this.mirror.userIdsWithRoles(scope, roles, q);
+  }
+
   emailOf(userId: string, q?: Db | DbTransaction): Promise<string | null> {
     return this.mirror.emailOf(userId, q);
   }

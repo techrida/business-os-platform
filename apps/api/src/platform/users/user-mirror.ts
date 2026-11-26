@@ -554,6 +554,14 @@ export class UserMirror implements OnApplicationShutdown {
     return this.store.userIdsWithRole(scope, role, q);
   }
 
+  userIdsWithRoles(
+    scope: TxScope,
+    roles: readonly RoleKey[],
+    q?: Db | DbTransaction,
+  ): Promise<Map<RoleKey, string[]>> {
+    return this.store.userIdsWithRoles(scope, roles, q);
+  }
+
   emailOf(userId: string, q?: Db | DbTransaction): Promise<string | null> {
     return this.store.emailOf(userId, q);
   }
