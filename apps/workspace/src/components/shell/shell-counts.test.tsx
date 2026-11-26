@@ -58,7 +58,9 @@ async function dispatch(target: EventTarget, type: string) {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'],
+  });
   nav.pathname = '/';
   hidden = false;
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
@@ -133,6 +135,25 @@ describe('ShellCountsProvider', () => {
     await render({ inbox: 1, notifications: 1 });
     expect(reads()).toBe(1);
     expect(shown()).toBe('inbox=7 unread=2 signedOut=false');
+  });
+
+  it('makes one read for two page changes within 5 s, and reads again after that', async () => {
+    fetchMock.mockImplementation(answer(7, 2));
+    await render({ inbox: 1, notifications: 1 });
+
+    nav.pathname = '/sales';
+    await render({ inbox: 1, notifications: 1 });
+    expect(reads()).toBe(1);
+
+    await tick(2_000);
+    nav.pathname = '/quotations';
+    await render({ inbox: 1, notifications: 1 });
+    expect(reads()).toBe(1);
+
+    await tick(4_000);
+    nav.pathname = '/inbox';
+    await render({ inbox: 1, notifications: 1 });
+    expect(reads()).toBe(2);
   });
 
   it('keeps the last unread count when that read comes back unknown, never showing a zero', async () => {
