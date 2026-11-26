@@ -149,6 +149,7 @@ export function onClientError(client: Redis, which: 'session' | 'oidc'): void {
         event: 'valkey.client_error',
         client: which,
         error: err instanceof Error ? err.name : 'unknown',
+        category: errorCategory(err),
       }),
     );
   });

@@ -280,7 +280,7 @@ describe.skipIf(!enabled)('getSession against a real Valkey that drops the conne
       .mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
     const clientErrors = allLines.filter((l) => l.event === 'valkey.client_error');
     for (const line of clientErrors) {
-      expect(Object.keys(line).sort()).toEqual(['client', 'error', 'event']);
+      expect(Object.keys(line).sort()).toEqual(['category', 'client', 'error', 'event']);
     }
     const lines = allLines.filter((l) => l.event !== 'valkey.client_error');
     expect(lines).toEqual([

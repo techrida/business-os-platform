@@ -77,7 +77,12 @@ describe.each([
 
     expect(warn).toHaveBeenCalledTimes(1);
     const line = JSON.parse(String(warn.mock.calls[0]?.[0])) as Record<string, unknown>;
-    expect(line).toEqual({ event: 'valkey.client_error', client: which, error: 'ReplyError' });
+    expect(line).toEqual({
+      event: 'valkey.client_error',
+      client: which,
+      error: 'ReplyError',
+      category: 'other',
+    });
     const logged = JSON.stringify(warn.mock.calls);
     expect(logged).not.toContain('secret-access-token');
     expect(logged).not.toContain('sess:abc123');
