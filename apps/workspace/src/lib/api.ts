@@ -69,8 +69,9 @@ async function incomingContext(): Promise<{
 }
 
 /**
- * What a call that outlasted its deadline looks like to the callers: the same 503 `db_busy` refusal
- * the API sends when it is overloaded, so the existing "busy, try again" handling shows it.
+ * What a read that outlasted its deadline looks like to the callers: the same 503 `db_busy` refusal
+ * the API sends when it is overloaded, so the existing "busy, try again" handling shows it. Only for
+ * reads: a read can always be repeated.
  */
 function timeoutAsBusy(requestId: string): ApiError {
   return new ApiError(503, `API did not answer within ${API_TIMEOUT_MS / 1000} s`, {
@@ -81,6 +82,34 @@ function timeoutAsBusy(requestId: string): ApiError {
       details: { retryAfterSeconds: 1 },
     },
   });
+}
+
+/**
+ * A write that outlasted its deadline may still have been committed, so it must not claim the safe
+ * "nothing happened, retry" meaning of `db_busy`. A 504 with its own code reads as a gateway failure.
+ */
+function timeoutOfWrite(requestId: string): ApiError {
+  return new ApiError(504, `API did not answer within ${API_TIMEOUT_MS / 1000} s`, {
+    error: {
+      code: 'api_timeout',
+      message: 'The platform did not answer in time. The change may or may not have been saved.',
+      correlationId: requestId,
+    },
+  });
+}
+
+/**
+ * Only a call with no body, or a small in-memory one, gets the default deadline. A file moving in
+ * either direction can take longer than 15 s on a slow link, and the deadline would cut it off.
+ */
+function getsDefaultDeadline(init: RequestInit | undefined): boolean {
+  const body = init?.body;
+  return (
+    body === undefined ||
+    body === null ||
+    typeof body === 'string' ||
+    body instanceof URLSearchParams
+  );
 }
 
 /** Async so a bad path rejects the promise instead of throwing synchronously at the call site. */
@@ -103,17 +132,31 @@ async function authedFetch(
   headers.delete('user-agent');
   if (incoming.forwardedFor !== undefined) headers.set('x-forwarded-for', incoming.forwardedFor);
   if (incoming.userAgent !== undefined) headers.set('user-agent', incoming.userAgent);
-  const ownSignal = init?.signal ?? undefined;
-  const signal = ownSignal ?? AbortSignal.timeout(API_TIMEOUT_MS);
+  // The deadline is for the wait until the API starts answering. It stops once the response headers
+  // arrive, so a long body (a file download) is never cut off by it.
+  const deadline =
+    init?.signal === undefined && getsDefaultDeadline(init) ? new AbortController() : undefined;
+  const timer =
+    deadline === undefined
+      ? undefined
+      : setTimeout(() => {
+          deadline.abort(new DOMException('The API did not answer in time.', 'TimeoutError'));
+        }, API_TIMEOUT_MS);
+  const signal = init?.signal ?? deadline?.signal;
   try {
     // Responses are per user: never let Next's data cache keep or share them.
-    return await fetch(url, { ...init, headers, signal, cache: 'no-store' });
+    return await fetch(url, { ...init, headers, ...(signal ? { signal } : {}), cache: 'no-store' });
   } catch (err) {
-    // Only our own deadline becomes the busy refusal; a caller's abort stays the caller's.
-    if (ownSignal === undefined && err instanceof Error && err.name === 'TimeoutError') {
-      throw timeoutAsBusy(requestId);
+    // Only our own deadline becomes a refusal; a caller's abort stays the caller's.
+    if (deadline?.signal.aborted && err instanceof Error && err.name === 'TimeoutError') {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      throw method === 'GET' || method === 'HEAD'
+        ? timeoutAsBusy(requestId)
+        : timeoutOfWrite(requestId);
     }
     throw err;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

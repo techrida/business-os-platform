@@ -167,17 +167,18 @@ describe('apiFetch browser context', () => {
     expect(lastCall().headers.get('x-request-id')).toBe(REQUEST_ID);
   });
 
-  it.each([['too short', 'abc'], ['has a space', 'abcd efgh1234'], ['too long', 'a'.repeat(65)]])(
-    'mints a fresh id instead of an incoming id that is %s',
-    async (_why, bad) => {
-      incoming({ 'x-request-id': bad });
-      fetchMock.mockResolvedValue(new Response('{}'));
-      await apiFetch(session, '/v1/me');
-      const id = lastCall().headers.get('x-request-id');
-      expect(id).not.toBe(bad);
-      expect(id).toMatch(/^[A-Za-z0-9-]{8,64}$/);
-    },
-  );
+  it.each([
+    ['too short', 'abc'],
+    ['has a space', 'abcd efgh1234'],
+    ['too long', 'a'.repeat(65)],
+  ])('mints a fresh id instead of an incoming id that is %s', async (_why, bad) => {
+    incoming({ 'x-request-id': bad });
+    fetchMock.mockResolvedValue(new Response('{}'));
+    await apiFetch(session, '/v1/me');
+    const id = lastCall().headers.get('x-request-id');
+    expect(id).not.toBe(bad);
+    expect(id).toMatch(/^[A-Za-z0-9-]{8,64}$/);
+  });
 });
 
 describe('apiFetch deadline', () => {
@@ -187,17 +188,6 @@ describe('apiFetch deadline', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  /** AbortSignal.timeout runs on Node's own timer, which fake timers do not move; drive it with them. */
-  function timeoutSignalOnFakeClock() {
-    return vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
-      const controller = new AbortController();
-      setTimeout(() => {
-        controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
-      }, ms);
-      return controller.signal;
-    });
-  }
 
   /** A fetch that never answers and rejects with the signal's reason once it aborts. */
   function hangingFetch() {
@@ -209,24 +199,22 @@ describe('apiFetch deadline', () => {
     );
   }
 
-  it('gives up after 15 s with the 503 busy refusal the pages already show', async () => {
-    const spy = timeoutSignalOnFakeClock();
-    hangingFetch();
-    const outcome = apiFetch(session, '/v1/me').then(
+  async function outcomeAfter(call: Promise<unknown>, ms: number): Promise<unknown> {
+    const outcome = call.then(
       () => 'resolved' as const,
       (err: unknown) => err,
     );
-
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(spy).toHaveBeenCalledWith(15_000);
     let settled = false;
     void outcome.then(() => (settled = true));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(ms - 1);
     expect(settled).toBe(false);
-
     await vi.advanceTimersByTimeAsync(1);
-    const err = await outcome;
+    return await outcome;
+  }
+
+  it('a read gives up after 15 s with the 503 busy refusal the pages already show', async () => {
+    hangingFetch();
+    const err = await outcomeAfter(apiFetch(session, '/v1/me'), 15_000);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 503 });
     expect(BUSY_BODY.safeParse((err as ApiError).body).success).toBe(true);
@@ -236,22 +224,47 @@ describe('apiFetch deadline', () => {
     expect((err as Error).message).not.toContain(TOKEN);
   });
 
-  it('passes the signal to fetch', async () => {
+  it('a write that times out is not called busy: it may have been saved', async () => {
+    hangingFetch();
+    const err = await outcomeAfter(
+      apiFetch(session, '/v1/me', { method: 'POST', body: '{"a":1}' }),
+      15_000,
+    );
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 504, body: { error: { code: 'api_timeout' } } });
+  });
+
+  it('stops the clock once the response headers arrive, so a long body is not cut off', async () => {
     fetchMock.mockResolvedValue(new Response('{}'));
     await apiFetch(session, '/v1/me');
-    expect(lastCall().init.signal).toBeInstanceOf(AbortSignal);
+    const signal = lastCall().init.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(signal?.aborted).toBe(false);
   });
+
+  it.each([
+    ['a Blob', () => new Blob(['x'])],
+    ['form data', () => new FormData()],
+    ['a byte array', () => new Uint8Array(4)],
+    ['a stream', () => new ReadableStream()],
+  ])(
+    'puts no default deadline on a call that sends %s (a file can take longer)',
+    async (_n, body) => {
+      fetchMock.mockResolvedValue(new Response('{}'));
+      await apiFetch(session, '/v1/me', { method: 'PUT', body: body() as BodyInit });
+      expect(lastCall().init.signal).toBeUndefined();
+    },
+  );
 
   it("uses the caller's own signal and leaves its abort alone", async () => {
     const controller = new AbortController();
-    const spy = vi.spyOn(AbortSignal, 'timeout');
     hangingFetch();
     const outcome = apiFetch(session, '/v1/me', { signal: controller.signal }).catch(
       (err: unknown) => err,
     );
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(20_000);
     expect(lastCall().init.signal).toBe(controller.signal);
-    expect(spy).not.toHaveBeenCalled();
     const reason = new DOMException('caller gave up', 'AbortError');
     controller.abort(reason);
     expect(await outcome).toBe(reason);
