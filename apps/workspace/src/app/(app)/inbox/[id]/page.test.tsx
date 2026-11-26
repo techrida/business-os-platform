@@ -392,6 +392,7 @@ it('renders the denial returned by the inbox endpoint', async () => {
   );
   const html = renderToStaticMarkup(await InboxPage({ searchParams: Promise.resolve({}) }));
   const paths = fetchMock.mock.calls.map(([url]) => new URL(url as URL | string).pathname);
-  expect(paths).toEqual(['/v1/approvals/inbox']);
+  // The summary read starts with the list read (U1-16); its answer is dropped when the list is denied.
+  expect(paths).toEqual(['/v1/approvals/inbox', '/v1/approvals/inbox']);
   expect(html).toContain('You have no approval assignment.');
 });
