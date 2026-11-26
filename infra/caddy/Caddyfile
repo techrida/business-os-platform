@@ -3,6 +3,8 @@
 
 (site_tls) {
 	tls {$CADDY_TLS:internal}
+	# Browsers that have seen the site once refuse plain HTTP to it (and its subdomains) for a year.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 }
 
 # Upstream connection reuse for the Node servers (workspace, portal, API, Login V2 UI).
@@ -115,6 +117,10 @@
 # API. /metrics is never served here (metrics live on an internal port).
 {$API_HOST:api.localhost} {
 	import site_tls
+
+	# Prod only: compose.prod.yaml mounts infra/caddy/api-restricted.caddy here, which answers 404 for every path
+	# outside callers do not need. Dev mounts nothing, so dev routing stays open.
+	import /etc/caddy/api.d/*
 
 	@metrics path /metrics /metrics/*
 	handle @metrics {
