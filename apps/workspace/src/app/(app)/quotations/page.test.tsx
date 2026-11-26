@@ -212,9 +212,9 @@ describe('quotations list', () => {
     );
 
     const html = await render();
-    expect(html).toContain(`href="/quotations/${Q1}/edit" aria-label="Edit QT-2082-0001"`);
+    expect(html).toContain(`aria-label="Edit QT-2082-0001" href="/quotations/${Q1}/edit"`);
     expect(html).not.toContain(`href="/quotations/${OPP}/edit"`);
-    expect(html).toContain(`href="/quotations/${OPP}" aria-label="View QT-2082-0042"`);
+    expect(html).toContain(`aria-label="View QT-2082-0042" href="/quotations/${OPP}"`);
   });
 
   it('shows the window and page links from the total, carrying filters and rows onward', async () => {

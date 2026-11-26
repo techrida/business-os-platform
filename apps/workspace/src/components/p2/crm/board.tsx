@@ -1,8 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
+import { linkKind } from '@/components/ui/link-kind';
 
 import { edgeScrollDelta } from './board-scroll';
 import styles from './crm.module.css';
@@ -305,9 +307,15 @@ function BoardCardItem({
       }}
       onDragEnd={onDragEnd}
     >
-      <a href={card.href} className={styles.cardTitle}>
-        {card.title}
-      </a>
+      {linkKind({ href: card.href }) === 'router' ? (
+        <Link href={card.href} prefetch={false} className={styles.cardTitle}>
+          {card.title}
+        </Link>
+      ) : (
+        <a href={card.href} className={styles.cardTitle}>
+          {card.title}
+        </a>
+      )}
       <span className={styles.cardMeta}>{card.number}</span>
       {card.subtitle ? <span className={styles.cardSub}>{card.subtitle}</span> : null}
       {card.value !== null ? <span className={styles.cardValue}>{card.value}</span> : null}

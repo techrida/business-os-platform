@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import {
   useCallback,
   useEffect,
@@ -18,6 +19,7 @@ import {
   popDot,
   type BellRing,
 } from '@/components/ui/bell-ring';
+import { linkKind } from '@/components/ui/link-kind';
 import { safeLocalPath } from '@/lib/kernel-ui';
 
 import styles from './notifications-bell.module.css';
@@ -270,11 +272,22 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
                   return (
                     <li key={item.id} className={unread ? styles.unread : undefined}>
                       {href !== null ? (
-                        // A plain link, not router.push: the page it opens is server-rendered
-                        // and must see the freshest data after the click marks the item read.
-                        <a href={href} className={cls} onClick={() => onItemClick(item)}>
-                          {content}
-                        </a>
+                        // Dynamic server page: the router refetches it on click, after onItemClick
+                        // has marked the item read. A route-handler link stays a plain anchor.
+                        linkKind({ href }) === 'router' ? (
+                          <Link
+                            href={href}
+                            prefetch={false}
+                            className={cls}
+                            onClick={() => onItemClick(item)}
+                          >
+                            {content}
+                          </Link>
+                        ) : (
+                          <a href={href} className={cls} onClick={() => onItemClick(item)}>
+                            {content}
+                          </a>
+                        )
                       ) : (
                         <div className={cls}>{content}</div>
                       )}
