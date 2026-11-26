@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { money } from '@/lib/kernel-format';
 
+import { ShellCountsProvider } from '@/components/shell/shell-counts';
+
 import OverviewPage from '../page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -17,9 +19,10 @@ const mocks = vi.hoisted(() => ({
   granted: new Set<string>(),
   requireStaffSession: vi.fn(),
   getNumberSystems: vi.fn(),
-  getMe: vi.fn(),
-  getInbox: vi.fn(),
+  getMeOrNull: vi.fn(),
+  getInboxPage: vi.fn(),
   getUnreadCount: vi.fn(),
+  getInbox: vi.fn(),
   listNotifications: vi.fn(),
   listCustomers: vi.fn(),
   getLeadSummary: vi.fn(),
@@ -30,8 +33,11 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/lib/display-settings', () => ({ getNumberSystems: mocks.getNumberSystems }));
-vi.mock('@/lib/api', () => ({ getMe: mocks.getMe }));
+// The one memoised `/v1/me` of the render, null when it fails (as the real one answers).
+vi.mock('@/lib/live-permissions', () => ({ getMeOrNull: mocks.getMeOrNull }));
 vi.mock('@/lib/api-kernel', () => ({
+  getInboxPage: mocks.getInboxPage,
+  // Still listed so a page that goes back to these is counted by the tests below, not crashed.
   getInbox: mocks.getInbox,
   getUnreadCount: mocks.getUnreadCount,
   listNotifications: mocks.listNotifications,
@@ -93,7 +99,10 @@ const activity = (createdByUserId: string | null, createdByName: string | null =
 });
 
 async function render(): Promise<string> {
-  return renderToStaticMarkup(await OverviewPage());
+  // The unread card shows the shell's own count, so the page renders inside the provider with one.
+  return renderToStaticMarkup(
+    <ShellCountsProvider initialNotifications={2}>{await OverviewPage()}</ShellCountsProvider>,
+  );
 }
 
 /** `<dt>label</dt><dd class="..">value</dd>` of a stat card. */
@@ -104,11 +113,12 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getNumberSystems.mockReset().mockResolvedValue(undefined);
   // userId is the identity sub; the app id and the name come separately, as /v1/me sends them.
-  mocks.getMe
+  mocks.getMeOrNull
     .mockReset()
     .mockResolvedValue({ userId: '312345678901234567', id: ME, displayName: 'Amanda Vance' });
-  mocks.getInbox.mockReset().mockResolvedValue([]);
-  mocks.getUnreadCount.mockReset().mockResolvedValue({ count: 2 });
+  mocks.getInboxPage.mockReset().mockResolvedValue({ items: [], total: 0 });
+  mocks.getInbox.mockReset();
+  mocks.getUnreadCount.mockReset();
   mocks.listNotifications.mockReset().mockResolvedValue([
     {
       id: '77777777-7777-4777-8777-777777777777',
@@ -153,11 +163,18 @@ describe('overview page', () => {
   });
 
   it('keeps Welcome back when the name is missing, is an email, or /v1/me fails', async () => {
-    mocks.getMe.mockResolvedValue({ userId: '312345678901234567', id: ME, displayName: null });
+    mocks.getMeOrNull.mockResolvedValue({
+      userId: '312345678901234567',
+      id: ME,
+      displayName: null,
+    });
     expect(await render()).toContain('Welcome back');
-    mocks.getMe.mockResolvedValue({ userId: '312345678901234567', displayName: 'amanda@x.test' });
+    mocks.getMeOrNull.mockResolvedValue({
+      userId: '312345678901234567',
+      displayName: 'amanda@x.test',
+    });
     expect(await render()).toContain('Welcome back');
-    mocks.getMe.mockRejectedValue(new Error('GET /v1/me failed with 502'));
+    mocks.getMeOrNull.mockResolvedValue(null);
     expect(await render()).toContain('Welcome back');
   });
 
@@ -217,7 +234,7 @@ describe('overview page', () => {
     expect(html).not.toContain('No activity yet');
 
     // Live grants win: one subject read brings the panel (and its honest empty state) back.
-    mocks.getMe.mockResolvedValue({
+    mocks.getMeOrNull.mockResolvedValue({
       userId: ME,
       permissions: [{ permission: 'customer.read' }],
     });
@@ -244,5 +261,23 @@ describe('overview page', () => {
     expect(html).toContain('href="/customers/new"');
     expect(html).not.toContain('Add user');
     expect(html).not.toContain('href="/opportunities"');
+  });
+
+  it('reads /v1/me once and takes the approvals count and rows from one inbox page read', async () => {
+    mocks.getInboxPage.mockResolvedValue({ items: [], total: 7 });
+    const html = await render();
+    expect(mocks.getMeOrNull).toHaveBeenCalledTimes(1);
+    expect(mocks.getMeOrNull).toHaveBeenCalledWith('tok');
+    expect(mocks.getInboxPage).toHaveBeenCalledTimes(1);
+    expect(mocks.getInboxPage).toHaveBeenCalledWith(expect.anything(), { limit: 5 });
+    expect(mocks.getInbox).not.toHaveBeenCalled();
+    expect(mocks.getUnreadCount).not.toHaveBeenCalled();
+    expect(html).toMatch(card('Pending approvals', 7));
+    expect(html).toContain('7 approvals to review');
+  });
+
+  it('shows no unread card until the shell has its count', async () => {
+    const html = renderToStaticMarkup(await OverviewPage());
+    expect(html).not.toContain('Unread notifications</dt>');
   });
 });
