@@ -4,7 +4,7 @@ name: dependency-review
 
 on:
   pull_request:
-    branches: [main, p4-main]
+    branches: [main]
 
 permissions:
   contents: read
