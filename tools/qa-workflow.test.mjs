@@ -154,3 +154,20 @@ test('a pull request runs the selector from its base commit, never its own copy'
     assert.match(step, /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/, file);
   }
 });
+
+test('every checkout in the four workflows drops its token, and dependabot watches the compose images', () => {
+  for (const file of ['ci', 'qa', 'codeql', 'dependency-review']) {
+    const source = readFileSync(
+      new URL(`../.github/workflows/${file}.yml`, import.meta.url),
+      'utf8',
+    );
+    const checkouts = source.split('- uses: actions/checkout@').slice(1);
+    assert.ok(checkouts.length > 0, file);
+    for (const rest of checkouts) {
+      const step = rest.slice(0, rest.search(/\n\s*\n|\n {6}- /));
+      assert.match(step, /persist-credentials: false/, `${file}.yml: ${step.slice(0, 40)}`);
+    }
+  }
+  const dependabot = readFileSync(new URL('../.github/dependabot.yml', import.meta.url), 'utf8');
+  assert.match(dependabot, /package-ecosystem: docker-compose\n {4}directory: \/infra\/compose/);
+});
