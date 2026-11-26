@@ -64,7 +64,7 @@ for (const entry of list) for (const k of ['password','totpSecret']) if (typeof 
 end
 
 step "start api, worker, workspace (devtools build), portal"
-set -a; source .env; source .dev/zitadel.env; source .dev/zitadel-api.env; set +a
+set -a; source .env; source .dev/zitadel.env; set +a
 export NEXT_TELEMETRY_DISABLED=1 NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt"
 export BOS_DEV_PERSONAS_FILE="$PWD/.dev/personas.json" BOS_DEV_LOGIN_CLIENT_TOKEN_FILE="$PWD/.dev/login-client.pat"
 export SMTP_URL=smtp://127.0.0.1:1025 FILES_ROOT="$PWD/.dev/files" CLAMD_HOST=127.0.0.1 CLAMD_PORT=3310
@@ -76,8 +76,9 @@ export DATABASE_URL="${DATABASE_URL/@postgres:/@127.0.0.1:}" VALKEY_URL="${VALKE
 mkdir -p .dev/files .dev/logs
 
 # Both Next apps are built after the API is up: ZITADEL's webhook target is the API on :3001.
-(NODE_ENV=development node apps/api/dist/main.js > .dev/logs/api.log 2>&1 &)
-(NODE_ENV=development METRICS_PORT=3339 node apps/api/dist/worker.js > .dev/logs/worker.log 2>&1 &)
+# zitadel-api.env (provisioner token, signing key) is loaded inside these two subshells only: the web apps below never see it.
+(set -a; source .dev/zitadel-api.env; set +a; NODE_ENV=development node apps/api/dist/main.js > .dev/logs/api.log 2>&1 &)
+(set -a; source .dev/zitadel-api.env; set +a; NODE_ENV=development METRICS_PORT=3339 node apps/api/dist/worker.js > .dev/logs/worker.log 2>&1 &)
 for i in $(seq 1 60); do
   [ "$(curl -s -o /dev/null -w '%{http_code}' --cacert .dev/caddy-root.crt https://api.localhost/health/ready || true)" = 200 ] && break
   sleep 3

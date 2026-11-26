@@ -386,3 +386,16 @@ test('clamd refuses the SHUTDOWN command from the network', () => {
   const conf = readFileSync(new URL('../../infra/clamav/clamd.conf', import.meta.url), 'utf8');
   assert.match(conf, /^EnableShutdownCommand no$/m);
 });
+
+test('the CI stack script loads zitadel-api.env only inside the api and worker subshells', () => {
+  const script = readFileSync(new URL('../../.github/qa/up.sh', import.meta.url), 'utf8');
+  const lines = script.split(/\r?\n/).filter((l) => /zitadel-api\.env/.test(l) && !/^\s*#/.test(l));
+  assert.ok(lines.length >= 2, 'api and worker must load the file');
+  for (const line of lines) {
+    assert.match(
+      line,
+      /^\(set -a; source \.dev\/zitadel-api\.env; set \+a; .*dist\/(main|worker)\.js/,
+      line,
+    );
+  }
+});

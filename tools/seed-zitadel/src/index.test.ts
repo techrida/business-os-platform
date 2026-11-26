@@ -1031,6 +1031,25 @@ describe('@bos/seed-zitadel', () => {
       ]);
     });
 
+    it('keeps the file and fails when the bootstrap account is not found', async () => {
+      const { api, deps } = setup();
+      const result = await runSeed(deps);
+      const removed: string[] = [];
+      await expect(
+        finalizeBootstrap({
+          api,
+          staffOrgId: `${result.staffOrgId}-elsewhere`,
+          patFile: '/zitadel/admin/admin.pat',
+          removeFile: (path) => {
+            removed.push(path);
+            return Promise.resolve();
+          },
+          log: () => undefined,
+        }),
+      ).rejects.toThrow(/not found/);
+      expect(removed).toEqual([]);
+    });
+
     it('keeps the file when the deactivate call fails, so the run can be repeated', async () => {
       const { api, deps } = setup();
       const result = await runSeed(deps);

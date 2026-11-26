@@ -715,15 +715,16 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     ZITADEL_CUSTOMER_ORG_ID: orgIds.customer,
     ZITADEL_VENDOR_ORG_ID: orgIds.vendor,
   };
-  if (await files.write('zitadel.env', renderEnv(zitadelEnv))) {
-    changed('wrote .dev/zitadel.env');
-  }
   // The secrets go to their own file, read by api and worker only (compose.yaml). Only when known: a lost
-  // key stays absent, so the file renders the same on every run.
+  // key stays absent, so the file renders the same on every run. Written BEFORE zitadel.env: on a stack that
+  // still has the secrets in zitadel.env, a failure between the two writes must not leave them in neither.
   const apiEnv: Record<string, string> = { ZITADEL_PROVISIONER_TOKEN: provisionerToken };
   if (signingKey) apiEnv['ZITADEL_ACTIONS_SIGNING_KEY'] = signingKey;
   if (await files.write(API_ENV_FILE, renderEnv(apiEnv))) {
     changed(`wrote .dev/${API_ENV_FILE}`);
+  }
+  if (await files.write('zitadel.env', renderEnv(zitadelEnv))) {
+    changed('wrote .dev/zitadel.env');
   }
   // Only the portal's own client id: issuer, audience and the org ids come from zitadel.env, which the
   // portal reads first. Without PORTAL_PUBLIC_URL an existing file is left alone.
@@ -816,8 +817,13 @@ export async function finalizeBootstrap(deps: FinalizeDeps): Promise<string[]> {
   const done: string[] = [];
   const account = await api.findUser(staffOrgId, BOOTSTRAP_SA_USER);
   if (!account) {
-    log(`finalize: ${BOOTSTRAP_SA_USER} not found in the staff org (already removed?)`);
-  } else if (await api.deactivateUser(account.id)) {
+    // The lookup does not filter by state, so "not found" means the account is not where we looked. Deleting the
+    // token file now could leave a live IAM_OWNER token in ZITADEL with no file to show for it.
+    throw new Error(
+      `finalize refused: ${BOOTSTRAP_SA_USER} was not found in the staff org, so its token file is kept.`,
+    );
+  }
+  if (await api.deactivateUser(account.id)) {
     done.push(`deactivated ${BOOTSTRAP_SA_USER}`);
   } else {
     log(`finalize: ${BOOTSTRAP_SA_USER} was already deactivated`);

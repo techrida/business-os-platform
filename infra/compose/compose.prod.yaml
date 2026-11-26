@@ -8,7 +8,8 @@
 #
 # Hardening still to do before real data (tracked for P1):
 #   - split ZITADEL into init / setup / start (see the "prodlike" overlay in ZITADEL's deploy/compose)
-#   - delete admin.pat plus the bootstrap service account after setup (ZITADEL_PAT_EXPIRATION is already required below)
+#   - delete admin.pat plus the bootstrap service account after setup: `seed-zitadel ... --finalize` does it (see compose.yaml);
+#     ZITADEL_PAT_EXPIRATION is already required below
 #   - the public auth host now answers 404 for the console and admin APIs (infra/caddy/auth-restricted.caddy), but
 #     tools/seed-zitadel reaches those APIs through OIDC_ISSUER, i.e. through that host. In prod the seed needs
 #     another route to ZITADEL (internal URL with the public Host header) or a temporary unrestricted Caddy.
