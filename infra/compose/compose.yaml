@@ -474,6 +474,7 @@ services:
       CLAMD_HOST: clamav
       CLAMD_PORT: '3310'
       SMTP_URL: smtp://mailpit:1025 # mailpit exists in the dev overlay only; prod overrides this
+      SMTP_ALLOW_PLAINTEXT: 'true' # the image runs NODE_ENV=production, which refuses plain smtp:// (mailpit has no TLS); prod removes this
       MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
       # Signs the 60 s single-use document links. The same value must be in .env for a host-run API.
       DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
@@ -532,6 +533,7 @@ services:
       CLAMD_HOST: clamav
       CLAMD_PORT: '3310'
       SMTP_URL: smtp://mailpit:1025
+      SMTP_ALLOW_PLAINTEXT: 'true' # as in api
       MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
       DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost}

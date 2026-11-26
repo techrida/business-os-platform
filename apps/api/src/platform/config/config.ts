@@ -66,6 +66,8 @@ const coreShape = (service: ServiceName) => ({
     .string()
     .refine(urlWithProtocol(['smtp:', 'smtps:']), 'must be an smtp:// or smtps:// URL')
     .optional(),
+  // 'true' lets production use a plain smtp:// URL. Set only by compose for the dev mailbox (mailpit has no TLS).
+  SMTP_ALLOW_PLAINTEXT: blankAsUnset,
   MAIL_FROM: z
     .string()
     .refine((v) => v.includes('@'), 'must contain an email address')
@@ -130,6 +132,16 @@ const API_REQUIRED_IN_PRODUCTION = [
   // (ADR 0019, the 10-minute reconcile keeps users correct), and without a key the hook answers 401.
 ] as const;
 
+/** True for `smtps:` and for `smtp:` carrying `requireTLS=true`. The URL is never put in a message. */
+function smtpUsesTls(url: string): boolean {
+  if (url.toLowerCase().startsWith('smtps:')) return true;
+  try {
+    return new URL(url).searchParams.get('requireTLS') === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /** Production must state every kernel value itself: the names only, never a value, in the message. */
 function kernelProblems(required: readonly string[]) {
   return (cfg: { NODE_ENV?: string } & Record<string, unknown>, ctx: z.RefinementCtx): void => {
@@ -139,14 +151,16 @@ function kernelProblems(required: readonly string[]) {
         ctx.addIssue({ code: 'custom', path: [key], message: 'is required in production' });
       }
     }
-    // The SMTP URL carries the relay password. Production sends it only over TLS from the first byte
-    // (smtps://); the plain smtp:// scheme is for the dev mailbox.
+    // The SMTP URL carries the relay password, so production sends it only over TLS: smtps:// (TLS from the
+    // first byte) or smtp:// with requireTLS=true (STARTTLS that nodemailer refuses to skip). SMTP_ALLOW_PLAINTEXT
+    // is for the compose dev mailbox only; a real deployment leaves it unset.
     const smtp = cfg['SMTP_URL'];
-    if (typeof smtp === 'string' && !smtp.toLowerCase().startsWith('smtps:')) {
+    if (typeof smtp === 'string' && cfg['SMTP_ALLOW_PLAINTEXT'] !== 'true' && !smtpUsesTls(smtp)) {
       ctx.addIssue({
         code: 'custom',
         path: ['SMTP_URL'],
-        message: 'must use smtps:// in production (the plain smtp:// scheme is not encrypted)',
+        message:
+          'must use smtps:// or smtp:// with requireTLS=true in production (plain smtp:// is not encrypted)',
       });
     }
   };
@@ -482,6 +496,7 @@ export abstract class CoreConfig {
   abstract readonly CLAMD_HOST: string;
   abstract readonly CLAMD_PORT: number;
   abstract readonly SMTP_URL: string;
+  abstract readonly SMTP_ALLOW_PLAINTEXT?: string | undefined;
   abstract readonly MAIL_FROM: string;
   abstract readonly ZITADEL_API_URL: string;
   abstract readonly WORKSPACE_PUBLIC_URL: string;

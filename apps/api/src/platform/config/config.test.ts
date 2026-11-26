@@ -228,7 +228,7 @@ describe('P1 kernel settings', () => {
   it('refuses a plain smtp:// SMTP_URL in production, in the api and the worker, and keeps it for dev and test', () => {
     const plain = 'smtp://relay-user:relay-pw@smtp.example.com:587';
     const expected = [
-      'SMTP_URL: must use smtps:// in production (the plain smtp:// scheme is not encrypted)',
+      'SMTP_URL: must use smtps:// or smtp:// with requireTLS=true in production (plain smtp:// is not encrypted)',
     ];
     const list = problems(() => loadAppConfig({ ...prod, SMTP_URL: plain }));
     expect(list).toEqual(expected);
@@ -250,6 +250,15 @@ describe('P1 kernel settings', () => {
     ).toEqual(expected);
     expect(loadAppConfig({ ...prod, SMTP_URL: 'SMTPS://smtp.example.com:465' }).SMTP_URL).toBe(
       'SMTPS://smtp.example.com:465',
+    );
+    // STARTTLS that cannot be skipped is encrypted too; the compose dev mailbox opts out by name.
+    const starttls = 'smtp://smtp.example.com:587?requireTLS=true';
+    expect(loadAppConfig({ ...prod, SMTP_URL: starttls }).SMTP_URL).toBe(starttls);
+    expect(
+      problems(() => loadAppConfig({ ...prod, SMTP_URL: `${plain}?requireTLS=false` })),
+    ).toEqual(expected);
+    expect(loadAppConfig({ ...prod, SMTP_URL: plain, SMTP_ALLOW_PLAINTEXT: 'true' }).SMTP_URL).toBe(
+      plain,
     );
     for (const NODE_ENV of ['development', 'test']) {
       expect(loadAppConfig({ ...base, NODE_ENV, SMTP_URL: plain }).SMTP_URL).toBe(plain);
