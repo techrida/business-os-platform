@@ -45,7 +45,7 @@ test('apps/workspace only: workspace and its specs, not the portal or the API te
     [r.workspace, r['qa-workspace'], r.portal, r['qa-portal'], r.api],
     [true, true, false, false, false],
   );
-  assert.equal(qaMatrix(r).include.length, 4);
+  assert.equal(qaMatrix(r, { quarantine: 'x' }).include.length, 4);
 });
 
 test('apps/api: both browser suites run, because both apps serve from the API', () => {
@@ -122,11 +122,18 @@ test('an empty diff, and every event except pull_request, run everything', () =>
     assert.equal(affected(['docs/a.md'], packages, { event }).full, true, event);
 });
 
-test('the full matrix keeps the job names qa specs 1/2/3 and qa quarantined -', () => {
-  assert.deepEqual(
-    qaMatrix(run('pnpm-lock.yaml')).include.map((m) => `${m.mode} ${m.id}`),
-    ['specs 1', 'specs 2', 'specs 3', 'quarantined -'],
-  );
+test('the full matrix adds qa quarantined only when the quarantine file has content', () => {
+  const names = (quarantine) =>
+    qaMatrix(run('pnpm-lock.yaml'), { quarantine }).include.map((m) => `${m.mode} ${m.id}`);
+  assert.deepEqual(names('p4/line-item-widths'), [
+    'specs 1',
+    'specs 2',
+    'specs 3',
+    'quarantined -',
+  ]);
+  for (const empty of ['', '\n', '  \n\t'])
+    assert.deepEqual(names(empty), ['specs 1', 'specs 2', 'specs 3'], JSON.stringify(empty));
+  assert.deepEqual(names(undefined), ['specs 1', 'specs 2', 'specs 3']);
   assert.equal(qaMatrix(run('docs/a.md')).include.length, 0);
 });
 

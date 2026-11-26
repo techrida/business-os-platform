@@ -156,20 +156,28 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
   };
 }
 
-// The Playwright matrix for qa.yml: `ws` says whether the shard also runs the workspace specs.
-export function qaMatrix(result) {
+// The Playwright matrix for qa.yml: `ws` says whether the shard also runs the workspace specs. The non-blocking
+// `quarantined` job is only added when .github/qa/quarantine.txt has content: with nothing quarantined it would
+// bring up the whole stack just to print "Nothing is quarantined.".
+export function qaMatrix(result, { quarantine = '' } = {}) {
   const include = [];
   if (result['qa-workspace']) {
     include.push(
       { mode: 'specs', id: '1', shard: '1/3', ws: true },
       { mode: 'specs', id: '2', shard: '2/3', ws: true },
       { mode: 'specs', id: '3', shard: '3/3', ws: true },
-      { mode: 'quarantined', id: '-', shard: '1/1', ws: true },
     );
+    if (quarantine.trim() !== '')
+      include.push({ mode: 'quarantined', id: '-', shard: '1/1', ws: true });
   } else if (result['qa-portal']) {
     include.push({ mode: 'specs', id: '1', shard: '1/3', ws: false });
   }
   return { include };
+}
+
+function readQuarantine() {
+  const file = join(REPO_ROOT, '.github/qa/quarantine.txt');
+  return existsSync(file) ? readFileSync(file, 'utf8') : '';
 }
 
 function git(...args) {
@@ -211,7 +219,7 @@ function main() {
     }
   }
   const result = affected(files, packages, { event });
-  const matrix = qaMatrix(result);
+  const matrix = qaMatrix(result, { quarantine: readQuarantine() });
   const lines = {
     ...Object.fromEntries(
       Object.entries(result)
