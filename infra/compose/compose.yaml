@@ -77,6 +77,9 @@ networks:
   # edge, because Docker cannot publish ports from a container that is only on an internal network.)
   backend:
     internal: true
+  # egress: a route out and nothing else. Only clamav is on it (freshclam downloads signatures); no other service and
+  # not Caddy, so nothing from the internet or from the edge network can reach the scanner.
+  egress: {}
 
 volumes:
   pgdata: {}
@@ -88,7 +91,10 @@ volumes:
   files: {}
   # ClamAV signatures (~300 MB). Kept in a volume so a restart does not download them again.
   clamav-db: {}
+  # login-client.pat: written by zitadel-api, read by zitadel-login. admin.pat is NOT here (see zitadel-admin).
   zitadel-bootstrap: {}
+  # admin.pat (the bootstrap service account's token, IAM_OWNER). Mounted in zitadel-api and seed-zitadel only.
+  zitadel-admin: {}
   caddy-data: {}
   caddy-config: {}
 
@@ -279,7 +285,7 @@ services:
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: bos-bootstrap-sa
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: BOS bootstrap service account
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:-2099-01-01T00:00:00Z}
-      ZITADEL_FIRSTINSTANCE_PATPATH: /zitadel/bootstrap/admin.pat
+      ZITADEL_FIRSTINSTANCE_PATPATH: /zitadel/admin/admin.pat
 
       # Login V2: the login-client PAT is written here and read by zitadel-login through the shared volume.
       ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /zitadel/bootstrap/login-client.pat
@@ -301,6 +307,7 @@ services:
       start_period: 60s
     volumes:
       - zitadel-bootstrap:/zitadel/bootstrap:rw
+      - zitadel-admin:/zitadel/admin:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -315,7 +322,8 @@ services:
     build:
       context: ../..
       dockerfile: infra/login/Dockerfile
-    user: '0' # same reason as zitadel-api; also lets it read the root-owned PAT file
+    # No `user: '0'`: the image runs as its own uid (1001). login-client.pat is the only file it reads, and it is
+    # mode 0644 (fresh stacks) or owned by uid 1001 (infra/scripts/move-admin-pat.sh, existing stacks).
     environment:
       ZITADEL_API_URL: http://zitadel-api:8080
       NEXT_PUBLIC_BASE_PATH: /ui/v2/login
@@ -428,9 +436,9 @@ services:
       timeout: 10s
       retries: 5
       start_period: 300s
-    # No published port here. Both networks on purpose: freshclam must reach database.clamav.net, and `backend`
-    # is internal (no route out). api and worker reach it as clamav:3310 over either network.
-    networks: [backend, edge]
+    # No published port here. `backend` is internal (no route out) and carries api and worker's scan traffic to
+    # clamav:3310; `egress` is the route out for freshclam (database.clamav.net). Not on `edge`.
+    networks: [backend, egress]
     deploy:
       resources:
         limits:
@@ -481,10 +489,13 @@ services:
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost} # through Caddy, trusted via NODE_EXTRA_CA_CERTS
       WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
       PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost} # customer email links point at the portal
-    # OIDC_ISSUER, OIDC_AUDIENCE, OIDC_CLIENT_ID, ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY come
-    # from the seed output. The root .env is deliberately not passed in: it holds host-side values (127.0.0.1 URLs).
+    # zitadel.env (OIDC_ISSUER, OIDC_AUDIENCE, OIDC_CLIENT_ID, org ids) and zitadel-api.env (ZITADEL_PROVISIONER_TOKEN
+    # and ZITADEL_ACTIONS_SIGNING_KEY) are the seed output. The token file goes to api and worker only: the web apps
+    # never see it. The root .env is deliberately not passed in: it holds host-side values (127.0.0.1 URLs).
     env_file:
       - path: ../../.dev/zitadel.env
+        required: false
+      - path: ../../.dev/zitadel-api.env
         required: false
     volumes:
       - *ca-mount
@@ -531,7 +542,7 @@ services:
       CLAMD_PORT: '3310'
       SMTP_URL: smtp://mailpit:1025
       MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
-      DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
+      # No DOCS_LINK_SECRET: only the api signs and checks document links, the worker never does.
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost}
       WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
       PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost} # customer email links point at the portal
@@ -539,6 +550,8 @@ services:
       GOTENBERG_URL: http://gotenberg:3000
     env_file:
       - path: ../../.dev/zitadel.env
+        required: false
+      - path: ../../.dev/zitadel-api.env
         required: false
     volumes:
       - *ca-mount
@@ -698,13 +711,17 @@ services:
   seed-zitadel:
     profiles: [tools]
     image: node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
-    user: '0' # admin.pat in the bootstrap volume is root-owned
+    user: '0' # admin.pat in the zitadel-admin volume is root-owned
     working_dir: /repo
     # ASSUMPTION: U6 builds tools/seed-zitadel to dist/index.js. Override the command if it runs through tsx.
+    # Production only, as the last step: `... run --rm seed-zitadel node tools/seed-zitadel/dist/index.js --finalize`
+    # also deactivates bos-bootstrap-sa and deletes admin.pat. Dev and testrun never do: the next seed needs the token.
+    # The seed refuses a non-local issuer unless SEED_ALLOW_NON_LOCAL=1 is set, and --finalize refuses to run while the
+    # seed still lists manual steps (they need the token). Run the seed to a clean finish first, then finalize.
     command: ['node', 'tools/seed-zitadel/dist/index.js']
     environment:
       OIDC_ISSUER: https://${AUTH_HOST:-auth.localhost}
-      ZITADEL_ADMIN_PAT_FILE: /zitadel/bootstrap/admin.pat
+      ZITADEL_ADMIN_PAT_FILE: /zitadel/admin/admin.pat
       DATABASE_MIGRATE_URL: postgresql://bos_owner:${BOS_DB_OWNER_PASSWORD}@postgres:5432/bos
       BOS_DEV_PERSONAS_FILE: /repo/.dev/personas.json
       NODE_EXTRA_CA_CERTS: /repo/.dev/caddy-root.crt
@@ -716,7 +733,8 @@ services:
     volumes:
       - ../..:/repo:ro
       - ../../.dev:/repo/.dev:rw
-      - zitadel-bootstrap:/zitadel/bootstrap:ro
+      # rw so that `--finalize` (production only) can delete admin.pat. A normal run only reads it.
+      - zitadel-admin:/zitadel/admin:rw
     restart: 'no'
     networks: [edge, backend]
     deploy:
