@@ -18,14 +18,16 @@ on:
         description: 'Run each selected spec this many times (a stability check of new specs), e.g. 3'
         required: false
         default: '1'
+  # Kuu 2026-11-26: only main runs QA (pushes and pull requests into main).
   push:
-    branches: [main, p4-main, 'r6/**', 'kuu/**']
+    branches: [main]
   # Weekly full run: catches anything the per-pull-request selection (tools/affected.mjs) missed.
   schedule:
     - cron: '47 3 * * 1'
   # Every pull request, with no path filter: a required "qa specs 1/2/3" check must report on a docs-only or
   # tools-only PR too, or the PR waits for it forever.
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
