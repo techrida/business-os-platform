@@ -60,7 +60,10 @@ export function serializeLoggedRequest<T extends LoggedRequest>(req: T): T {
   const headers = req.headers;
   if (typeof headers === 'object' && headers !== null && 'referer' in headers) {
     const referer = (headers as { referer?: unknown }).referer;
-    if (typeof referer === 'string') (headers as { referer: string }).referer = cutAtQuery(referer);
+    // A copy: pino hands over the live request headers, and the real referer must stay as it was sent.
+    if (typeof referer === 'string') {
+      req.headers = { ...(headers as object), referer: cutAtQuery(referer) };
+    }
   }
   return req;
 }

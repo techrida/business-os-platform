@@ -89,10 +89,13 @@ describe('request url in logs', () => {
       url: '/v1/leads',
       headers: { referer: 'https://app.example.com/leads?q=ram%40example.com', host: 'api' },
     };
+    const original = req.headers;
     expect(serializeLoggedRequest(req).headers).toEqual({
       referer: 'https://app.example.com/leads',
       host: 'api',
     });
+    // The request's own headers are not edited.
+    expect(original.referer).toBe('https://app.example.com/leads?q=ram%40example.com');
   });
 });
 
