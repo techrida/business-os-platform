@@ -41,7 +41,7 @@ step "CA, migrate, seed"
 bash infra/scripts/export-dev-ca.sh
 bash infra/scripts/migrate-dev.sh
 dc --profile tools run --rm seed-zitadel
-docker cp "$(dc ps -q zitadel-api)":/zitadel/bootstrap/admin.pat .dev/admin.pat
+docker cp "$(dc ps -q zitadel-api)":/zitadel/admin/admin.pat .dev/admin.pat
 set -a; source .dev/zitadel.env; set +a
 NODE_ENV=development NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt" \
   BOS_DEV_BOOTSTRAP_TOKEN_FILE=.dev/admin.pat BOS_DEV_LOGIN_CLIENT_TOKEN_FILE=.dev/login-client.pat \
@@ -64,7 +64,7 @@ for (const entry of list) for (const k of ['password','totpSecret']) if (typeof 
 end
 
 step "start api, worker, workspace (devtools build), portal"
-set -a; source .env; source .dev/zitadel.env; set +a
+set -a; source .env; source .dev/zitadel.env; source .dev/zitadel-api.env; set +a
 export NEXT_TELEMETRY_DISABLED=1 NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt"
 export BOS_DEV_PERSONAS_FILE="$PWD/.dev/personas.json" BOS_DEV_LOGIN_CLIENT_TOKEN_FILE="$PWD/.dev/login-client.pat"
 export SMTP_URL=smtp://127.0.0.1:1025 FILES_ROOT="$PWD/.dev/files" CLAMD_HOST=127.0.0.1 CLAMD_PORT=3310

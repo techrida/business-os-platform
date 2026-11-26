@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the whole P0 app in containers (prod-like): migrate (one-shot), api, worker, workspace behind Caddy.
-# Needs: core stack up, `pnpm seed` done (.dev/zitadel.env), images bos/api:dev and bos/workspace:dev built.
+# Needs: core stack up, `pnpm seed` done (.dev/zitadel.env and .dev/zitadel-api.env), images bos/api:dev and bos/workspace:dev built.
 # Usage (repo root): bash infra/scripts/app-up.sh
 set -euo pipefail
 export WORKSPACE_UPSTREAM=workspace:3000 API_UPSTREAM=api:3001
