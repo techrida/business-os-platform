@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { expect, type Locator, type Page } from '@playwright/test';
 import { generate } from 'otplib';
 
@@ -41,8 +45,37 @@ const TOTP_PERIOD_S = 30;
 /** If fewer seconds than this remain in the window, wait for the next one before generating. */
 const TOTP_MIN_REMAINING_S = 3;
 
-/** The TOTP window each secret last produced a code in during this worker's lifetime. */
-const lastWindowBySecret = new Map<string, number>();
+/**
+ * Where the window each secret last produced a code in is kept: one small file per secret, so parallel workers (the
+ * warm-up signs six personas in at once) never write the same file. It lives under the git-ignored `.dev/` and holds a
+ * hash of the secret, never the secret. `BOS_E2E_TOTP_STATE_DIR` moves it (the unit test does).
+ */
+const totpStateDir = (): string =>
+  process.env.BOS_E2E_TOTP_STATE_DIR ?? path.resolve(process.cwd(), '../../.dev/totp-windows');
+const totpStateFile = (secret: string): string =>
+  path.join(
+    totpStateDir(),
+    `${createHash('sha256').update(secret).digest('hex').slice(0, 32)}.txt`,
+  );
+
+/**
+ * The window this secret last produced a code in, `undefined` when it never has (no file), `NaN` when the file is there
+ * but unreadable: a torn write is treated as "used", never as "fresh".
+ */
+function lastTotpWindow(secret: string): number | undefined {
+  try {
+    return Number.parseInt(readFileSync(totpStateFile(secret), 'utf8').trim(), 10);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    return Number.NaN;
+  }
+}
+
+function rememberTotpWindow(secret: string, window: number): void {
+  mkdirSync(totpStateDir(), { recursive: true });
+  writeFileSync(totpStateFile(secret), `${window}\n`);
+}
+
 const currentTotpWindow = (nowMs: number = Date.now()): number =>
   Math.floor(nowMs / 1000 / TOTP_PERIOD_S);
 
@@ -54,21 +87,26 @@ export function secondsLeftInTotpWindow(nowMs: number = Date.now()): number {
 /**
  * A code ZITADEL will still accept after the browser has submitted it. A code generated in the
  * last couple of seconds of a window can expire in flight, so this waits for the next window then.
- * On a worker's first use, also wait: Playwright restarts workers after failures, while ZITADEL
- * still remembers the previous worker's consumed code. Starting a fresh window avoids that replay.
+ * ZITADEL accepts each code once, and it remembers codes across Playwright's worker restarts (a failed test
+ * restarts the worker), so what a secret last used is kept in a file, not in this process: the wait happens only
+ * when this secret already produced a code in the current window, or its state cannot be read. A secret that
+ * has never signed in, or last signed in during an earlier window, signs in at once.
  * SHA-1, 6 digits and 30 s are ZITADEL's fixed TOTP parameters, spelled out so a future change in
  * the library's defaults cannot silently break the logins.
  */
 export async function freshTotpCode(secret: string, page: Page): Promise<string> {
   const normalized = secret.replace(/\s+/g, '').toUpperCase();
   const left = secondsLeftInTotpWindow();
-  const previous = lastWindowBySecret.get(normalized);
-  // ZITADEL accepts each code once: a persona that signs in twice inside one 30 s window (the exit
-  // spec, then the inbox spec) would send a used code and stall on the OTP page. Wait it out.
-  if (previous === undefined || previous === currentTotpWindow() || left < TOTP_MIN_REMAINING_S) {
+  const previous = lastTotpWindow(normalized);
+  // A persona that signs in twice inside one 30 s window (the exit spec, then the inbox spec) would send a used code
+  // and stall on the OTP page. Wait it out.
+  if (
+    (previous !== undefined && (Number.isNaN(previous) || previous === currentTotpWindow())) ||
+    left < TOTP_MIN_REMAINING_S
+  ) {
     await page.waitForTimeout(Math.ceil(left * 1000) + 250);
   }
-  lastWindowBySecret.set(normalized, currentTotpWindow());
+  rememberTotpWindow(normalized, currentTotpWindow());
   return generate({
     secret: normalized,
     strategy: 'totp',
