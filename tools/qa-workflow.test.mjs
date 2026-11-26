@@ -32,3 +32,19 @@ test('ci required always reports and needs every ci job', () => {
     /ci-required:\n {4}name: ci required\n {4}if: \$\{\{ always\(\) \}\}\n {4}needs: \[changes, checks, secrets, e2e, web, docker\]/,
   );
 });
+
+test('the tools tests run from a glob that includes tools/policy, in ci.yml and in tools/gate.sh', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const gate = readFileSync(new URL('./gate.sh', import.meta.url), 'utf8');
+  for (const [name, source] of [
+    ['ci.yml', ci],
+    ['tools/gate.sh', gate],
+  ]) {
+    const line = source.split('\n').find((l) => l.includes('node --test'));
+    assert.ok(line, `${name} has a node --test line`);
+    // Quoted, so node (not the shell) expands them: an unmatched pattern is then ignored instead of passed on literally.
+    assert.match(line, /"tools\/\*\.test\.mjs"/, name);
+    assert.match(line, /"tools\/policy\/\*\.test\.mjs"/, name);
+    assert.doesNotMatch(line, /tools\/(affected|qa-[a-z-]+|check-public-repo)\.test\.mjs/, name);
+  }
+});
