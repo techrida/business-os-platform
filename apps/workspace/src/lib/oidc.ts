@@ -8,7 +8,7 @@ import { z } from 'zod';
 
 import { cookieName } from './cookie-name';
 import { getEnv } from './env';
-import { safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
+import { onClientError, safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
 
 /**
  * OIDC against ZITADEL with openid-client v6 (functional API).
@@ -157,7 +157,10 @@ let oidcRedis: Redis | undefined;
  * on first use, with the same fail-fast options as the session client.
  */
 export function getOidcRedis(): Redis {
-  oidcRedis ??= new Redis(getEnv().OIDC_STATE_VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+  if (!oidcRedis) {
+    oidcRedis = new Redis(getEnv().OIDC_STATE_VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+    onClientError(oidcRedis, 'oidc');
+  }
   return oidcRedis;
 }
 

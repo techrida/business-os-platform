@@ -129,8 +129,29 @@ let redis: Redis | undefined;
 
 /** One shared connection per process, created on first use (so `next build` needs no Valkey). */
 export function getRedis(): Redis {
-  redis ??= new Redis(getEnv().VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+  if (!redis) {
+    redis = new Redis(getEnv().VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+    onClientError(redis, 'session');
+  }
   return redis;
+}
+
+/**
+ * ioredis emits `error` for every failed connect and reconnect. With no listener it prints the whole
+ * error to the console, and the message of an ioredis error can carry the host, the key and the stored
+ * record. This listener logs the error name only, so the line is safe and carries the one thing an
+ * operator needs: that the client is failing. Shared with the OIDC state client.
+ */
+export function onClientError(client: Redis, which: 'session' | 'oidc'): void {
+  client.on('error', (err: unknown) => {
+    console.warn(
+      JSON.stringify({
+        event: 'valkey.client_error',
+        client: which,
+        error: err instanceof Error ? err.name : 'unknown',
+      }),
+    );
+  });
 }
 
 /** `getRedis()` once it can take commands; see `whenReady`. */
