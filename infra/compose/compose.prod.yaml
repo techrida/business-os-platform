@@ -1,5 +1,8 @@
 # Prod overlay: use together with compose.yaml, always with --env-file .env (see the header of compose.yaml).
-#   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.prod.yaml --profile core --profile app up -d --wait
+#   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.prod.yaml --profile core --profile app --profile files up -d --wait
+#
+# Add `--profile obs` to start the metrics stack (Prometheus and friends); `--profile files` starts ClamAV, which the
+# upload scan needs. Without it, uploads stay unscanned.
 #
 # P0 production serves admin sign-in over HTTPS through Caddy and ZITADEL.
 # BIND_ADDR selects the server interface. Remote host administration is a separate open decision.
@@ -8,7 +11,8 @@
 #
 # Hardening still to do before real data (tracked for P1):
 #   - split ZITADEL into init / setup / start (see the "prodlike" overlay in ZITADEL's deploy/compose)
-#   - delete admin.pat plus the bootstrap service account after setup (ZITADEL_PAT_EXPIRATION is already required below)
+#   - delete admin.pat plus the bootstrap service account after setup: `seed-zitadel ... --finalize` does it (see compose.yaml);
+#     ZITADEL_PAT_EXPIRATION is already required below
 #   - the public auth host now answers 404 for the console and admin APIs (infra/caddy/auth-restricted.caddy), but
 #     tools/seed-zitadel reaches those APIs through OIDC_ISSUER, i.e. through that host. In prod the seed needs
 #     another route to ZITADEL (internal URL with the public Host header) or a temporary unrestricted Caddy.
@@ -49,8 +53,14 @@ services:
     <<: *restart
   api:
     <<: *restart
+    environment:
+      # Required in prod: compose.yaml defaults to the dev-only mailpit, which does not exist here, so a start without
+      # a real mail server would silently fail to send every email.
+      SMTP_URL: ${SMTP_URL:?set SMTP_URL in .env}
   worker:
     <<: *restart
+    environment:
+      SMTP_URL: ${SMTP_URL:?set SMTP_URL in .env}
   gotenberg:
     <<: *restart
   portal:
@@ -75,6 +85,13 @@ services:
       - type: bind
         source: ../caddy/auth-restricted.caddy
         target: /etc/caddy/auth.d/restricted.caddy
+        read_only: true
+        bind:
+          create_host_path: false
+      # Restricts the public API host to the paths outside callers need (the Caddyfile imports /etc/caddy/api.d/*).
+      - type: bind
+        source: ../caddy/api-restricted.caddy
+        target: /etc/caddy/api.d/restricted.caddy
         read_only: true
         bind:
           create_host_path: false

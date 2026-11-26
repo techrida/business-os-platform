@@ -2,7 +2,7 @@
 #
 # One image, two entry points: `node dist/main.js` (API, the default) and `node dist/worker.js`
 # (BullMQ worker). It also carries the migration runner for the compose `migrate` job:
-# `node packages/db/dist/migrate.js`.
+# `node node_modules/@bos/db/dist/migrate.js`.
 #
 # Build context is the REPO ROOT (the workspace needs pnpm-lock.yaml and packages/*):
 #   docker build -f apps/api/Dockerfile -t bos/api:dev .
@@ -44,8 +44,13 @@ COPY packages/money-rules packages/money-rules
 COPY apps/api apps/api
 RUN pnpm --filter @bos/contracts --filter @bos/db --filter @bos/locale --filter @bos/money-rules run build \
  && pnpm --filter @bos/api run build \
- # Tests are compiled too; they import vitest, which is not in the production image.
- && find apps/api/dist -name '*.test.js*' -delete
+ # Tests are compiled too; they import vitest, which is not in the production image. The test doubles and fixtures
+ # the tests share (fake virus scanner, harness, fixtures) are compiled as well and must not ship. Source maps are
+ # deleted too: nothing starts Node with --enable-source-maps (Kuu, OQ-R7-10 a).
+ && find apps/api/dist \( -name '*.test.js*' -o -name '*.map' \
+      -o -name 'users.fakes.js*' -o -name 'harness.js*' -o -name 'quotation.fixture.js*' \
+      -o -name 'invoice-test-rows.js*' -o -name 'fake-clamd.js*' -o -name 'evidence.fixture.js*' \
+      -o -name 'probe-clamd.js*' \) -delete
 
 # 3. Production dependencies only. `--legacy` because pnpm 11's default deploy needs
 #    `injectWorkspacePackages: true` in pnpm-workspace.yaml (a root file this image does not own).
@@ -53,7 +58,11 @@ RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
     pnpm --filter @bos/api --prod deploy --legacy --store-dir /pnpm-store /out
 
 # The checks below turn a wrong layout into a build failure instead of a crash at runtime.
-RUN test -f apps/api/dist/main.js \
+# The first one fails the build when a test double, fixture or source map is still in dist (a new test-support
+# file needs its name in the delete above).
+RUN test -z "$(find apps/api/dist \( -name '*.map' -o -name '*fake*' -o -name '*fixture*' -o -name 'harness.js*' \
+      -o -name '*-test-rows.js*' -o -name 'probe-clamd.js*' -o -name '*.test.js*' \))" \
+ && test -f apps/api/dist/main.js \
  && test -f apps/api/dist/worker.js \
  && test -f /out/node_modules/@bos/db/dist/index.js \
  && test -f /out/node_modules/@bos/contracts/dist/index.js \
@@ -70,12 +79,9 @@ WORKDIR /app
 COPY --from=build --chown=node:node /out/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/apps/api/package.json ./package.json
 COPY --from=build --chown=node:node /repo/apps/api/dist ./dist
-# The compose `migrate` job runs `node packages/db/dist/migrate.js` from this working
-# directory. package.json is needed there too: it holds `"type": "module"`, without which Node
-# would read the ESM migrate script as CommonJS. Its imports resolve through /app/node_modules.
-COPY --from=build --chown=node:node /repo/packages/db/package.json ./packages/db/package.json
-COPY --from=build --chown=node:node /repo/packages/db/dist ./packages/db/dist
-COPY --from=build --chown=node:node /repo/packages/db/migrations ./packages/db/migrations
+# The compose `migrate` job runs `node node_modules/@bos/db/dist/migrate.js` from this working directory: the deployed
+# @bos/db package already carries its dist, its migrations folder and its `"type": "module"` package.json, so no
+# second copy of packages/db is needed.
 
 # Document storage (P1, StorageAdapter). A named volume mounted here copies this directory's
 # owner on first use, so creating it as `node` lets the non-root api and worker write to it.

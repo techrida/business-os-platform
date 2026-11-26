@@ -15,7 +15,7 @@ export type ShellCounts = { inbox: number | null; notifications: number | null }
  * browser sends the user to sign in. The token never leaves the server.
  */
 export async function GET(): Promise<Response> {
-  const session = await routeSession();
+  const session = await routeSession({ slide: false });
   if (session instanceof Response) return session;
 
   const [inbox, notifications] = await Promise.allSettled([

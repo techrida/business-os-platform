@@ -28,6 +28,11 @@ beforeEach(() => {
 });
 
 describe('POST /telemetry/vitals', () => {
+  it('reads the session without sliding it: a vitals beacon must not keep a tab signed in', async () => {
+    await POST(post(JSON.stringify(good)));
+    expect(getSessionMock).toHaveBeenCalledWith({ slide: false });
+  });
+
   it('returns 401 without a session and does not forward', async () => {
     getSessionMock.mockResolvedValue(null);
     const res = await POST(post(JSON.stringify(good)));

@@ -1,0 +1,22 @@
+# PROD ONLY. Narrows the public API host to what callers outside the platform need. Not part of the dev stack: dev
+# has no file in /etc/caddy/api.d, so the `import` in the Caddyfile adds nothing and dev routing stays as it was.
+# compose.prod.yaml mounts this file at /etc/caddy/api.d/restricted.caddy. It is spliced into the API host's site
+# block before the host's own `handle` blocks, so the 404 below wins.
+#
+# The Workspace and the portal reach the API over the internal network (API_INTERNAL_URL=http://api:3001), never
+# through this host, so they are not affected.
+#
+# Allowed (a caller outside the platform needs these):
+#   /v1/hooks/postal     Postal bounce webhook
+#   /v1/hooks/zitadel    ZITADEL actions webhook
+#   /v1/public/*         anonymous logo paths
+#   /v1/files/*          signed file links in emails
+#   /health/live         external uptime probe (/health/ready stays internal)
+# Everything else answers 404. /metrics is already refused by the Caddyfile.
+#
+# Caddy matches on the cleaned path (dot segments and doubled slashes resolved), so /v1/public/../me is judged as
+# /v1/me and refused.
+@api_denied not path /v1/hooks/postal /v1/hooks/zitadel /v1/public/* /v1/files/* /health/live
+handle @api_denied {
+	respond 404
+}

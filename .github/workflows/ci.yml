@@ -13,15 +13,11 @@
 name: ci
 
 on:
+  # Kuu 2026-11-26: CI runs only for main (pushes and pull requests into main), not on p4-main or unit branches.
   push:
-    branches:
-      - main
-      - p4-main
-      - 'p*/**'
-      - 'p[1-4]-main'
-      - 'r6/**'
-      - 'kuu/**'
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
   # Weekly full run: catches anything the per-pull-request selection (tools/affected.mjs) missed.
   schedule:
@@ -49,7 +45,12 @@ jobs:
     name: changes (what this run covers)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # `actions: read` lets the selector ask for earlier runs of this workflow on the same commit (same-commit skip).
+    permissions:
+      contents: read
+      actions: read
     outputs:
+      skip: ${{ steps.affected.outputs.skip }}
       full: ${{ steps.affected.outputs.full }}
       api: ${{ steps.affected.outputs.api }}
       workspace: ${{ steps.affected.outputs.workspace }}
@@ -57,6 +58,10 @@ jobs:
       db: ${{ steps.affected.outputs.db }}
       web: ${{ steps.affected.outputs.web }}
       docker: ${{ steps.affected.outputs.docker }}
+      docker-api: ${{ steps.affected.outputs.docker-api }}
+      docker-workspace: ${{ steps.affected.outputs.docker-workspace }}
+      docker-portal: ${{ steps.affected.outputs.docker-portal }}
+      docker-login: ${{ steps.affected.outputs.docker-login }}
       docs-only: ${{ steps.affected.outputs.docs-only }}
       packages: ${{ steps.affected.outputs.packages }}
     steps:
@@ -64,16 +69,30 @@ jobs:
         with:
           # The diff needs the base commit as well as the head.
           fetch-depth: 0
+          # No later step pushes, so the token is not left in .git/config.
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+
+      # The selector decides what is tested, so a pull request must not be able to edit it. The copy on the base commit
+      # replaces the one in the checkout; a change to tools/ or .github/ runs everything under that copy anyway.
+      - name: Use the selector from the base commit
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git show "$BASE_SHA:tools/affected.mjs" > tools/affected.mjs
 
       - name: Map the diff to areas
         id: affected
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Same-commit skip: a push run of this workflow that already succeeded for this commit means nothing runs again.
+          BOS_SKIP_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BOS_SKIP_WORKFLOW: ci.yml
+          GITHUB_TOKEN: ${{ github.token }}
         run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
   # Fast gate: types, lint, unit tests, formatting. No containers started by this repo's
@@ -81,10 +100,13 @@ jobs:
   checks:
     name: checks (typecheck, lint, unit, format)
     needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Order matters: pnpm must exist before setup-node asks it for the store path (cache: pnpm).
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -99,15 +121,22 @@ jobs:
       - name: Install (lockfile must match every package.json)
         run: pnpm install --frozen-lockfile
 
+      # First after the install: a formatting failure shows in about 45 s instead of after the 10 minutes of typecheck, lint
+      # and unit tests. It also runs on a docs-only change, which skips the steps below.
+      - name: Format check
+        run: pnpm format:check
+
       - name: Typecheck
+        if: ${{ needs.changes.outputs.docs-only != 'true' }}
         run: pnpm typecheck
 
       - name: Lint (zero warnings allowed)
+        if: ${{ needs.changes.outputs.docs-only != 'true' }}
         run: pnpm lint
 
       # A pull request runs the unit tests of the changed packages and the packages that depend on them (the
       # `packages` output, see tools/affected.mjs); everything else runs them all. Typecheck, lint and format stay
-      # whole-repo: they take about 4 minutes together and catch what selection cannot.
+      # whole-repo: they take about 4 minutes together and catch what selection cannot. A docs-only change skips them.
       - name: Unit tests
         if: ${{ needs.changes.outputs.docs-only != 'true' }}
         env:
@@ -122,16 +151,13 @@ jobs:
             pnpm "${args[@]}" -r --if-present run test
           fi
 
-      - name: Format check
-        run: pnpm format:check
-
       # Fails if any compose `image:` or Dockerfile `FROM` is not pinned by @sha256 digest (supply chain).
       - name: Container images are pinned by digest
         run: node infra/scripts/check-image-pins.mjs
 
       # Tracked files must be fit for a public repository (license fields, no private paths); same step as tools/gate.sh.
       - name: Public-repo check
-        run: node --test tools/check-public-repo.test.mjs infra/pnpm-bootstrap.test.mjs tools/qa-workflow.test.mjs tools/affected.test.mjs tools/qa-approve-timing.test.mjs tools/qa-spec-counts.test.mjs && node tools/check-public-repo.mjs
+        run: node --test "tools/*.test.mjs" "tools/policy/*.test.mjs" "infra/*.test.mjs" "infra/scripts/*.test.mjs" && node tools/check-public-repo.mjs
 
   # Scans the whole git history for committed secrets. Config: .gitleaks.toml (test fixtures only).
   # Runs the open-source gitleaks CLI directly (the gitleaks-action wrapper needs a GITLEAKS_LICENSE
@@ -139,6 +165,8 @@ jobs:
   # gitleaks_8.30.1_checksums.txt; a mismatch fails the job before anything is executed.
   secrets:
     name: secrets (gitleaks)
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -149,6 +177,8 @@ jobs:
         with:
           # Full history: a secret removed in a later commit is still leaked.
           fetch-depth: 0
+          # No later step pushes, so the token is not left in .git/config.
+          persist-credentials: false
 
       - name: Install gitleaks 8.30.1 (sha256-pinned)
         run: |
@@ -178,6 +208,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -211,6 +243,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -262,12 +296,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # The build context is the repo root (the Dockerfiles need pnpm-lock.yaml and packages/*).
       # Each image has its own cache scope so one image's layers don't evict the other's.
       - name: Build api image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-api == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -278,6 +315,7 @@ jobs:
 
       # load: true keeps the image in the runner's Docker so the next step can look inside it.
       - name: Build workspace image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-workspace == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -293,6 +331,7 @@ jobs:
       # the image's own Node against the image's .next folder. It exits 1 on a dev route, and 2 when the folder
       # is not a finished build, which fails the step too.
       - name: Check no dev routes in the workspace image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-workspace == 'true' }}
         run: |
           docker run --rm \
             -v "$PWD/apps/workspace/scripts/check-no-dev-routes.mjs:/check/check-no-dev-routes.mjs:ro" \
@@ -302,6 +341,7 @@ jobs:
 
       # Same shape as the workspace image, with its own cache scope. Not loaded or tagged: nothing inspects it yet.
       - name: Build portal image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-portal == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -311,6 +351,7 @@ jobs:
           cache-to: type=gha,scope=portal,mode=max
 
       - name: Test Login V2 forms
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-login == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -321,6 +362,7 @@ jobs:
           cache-to: type=gha,scope=login-test,mode=max
 
       - name: Build Login V2 image
+        if: ${{ needs.changes.outputs.full == 'true' || needs.changes.outputs.docker-login == 'true' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
