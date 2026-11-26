@@ -43,7 +43,12 @@ jobs:
     name: changes (what this run covers)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # `actions: read` lets the selector ask for earlier runs of this workflow on the same commit (same-commit skip).
+    permissions:
+      contents: read
+      actions: read
     outputs:
+      skip: ${{ steps.affected.outputs.skip }}
       qa-workspace: ${{ steps.affected.outputs.qa-workspace }}
       qa-portal: ${{ steps.affected.outputs.qa-portal }}
       qa-matrix: ${{ steps.affected.outputs.qa-matrix }}
@@ -61,6 +66,10 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Same-commit skip: a push run of this workflow that already succeeded for this commit means nothing runs again.
+          BOS_SKIP_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BOS_SKIP_WORKFLOW: qa.yml
+          GITHUB_TOKEN: ${{ github.token }}
         run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
   workspace:

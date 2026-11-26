@@ -97,3 +97,41 @@ test('every image build step in ci.yml is gated on its own image output (or a fu
       new RegExp(`docker-${image}: \\$\\{\\{ steps\\.affected\\.outputs\\.docker-${image} \\}\\}`),
     );
 });
+
+test('both workflows ask the selector for the same-commit skip, with actions: read on the changes job only', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  for (const [file, source] of [
+    ['ci.yml', ci],
+    ['qa.yml', text],
+  ]) {
+    const changes = source.slice(
+      source.indexOf('\n  changes:'),
+      source.indexOf('\n  workspace:') > 0
+        ? source.indexOf('\n  workspace:')
+        : source.indexOf('\n  checks:'),
+    );
+    assert.match(changes, /permissions:\n {6}contents: read\n {6}actions: read/, file);
+    assert.match(
+      changes,
+      /BOS_SKIP_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/,
+      file,
+    );
+    assert.match(changes, new RegExp(`BOS_SKIP_WORKFLOW: ${file.replace('.', '\\.')}`), file);
+    assert.equal(
+      source.split(/^\s+actions: read$/m).length - 1,
+      1,
+      `${file}: actions: read only on changes`,
+    );
+  }
+});
+
+test('ci.yml: checks and secrets do not run when the same-commit skip applies', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const job = (name, next) => ci.slice(ci.indexOf(`\n  ${name}:`), ci.indexOf(`\n  ${next}:`));
+  for (const section of [job('checks', 'secrets'), job('secrets', 'e2e')]) {
+    assert.match(
+      section,
+      /needs: changes\n {4}if: \$\{\{ needs\.changes\.outputs\.skip != 'true' \}\}/,
+    );
+  }
+});

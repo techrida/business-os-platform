@@ -6,6 +6,12 @@
 //
 // A changed workspace package marks itself and every package that depends on it (the pnpm
 // `--filter "...[base]"` rule), read straight from the package.json files, so no install is needed.
+// Same-commit skip (CI and QA): a push or pull_request run whose head commit already has a push-event run of the same
+// workflow that finished with `success` selects nothing, so a commit that is fully green never runs twice. It reads the
+// Actions API (env BOS_SKIP_SHA, BOS_SKIP_WORKFLOW, GITHUB_REPOSITORY, GITHUB_TOKEN, GITHUB_RUN_ID) and never keys on
+// check-run names: a pull request's `checks` job is green after testing a subset. It does not skip on a run that is in
+// progress, failed, cancelled or missing, on a run from a pull request (it may have tested only the affected part), or
+// on a scheduled or manual run. An API error means no skip.
 // Fail safe: a shared root, a gate script, infrastructure, @bos/contracts, @bos/db, or any path this script cannot
 // place, runs everything. Events other than pull_request (push, schedule, workflow_dispatch) always run everything.
 import { execFileSync } from 'node:child_process';
@@ -92,6 +98,7 @@ export function withDependents(changed, packages) {
 }
 
 const ALL = {
+  skip: false,
   full: true,
   api: true,
   workspace: true,
@@ -107,6 +114,49 @@ const ALL = {
   'qa-portal': true,
   'docs-only': false,
 };
+
+// Did a push-event run of this workflow already finish green for this commit? `runs` is the `workflow_runs` array of the
+// Actions API; the API is asked for exactly these runs, and they are checked again here so a loose answer cannot skip.
+export function sameCommitGreen({ runs, sha, currentRunId }) {
+  if (!sha) return false;
+  return runs.some(
+    (r) =>
+      r.event === 'push' &&
+      r.status === 'completed' &&
+      r.conclusion === 'success' &&
+      r.head_sha === sha &&
+      String(r.id) !== String(currentRunId),
+  );
+}
+
+// An empty selection: every job is skipped and `ci required` / `qa required` still report success.
+export function nothingToRun(reason) {
+  return {
+    ...Object.fromEntries(Object.keys(ALL).map((k) => [k, false])),
+    skip: true,
+    reason,
+    packages: [],
+  };
+}
+
+async function greenPushRuns({ repo, token, workflow, sha }) {
+  const api = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const query = new URLSearchParams({
+    head_sha: sha,
+    event: 'push',
+    status: 'success',
+    per_page: '100',
+  });
+  const response = await fetch(`${api}/repos/${repo}/actions/workflows/${workflow}/runs?${query}`, {
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${token}`,
+      'x-github-api-version': '2022-11-28',
+    },
+  });
+  if (!response.ok) throw new Error(`the Actions API answered ${response.status}`);
+  return (await response.json()).workflow_runs ?? [];
+}
 
 export function affected(files, packages, { event = 'pull_request' } = {}) {
   const everything = (reason, packageNames = packages.map((p) => p.name)) => ({
@@ -144,6 +194,7 @@ export function affected(files, packages, { event = 'pull_request' } = {}) {
   const portal = set.has('@bos/portal');
   const db = set.has('@bos/db');
   return {
+    skip: false,
     full: false,
     api,
     workspace,
@@ -216,7 +267,7 @@ function parseArgs(argv) {
   return out;
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const packages = loadWorkspace();
   let files = args.files;
@@ -236,7 +287,20 @@ function main() {
       event = 'pull_request';
     }
   }
-  const result = affected(files, packages, { event });
+  let result = affected(files, packages, { event });
+  const sha = process.env.BOS_SKIP_SHA;
+  const workflow = process.env.BOS_SKIP_WORKFLOW;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GITHUB_TOKEN;
+  if (sha && workflow && repo && token && ['push', 'pull_request'].includes(event)) {
+    try {
+      const runs = await greenPushRuns({ repo, token, workflow, sha });
+      if (sameCommitGreen({ runs, sha, currentRunId: process.env.GITHUB_RUN_ID }))
+        result = nothingToRun(`${sha.slice(0, 9)} already passed ${workflow} on a push run`);
+    } catch (error) {
+      console.error(`affected: cannot read earlier runs (${error.message}); running as selected`);
+    }
+  }
   const matrix = qaMatrix(result, { quarantine: readQuarantine() });
   const lines = {
     ...Object.fromEntries(
@@ -259,4 +323,4 @@ function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
