@@ -942,6 +942,7 @@ describe('database busy errors on the HTTP boundary', () => {
   it.each([
     ['40P01', 'deadlock detected', '1'],
     ['55P03', 'canceling statement due to lock timeout', '2'],
+    ['57014', 'canceling statement due to statement timeout', '5'],
   ])(
     'answers %s as a retryable 503 db_busy with Retry-After %s, also when drizzle wraps it',
     (code, message, retryAfter) => {
@@ -991,7 +992,6 @@ describe('database busy errors on the HTTP boundary', () => {
     for (const exception of [
       pgError('23505', 'duplicate key'),
       pgError('25P03', 'terminating connection due to idle-in-transaction timeout'),
-      new DrizzleQueryError('select 1', [], pgError('57014', 'canceling statement')),
     ]) {
       const out = filter(exception);
       expect(out.status).toBe(500);

@@ -35,6 +35,11 @@ export interface TxOptions {
    * lock across a call to another service (ZITADEL); see withTx.
    */
   audit?: 'first' | 'lazy';
+  /**
+   * Overrides the statement limit (DB_STATEMENT_TIMEOUT_MS, 15 s) for this transaction, in ms; 0 turns it off.
+   * For a statement that is slow on purpose (a CSV export, a register over many months). Give the reason where it is used.
+   */
+  statementTimeoutMs?: number;
 }
 
 /** For a transaction that only reads: it never appends to the audit chain, so it need not wait for its tenant's lock. */
@@ -54,9 +59,11 @@ function requireNonEmpty(value: string, what: string): void {
  * transaction. `set_config(..., true)` is the function form of SET LOCAL: it vanishes at COMMIT or
  * ROLLBACK, so a pooled connection never carries one request's identity into the next.
  *
- * The same statement sets `lock_timeout` and `idle_in_transaction_session_timeout` for this
+ * The same statement sets `lock_timeout`, `statement_timeout` and `idle_in_transaction_session_timeout` for this
  * transaction only (configureTx in tx-settings.ts), so a write stuck behind a lock fails with 55P03 instead of
- * holding its pool connection, and a transaction left open is ended by the server.
+ * holding its pool connection, a statement that runs too long is cancelled with 57014 (answered as 503 db_busy),
+ * and a transaction left open is ended by the server. The wait for the tenant lock below is timed and exported
+ * as db_tenant_lock_wait_seconds.
  *
  * Then, unless `options.audit` is 'lazy', it takes the tenant's audit-chain lock: the same
  * transaction-scoped advisory lock audit.append takes at every audited write (0008_audit_hardening.sql),
@@ -77,7 +84,9 @@ export async function withTx<T>(
 ): Promise<T> {
   requireNonEmpty(actor.id, 'actor.id');
   requireNonEmpty(actor.correlationId, 'actor.correlationId');
-  const { lockTimeoutMs, idleInTxTimeoutMs } = txTimeouts();
+  const { lockTimeoutMs, statementTimeoutMs: defaultStatementTimeoutMs, idleInTxTimeoutMs } =
+    txTimeouts();
+  const statementTimeoutMs = options?.statementTimeoutMs ?? defaultStatementTimeoutMs;
   const observer = txObserver();
   const started = performance.now();
   let setupSeconds: number | undefined;
@@ -92,13 +101,16 @@ export async function withTx<T>(
         set_config('bos.ip', ${actor.ip ?? ''}, true),
         set_config('bos.user_agent', ${actor.userAgent ?? ''}, true),
         set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true),
+        set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true),
         set_config('idle_in_transaction_session_timeout', ${`${idleInTxTimeoutMs}ms`}, true)`);
       // Stamped before the tenant lock: setup stays pool checkout + BEGIN + settings (TX_SETUP_BUCKETS).
       setupSeconds = (performance.now() - started) / 1000;
       if (options?.audit !== 'lazy') {
+        const lockStarted = performance.now();
         await tx.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended('audit.chain:' || ${scope.tenantId}::uuid::text, 0))`,
         );
+        observer?.observeTenantLockWait((performance.now() - lockStarted) / 1000);
       }
       return fn(tx);
     });
