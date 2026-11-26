@@ -121,15 +121,22 @@ jobs:
       - name: Install (lockfile must match every package.json)
         run: pnpm install --frozen-lockfile
 
+      # First after the install: a formatting failure shows in about 45 s instead of after the 10 minutes of typecheck, lint
+      # and unit tests. It also runs on a docs-only change, which skips the steps below.
+      - name: Format check
+        run: pnpm format:check
+
       - name: Typecheck
+        if: ${{ needs.changes.outputs.docs-only != 'true' }}
         run: pnpm typecheck
 
       - name: Lint (zero warnings allowed)
+        if: ${{ needs.changes.outputs.docs-only != 'true' }}
         run: pnpm lint
 
       # A pull request runs the unit tests of the changed packages and the packages that depend on them (the
       # `packages` output, see tools/affected.mjs); everything else runs them all. Typecheck, lint and format stay
-      # whole-repo: they take about 4 minutes together and catch what selection cannot.
+      # whole-repo: they take about 4 minutes together and catch what selection cannot. A docs-only change skips them.
       - name: Unit tests
         if: ${{ needs.changes.outputs.docs-only != 'true' }}
         env:
@@ -143,9 +150,6 @@ jobs:
             for name in $AFFECTED; do args+=(--filter "$name"); done
             pnpm "${args[@]}" -r --if-present run test
           fi
-
-      - name: Format check
-        run: pnpm format:check
 
       # Fails if any compose `image:` or Dockerfile `FROM` is not pinned by @sha256 digest (supply chain).
       - name: Container images are pinned by digest

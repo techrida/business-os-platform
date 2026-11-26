@@ -171,3 +171,19 @@ test('every checkout in the four workflows drops its token, and dependabot watch
   const dependabot = readFileSync(new URL('../.github/dependabot.yml', import.meta.url), 'utf8');
   assert.match(dependabot, /package-ecosystem: docker-compose\n {4}directory: \/infra\/compose/);
 });
+
+test('ci.yml checks: format runs first after the install, and a docs-only change skips typecheck and lint only', () => {
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const checks = ci.slice(ci.indexOf('\n  checks:'), ci.indexOf('\n  secrets:'));
+  const names = [...checks.matchAll(/\n {6}- (?:name|uses): ([^\n]+)/g)].map((m) => m[1]);
+  const install = names.findIndex((n) => n.startsWith('Install'));
+  assert.equal(names[install + 1], 'Format check');
+  const step = (name) => {
+    const at = checks.indexOf(`- name: ${name}`);
+    return checks.slice(at, checks.indexOf('\n\n', at));
+  };
+  const docsOnly = /if: \$\{\{ needs\.changes\.outputs\.docs-only != 'true' \}\}/;
+  assert.match(step('Typecheck'), docsOnly);
+  assert.match(step('Lint (zero warnings allowed)'), docsOnly);
+  assert.doesNotMatch(step('Format check'), /\n\s+if:/);
+});
