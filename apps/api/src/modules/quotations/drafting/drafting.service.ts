@@ -87,7 +87,8 @@ import {
   toQuotationVersionDto,
   type QuotationRow,
   type QuotationVersionParts,
-  type QuotationVersionRow,
+  QUOTATION_VERSION_BODY_COLUMNS,
+  type QuotationVersionBody,
 } from './mapping';
 
 /** A version with its own rows; the parent quotation is added by the caller. */
@@ -478,7 +479,13 @@ export class DraftingService {
             r
               .select({
                 quotation: quotations,
-                current: quotationVersions,
+                // The four figures the list shows, not the whole version: its document style can hold a logo.
+                current: {
+                  status: quotationVersions.status,
+                  currency: quotationVersions.currency,
+                  total: quotationVersions.total,
+                  validUntil: quotationVersions.validUntil,
+                },
                 customerName: customers.legalName,
                 ownerName: users.displayName,
                 ownerAvatarDocumentId: users.avatarDocumentId,
@@ -597,7 +604,7 @@ export class DraftingService {
       async (tx) => {
         const quotation = await this.findVisible(tx, principal, id);
         const versionRows = await tx
-          .select()
+          .select(QUOTATION_VERSION_BODY_COLUMNS)
           .from(quotationVersions)
           .where(
             and(
@@ -903,9 +910,9 @@ export class DraftingService {
     quotation: QuotationRow,
     versionId: string,
     forUpdate = false,
-  ): Promise<QuotationVersionRow> {
+  ): Promise<QuotationVersionBody> {
     const query = tx
-      .select()
+      .select(QUOTATION_VERSION_BODY_COLUMNS)
       .from(quotationVersions)
       .where(
         and(
@@ -927,7 +934,7 @@ export class DraftingService {
   private async withParts(
     tx: DbTransaction,
     tenantId: string,
-    versions: readonly QuotationVersionRow[],
+    versions: readonly QuotationVersionBody[],
   ): Promise<VersionWithParts[]> {
     const ids = versions.map((v) => v.id);
     if (ids.length === 0) return [];
