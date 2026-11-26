@@ -10,8 +10,19 @@ const monorepoRoot = path.join(__dirname, '../..');
 
 // 'unsafe-inline' is needed because the App Router injects inline scripts (hydration data)
 // and this app has no per-request nonce yet. 'unsafe-eval' is only for React's dev tooling.
-// No form-action directive: Chrome applies it to the redirect after a form POST, so it would
-// block "Sign out" when /auth/logout answers with a redirect to the identity provider.
+// Form posts may only go to this app and to the identity provider. Chrome applies form-action to the redirect that
+// follows a form POST, so "Sign out" (POST /auth/logout, answered with a redirect to the issuer's end_session) needs
+// the issuer origin in the list. headers() is resolved at build time: a build that has OIDC_ISSUER set (compose.yaml
+// gives it to the app containers at run time only) names the exact origin; a build without it allows any https:
+// origin, which still blocks forms that post to http:, data: or javascript: targets.
+const issuerOrigin = (() => {
+  try {
+    return new URL(process.env.OIDC_ISSUER ?? '').origin;
+  } catch {
+    return 'https:';
+  }
+})();
+const formAction = `form-action 'self' ${issuerOrigin}`;
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
@@ -23,11 +34,14 @@ const contentSecurityPolicy = [
   "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
+  formAction,
   "frame-ancestors 'none'",
 ].join('; ');
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // Show images as they are: nothing resizes them on the server, so the image library (sharp) stays out of the build.
+  images: { unoptimized: true },
   outputFileTracingRoot: monorepoRoot,
   // Turbopack (the default bundler) has its own root setting. Keep it equal to the tracing
   // root so Next does not warn about two different roots.
