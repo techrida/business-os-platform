@@ -119,13 +119,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Before the stack comes up: a spec file that is in no shard list (or in both) must fail in seconds, not after 18 minutes.
+      - name: Bring up the stack and seed the dev personas
+        run: bash .github/qa/up.sh
+
+      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
+      # listing tests. Still minutes before the first spec runs.
       - name: Every workspace spec is in exactly one shard list
         if: ${{ matrix.ws && matrix.mode == 'specs' }}
         run: node .github/qa/spec-counts.mjs --lists
-
-      - name: Bring up the stack and seed the dev personas
-        run: bash .github/qa/up.sh
 
       - name: Install Chromium
         run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
@@ -230,7 +231,8 @@ jobs:
           pnpm exec playwright test --project=dev --timeout=60000 --grep "$quarantine"
 
       - name: Portal specs (they skip themselves without their fixtures)
-        if: ${{ !cancelled() && matrix.mode == 'specs' && matrix.portal }}
+        # A matrix from the selector of an older base commit has no `portal` flag: its shard 1 ran the portal specs.
+        if: ${{ !cancelled() && matrix.mode == 'specs' && (matrix.portal || (!matrix.list && matrix.id == '1')) }}
         env:
           PORTAL_E2E_BASE_URL: https://portal.localhost
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt

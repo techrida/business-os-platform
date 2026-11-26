@@ -90,6 +90,16 @@ test('checkLists fails on a spec in no list, a spec in both, and a list entry th
   assert.deepEqual(stale.problems, ['gone.spec.ts (x) is not a spec the run executes']);
 });
 
+test('checkLists rejects blank and padded lines, which Playwright would read as match-everything and match-nothing', () => {
+  const specFiles = new Set(['a.spec.ts', 'b.spec.ts']);
+  const bad = (lines) => checkLists({ specFiles, lists: { x: lines, y: ['e2e/b.spec.ts'] } });
+  assert.equal(bad(['e2e/a.spec.ts', '']).ok, true, 'the piece after the final newline is fine');
+  assert.equal(bad(['e2e/a.spec.ts ', '']).ok, false, 'trailing space');
+  assert.equal(bad(['e2e/a.spec.ts\r', '']).ok, false, 'CRLF');
+  assert.equal(bad(['', 'e2e/a.spec.ts', '']).ok, false, 'blank line inside');
+  assert.match(bad([' e2e/a.spec.ts']).problems[0], /blank or padded line/);
+});
+
 test('the committed shard lists cover every dev-project spec file exactly once (offline, by the file system)', () => {
   const e2e = new URL('../apps/workspace/e2e/', import.meta.url);
   const all = [];

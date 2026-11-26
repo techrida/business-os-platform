@@ -57,13 +57,18 @@ test('the workspace step runs its shard from a file list; a spec filter falls ba
   assert.match(run, /--shard="\$SHARD"/);
 });
 
-test('the portal specs run on the job the matrix marks, and the shard lists are checked before the stack comes up', () => {
+test('the portal specs run on the job the matrix marks (or shard 1 of an older base selector)', () => {
   assert.match(
     text,
-    /- name: Portal specs[^\n]*\n {8}if: \$\{\{ !cancelled\(\) && matrix\.mode == 'specs' && matrix\.portal \}\}/,
+    /- name: Portal specs[^\n]*\n(?: {8}#[^\n]*\n)* {8}if: \$\{\{ !cancelled\(\) && matrix\.mode == 'specs' && \(matrix\.portal \|\| \(!matrix\.list && matrix\.id == '1'\)\) \}\}/,
   );
+});
+
+test('the shard lists are checked after the stack is up (Playwright reads .dev files when it lists) and before any spec', () => {
+  const up = text.indexOf('bash .github/qa/up.sh');
   const check = text.indexOf('node .github/qa/spec-counts.mjs --lists');
-  assert.ok(check > 0 && check < text.indexOf('bash .github/qa/up.sh'));
+  assert.ok(up > 0 && check > up, 'the check needs .dev/caddy-root.crt and .dev/personas.json');
+  assert.ok(check < text.indexOf('- name: Playwright warm-up'));
 });
 
 test('no workflow still talks about three shards', () => {

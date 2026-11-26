@@ -52,13 +52,20 @@ function relative(entry) {
 
 /**
  * Every spec file the run executes is in exactly one list, and every list entry is a spec file the run executes.
- * `lists` maps a list name to its lines; blank lines are ignored.
+ * `lists` maps a list name to its lines (the file split on newlines).
  */
 export function checkLists({ specFiles, lists }) {
   const problems = [];
   const owner = new Map();
   for (const [name, lines] of Object.entries(lists)) {
-    for (const line of lines.filter((l) => l.trim() !== '')) {
+    // Each line goes to Playwright as a regex: a blank line would match every spec and a padded line would match none,
+    // silently. Only the empty piece after the final newline is allowed.
+    const entries = lines.at(-1) === '' ? lines.slice(0, -1) : lines;
+    for (const line of entries) {
+      if (line === '' || line !== line.trim()) {
+        problems.push(`${name} has a blank or padded line: ${JSON.stringify(line)}`);
+        continue;
+      }
       const file = relative(line);
       if (owner.has(file))
         problems.push(`${file} is listed twice (${owner.get(file)} and ${name})`);
