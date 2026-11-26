@@ -117,4 +117,31 @@ describe('db_tenant_lock_wait_seconds', () => {
     expect(Number(sum)).toBeGreaterThanOrEqual(0.2);
     expect(Number(sum)).toBeLessThanOrEqual(waited + 0.1);
   });
+
+  it('also records a wait that ended in lock_timeout, the tail the metric is for', async () => {
+    const metrics = new MetricsService();
+    setTxObserver(metrics);
+    configureTx({ lockTimeoutMs: 150 });
+    const scope = await newScope();
+    let held!: () => void;
+    const holding = new Promise<void>((resolve) => {
+      held = resolve;
+    });
+    const first = withTx(db, scope, actor(), async () => {
+      held();
+      await sleep(600);
+    });
+    await holding;
+    const failure = await withTx(db, scope, actor(), () => Promise.resolve()).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await first;
+    expect(dbBusyKindOf(failure)).toBe('lock_timeout');
+    const text = await metrics.render();
+    expect(text).toMatch(/^db_tenant_lock_wait_seconds_count 2$/m);
+    expect(
+      Number(/^db_tenant_lock_wait_seconds_sum ([0-9.e+-]+)$/m.exec(text)?.[1]),
+    ).toBeGreaterThanOrEqual(0.14);
+  });
 });

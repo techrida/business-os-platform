@@ -36,8 +36,11 @@ export interface TxOptions {
    */
   audit?: 'first' | 'lazy';
   /**
-   * Overrides the statement limit (DB_STATEMENT_TIMEOUT_MS, 15 s) for this transaction, in ms; 0 turns it off.
-   * For a statement that is slow on purpose (a CSV export, a register over many months). Give the reason where it is used.
+   * Overrides the statement limit (DB_STATEMENT_TIMEOUT_MS, 15 s) for this transaction, in ms, a positive integer.
+   * For a statement that is slow on purpose (a register over many months). Give the reason where it is used.
+   * Keep it below the pool's client-side query_timeout (35 s in the API, 125 s in the worker, runtimePoolOptions):
+   * past that the client gives up first, with an error that has no SQLSTATE, and its rollback queues behind the
+   * statement still running on the server. There is no "off": 0 is refused.
    */
   statementTimeoutMs?: number;
 }
@@ -90,6 +93,9 @@ export async function withTx<T>(
     idleInTxTimeoutMs,
   } = txTimeouts();
   const statementTimeoutMs = options?.statementTimeoutMs ?? defaultStatementTimeoutMs;
+  if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1) {
+    throw new Error('statementTimeoutMs must be a positive integer');
+  }
   const observer = txObserver();
   const started = performance.now();
   let setupSeconds: number | undefined;
@@ -110,10 +116,14 @@ export async function withTx<T>(
       setupSeconds = (performance.now() - started) / 1000;
       if (options?.audit !== 'lazy') {
         const lockStarted = performance.now();
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended('audit.chain:' || ${scope.tenantId}::uuid::text, 0))`,
-        );
-        observer?.observeTenantLockWait((performance.now() - lockStarted) / 1000);
+        try {
+          await tx.execute(
+            sql`SELECT pg_advisory_xact_lock(hashtextextended('audit.chain:' || ${scope.tenantId}::uuid::text, 0))`,
+          );
+        } finally {
+          // Also when the wait ended in lock_timeout: those are the waits the metric exists to show.
+          observer?.observeTenantLockWait((performance.now() - lockStarted) / 1000);
+        }
       }
       return fn(tx);
     });

@@ -249,17 +249,22 @@ describe('withTx timeouts', () => {
     expect(setting('statement_timeout')).toBeNull();
   });
 
-  it('lets one transaction override the statement limit, and 0 turns it off', async () => {
+  it('lets one transaction override the statement limit, and refuses 0 and fractions (no "off")', async () => {
     const { db, setting } = fakeDb();
     const seen: (string | null)[] = [];
     const read = () => {
       seen.push(setting('statement_timeout'));
       return Promise.resolve();
     };
-    await withTx(db, scope, actor, read, { statementTimeoutMs: 60_000 });
-    await withTx(db, scope, actor, read, { statementTimeoutMs: 0 });
+    await withTx(db, scope, actor, read, { statementTimeoutMs: 30_000 });
     await withTx(db, scope, actor, read);
-    expect(seen).toEqual(['60000ms', '0ms', '15000ms']);
+    expect(seen).toEqual(['30000ms', '15000ms']);
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      await expect(withTx(db, scope, actor, read, { statementTimeoutMs: bad })).rejects.toThrow(
+        'statementTimeoutMs must be a positive integer',
+      );
+    }
+    expect(seen).toHaveLength(2);
   });
 
   it('uses what configureTx set, and the defaults again for values left out', async () => {
