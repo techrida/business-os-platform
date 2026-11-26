@@ -39,6 +39,13 @@ export const IDLE_SECONDS = 3600;
 /** Hard cap from sign-in, however active the user is. */
 export const ABSOLUTE_SECONDS = 86400;
 
+/**
+ * A sliding write is skipped when the record was last written less than this many seconds ago, so
+ * a busy page does not write the same record on every request. The idle limit is measured from the
+ * last write, so it can end up to this many seconds early.
+ */
+const SLIDE_MIN_INTERVAL_SECONDS = 60;
+
 /** Refresh the access token when fewer than this many seconds remain, so API calls never race its expiry. */
 const REFRESH_MARGIN_SECONDS = 60;
 /** Upper bound on one refresh round-trip; the lock expires by itself if a process dies mid-refresh. */
@@ -342,7 +349,21 @@ function logStoreFailure(
  * rotated tokens is retried once (up to about 2 s more: the ready wait plus the command timeout).
  * If that also fails, the current token is kept while it is still valid.
  */
-export async function getSession(): Promise<Session | null> {
+export function getSession(options?: GetSessionOptions): Promise<Session | null> {
+  return readSessionOncePerRender(options?.slide ?? true);
+}
+
+/** `getSession` options. */
+export interface GetSessionOptions {
+  /**
+   * Whether this read counts as activity and moves the idle timer (default true). Background
+   * polls (badge counts, notifications, telemetry) pass false: they still refresh tokens, but a
+   * tab left open must not keep the session alive.
+   */
+  slide?: boolean;
+}
+
+async function readSessionOncePerRender(slide: boolean): Promise<Session | null> {
   const id = (await cookies()).get(SESSION_COOKIE)?.value;
   // Validate before building a Redis key from browser input.
   if (!id || !SESSION_ID_PATTERN.test(id)) return null;
@@ -350,7 +371,7 @@ export async function getSession(): Promise<Session | null> {
   const started = performance.now();
   const raw = await readSessionValue(id, started);
   if (raw === null) return null;
-  return resolveRecord(id, raw, started);
+  return resolveRecord(id, raw, started, slide);
 }
 
 /**
@@ -383,7 +404,12 @@ async function destroyQuietly(id: string, started: number): Promise<void> {
 }
 
 /** The rest of `getSession` once the record was read: expiry, refresh and the sliding TTL. */
-async function resolveRecord(id: string, raw: string, started: number): Promise<Session | null> {
+async function resolveRecord(
+  id: string,
+  raw: string,
+  started: number,
+  slide: boolean,
+): Promise<Session | null> {
   const record = unseal(id, raw);
   const now = nowSeconds();
   if (!record || isExpired(record, now)) {
@@ -394,7 +420,7 @@ async function resolveRecord(id: string, raw: string, started: number): Promise<
   if (record.accessExp - now < REFRESH_MARGIN_SECONDS) {
     let refreshed: StoredSession | null;
     try {
-      refreshed = await refreshUnderLock(id, record, now, started);
+      refreshed = await refreshUnderLock(id, record, now, started, slide);
     } catch (err) {
       // Valkey failed around the refresh. The record we read is valid; use its access token while
       // it lasts. Never retry: the refresh may already have rotated the refresh token.
@@ -406,6 +432,11 @@ async function resolveRecord(id: string, raw: string, started: number): Promise<
       throw new SessionUnavailableError();
     }
     return refreshed ? toSession(id, refreshed) : null;
+  }
+
+  // A background read leaves the idle timer alone, and so does a read right after a write.
+  if (!slide || now - record.lastSeenAt < SLIDE_MIN_INTERVAL_SECONDS) {
+    return toSession(id, record);
   }
 
   const client = getRedis();
@@ -452,6 +483,7 @@ async function refreshUnderLock(
   stale: StoredSession,
   now: number,
   started: number,
+  slide: boolean,
 ): Promise<StoredSession | null> {
   const client = await readyRedis();
   const lockToken = randomBytes(16).toString('base64url');
@@ -492,7 +524,8 @@ async function refreshUnderLock(
       // Keep the old values when the provider does not send new ones.
       ...(tokens.refreshToken !== undefined ? { refreshToken: tokens.refreshToken } : {}),
       ...(tokens.idToken !== undefined ? { idToken: tokens.idToken } : {}),
-      lastSeenAt: now,
+      // A background read that happens to refresh the token must not renew the idle timer.
+      lastSeenAt: slide ? now : latest.lastSeenAt,
     });
     // XX: only if the session still exists, so a concurrent logout is not undone. We hold the
     // lock and the newest tokens, so overwriting a concurrent slide is correct here.

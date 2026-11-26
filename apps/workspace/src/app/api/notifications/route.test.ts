@@ -8,9 +8,10 @@ import type { Session } from '@/lib/session';
 vi.mock('server-only', () => ({}));
 
 const session = { sub: 'user-1' } as unknown as Session;
+const routeSessionCall = vi.fn((_options?: unknown) => session);
 vi.mock('@/lib/bff', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/bff')>()),
-  routeSession: () => Promise.resolve(session),
+  routeSession: (options?: unknown) => Promise.resolve(routeSessionCall(options)),
 }));
 
 const listNotifications = vi.fn();
@@ -30,6 +31,12 @@ const row = (id: string, title: string, body: string) => ({
 });
 
 describe('GET /api/notifications', () => {
+  it('reads the session without sliding it: the bell poll must not keep a tab signed in', async () => {
+    listNotifications.mockResolvedValue([]);
+    await GET();
+    expect(routeSessionCall).toHaveBeenCalledWith({ slide: false });
+  });
+
   it('shows document types as words, not internal keys', async () => {
     listNotifications.mockResolvedValue([
       row(
