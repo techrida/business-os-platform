@@ -1,7 +1,12 @@
 // Shrinks a picture in the browser before it is uploaded as a logo or profile picture. The server still checks the
 // type, the size and scans every upload; this only keeps real uploads small and in a format every renderer embeds
 // (pdfkit takes PNG and JPEG, so WebP comes out as PNG). The pure parts are exported for the unit test.
-import { IMAGE_MAX_BYTES, IMAGE_MAX_SIDE_PX, IMAGE_MIME, type ImageMime } from '@bos/contracts';
+import {
+  IMAGE_MAX_BYTES,
+  IMAGE_MAX_SIDE_PX,
+  IMAGE_MIME,
+  type ImageMime,
+} from '@bos/contracts/constants';
 
 /** A picture the upload screen will not send. `message` is written for the person choosing the file. */
 export class ImageRefusal extends Error {

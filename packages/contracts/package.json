@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "description": "Zod schemas and inferred types shared by @bos/api and @bos/workspace.",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -12,6 +13,11 @@
       "bos-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./constants": {
+      "bos-source": "./src/constants/index.ts",
+      "types": "./dist/constants/index.d.ts",
+      "default": "./dist/constants/index.js"
     }
   },
   "files": [
