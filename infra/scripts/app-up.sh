@@ -6,6 +6,9 @@ set -euo pipefail
 export WORKSPACE_UPSTREAM=workspace:3000 API_UPSTREAM=api:3001
 dc() { docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml "$@"; }
 dc --profile core --profile app up -d --wait --wait-timeout 300
+# pg_stat_statements: init-dbs.sh only runs on an empty volume, so a redeploy that keeps its database creates it here.
+# As the superuser (the migrate role may not create extensions). A no-op when it exists.
+dc exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >/dev/null
 # Caddy must pick up the in-compose upstreams.
 dc --profile core up -d --force-recreate --no-deps caddy >/dev/null
 ca=.dev/caddy-root.crt

@@ -55,6 +55,11 @@ GRANT USAGE ON SCHEMA public TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE, SELECT ON SEQUENCES TO bos_app;
+
+-- Statement statistics (shared_preload_libraries in postgresql.conf). Creating an extension needs the superuser,
+-- which is who runs this file; the migrate role is not allowed to. app-up.sh repeats this on every deploy because
+-- this file only runs on an empty volume.
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 SQL
 
 echo "init-dbs: roles zitadel, bos_owner, bos_app and databases zitadel, bos are ready"
