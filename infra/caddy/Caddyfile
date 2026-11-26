@@ -86,11 +86,13 @@
 			max_size 1KB
 		}
 		reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000} {
+			header_up X-Request-Id {http.request.uuid}
 			import node_upstream_anonymous
 		}
 	}
 
 	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000} {
+		header_up X-Request-Id {http.request.uuid}
 		import node_upstream
 	}
 }
@@ -105,11 +107,13 @@
 			max_size 1KB
 		}
 		reverse_proxy {$PORTAL_UPSTREAM:portal:3000} {
+			header_up X-Request-Id {http.request.uuid}
 			import node_upstream_anonymous
 		}
 	}
 
 	reverse_proxy {$PORTAL_UPSTREAM:portal:3000} {
+		header_up X-Request-Id {http.request.uuid}
 		import node_upstream
 	}
 }

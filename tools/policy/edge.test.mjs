@@ -85,3 +85,17 @@ test('make-dev-env.sh generates the seven secrets', () => {
     assert.match(script, new RegExp(`ensure ${key} `), `${key} is generated`);
   }
 });
+
+test('the workspace and portal sites set X-Request-Id, so the browser cannot choose the id the API logs', () => {
+  for (const upstream of ['WORKSPACE_UPSTREAM', 'PORTAL_UPSTREAM']) {
+    const blocks = caddyfile.split(`reverse_proxy {$${upstream}:`).slice(1);
+    assert.equal(blocks.length, 2, upstream);
+    for (const block of blocks) {
+      assert.match(
+        block.slice(0, block.indexOf('import node_upstream')),
+        /header_up X-Request-Id \{http\.request\.uuid\}/,
+        upstream,
+      );
+    }
+  }
+});
