@@ -45,6 +45,8 @@ test('the tools tests run from a glob that includes tools/policy, in ci.yml and 
     // Quoted, so node (not the shell) expands them: an unmatched pattern is then ignored instead of passed on literally.
     assert.match(line, /"tools\/\*\.test\.mjs"/, name);
     assert.match(line, /"tools\/policy\/\*\.test\.mjs"/, name);
+    assert.match(line, /"infra\/\*\.test\.mjs"/, name);
+    assert.match(line, /"infra\/scripts\/\*\.test\.mjs"/, name);
     assert.doesNotMatch(line, /tools\/(affected|qa-[a-z-]+|check-public-repo)\.test\.mjs/, name);
   }
 });
