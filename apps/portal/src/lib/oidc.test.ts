@@ -19,6 +19,8 @@ import {
   LoginBindingError,
   OIDC_SCOPES,
   refreshTokens,
+  SIGNED_OUT_COOKIE,
+  SIGNED_OUT_COOKIE_MAX_AGE,
 } from './oidc';
 import { __setRedisForTests } from './session';
 
@@ -135,6 +137,16 @@ describe('LOGIN_COOKIE', () => {
 
   it('lives exactly as long as the stored login state', () => {
     expect(LOGIN_COOKIE_MAX_AGE).toBe(600);
+  });
+});
+
+describe('SIGNED_OUT_COOKIE', () => {
+  it('is a __Host- cookie of its own, apart from the workspace marker', () => {
+    expect(SIGNED_OUT_COOKIE).toBe('__Host-bos_portal_signed_out');
+  });
+
+  it('lives 30 days, longer than a ZITADEL browser session', () => {
+    expect(SIGNED_OUT_COOKIE_MAX_AGE).toBe(2_592_000);
   });
 });
 

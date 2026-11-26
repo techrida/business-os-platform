@@ -41,6 +41,8 @@ vi.mock('@/lib/oidc', () => ({
   // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
   LOGIN_COOKIE: '__Host-bos_portal_login',
   LOGIN_COOKIE_MAX_AGE: 600,
+  SIGNED_OUT_COOKIE: '__Host-bos_portal_signed_out',
+  SIGNED_OUT_COOKIE_MAX_AGE: 2_592_000,
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
@@ -78,6 +80,12 @@ const REFRESH = 'secret-refresh-token';
 const ID_TOKEN = 'secret-id-token';
 const LOGIN_COOKIE = '__Host-bos_portal_login';
 const SESSION_COOKIE = '__Host-bos_portal_session';
+const SIGNED_OUT_COOKIE = '__Host-bos_portal_signed_out';
+/** The signed-out marker writes, as [value, maxAge] pairs. */
+const signedOutWrites = (): [unknown, number | undefined][] =>
+  (m.cookieSet.mock.calls as unknown[][])
+    .filter((c) => c[0] === SIGNED_OUT_COOKIE)
+    .map((c) => [c[1], (c[2] as { maxAge?: number }).maxAge]);
 const SESSION_ID = 's'.repeat(43);
 const BINDING = 'b'.repeat(43);
 const LOGIN_COOKIE_ATTRS = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' };
@@ -142,6 +150,19 @@ describe('GET /auth/login', () => {
       maxAge: 600,
     });
     expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('asks for prompt=login while the signed-out marker is set, whatever prompt the link carried', async () => {
+    requestCookies.set(SIGNED_OUT_COOKIE, '1');
+    await call('?prompt=none');
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login' });
+    await call();
+    expect(m.beginLogin.mock.calls[1]?.[0]).toMatchObject({ prompt: 'login' });
+  });
+
+  it('sends no prompt of its own without the marker', async () => {
+    await call();
+    expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('prompt');
   });
 
   it('falls back to / for an unsafe returnTo', async () => {
@@ -308,6 +329,29 @@ describe('GET /auth/callback', () => {
     expect(logged).toContain('ReplyError');
     expect(logged).not.toContain('secret-key');
     expect(logged).not.toContain(ACCESS);
+  });
+
+  it('clears the signed-out marker once the person has signed in again', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-1', returnTo: '/' });
+    m.getMe.mockResolvedValue(CUSTOMER_ME);
+    m.createSession.mockResolvedValue('sid-1');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SIGNED_OUT_COOKIE, '1');
+
+    await call('?code=c&state=s');
+
+    expect(m.cookieSet).toHaveBeenCalledWith(SIGNED_OUT_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
+  });
+
+  it('keeps the signed-out marker when the login fails', async () => {
+    requestCookies.set(SIGNED_OUT_COOKIE, '1');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    m.completeLogin.mockRejectedValue(new Error('bad code'));
+    await call('?code=c&state=s');
+    expect(signedOutWrites()).toEqual([]);
   });
 
   it('hands completeLogin the registered redirect URI with only the query of the request', async () => {
@@ -574,6 +618,8 @@ describe('/auth/logout', () => {
     expect(m.endSessionUrl.mock.calls[0]).toEqual([{ idTokenHint: ID_TOKEN }]);
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(END_SESSION);
+    // ZITADEL ends its session on the hint, so the next login may use its account chooser as usual.
+    expect(signedOutWrites()).toEqual([]);
   });
 
   // CR-06: getSession is null when the record idled out or Valkey is down. The ZITADEL session
@@ -590,6 +636,17 @@ describe('/auth/logout', () => {
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(END_SESSION);
+    // R2-001: without the hint ZITADEL keeps its session, so the next login must ask for the credentials.
+    expect(m.cookieSet).toHaveBeenCalledWith(SIGNED_OUT_COOKIE, '1', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 2_592_000,
+    });
+  });
+
+  it('without any session record at all (idle expiry), sign-out still sets the marker so the next login asks for credentials', async () => {
+    m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
+    await post({ origin: ORIGIN });
+    expect(signedOutWrites()).toEqual([['1', 2_592_000]]);
   });
 
   it('without any cookie: clears the cookie and still ends the IdP session', async () => {
@@ -645,6 +702,8 @@ describe('/auth/logout', () => {
     expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.headers.get('location')).toBe('https://portal.localhost/');
+    // The IdP session was never asked to end, so the next login must ask for the credentials.
+    expect(signedOutWrites()).toEqual([['1', 2_592_000]]);
   });
 });
 

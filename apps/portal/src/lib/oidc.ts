@@ -48,6 +48,17 @@ const PROMPTS = new Set(['login', 'none', 'consent', 'select_account']);
 export const LOGIN_COOKIE = '__Host-bos_portal_login';
 /** Max-Age of LOGIN_COOKIE: the same 10 minutes as the stored state. */
 export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
+
+/**
+ * Set by /auth/logout when it could not end the ZITADEL session (no ID token to send as id_token_hint, because the
+ * session record had idled out or Valkey was down, or discovery failed). ZITADEL then keeps its session, and the
+ * next login in this browser would sign straight back in (R2-001). While the cookie is present /auth/login asks
+ * ZITADEL for `prompt=login`, so the person must sign in again; a completed login clears it. It holds no secret.
+ * Same rule as the workspace's cookie of the same purpose.
+ */
+export const SIGNED_OUT_COOKIE = '__Host-bos_portal_signed_out';
+/** 30 days: longer than a ZITADEL browser session is kept, so the session cannot outlive the marker. */
+export const SIGNED_OUT_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 const LOGIN_BINDING_BYTES = 32;
 
 const oidcKey = (state: string) => `pt:oidc:${state}`;
