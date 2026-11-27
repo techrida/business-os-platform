@@ -28,14 +28,28 @@ import type {
   quotations,
   quotationStatusHistory,
   quotationTaxSummary,
-  quotationVersions,
 } from '@bos/db';
+import { quotationVersions } from '@bos/db';
+import { getTableColumns } from 'drizzle-orm';
 
 import { quotationRenderGivenUp } from '../render/render-retry';
 import { paymentScheduleAmounts } from './payment-schedule';
 
 export type QuotationRow = typeof quotations.$inferSelect;
 export type QuotationVersionRow = typeof quotationVersions.$inferSelect;
+/**
+ * A version without its document style: the snapshot a render job captures, which can hold a company logo of
+ * tens of kilobytes. No DTO of this module reads it, so the reads leave it in the database.
+ */
+export type QuotationVersionBody = Omit<QuotationVersionRow, 'documentStyle'>;
+const { documentStyle: _documentStyle, ...versionBodyColumns } = getTableColumns(quotationVersions);
+/** The select list of a `QuotationVersionBody`: every version column except `document_style`. */
+export const QUOTATION_VERSION_BODY_COLUMNS = versionBodyColumns;
+/** The four figures of the current version the list shows (plus the status behind `status`). */
+export type QuotationListVersion = Pick<
+  QuotationVersionRow,
+  'status' | 'currency' | 'total' | 'validUntil'
+>;
 export type QuotationLineRow = typeof quotationLines.$inferSelect;
 export type QuotationTaxSummaryRow = typeof quotationTaxSummary.$inferSelect;
 export type QuotationStatusHistoryRow = typeof quotationStatusHistory.$inferSelect;
@@ -48,7 +62,7 @@ export type QuotationContactRow = Pick<
 export interface QuotationVersionParts {
   /** The parent: the number and the customer are the parent's, not the version's. */
   quotation: Pick<QuotationRow, 'number' | 'customerPartyId'>;
-  version: QuotationVersionRow;
+  version: QuotationVersionBody;
   lines: readonly QuotationLineRow[];
   taxSummary: readonly QuotationTaxSummaryRow[];
   /** The scan status of the rendered PDF's document version; null when no PDF is rendered. */
@@ -85,7 +99,7 @@ function currentVersionOf(quotation: Pick<QuotationRow, 'number' | 'currentVersi
   return quotation.currentVersionId;
 }
 
-function discountOf(v: QuotationVersionRow): Discount | null {
+function discountOf(v: QuotationVersionBody): Discount | null {
   if (v.discountMode === null || v.discountInput === null) return null;
   // A percentage is typed as a bare number; an amount is money, which the contract holds to two decimals.
   return v.discountMode === 'pct'
@@ -94,7 +108,7 @@ function discountOf(v: QuotationVersionRow): Discount | null {
 }
 
 /** Only a foreign-currency version with a frozen rate has one; an NPR document is its own NPR value. */
-function nprSnapshotOf(v: QuotationVersionRow): NprSnapshot | null {
+function nprSnapshotOf(v: QuotationVersionBody): NprSnapshot | null {
   if (
     v.currency === 'NPR' ||
     v.fxRate === null ||
@@ -214,7 +228,7 @@ export function toQuotationDto(q: QuotationRow, currentStatus: QuotationStatus):
  */
 export function toQuotationListItem(
   q: QuotationRow,
-  current: QuotationVersionRow,
+  current: QuotationListVersion,
   names: {
     customerName: string;
     ownerName: string | null;

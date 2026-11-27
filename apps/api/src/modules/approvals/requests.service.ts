@@ -47,7 +47,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
@@ -214,6 +214,20 @@ export function explicitSpecOf(
 type Q = Db | DbTransaction;
 type RequestRow = typeof approvalRequests.$inferSelect;
 type StepRow = typeof approvalSteps.$inferSelect;
+/** A request as the inbox reads it: every column but the snapshot (a whole document) and its hash. */
+type InboxRequest = Omit<RequestRow, 'snapshot' | 'snapshotSha256'>;
+/** What the assignment checks read of a request. */
+type AssignmentRequest = Pick<
+  RequestRow,
+  'tenantId' | 'organizationId' | 'documentType' | 'facts' | 'sodUserIds'
+>;
+const {
+  snapshot: _snapshot,
+  snapshotSha256: _snapshotSha256,
+  ...INBOX_REQUEST_COLUMNS
+} = getTableColumns(approvalRequests);
+/** Frozen specs kept in memory; a published version never changes, so an entry never goes stale. */
+const SPEC_CACHE_SIZE = 64;
 
 const HOUR_MS = 3_600_000;
 const addHours = (d: Date, h: number) => new Date(d.getTime() + h * HOUR_MS);
@@ -250,6 +264,7 @@ const forbidden = (reason: 'out_of_scope' | 'separation_of_duties', message: str
 @Injectable()
 export class ApprovalsService {
   private readonly subjects = new Map<string, ApprovalSubject>();
+  private readonly specCache = new Map<string, WorkflowSpec>();
   private readonly log = new Logger(ApprovalsService.name);
 
   constructor(
@@ -593,7 +608,7 @@ export class ApprovalsService {
       // 3. Eligibility, then separation of duties, before any version or status answer: someone who may
       // not act learns nothing about the request's state. Checked against the step at currentSeq whatever
       // its status, because a decided or blocked request has no active step.
-      const steps = await this.stepsOf(tx, requestId);
+      const steps = await this.stepsOf(tx, request);
       const current = steps.find((s) => s.seq === request.currentSeq);
       if (current === undefined) throw new ConflictException('The request has no current step');
       // An explicit-route request is routed by its stored user steps, not by the published role steps.
@@ -924,7 +939,7 @@ export class ApprovalsService {
       );
     }
     const newVersion = request.version + 1;
-    const current = (await this.stepsOf(tx, requestId)).find((s) => s.seq === request.currentSeq);
+    const current = (await this.stepsOf(tx, request)).find((s) => s.seq === request.currentSeq);
     await tx
       .update(approvalSteps)
       .set({ status: 'skipped', remindAt: null, escalateAt: null })
@@ -1056,11 +1071,11 @@ export class ApprovalsService {
     principal: Principal,
     genericApprover: boolean,
     query: InboxQuery,
-  ): Promise<{ request: RequestRow; step: StepRow }[]> {
+  ): Promise<{ request: InboxRequest; step: StepRow }[]> {
     const now = this.clock();
     const types = query.documentType ?? [];
     const rows = await this.db
-      .select({ request: approvalRequests, step: approvalSteps })
+      .select({ request: INBOX_REQUEST_COLUMNS, step: approvalSteps })
       .from(approvalRequests)
       .innerJoin(
         approvalSteps,
@@ -1087,40 +1102,51 @@ export class ApprovalsService {
       )
       .orderBy(asc(approvalRequests.submittedAt), asc(approvalRequests.id));
 
+    if (rows.length === 0) return [];
+
     // Earlier decisions of every listed request, for the distinctApprovers check below.
     const decided = new Map<string, StepDecision[]>();
-    if (rows.length > 0) {
-      const stepRows = await this.db
-        .select({
-          requestId: approvalSteps.requestId,
-          seq: approvalSteps.seq,
-          decidedBy: approvalSteps.decidedBy,
-          decidedOnBehalfOf: approvalSteps.decidedOnBehalfOf,
-        })
-        .from(approvalSteps)
-        .where(inArray(approvalSteps.requestId, [...new Set(rows.map((r) => r.request.id))]));
-      for (const d of stepRows) {
-        decided.set(d.requestId, [...(decided.get(d.requestId) ?? []), ...decisionsOf([d])]);
-      }
+    const stepRows = await this.db
+      .select({
+        requestId: approvalSteps.requestId,
+        seq: approvalSteps.seq,
+        decidedBy: approvalSteps.decidedBy,
+        decidedOnBehalfOf: approvalSteps.decidedOnBehalfOf,
+      })
+      .from(approvalSteps)
+      .where(
+        and(
+          eq(approvalSteps.tenantId, scope.tenantId),
+          eq(approvalSteps.organizationId, scope.organizationId),
+          inArray(approvalSteps.requestId, [...new Set(rows.map((r) => r.request.id))]),
+        ),
+      );
+    for (const d of stepRows) {
+      decided.set(d.requestId, [...(decided.get(d.requestId) ?? []), ...decisionsOf([d])]);
     }
 
     // Explicit-route requests name their approvers on the step rows, not in the frozen spec, so the active
-    // check needs those users too (one load per version, for every listed request).
+    // check needs those users too (each version's view of the directory adds them, see directoryViewOf).
     const stepUserIds = rows.flatMap(({ step }) =>
       step.kind === 'user' && step.userId !== null ? [step.userId] : [],
     );
-    const specs = new Map<string, { spec: WorkflowSpec; data: DirectoryData }>();
-    const eligible: { request: RequestRow; step: StepRow }[] = [];
+    // One read for the specs the listed requests were submitted under, and one directory for all of them: the
+    // union of their roles, groups and users, so the statement count does not grow with the number of versions.
+    const specs = await this.frozenSpecs(this.db, [
+      ...new Set(rows.map((r) => r.request.workflowVersionId)),
+    ]);
+    const union = await this.loadDirectoryFor(this.db, scope, [...specs.values()], stepUserIds);
+    // The active-user set is the one answer that depends on which spec asks, so each version gets its own view.
+    const views = new Map<string, DirectoryData>();
+    for (const [versionId, spec] of specs) {
+      views.set(versionId, directoryViewOf(union, spec, stepUserIds));
+    }
+    const eligible: { request: InboxRequest; step: StepRow }[] = [];
     for (const { request, step } of rows) {
-      let entry = specs.get(request.workflowVersionId);
-      if (entry === undefined) {
-        const spec = await this.frozenSpec(this.db, request.workflowVersionId);
-        entry = {
-          spec,
-          data: await this.loadDirectory(this.db, scope, spec, stepUserIds),
-        };
-        specs.set(request.workflowVersionId, entry);
-      }
+      const entry = {
+        spec: specs.get(request.workflowVersionId)!,
+        data: views.get(request.workflowVersionId)!,
+      };
       if (
         !genericApprover &&
         !this.prHeadAssignment(principal, request, step, entry.spec, entry.data, now) &&
@@ -1258,7 +1284,7 @@ export class ApprovalsService {
     // decided must not get a 404. A plain read only: deciding again still takes the checks below.
     if (replay === undefined && (await this.tookPart(scope, requestId, principal.userId))) return;
     if (request.documentType === 'purchase_request') {
-      const steps = await this.stepsOf(this.db, requestId);
+      const steps = await this.stepsOf(this.db, request);
       const current = steps.find((s) => s.seq === request.currentSeq);
       const spec = await this.frozenSpec(this.db, request.workflowVersionId);
       const data = await this.loadDirectory(this.db, scope, spec);
@@ -1290,7 +1316,7 @@ export class ApprovalsService {
     if (outsideRoleAssigneeRoles(request.documentType).length > 0) {
       // A user named outside the step's role (assignee.ts) reads the request they were named on while it waits
       // on them, and replays their own decision; nothing else.
-      const steps = await this.stepsOf(this.db, requestId);
+      const steps = await this.stepsOf(this.db, request);
       const current = steps.find((s) => s.seq === request.currentSeq);
       if (request.status === 'pending' && current?.status === 'active') {
         const spec = await this.frozenSpec(this.db, request.workflowVersionId);
@@ -1319,7 +1345,7 @@ export class ApprovalsService {
   /** PR department-head duty grants no rights on another document type or a named-user step. */
   private prHeadAssignment(
     p: Principal,
-    request: RequestRow,
+    request: AssignmentRequest,
     step: StepRow,
     spec: WorkflowSpec,
     data: DirectoryData,
@@ -1382,7 +1408,7 @@ export class ApprovalsService {
     ) {
       return false;
     }
-    const step = (await this.stepsOf(q, request.id)).find((s) => s.id === previous.stepId);
+    const step = (await this.stepsOf(q, request)).find((s) => s.id === previous.stepId);
     if (step === undefined) return false;
     const spec = await this.frozenSpec(q, request.workflowVersionId);
     const data = await this.loadDirectory(q, scope, spec);
@@ -1484,7 +1510,7 @@ export class ApprovalsService {
    */
   private outsideRoleAssignment(
     p: Principal,
-    request: RequestRow,
+    request: AssignmentRequest,
     step: StepRow,
     data: DirectoryData,
   ): boolean {
@@ -1524,7 +1550,7 @@ export class ApprovalsService {
     ) {
       return false;
     }
-    const step = (await this.stepsOf(q, request.id)).find((s) => s.id === previous.stepId);
+    const step = (await this.stepsOf(q, request)).find((s) => s.id === previous.stepId);
     return step !== undefined && assigneeOf(request.facts, step.seq) === p.userId;
   }
 
@@ -1603,7 +1629,7 @@ export class ApprovalsService {
           `The request is ${request.status}; only open requests can be rerouted`,
         );
       }
-      const steps = await this.stepsOf(tx, requestId);
+      const steps = await this.stepsOf(tx, request);
       const spec = routingSpecOf(
         request.facts,
         await this.frozenSpec(tx, request.workflowVersionId),
@@ -1725,12 +1751,44 @@ export class ApprovalsService {
 
   /** The spec a request was submitted under (never the definition's current version). */
   async frozenSpec(q: Q, workflowVersionId: string): Promise<WorkflowSpec> {
-    const [row] = await q
-      .select({ spec: workflowVersions.spec })
+    return (await this.frozenSpecs(q, [workflowVersionId])).get(workflowVersionId)!;
+  }
+
+  /**
+   * `frozenSpec` for several versions in at most one statement. A frozen version never changes, so a spec read once
+   * stays in a small least-recently-used map and costs no statement the next time. Callers must not mutate it.
+   */
+  async frozenSpecs(q: Q, versionIds: readonly string[]): Promise<Map<string, WorkflowSpec>> {
+    const found = new Map<string, WorkflowSpec>();
+    const missing: string[] = [];
+    for (const id of versionIds) {
+      const cached = this.specCache.get(id);
+      if (cached === undefined) {
+        missing.push(id);
+        continue;
+      }
+      // Re-insert so the map's order stays oldest-used first.
+      this.specCache.delete(id);
+      this.specCache.set(id, cached);
+      found.set(id, cached);
+    }
+    if (missing.length === 0) return found;
+    const rows = await q
+      .select({ id: workflowVersions.id, spec: workflowVersions.spec })
       .from(workflowVersions)
-      .where(eq(workflowVersions.id, workflowVersionId));
-    if (row === undefined) throw new Error(`workflow version ${workflowVersionId} is missing`);
-    return WorkflowSpecSchema.parse(row.spec);
+      .where(inArray(workflowVersions.id, missing));
+    for (const row of rows) {
+      const spec = WorkflowSpecSchema.parse(row.spec);
+      this.specCache.set(row.id, spec);
+      found.set(row.id, spec);
+    }
+    for (const id of missing) {
+      if (!found.has(id)) throw new Error(`workflow version ${id} is missing`);
+    }
+    while (this.specCache.size > SPEC_CACHE_SIZE) {
+      this.specCache.delete(this.specCache.keys().next().value!);
+    }
+    return found;
   }
 
   /** Loads the people the spec can route to: role holders, group members and delegations. */
@@ -1741,10 +1799,25 @@ export class ApprovalsService {
     /** Users named by stored steps rather than by `spec` (an explicit route read through the frozen spec). */
     extraUserIds: readonly string[] = [],
   ): Promise<DirectoryData> {
-    const all = [...spec.steps, ...spec.rules.map((r) => r.add)];
+    return this.loadDirectoryFor(q, scope, [spec], extraUserIds);
+  }
+
+  /**
+   * The directory of several specs at once: the union of their roles, groups, users and department heads, in one
+   * read each. A spec's router only looks up the keys of its own steps, so the extra entries change no answer
+   * (except `activeUserIds`: see `directoryViewOf`).
+   */
+  async loadDirectoryFor(
+    q: Q,
+    scope: TxScope,
+    specs: readonly WorkflowSpec[],
+    /** Users named by stored steps rather than by a spec (an explicit route read through the frozen spec). */
+    extraUserIds: readonly string[] = [],
+  ): Promise<DirectoryData> {
+    const all = specs.flatMap((spec) => [...spec.steps, ...spec.rules.map((r) => r.add)]);
     const roles = [
       ...new Set([
-        ...outsideRoleAssigneeRoles(spec.documentType),
+        ...specs.flatMap((spec) => outsideRoleAssigneeRoles(spec.documentType)),
         ...all.flatMap((s) => {
           if (s.kind === 'role' && s.role !== undefined) return [s.role];
           // A department_head step may resolve to its fallback role (AD11).
@@ -1761,10 +1834,16 @@ export class ApprovalsService {
       ),
     ];
 
-    const roleMembers = new Map<string, readonly string[]>();
     // On `q`: inside submit or a decision it is the transaction, and a pool read there takes a second connection.
-    for (const role of roles) {
-      roleMembers.set(role, await this.users.userIdsWithRole(scope, role, q));
+    // One statement, not a Promise.all of reads, so a transaction (and later row-level security) sees one connection.
+    let roleMembers: Map<string, readonly string[]>;
+    if (this.users.userIdsWithRoles !== undefined) {
+      roleMembers = await this.users.userIdsWithRoles(scope, roles, q);
+    } else {
+      roleMembers = new Map();
+      for (const role of roles) {
+        roleMembers.set(role, await this.users.userIdsWithRole(scope, role, q));
+      }
     }
 
     const groups = new Map<string, { id: string; memberIds: string[] }>();
@@ -1989,11 +2068,23 @@ export class ApprovalsService {
       .from(approvalRequests)
       .where(requestInScope(scope, requestId));
     if (request === undefined) throw new NotFoundException('Approval request not found');
-    const steps = await this.stepsOf(q, requestId);
+    const steps = await this.stepsOf(q, request);
     const actions = await q
-      .select()
+      .select({
+        action: approvalActions.action,
+        actorUserId: approvalActions.actorUserId,
+        onBehalfOfUserId: approvalActions.onBehalfOfUserId,
+        comment: approvalActions.comment,
+        createdAt: approvalActions.createdAt,
+      })
       .from(approvalActions)
-      .where(eq(approvalActions.requestId, requestId))
+      .where(
+        and(
+          eq(approvalActions.tenantId, request.tenantId),
+          eq(approvalActions.organizationId, request.organizationId),
+          eq(approvalActions.requestId, requestId),
+        ),
+      )
       // Rows of one transaction share created_at; seq keeps them in the order they were written.
       .orderBy(asc(approvalActions.createdAt), asc(approvalActions.seq));
     return {
@@ -2086,11 +2177,20 @@ export class ApprovalsService {
     return request;
   }
 
-  private stepsOf(q: Q, requestId: string): Promise<StepRow[]> {
+  private stepsOf(
+    q: Q,
+    request: Pick<RequestRow, 'id' | 'tenantId' | 'organizationId'>,
+  ): Promise<StepRow[]> {
     return q
       .select()
       .from(approvalSteps)
-      .where(eq(approvalSteps.requestId, requestId))
+      .where(
+        and(
+          eq(approvalSteps.tenantId, request.tenantId),
+          eq(approvalSteps.organizationId, request.organizationId),
+          eq(approvalSteps.requestId, request.id),
+        ),
+      )
       .orderBy(asc(approvalSteps.seq));
   }
 
@@ -2099,6 +2199,33 @@ export class ApprovalsService {
     if (s === undefined) throw new Error(`no approval subject registered for "${documentType}"`);
     return s;
   }
+}
+
+/**
+ * The directory of several specs, seen as one spec alone would have loaded it. Roles, groups, delegations and
+ * heads are looked up by key, so extra entries change no answer; `activeUserIds` is different: the router also
+ * checks the user a stored step names against it, and an absent set means "no restriction". So the view keeps
+ * only the users this spec (its `user` steps, its department heads when it has such a step, and the users the
+ * listed rows name) would have asked about, and leaves the set out when that list is empty.
+ */
+export function directoryViewOf(
+  data: DirectoryData,
+  spec: WorkflowSpec,
+  extraUserIds: readonly string[],
+): DirectoryData {
+  const union = data.activeUserIds;
+  if (union === undefined) return data;
+  const steps = [...spec.steps, ...spec.rules.map((r) => r.add)];
+  const asked = new Set<string>(extraUserIds);
+  for (const s of steps) if (s.kind === 'user' && s.user !== undefined) asked.add(s.user);
+  if (steps.some((s) => s.kind === 'department_head')) {
+    for (const head of data.departmentHeads?.values() ?? []) asked.add(head);
+  }
+  if (asked.size === 0) {
+    const { activeUserIds: _unrestricted, ...rest } = data;
+    return rest;
+  }
+  return { ...data, activeUserIds: new Set([...asked].filter((id) => union.has(id))) };
 }
 
 /**

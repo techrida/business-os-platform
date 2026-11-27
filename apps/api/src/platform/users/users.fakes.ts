@@ -274,6 +274,13 @@ export class FakeUsersStore extends UsersStore {
         .map((u) => u.id),
     );
   }
+  async userIdsWithRoles(s: TxScope, roles: readonly RoleKey[]) {
+    return new Map(
+      await Promise.all(
+        roles.map(async (role) => [role, await this.userIdsWithRole(s, role)] as const),
+      ),
+    );
+  }
   effectiveRoleHolders(_q: Queryable, tenantId: string, role: RoleKey) {
     const holders: EffectiveRoleHolder[] = [];
     for (const m of this.memberships) {

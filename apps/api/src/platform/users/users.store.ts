@@ -234,6 +234,15 @@ export abstract class UsersStore {
    */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey, q?: Queryable): Promise<string[]>;
   /**
+   * `userIdsWithRole` for several roles in one statement: every requested role is a key of the map (an empty list
+   * when nobody holds it), each list in user id order.
+   */
+  abstract userIdsWithRoles(
+    scope: TxScope,
+    roles: readonly RoleKey[],
+    q?: Queryable,
+  ): Promise<Map<RoleKey, string[]>>;
+  /**
    * Effective holders of `role` per legal entity, used by the last-Founder guard: an active user with the
    * role and a membership in the entity whose role_keys is NULL or has the role. One row per (entity, user).
    */
@@ -688,6 +697,31 @@ export class SqlUsersStore extends UsersStore {
           ORDER BY u.id`,
     );
     return found.map((r) => r.id);
+  }
+
+  async userIdsWithRoles(
+    scope: TxScope,
+    roles: readonly RoleKey[],
+    q: Queryable = this.db,
+  ): Promise<Map<RoleKey, string[]>> {
+    const byRole = new Map<RoleKey, string[]>(roles.map((role) => [role, []]));
+    if (roles.length === 0) return byRole;
+    const found = await rows<{ id: string; role: RoleKey }>(
+      q,
+      sql`SELECT u.id, ur.role_key AS role FROM app.user_roles ur
+          JOIN app.users u ON u.tenant_id = ur.tenant_id AND u.id = ur.user_id
+          JOIN app.user_entities ue ON ue.tenant_id = ur.tenant_id AND ue.user_id = ur.user_id
+            AND ue.organization_id = ${scope.organizationId}
+          WHERE ur.tenant_id = ${scope.tenantId} AND u.status = 'active'
+            AND ur.role_key = ANY (ARRAY[${sql.join(
+              roles.map((role) => sql`${role}`),
+              sql`, `,
+            )}]::text[])
+            AND (ue.role_keys IS NULL OR ur.role_key = ANY (ue.role_keys))
+          ORDER BY u.id`,
+    );
+    for (const r of found) byRole.get(r.role)?.push(r.id);
+    return byRole;
   }
 
   effectiveRoleHolders(
