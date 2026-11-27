@@ -92,15 +92,16 @@ test('a clean follow-up push is allowed after a refused one', () => {
   assert.equal(r.status, 0, r.stderr);
 });
 
-test('a branch named *wip-t3-* is refused before any content is checked', () => {
+test('a branch named *wip-t3-* is refused', () => {
   const r = push('main:refs/heads/kuu/wip-t3-scratch');
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /refs\/heads\/kuu\/wip-t3-scratch: branches named \*wip-t3-\*/);
 });
 
 test('deleting a *wip-t3-* branch is not blocked', () => {
-  const r = push('--delete', 'refs/heads/kuu/wip-t3-scratch');
-  assert.ok(!/never pushed/.test(r.stderr), r.stderr);
+  must(['push', '--no-verify', 'origin', 'main:refs/heads/kuu/wip-t3-old']);
+  const r = push('--delete', 'refs/heads/kuu/wip-t3-old');
+  assert.equal(r.status, 0, r.stderr);
 });
 
 const prepareCommand = JSON.parse(
