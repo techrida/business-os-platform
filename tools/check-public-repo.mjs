@@ -132,13 +132,18 @@ function commitExists(git, sha) {
   }
 }
 
+const BLOCKED_REF = /wip-t3-/;
+
 // `updates` are the lines git feeds a pre-push hook: "<local ref> <local sha> <remote ref> <remote sha>".
 export function checkPush(updates, git) {
   const problems = [];
   const entries = new Map();
   for (const line of updates) {
-    const [, localSha, , remoteSha] = line.trim().split(/\s+/);
+    const [, localSha, remoteRef, remoteSha] = line.trim().split(/\s+/);
     if (!localSha || ZERO_SHA.test(localSha)) continue; // deleting a ref pushes no content
+    if (remoteRef && BLOCKED_REF.test(remoteRef)) {
+      problems.push(`${remoteRef}: branches named *wip-t3-* are never pushed to this repository`);
+    }
     for (const e of treeEntries(git, localSha)) entries.set(`${e.file}\0${e.blob}`, e);
     for (const e of newCommitEntries(git, localSha, remoteSha)) {
       const key = `${e.file}\0${e.blob}`;
