@@ -19,7 +19,8 @@ import { systemActor, withTx } from '../../platform/db/tx';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { ApprovalsAdminService } from './admin.service';
 import type { Caller } from './ports';
-import { ApprovalsService } from './requests.service';
+import type { DirectoryData } from './router';
+import { ApprovalsService, directoryViewOf } from './requests.service';
 
 const scope = { tenantId: '', organizationId: '' };
 let staffIdpOrgId = '';
@@ -182,8 +183,8 @@ describe('inbox count on pending requests of four workflow versions', () => {
     // A service of its own: its frozen specs are not in memory yet, the worst case of a first poll.
     const cold = new ApprovalsService(countingDb, audit, notify, users, caller, clock);
     const sent = await capture(() => cold.inboxCount());
-    expect(sent.length).toBeLessThanOrEqual(8);
-    expect(sent.filter((s) => s.includes('"snapshot"'))).toEqual([]);
+    expect(sent.length).toBeLessThanOrEqual(5); // plan bound 8; measured 5 on a cold cache, was 22
+    expect(sent.filter((s) => /"snapshot(_sha256)?"/.test(s))).toEqual([]);
   });
 
   it('keeps a frozen spec in memory: a second count reads no workflow version', async () => {
@@ -191,6 +192,7 @@ describe('inbox count on pending requests of four workflow versions', () => {
     await counted.inboxCount();
     const sent = await capture(() => counted.inboxCount());
     expect(sent.filter((s) => s.includes('"workflow_versions"'))).toEqual([]);
+    expect(sent.length).toBeLessThanOrEqual(4);
   });
 
   it('reads the role holders of all roles in one statement, the same as one read per role', async () => {
@@ -233,5 +235,37 @@ describe('inbox count on pending requests of four workflow versions', () => {
       expect(whereOf(s)).toContain('"organization_id"');
       expect(s).not.toContain('"result"');
     }
+  });
+});
+
+describe('directoryViewOf: the active-user set stays the answer one spec alone would get', () => {
+  const H = randomUUID();
+  const N = randomUUID();
+  const base = { roleMembers: new Map(), groups: new Map(), delegations: [] };
+  const spec = (steps: object[]) => ({ documentType: 'x', steps, rules: [] }) as never;
+  const headStep = { id: 'h', kind: 'department_head', reason: 'head' };
+  const userStep = (user: string) => ({ id: 'u', kind: 'user', user, reason: 'named' });
+  const union = (active: string[]): DirectoryData => ({
+    ...base,
+    departmentHeads: new Map([['dept', H]]),
+    activeUserIds: new Set(active),
+  });
+
+  it('leaves the set out for a spec that names nobody, as that spec alone would', () => {
+    const view = directoryViewOf(union([N]), spec([step('a', 'accountant')]), []);
+    expect(view.activeUserIds).toBeUndefined();
+  });
+
+  it("does not let another version's named user restrict a stale department head", () => {
+    // Version A names N; version B has a department_head step whose stored head is H, who is not active.
+    const viewB = directoryViewOf(union([N]), spec([headStep]), [H]);
+    expect(viewB.activeUserIds).toEqual(new Set());
+    const viewA = directoryViewOf(union([N]), spec([userStep(N)]), []);
+    expect(viewA.activeUserIds).toEqual(new Set([N]));
+  });
+
+  it('keeps the whole set for a spec without a named user when the rows name users', () => {
+    const view = directoryViewOf(union([N]), spec([step('a', 'accountant')]), [N]);
+    expect(view.activeUserIds).toEqual(new Set([N]));
   });
 });

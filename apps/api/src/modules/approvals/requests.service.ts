@@ -1126,7 +1126,7 @@ export class ApprovalsService {
     }
 
     // Explicit-route requests name their approvers on the step rows, not in the frozen spec, so the active
-    // check needs those users too (one load per version, for every listed request).
+    // check needs those users too (each version's view of the directory adds them, see directoryViewOf).
     const stepUserIds = rows.flatMap(({ step }) =>
       step.kind === 'user' && step.userId !== null ? [step.userId] : [],
     );
@@ -1135,10 +1135,18 @@ export class ApprovalsService {
     const specs = await this.frozenSpecs(this.db, [
       ...new Set(rows.map((r) => r.request.workflowVersionId)),
     ]);
-    const data = await this.loadDirectoryFor(this.db, scope, [...specs.values()], stepUserIds);
+    const union = await this.loadDirectoryFor(this.db, scope, [...specs.values()], stepUserIds);
+    // The active-user set is the one answer that depends on which spec asks, so each version gets its own view.
+    const views = new Map<string, DirectoryData>();
+    for (const [versionId, spec] of specs) {
+      views.set(versionId, directoryViewOf(union, spec, stepUserIds));
+    }
     const eligible: { request: InboxRequest; step: StepRow }[] = [];
     for (const { request, step } of rows) {
-      const entry = { spec: specs.get(request.workflowVersionId)!, data };
+      const entry = {
+        spec: specs.get(request.workflowVersionId)!,
+        data: views.get(request.workflowVersionId)!,
+      };
       if (
         !genericApprover &&
         !this.prHeadAssignment(principal, request, step, entry.spec, entry.data, now) &&
@@ -1796,7 +1804,8 @@ export class ApprovalsService {
 
   /**
    * The directory of several specs at once: the union of their roles, groups, users and department heads, in one
-   * read each. A spec's router only looks up the keys of its own steps, so the extra entries change no answer.
+   * read each. A spec's router only looks up the keys of its own steps, so the extra entries change no answer
+   * (except `activeUserIds`: see `directoryViewOf`).
    */
   async loadDirectoryFor(
     q: Q,
@@ -2190,6 +2199,33 @@ export class ApprovalsService {
     if (s === undefined) throw new Error(`no approval subject registered for "${documentType}"`);
     return s;
   }
+}
+
+/**
+ * The directory of several specs, seen as one spec alone would have loaded it. Roles, groups, delegations and
+ * heads are looked up by key, so extra entries change no answer; `activeUserIds` is different: the router also
+ * checks the user a stored step names against it, and an absent set means "no restriction". So the view keeps
+ * only the users this spec (its `user` steps, its department heads when it has such a step, and the users the
+ * listed rows name) would have asked about, and leaves the set out when that list is empty.
+ */
+export function directoryViewOf(
+  data: DirectoryData,
+  spec: WorkflowSpec,
+  extraUserIds: readonly string[],
+): DirectoryData {
+  const union = data.activeUserIds;
+  if (union === undefined) return data;
+  const steps = [...spec.steps, ...spec.rules.map((r) => r.add)];
+  const asked = new Set<string>(extraUserIds);
+  for (const s of steps) if (s.kind === 'user' && s.user !== undefined) asked.add(s.user);
+  if (steps.some((s) => s.kind === 'department_head')) {
+    for (const head of data.departmentHeads?.values() ?? []) asked.add(head);
+  }
+  if (asked.size === 0) {
+    const { activeUserIds: _unrestricted, ...rest } = data;
+    return rest;
+  }
+  return { ...data, activeUserIds: new Set([...asked].filter((id) => union.has(id))) };
 }
 
 /**
