@@ -49,7 +49,8 @@ type Counts = Pick<ShellCounts, 'inbox' | 'notifications' | 'signedOut'>;
  * screen (the read on arrival, the poll), and a context around the page that changes then also reaches the page's
  * Suspense boundaries: React cannot hydrate a boundary whose segment is still streaming, so it renders that page
  * again on the client and the streamed server copy stays in the DOM (two of every field). Only the components that
- * show a number subscribe, so a new number re-renders them and nothing else.
+ * show a number subscribe, so a new number re-renders them and nothing else. Keep those subscribers leaf components:
+ * one that renders page content as its children would pass that content new props on every number.
  */
 interface CountsStore {
   get: () => Counts;
