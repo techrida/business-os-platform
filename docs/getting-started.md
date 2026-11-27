@@ -51,6 +51,8 @@ pnpm build
 
 `pnpm build` compiles `@bos/contracts`, `@bos/db`, `@bos/locale`, `@bos/money-rules`, `@bos/seed-zitadel`, `@bos/api`, `@bos/workspace`, and `@bos/portal` in dependency order.
 
+`pnpm install` also points git at `.githooks` (`core.hooksPath`), so every `git push` runs `tools/check-public-repo.mjs` on what is pushed and refuses internal files, private hostnames and `*wip-t3-*` branches. Skip it in an emergency with `git push --no-verify`.
+
 ## 3. Start the infrastructure stack
 
 Start the `core` Compose profile:

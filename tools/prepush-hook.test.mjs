@@ -2,7 +2,15 @@
 // Runs the real .githooks/pre-push through `git push` from a throwaway repository to a bare remote.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -93,4 +101,47 @@ test('a branch named *wip-t3-* is refused before any content is checked', () => 
 test('deleting a *wip-t3-* branch is not blocked', () => {
   const r = push('--delete', 'refs/heads/kuu/wip-t3-scratch');
   assert.ok(!/never pushed/.test(r.stderr), r.stderr);
+});
+
+const prepareCommand = JSON.parse(
+  readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'),
+    'utf8',
+  ),
+).scripts.prepare;
+const runPrepare = (cwd) => spawnSync(prepareCommand, { cwd, env, encoding: 'utf8', shell: true });
+const installer = fileURLToPath(new URL('./prepush-install.mjs', import.meta.url));
+const withInstaller = (root) => {
+  mkdirSync(path.join(root, 'tools'), { recursive: true });
+  copyFileSync(installer, path.join(root, 'tools', 'prepush-install.mjs'));
+  return root;
+};
+
+test('the prepare script installs the hooks path at a repository root', () => {
+  const repo = withInstaller(path.join(dir, 'fresh'));
+  execFileSync('git', ['init', '-q', repo], { env });
+  const r = runPrepare(repo);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(must(['config', '--local', 'core.hooksPath'], repo).stdout.trim(), '.githooks');
+  assert.equal(runPrepare(repo).status, 0);
+});
+
+test('the prepare script is a no-op outside a git work tree', () => {
+  const plain = withInstaller(path.join(dir, 'tarball'));
+  const r = runPrepare(plain);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout + r.stderr, '');
+  assert.equal(existsSync(path.join(plain, '.git')), false);
+});
+
+test('the prepare script does not touch a repository it is only nested inside', () => {
+  const before = must(['config', '--local', '--list']).stdout;
+  assert.equal(runPrepare(withInstaller(path.join(work, 'sub'))).status, 0);
+  assert.equal(must(['config', '--local', '--list']).stdout, before);
+});
+
+test('the prepare script never fails the install when tools/ is missing', () => {
+  const bare = path.join(dir, 'docker');
+  mkdirSync(bare);
+  assert.equal(runPrepare(bare).status, 0);
 });
