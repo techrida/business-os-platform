@@ -8,6 +8,7 @@ import {
   SIGNED_IN_COOKIE,
   SIGNED_IN_COOKIE_MAX_AGE,
   SIGNED_OUT_COOKIE,
+  StaleSignInError,
 } from '@/lib/oidc';
 import {
   createSession,
@@ -145,8 +146,10 @@ export async function GET(req: Request): Promise<Response> {
     }
     // Log a correlation id only. Error messages and stacks from the OIDC library can contain
     // the code, state or tokens, so nothing from the error itself goes to the log.
+    // A refused stale sign-in gets its own event: a ZITADEL clock running behind ours would look like this too.
     const correlationId = crypto.randomUUID();
-    console.error(JSON.stringify({ event: 'auth.callback_failed', correlationId }));
+    const event = err instanceof StaleSignInError ? 'auth.stale_sign_in' : 'auth.callback_failed';
+    console.error(JSON.stringify({ event, correlationId }));
     return redirectTo('/auth/error?code=callback_failed');
   }
 }

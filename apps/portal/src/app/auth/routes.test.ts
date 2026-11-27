@@ -37,7 +37,10 @@ const { ApiError } = vi.hoisted(() => ({
 /** The request's cookies, as `cookies().get()` sees them. Reset per test. */
 let requestCookies = new Map<string, string>();
 
+const { StaleSignInError } = vi.hoisted(() => ({ StaleSignInError: class extends Error {} }));
+
 vi.mock('@/lib/oidc', () => ({
+  StaleSignInError,
   // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
   LOGIN_COOKIE: '__Host-bos_portal_login',
   LOGIN_COOKIE_MAX_AGE: 600,
@@ -618,6 +621,23 @@ describe('GET /auth/callback', () => {
     expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
       ...LOGIN_COOKIE_ATTRS,
       maxAge: 0,
+    });
+  });
+
+  it('logs a refused stale sign-in as its own event, then fails closed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    m.completeLogin.mockRejectedValue(new StaleSignInError());
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    const res = await call('?code=c&state=s');
+
+    expect(res.headers.get('location')).toBe(
+      'https://portal.localhost/auth/error?code=callback_failed',
+    );
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toMatchObject({
+      event: 'auth.stale_sign_in',
     });
   });
 
