@@ -155,7 +155,7 @@ function line(name, data) {
   }
   const n = count !== undefined && count.count !== undefined ? count.count : '?';
   return (
-    `${name}: p50 ${v['p(50)'].toFixed(1)} ms, p95 ${v['p(95)'].toFixed(1)} ms ` +
+    `${name}: p50 ${v['p(50)'].toFixed(1)} ms, p95 ${v['p(95)'].toFixed(1)} ms, p99 ${v['p(99)'].toFixed(1)} ms ` +
     `(limit ${NFR.dbReadP95Ms} ms, ${v['p(95)'] < NFR.dbReadP95Ms ? 'ok' : 'FAIL'}), ${n} requests`
   );
 }
