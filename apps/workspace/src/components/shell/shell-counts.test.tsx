@@ -137,7 +137,7 @@ describe('ShellCountsProvider', () => {
     expect(shown()).toBe('inbox=7 unread=2 signedOut=false');
   });
 
-  it('makes one read for two page changes within 5 s, and reads again after that', async () => {
+  it('makes one read for a run of page changes within 5 s, delayed to the end of the window, never dropped', async () => {
     fetchMock.mockImplementation(answer(7, 2));
     await render({ inbox: 1, notifications: 1 });
 
@@ -148,12 +148,15 @@ describe('ShellCountsProvider', () => {
     await tick(2_000);
     nav.pathname = '/quotations';
     await render({ inbox: 1, notifications: 1 });
-    expect(reads()).toBe(1);
-
-    await tick(4_000);
     nav.pathname = '/inbox';
     await render({ inbox: 1, notifications: 1 });
+    expect(reads()).toBe(1);
+
+    // The number after the last page change still arrives, 5 s after the previous read.
+    fetchMock.mockImplementation(answer(0, 2));
+    await tick(3_000);
     expect(reads()).toBe(2);
+    expect(shown()).toBe('inbox=0 unread=2 signedOut=false');
   });
 
   it('keeps the last unread count when that read comes back unknown, never showing a zero', async () => {

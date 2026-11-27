@@ -17,7 +17,7 @@ import {
 export const SHELL_COUNTS_URL = '/api/shell/counts';
 
 const POLL_MS = 15_000;
-/** A page change within this long of the last read does not start another: the number cannot have moved much. */
+/** A page change within this long of the last read waits for the end of it before reading, so a run of page changes makes one read. */
 const PATH_READ_MIN_MS = 5_000;
 const READ_TIMEOUT_MS = 10_000;
 
@@ -66,7 +66,7 @@ const knownCount = (value: unknown): number | undefined =>
 
 /**
  * The one counts poller per tab, mounted once by the app layout. It feeds the sidebar's Inbox badge and the
- * header bell from a single read of `/api/shell/counts`: on page changes (not within 5 s of the last read),
+ * header bell from a single read of `/api/shell/counts`: on page changes (at most one per 5 s, the last one is not dropped),
  * when the window regains focus or the tab becomes visible, and every 15 s. A hidden tab does not poll. When
  * the layout has no unread count (it no longer waits for one) it reads once on arrival.
  *
@@ -190,11 +190,11 @@ export function ShellCountsProvider({
   useEffect(() => {
     if (seenPath.current === pathname) return;
     seenPath.current = pathname;
-    const read = window.setTimeout(() => {
-      const last = lastReadAt.current;
-      if (last !== null && Date.now() - last < PATH_READ_MIN_MS) return;
-      void refresh();
-    }, 0);
+    // Within 5 s of the last read the read is delayed to the end of that window, not dropped: a page change
+    // that follows an action (an approval, then the redirect to the list) still gets a fresh number.
+    const last = lastReadAt.current;
+    const wait = last === null ? 0 : Math.max(0, PATH_READ_MIN_MS - (Date.now() - last));
+    const read = window.setTimeout(() => void refresh(), wait);
     return () => window.clearTimeout(read);
   }, [pathname, refresh]);
 
