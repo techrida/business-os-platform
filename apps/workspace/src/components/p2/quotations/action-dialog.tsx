@@ -30,6 +30,7 @@ export function ActionDialog({
   pending,
   done,
   blocked = false,
+  refreshOnDone = false,
   children,
 }: {
   triggerLabel: string;
@@ -43,6 +44,11 @@ export function ActionDialog({
   done?: boolean | undefined;
   /** Keeps the submit button off while a field is not ready (a file still uploading, an infected file). */
   blocked?: boolean | undefined;
+  /**
+   * Refresh the server page when a done dialog closes instead of reloading the document. Only for forms keyed on the
+   * record version (the quotation dialogs); a form whose state would survive the refresh keeps the reload.
+   */
+  refreshOnDone?: boolean | undefined;
   children: ReactNode;
 }) {
   const refreshAfterAction = useRefreshAfterAction();
@@ -53,7 +59,10 @@ export function ActionDialog({
       description={intro}
       locked={pending}
       onOpenChange={(open) => {
-        if (!open && done) refreshAfterAction();
+        if (!open && done) {
+          if (refreshOnDone) refreshAfterAction();
+          else window.location.reload();
+        }
       }}
       footer={
         done ? (

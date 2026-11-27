@@ -15,6 +15,8 @@ export function shouldAutoRefresh(words: PdfWords): boolean {
 }
 
 const CHECK_TIMEOUT_MS = 8_000;
+/** After a refresh, the page needs a moment to arrive; another refresh before then would only queue a second render. */
+const REFRESH_SETTLE_MS = 10_000;
 
 /**
  * Shows the words for a PDF that is on its way and, on the shared schedule (use-prepare-poll.ts: 1 s, 2 s, 4 s, 8 s,
@@ -36,10 +38,11 @@ export function PreparingRefresh({
   const router = useRouter();
   const auto = shouldAutoRefresh(text);
   const inFlight = useRef<AbortController | null>(null);
+  const refreshedAt = useRef(0);
   useEffect(() => () => inFlight.current?.abort(), []);
 
   const check = useCallback(() => {
-    if (inFlight.current !== null) return;
+    if (inFlight.current !== null || Date.now() - refreshedAt.current < REFRESH_SETTLE_MS) return;
     const own = new AbortController();
     inFlight.current = own;
     const query = new URLSearchParams({ quotationId, versionId });
@@ -51,7 +54,10 @@ export function PreparingRefresh({
       .then(async (response) => {
         if (!response.ok) return;
         const body = (await response.json()) as { preparing?: unknown };
-        if (!own.signal.aborted && body.preparing === false) router.refresh();
+        if (!own.signal.aborted && body.preparing === false) {
+          refreshedAt.current = Date.now();
+          router.refresh();
+        }
       })
       .catch(() => undefined)
       .finally(() => {

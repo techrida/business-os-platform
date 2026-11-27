@@ -65,15 +65,19 @@ function Harness() {
   );
 }
 
-it('refreshes on Done without a reload and starts a fresh form on the next render key', async () => {
+it('keeps showing done when the page re-renders with a new key, then refreshes on Done and starts a fresh form', async () => {
   mounted = await mountForm(<Harness />);
   await click(button('Issue'));
   await submit(document.querySelector<HTMLElement>('[role="dialog"]')!);
+  // The action's own reply re-rendered the page (revalidatePath): a new render key, and the dialog must still say done.
+  await click(document.querySelector('[data-testid="server-refresh"]'));
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Issued.');
+  expect(mocks.refresh).not.toHaveBeenCalled();
+
   await click(button('Done'));
   expect(mocks.refresh).toHaveBeenCalledTimes(1);
   expect(mocks.reload).not.toHaveBeenCalled();
 
-  await click(document.querySelector('[data-testid="server-refresh"]'));
   await click(button('Issue'));
   const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
   expect(dialog.querySelector('form')).not.toBeNull();

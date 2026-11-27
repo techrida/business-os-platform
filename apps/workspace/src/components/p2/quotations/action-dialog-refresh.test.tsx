@@ -47,6 +47,7 @@ it('closing a done dialog refreshes the page and does not reload the document', 
       submitLabel="Send"
       pending={false}
       done
+      refreshOnDone
     >
       <p>Sent.</p>
     </ActionDialog>,
@@ -56,6 +57,26 @@ it('closing a done dialog refreshes the page and does not reload the document', 
   await click(button('Done') ?? null);
   expect(router.refresh).toHaveBeenCalledTimes(1);
   expect(reload).not.toHaveBeenCalled();
+});
+
+it('a dialog whose form is not keyed on the record keeps the document reload', async () => {
+  mounted = await mountForm(
+    <ActionDialog
+      triggerLabel="Match"
+      title="Match"
+      intro="Match it."
+      formId="f"
+      submitLabel="Match"
+      pending={false}
+      done
+    >
+      <p>Matched.</p>
+    </ActionDialog>,
+  );
+  await click(button('Match') ?? null);
+  await click(button('Done') ?? null);
+  expect(reload).toHaveBeenCalledTimes(1);
+  expect(router.refresh).not.toHaveBeenCalled();
 });
 
 it('closing a dialog that did nothing refreshes nothing', async () => {

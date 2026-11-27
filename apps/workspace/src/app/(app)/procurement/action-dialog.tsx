@@ -1,6 +1,13 @@
 'use client';
 
-import { useActionState, useId, useRef, type ComponentProps, type ReactNode } from 'react';
+import {
+  useActionState,
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, type DialogSize } from '@/components/ui/dialog';
@@ -14,9 +21,22 @@ import {
 import type { ActionState } from './orders/_lib/state';
 import styles from './procurement.module.css';
 
-/** Keyed on the render's idempotency key: the refresh after a success starts a fresh form instead of keeping "done". */
-export function ProcurementActionDialog(props: ComponentProps<typeof ProcurementActionForm>) {
-  return <ProcurementActionForm key={props.idempotencyKey} {...props} />;
+/**
+ * The dialog shows "done" until it is closed (the action's own reply already re-rendered the page with a new render key,
+ * so nothing may reset it before that). Closing a done dialog refreshes the page and starts a fresh form on the render
+ * key the page holds by then.
+ */
+export function ProcurementActionDialog(
+  props: Omit<ComponentProps<typeof ProcurementActionForm>, 'onDoneClosed'>,
+) {
+  const [generation, setGeneration] = useState(0);
+  return (
+    <ProcurementActionForm
+      key={generation}
+      {...props}
+      onDoneClosed={() => setGeneration((g) => g + 1)}
+    />
+  );
 }
 
 function ProcurementActionForm({
@@ -35,7 +55,9 @@ function ProcurementActionForm({
   pendingWords,
   size = 'small',
   fields,
+  onDoneClosed,
 }: {
+  onDoneClosed: () => void;
   triggerLabel: string;
   triggerVariant?: 'primary' | 'secondary';
   title: string;
@@ -71,7 +93,10 @@ function ProcurementActionForm({
       locked={pending}
       closeOnOutsideClick={fields === undefined}
       onOpenChange={(open) => {
-        if (!open && done) refreshAfterAction();
+        if (!open && done) {
+          refreshAfterAction();
+          onDoneClosed();
+        }
       }}
       footer={
         done ? (
