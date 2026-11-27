@@ -339,10 +339,10 @@ it('with pollWhilePreparing, checks a 409 again by itself and draws the PDF once
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await advance(5_000);
+    await advance(1_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fetchMock.mockImplementation(() => respond(200));
-    await advance(10_000);
+    await advance(2_000);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(document.querySelector('[data-testid="pdf-pages"]')).not.toBeNull();
 
@@ -368,7 +368,7 @@ it('stops checking after the time a render may take and offers Check again', asy
     await click(button('Check again'));
     await advance(0);
     expect(fetchMock).toHaveBeenCalledTimes(calls + 1);
-    await advance(5_000);
+    await advance(1_000);
     expect(fetchMock).toHaveBeenCalledTimes(calls + 2);
   } finally {
     vi.useRealTimers();

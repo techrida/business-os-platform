@@ -1,3 +1,19 @@
+import { vi } from 'vitest';
+
+// Next's `useRouter` throws outside a mounted app router, which is where every component test renders. A test that needs
+// to see a navigation or a refresh mocks `next/navigation` itself and wins over this stub.
+vi.mock('next/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/navigation')>()),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+}));
+
 // jsdom does not implement layout geometry on Range/Text/Element. ProseMirror/Tiptap calls
 // getClientRects() and getBoundingClientRect() on Range, Text, and Element nodes when
 // scrolling selections into view; stubbing missing methods keeps jsdom tests from throwing

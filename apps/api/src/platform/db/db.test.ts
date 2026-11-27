@@ -44,6 +44,53 @@ describe('DbModule', () => {
   });
 });
 
+describe('the connection pool options', () => {
+  async function poolOptionsOf(service: 'api' | 'worker') {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          service,
+          env:
+            service === 'api'
+              ? {
+                  ...ENV,
+                  OIDC_ISSUER: 'https://auth.example.com',
+                  OIDC_AUDIENCE: 'aud',
+                  OIDC_CLIENT_ID: 'c',
+                }
+              : ENV,
+        }),
+        DbModule,
+      ],
+    }).compile();
+    const pool = moduleRef.get<{ options: Record<string, unknown>; end: () => Promise<void> }>(
+      PG_POOL,
+    );
+    const options = { ...pool.options };
+    await pool.end();
+    return options;
+  }
+
+  it('gives the API 4 warm connections, a 5 minute idle limit and a 30 s statement limit', async () => {
+    expect(await poolOptionsOf('api')).toMatchObject({
+      max: 10,
+      min: 4,
+      idleTimeoutMillis: 300_000,
+      connectionTimeoutMillis: 5_000,
+      statement_timeout: 30_000,
+      query_timeout: 35_000,
+    });
+  });
+
+  it('keeps the worker on a longer 120 s statement limit', async () => {
+    expect(await poolOptionsOf('worker')).toMatchObject({
+      min: 4,
+      statement_timeout: 120_000,
+      query_timeout: 125_000,
+    });
+  });
+});
+
 describe('inTransaction', () => {
   it('runs the callback through the db transaction (commit or roll back is drizzle behaviour)', async () => {
     const tx = { marker: 'tx' };
@@ -72,7 +119,11 @@ describe('DbModule settings and metrics', () => {
     }).compile();
     const app = moduleRef.createNestApplication();
     await app.init();
-    expect(txTimeouts()).toEqual({ lockTimeoutMs: 1500, idleInTxTimeoutMs: 45_000 });
+    expect(txTimeouts()).toEqual({
+      lockTimeoutMs: 1500,
+      statementTimeoutMs: 15_000,
+      idleInTxTimeoutMs: 45_000,
+    });
     await app.close();
   });
 
@@ -85,7 +136,8 @@ describe('DbModule settings and metrics', () => {
     const metrics = moduleRef.get(MetricsService);
     expect(txObserver()).toBe(metrics);
     const text = await metrics.render();
-    expect(text).toMatch(/^db_pool_connections 0$/m);
+    // The pool starts warming its 4 connections at boot, so a count may be a pending connect, not 0.
+    expect(text).toMatch(/^db_pool_connections [0-4]$/m);
     expect(text).toMatch(/^db_pool_idle_connections 0$/m);
     expect(text).toMatch(/^db_pool_waiting_clients 0$/m);
     await app.close();

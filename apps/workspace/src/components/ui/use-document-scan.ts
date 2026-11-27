@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import type { FileView } from '@/components/p2/crm/verification-file';
 import { needsPolling } from '@/lib/kernel-ui';
 
+/** The pauses before the checks: 500 ms, 1 s, then every 2 s. A small file is scanned within a second or two. */
+const SCAN_PAUSES_MS = [500, 1_000] as const;
 const SCAN_INTERVAL = 2_000;
 const SCAN_WINDOW = 120_000;
 const REQUEST_TIMEOUT = 8_000;
@@ -32,7 +34,9 @@ export function useDocumentScan(endpoint: string, initial: FileView | null, enab
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const deadline = Date.now() + SCAN_WINDOW;
+    let checks = 0;
     const query = new URLSearchParams({ documentId, versionId });
+    const nextPause = () => SCAN_PAUSES_MS[checks++] ?? SCAN_INTERVAL;
     async function poll() {
       try {
         const response = await fetch(`${endpoint}?${query}`, {
@@ -56,10 +60,10 @@ export function useDocumentScan(endpoint: string, initial: FileView | null, enab
       } catch {
         if (controller.signal.aborted) return;
       }
-      if (Date.now() < deadline) timer = setTimeout(() => void poll(), SCAN_INTERVAL);
+      if (Date.now() < deadline) timer = setTimeout(() => void poll(), nextPause());
       else setObserved({ key, stalled: true });
     }
-    timer = setTimeout(() => void poll(), SCAN_INTERVAL);
+    timer = setTimeout(() => void poll(), nextPause());
     return () => {
       controller.abort();
       clearTimeout(timer);

@@ -55,6 +55,7 @@ export function ConfirmEvidenceDialog({
 
   return (
     <ActionDialog
+      refreshOnDone
       triggerLabel="Confirm evidence"
       triggerVariant="primary"
       title={`Confirm acceptance evidence for revision ${revisionNo}`}

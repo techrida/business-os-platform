@@ -15,14 +15,14 @@ const base = {
 
 // Production must state every kernel value itself (no dev defaults, no optional secrets).
 const kernelProd = {
-  SMTP_URL: 'smtp://smtp.example.com:587',
+  SMTP_URL: 'smtps://smtp.example.com:465',
   MAIL_FROM: 'Business OS <no-reply@example.com>',
   ZITADEL_API_URL: 'https://auth.example.com',
   ZITADEL_PROVISIONER_TOKEN: 'provisioner-token-value',
   WORKSPACE_PUBLIC_URL: 'https://app.example.com',
   PORTAL_PUBLIC_URL: 'https://portal.example.com',
   DOCS_LINK_SECRET: 'd'.repeat(32),
-  ZITADEL_ACTIONS_SIGNING_KEY: 'signing-key-value',
+  ZITADEL_ACTIONS_SIGNING_KEY: 'signing-key-value-with-32-chars!!',
   FIELD_ENC_KEYS: `k1:${randomBytes(32).toString('base64')}`,
 };
 const prod = { ...base, ...kernelProd, NODE_ENV: 'production' };
@@ -203,13 +203,66 @@ describe('P1 kernel settings', () => {
 
   it('keeps the exact bytes of a nonblank webhook secret and signing key (no trimming)', () => {
     const postal = `  ${'p'.repeat(32)}  `;
+    const signing = ` ${'k'.repeat(32)} `;
     const config = loadAppConfig({
       ...base,
       POSTAL_WEBHOOK_SECRET: postal,
-      ZITADEL_ACTIONS_SIGNING_KEY: ' key ',
+      ZITADEL_ACTIONS_SIGNING_KEY: signing,
     });
     expect(config.POSTAL_WEBHOOK_SECRET).toBe(postal);
-    expect(config.ZITADEL_ACTIONS_SIGNING_KEY).toBe(' key ');
+    expect(config.ZITADEL_ACTIONS_SIGNING_KEY).toBe(signing);
+  });
+
+  it('refuses a ZITADEL_ACTIONS_SIGNING_KEY under 32 characters without echoing it', () => {
+    const list = problems(() =>
+      loadAppConfig({ ...base, ZITADEL_ACTIONS_SIGNING_KEY: 'short-key-16-chrs' }),
+    );
+    expect(list.map((p) => p.split(':')[0])).toEqual(['ZITADEL_ACTIONS_SIGNING_KEY']);
+    expect(list.join('\n')).not.toContain('short-key-16-chrs');
+    expect(
+      loadAppConfig({ ...base, ZITADEL_ACTIONS_SIGNING_KEY: 'k'.repeat(32) })
+        .ZITADEL_ACTIONS_SIGNING_KEY,
+    ).toBe('k'.repeat(32));
+  });
+
+  it('refuses a plain smtp:// SMTP_URL in production, in the api and the worker, and keeps it for dev and test', () => {
+    const plain = 'smtp://relay-user:relay-pw@smtp.example.com:587';
+    const expected = [
+      'SMTP_URL: must use smtps:// or smtp:// with requireTLS=true in production (plain smtp:// is not encrypted)',
+    ];
+    const list = problems(() => loadAppConfig({ ...prod, SMTP_URL: plain }));
+    expect(list).toEqual(expected);
+    expect(list.join('\n')).not.toContain('relay-pw');
+    expect(
+      problems(() =>
+        loadCoreConfig(
+          {
+            DATABASE_URL: base.DATABASE_URL,
+            VALKEY_URL: base.VALKEY_URL,
+            ...kernelProd,
+            GOTENBERG_URL: 'https://gotenberg.example.com',
+            SMTP_URL: plain,
+            NODE_ENV: 'production',
+          },
+          'worker',
+        ),
+      ),
+    ).toEqual(expected);
+    expect(loadAppConfig({ ...prod, SMTP_URL: 'SMTPS://smtp.example.com:465' }).SMTP_URL).toBe(
+      'SMTPS://smtp.example.com:465',
+    );
+    // STARTTLS that cannot be skipped is encrypted too; the compose dev mailbox opts out by name.
+    const starttls = 'smtp://smtp.example.com:587?requireTLS=true';
+    expect(loadAppConfig({ ...prod, SMTP_URL: starttls }).SMTP_URL).toBe(starttls);
+    expect(
+      problems(() => loadAppConfig({ ...prod, SMTP_URL: `${plain}?requireTLS=false` })),
+    ).toEqual(expected);
+    expect(loadAppConfig({ ...prod, SMTP_URL: plain, SMTP_ALLOW_PLAINTEXT: 'true' }).SMTP_URL).toBe(
+      plain,
+    );
+    for (const NODE_ENV of ['development', 'test']) {
+      expect(loadAppConfig({ ...base, NODE_ENV, SMTP_URL: plain }).SMTP_URL).toBe(plain);
+    }
   });
 
   it('keeps POSTAL_WEBHOOK_SECRET optional in production, treats blank as unset, and refuses a short one without echoing it', () => {
@@ -408,8 +461,12 @@ describe('the PDF renderer (Gotenberg)', () => {
 describe('the per-transaction database timeouts', () => {
   const worker = { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL };
 
-  it('defaults to a 5 s lock wait and a 30 s idle transaction in both processes', () => {
-    const defaults = { DB_LOCK_TIMEOUT_MS: 5_000, DB_IDLE_IN_TX_TIMEOUT_MS: 30_000 };
+  it('defaults to a 5 s lock wait, a 15 s statement and a 30 s idle transaction in both processes', () => {
+    const defaults = {
+      DB_LOCK_TIMEOUT_MS: 5_000,
+      DB_STATEMENT_TIMEOUT_MS: 15_000,
+      DB_IDLE_IN_TX_TIMEOUT_MS: 30_000,
+    };
     expect(loadCoreConfig(worker, 'worker')).toMatchObject(defaults);
     expect(loadAppConfig(base)).toMatchObject(defaults);
   });
@@ -417,19 +474,33 @@ describe('the per-transaction database timeouts', () => {
   it('coerces the values and refuses blanks, zero, fractions and words', () => {
     expect(
       loadCoreConfig(
-        { ...worker, DB_LOCK_TIMEOUT_MS: '2000', DB_IDLE_IN_TX_TIMEOUT_MS: '60000' },
+        {
+          ...worker,
+          DB_LOCK_TIMEOUT_MS: '2000',
+          DB_STATEMENT_TIMEOUT_MS: '20000',
+          DB_IDLE_IN_TX_TIMEOUT_MS: '60000',
+        },
         'worker',
       ),
-    ).toMatchObject({ DB_LOCK_TIMEOUT_MS: 2_000, DB_IDLE_IN_TX_TIMEOUT_MS: 60_000 });
+    ).toMatchObject({
+      DB_LOCK_TIMEOUT_MS: 2_000,
+      DB_STATEMENT_TIMEOUT_MS: 20_000,
+      DB_IDLE_IN_TX_TIMEOUT_MS: 60_000,
+    });
     for (const bad of ['', '0', '1.5', '5s']) {
       expect(
         problems(() =>
           loadCoreConfig(
-            { ...worker, DB_LOCK_TIMEOUT_MS: bad, DB_IDLE_IN_TX_TIMEOUT_MS: bad },
+            {
+              ...worker,
+              DB_LOCK_TIMEOUT_MS: bad,
+              DB_STATEMENT_TIMEOUT_MS: bad,
+              DB_IDLE_IN_TX_TIMEOUT_MS: bad,
+            },
             'worker',
           ),
         ).map((p) => p.split(':')[0]),
-      ).toEqual(['DB_LOCK_TIMEOUT_MS', 'DB_IDLE_IN_TX_TIMEOUT_MS']);
+      ).toEqual(['DB_LOCK_TIMEOUT_MS', 'DB_STATEMENT_TIMEOUT_MS', 'DB_IDLE_IN_TX_TIMEOUT_MS']);
     }
   });
 });

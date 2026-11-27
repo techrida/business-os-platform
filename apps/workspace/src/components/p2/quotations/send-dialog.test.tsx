@@ -10,7 +10,7 @@ import { SendDialog } from './send-dialog';
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({ redirect: vi.fn(), useRouter: () => ({ refresh: vi.fn() }) }));
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),

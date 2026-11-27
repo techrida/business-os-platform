@@ -76,7 +76,7 @@ function Pdf({
     </span>
   ) : (
     <span className={styles.pdfWords}>
-      <PreparingRefresh text={pdf.text} />
+      <PreparingRefresh text={pdf.text} quotationId={quotation.id} versionId={version.id} />
     </span>
   );
 }

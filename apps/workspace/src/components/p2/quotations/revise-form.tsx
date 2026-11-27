@@ -46,6 +46,7 @@ export function ReviseForm({
 
   return (
     <ActionDialog
+      refreshOnDone
       triggerLabel="Revise"
       title={`Revise ${number}`}
       intro={

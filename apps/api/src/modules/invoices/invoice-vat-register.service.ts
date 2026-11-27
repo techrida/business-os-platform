@@ -191,7 +191,9 @@ export class InvoiceVatRegisterService {
         };
         return { from, to, rows, totals, nprTotal };
       },
-      READ_ONLY,
+      // A register over a whole period reads every issued document of it: slow on purpose, so 30 s, not the 15 s default.
+      // (Under the API pool's 35 s client-side query_timeout, see TxOptions.statementTimeoutMs.)
+      { ...READ_ONLY, statementTimeoutMs: 30_000 },
     );
   }
 }

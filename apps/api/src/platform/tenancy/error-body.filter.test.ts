@@ -942,6 +942,7 @@ describe('database busy errors on the HTTP boundary', () => {
   it.each([
     ['40P01', 'deadlock detected', '1'],
     ['55P03', 'canceling statement due to lock timeout', '2'],
+    ['57014', 'canceling statement due to statement timeout', '5'],
   ])(
     'answers %s as a retryable 503 db_busy with Retry-After %s, also when drizzle wraps it',
     (code, message, retryAfter) => {
@@ -968,11 +969,32 @@ describe('database busy errors on the HTTP boundary', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it('logs the query text and the cause stack of a 500 query error, never its params', () => {
+    const cause = pgError(
+      '23505',
+      'duplicate key value violates unique constraint "customers_email_key"',
+    );
+    const exception = new DrizzleQueryError(
+      'insert into customers (email) values ($1)',
+      ['secret@example.com'],
+      cause,
+    );
+    const errorLog = vi.mocked(Logger.prototype.error);
+    const out = filter(exception);
+    expect(out.status).toBe(500);
+    expect(JSON.stringify(out.body)).not.toContain('secret@example.com');
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    const logged = errorLog.mock.calls[0]?.map((part) => String(part)).join('\n') ?? '';
+    expect(logged).toContain('insert into customers (email) values ($1)');
+    expect(logged).toContain('customers_email_key');
+    expect(logged).not.toContain('secret@example.com');
+    expect(logged).not.toContain('params:');
+  });
+
   it('leaves other database errors a plain 500 without Retry-After', () => {
     for (const exception of [
       pgError('23505', 'duplicate key'),
       pgError('25P03', 'terminating connection due to idle-in-transaction timeout'),
-      new DrizzleQueryError('select 1', [], pgError('57014', 'canceling statement')),
     ]) {
       const out = filter(exception);
       expect(out.status).toBe(500);

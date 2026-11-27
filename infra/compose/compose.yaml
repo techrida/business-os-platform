@@ -472,6 +472,8 @@ services:
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
       # Database timeouts (platform/config): a lock wait gives up with 503 db_busy, and a transaction left idle is cut.
       DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_POOL_STATEMENT_TIMEOUT_MS: ${DB_POOL_STATEMENT_TIMEOUT_MS:-30000}
       DB_IDLE_IN_TX_TIMEOUT_MS: ${DB_IDLE_IN_TX_TIMEOUT_MS:-30000}
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
@@ -481,6 +483,7 @@ services:
       CLAMD_HOST: clamav
       CLAMD_PORT: '3310'
       SMTP_URL: smtp://mailpit:1025 # mailpit exists in the dev overlay only; prod overrides this
+      SMTP_ALLOW_PLAINTEXT: 'true' # the image runs NODE_ENV=production, which refuses plain smtp:// (mailpit has no TLS); prod removes this
       MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
       # Signs the 60 s single-use document links. The same value must be in .env for a host-run API.
       DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
@@ -533,6 +536,8 @@ services:
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
       # Database timeouts (platform/config): a lock wait gives up with 503 db_busy, and a transaction left idle is cut.
       DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_POOL_STATEMENT_TIMEOUT_MS: ${DB_POOL_STATEMENT_TIMEOUT_MS:-120000}
       DB_IDLE_IN_TX_TIMEOUT_MS: ${DB_IDLE_IN_TX_TIMEOUT_MS:-30000}
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
@@ -541,6 +546,7 @@ services:
       CLAMD_HOST: clamav
       CLAMD_PORT: '3310'
       SMTP_URL: smtp://mailpit:1025
+      SMTP_ALLOW_PLAINTEXT: 'true' # as in api
       MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
       # No DOCS_LINK_SECRET: only the api signs and checks document links, the worker never does.
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost}

@@ -15,6 +15,7 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { PinoLogger } from 'nestjs-pino';
 import { z } from 'zod';
 
@@ -22,6 +23,7 @@ import { ScanQueueDeferredError } from '../documents/scan-queue-deferred.error';
 import { STEP_UP_REQUIRED } from '../auth/step-up';
 import { DB_BUSY_RETRY_AFTER_SECONDS, type DbBusyKind, dbBusyKindOf } from '../db/busy';
 import { newCorrelationId } from '../obs/correlation';
+import { describeErrorForLog } from '../obs/logger';
 import { REQUEST_ID_HEADER, type CorrelatedRequest } from './correlation.middleware';
 import { currentCorrelationId } from './request-context';
 
@@ -839,7 +841,12 @@ export class ErrorBodyFilter implements ExceptionFilter {
       );
     } else if (status >= 500) {
       // req.path excludes the query string, which could carry secrets.
-      const stack = exception instanceof Error ? exception.stack : String(exception);
+      // A Drizzle query error logs its query text and its cause's stack, never the statement's params.
+      const { message: errorMessage, stack: errorStack } = describeErrorForLog(exception);
+      const stack =
+        exception instanceof DrizzleQueryError
+          ? [errorMessage, errorStack].filter((part) => part !== undefined).join('\n')
+          : (errorStack ?? errorMessage);
       this.logger.error(
         `${req.method} ${req.path} failed with ${status} (correlationId=${correlationId})`,
         stack,
