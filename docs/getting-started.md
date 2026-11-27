@@ -11,6 +11,7 @@ Install these tools before you start:
 - pnpm 11 (`11.29.0`, pinned in `package.json`).
 - Docker Engine with Compose v2 (`docker compose`).
 - OpenSSL (used to generate random local secrets).
+- A host firewall that lets Docker containers reach DNS. The `clamav` container downloads virus signatures over the `egress` network, so it needs to resolve names. On a host with `ufw` or another default-deny firewall, allow DNS (port 53, UDP and TCP) from the Docker bridge address ranges, or pin the `egress` network to a subnet your firewall already allows. Docker hands out new subnets as networks are created, so a rule for one stack's current subnet can stop matching after a rebuild.
 
 On Ubuntu, you can install Docker, Node.js 24, and pnpm 11 with the setup script:
 
@@ -230,6 +231,7 @@ BOS_CONFIRM_NUKE=yes pnpm stack:nuke
 - **Caddy returns 502 on `app.localhost` or `portal.localhost`.** Verify that the host dev server is running and bound to `0.0.0.0` (`-H 0.0.0.0`), not `127.0.0.1`.
 - **Node fails with `self-signed certificate in certificate chain`.** Confirm `.dev/caddy-root.crt` exists (`bash infra/scripts/export-dev-ca.sh`) and `NODE_EXTRA_CA_CERTS=.dev/caddy-root.crt` is exported in your shell.
 - **PostgreSQL logs archive command warnings on a fresh stack.** Before the first backup runs, PostgreSQL may log WAL archive errors until pgBackRest initializes its stanza (`bash infra/backup/backup.sh full`).
+- **ClamAV signatures never update (`freshclam` logs `Can't query` or DNS errors) while uploads still scan.** The host firewall is dropping DNS from the `egress` network. Check the network's subnet with `docker network inspect <project>_egress --format '{{(index .IPAM.Config 0).Subnet}}'` and allow DNS from it, or set a fixed `subnet` for `egress` in a compose override that falls inside a range the firewall allows.
 - **A container fails to become healthy.** Inspect container logs with `docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core logs --tail 100 <service>`.
 
 ## Next steps
