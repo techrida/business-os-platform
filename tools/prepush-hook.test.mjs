@@ -79,7 +79,7 @@ test('an added file is refused even when a later commit removes it again', () =>
 });
 
 test('a commit adding a private network hostname is refused', () => {
-  commitFile('notes.txt', 'see https://box.tail1c04d9.ts' + '.net/x\n');
+  commitFile('notes.txt', ['see https://box.', 'tail', '1c04d9', '.ts', '.net/x\n'].join(''));
   const r = push('main:refs/heads/main');
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /notes\.txt: contains a private network host/);
