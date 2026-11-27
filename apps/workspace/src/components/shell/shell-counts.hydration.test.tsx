@@ -103,8 +103,10 @@ it('numbers that arrive while the page is still streaming do not make React thro
     root = hydrateRoot(container, <Shell />, { onRecoverableError: () => undefined });
   });
   // The read on arrival lands.
-  await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
-  expect(container.querySelector('[data-testid="bell"]')?.textContent).toBe('7');
+  await vi.waitFor(async () => {
+    await act(() => Promise.resolve());
+    expect(container.querySelector('[data-testid="bell"]')?.textContent).toBe('7');
+  });
 
   // The boundary is still the server's, waiting for its segment. Had the arrival changed a context around it,
   // React would have given up hydrating it and rendered the page again on the client, leaving the streamed
