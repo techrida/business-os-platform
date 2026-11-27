@@ -218,6 +218,17 @@ describe('GET /auth/login', () => {
     });
   });
 
+  // A browser signed in before the marker existed still holds the session cookie after the record idled out.
+  it('forces prompt=login while the session cookie is present without the marker', async () => {
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    await call();
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({
+      prompt: 'login',
+      maxAge: 0,
+      freshSignIn: true,
+    });
+  });
+
   it('overrides a silent prompt and a long max_age from the link once this browser has signed in', async () => {
     requestCookies.set(SIGNED_IN_COOKIE, '1');
     await call('?prompt=none&max_age=86400');

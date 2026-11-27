@@ -187,6 +187,13 @@ describe('GET /auth/login', () => {
     expect(m.beginLogin.mock.calls[1]?.[0]).toMatchObject({ prompt: 'login' });
   });
 
+  // A browser signed in before the marker existed still holds the session cookie after the record idled out.
+  it('forces prompt=login while the session cookie is present without the marker', async () => {
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    await call();
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login', freshSignIn: true });
+  });
+
   it('falls back to / for an unsafe returnTo', async () => {
     await call('?returnTo=' + encodeURIComponent('https://evil.example/steal'));
     expect(m.safeReturnTo).toHaveBeenCalledWith('https://evil.example/steal');
