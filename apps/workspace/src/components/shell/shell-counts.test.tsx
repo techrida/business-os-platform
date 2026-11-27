@@ -345,9 +345,9 @@ describe('ShellCountsProvider', () => {
 });
 
 describe('signInHref', () => {
-  it('returns to the same page and query after sign-in', () => {
+  it('forces a fresh password prompt and returns to the same page and query after sign-in', () => {
     expect(signInHref({ pathname: '/inbox/abc', search: '?tab=open' })).toBe(
-      '/auth/login?returnTo=%2Finbox%2Fabc%3Ftab%3Dopen',
+      '/auth/login?prompt=login&max_age=0&returnTo=%2Finbox%2Fabc%3Ftab%3Dopen',
     );
   });
 });

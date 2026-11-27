@@ -48,9 +48,14 @@ export function useShellCounts(): ShellCounts | null {
   return useContext(ShellCountsContext);
 }
 
-/** Where to send a person whose session ended: sign in, then come back to this page. */
+/**
+ * Where to send a person whose session ended while the tab sat open: a login that must ask for the password
+ * again (`prompt=login&max_age=0`, the same link as `stepUpLoginUrl` in lib/bff.ts, which is server-only), then
+ * back to this page. A plain login link would let the identity provider's still-live session sign them straight in.
+ */
 export function signInHref(location: Pick<Location, 'pathname' | 'search'>): string {
-  return `/auth/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`;
+  const returnTo = encodeURIComponent(location.pathname + location.search);
+  return `/auth/login?prompt=login&max_age=0&returnTo=${returnTo}`;
 }
 
 interface State {
