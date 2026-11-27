@@ -39,7 +39,19 @@ const coreShape = (service: ServiceName) => ({
   // table lock (then 55P03, answered as 503 db_busy), and how long a transaction may sit idle before
   // the server ends its session. No 0 (off): a blank value would coerce to it silently.
   DB_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(5_000),
+  // How long one statement may run inside withTx (SET LOCAL statement_timeout via set_config), then 57014,
+  // answered as 503 db_busy. Same floor and no-0 rule as the lock timeout.
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(15_000),
   DB_IDLE_IN_TX_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(30_000),
+  // The pool's own limit, for a statement outside withTx (a read on the bare pool): the server cancels it
+  // after this long (57014). The API gives 30 s; the worker keeps a longer 120 s for its sweeps and seals.
+  // The client-side query_timeout is this plus 5 s, so the server's cancel always lands first.
+  DB_POOL_STATEMENT_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(3_600_000)
+    .default(service === 'worker' ? 120_000 : 30_000),
   VALKEY_URL: z
     .string()
     .refine(urlWithProtocol(['redis:', 'rediss:']), 'must be a redis:// or rediss:// URL'),
@@ -54,6 +66,8 @@ const coreShape = (service: ServiceName) => ({
     .string()
     .refine(urlWithProtocol(['smtp:', 'smtps:']), 'must be an smtp:// or smtps:// URL')
     .optional(),
+  // 'true' lets production use a plain smtp:// URL. Set only by compose for the dev mailbox (mailpit has no TLS).
+  SMTP_ALLOW_PLAINTEXT: blankAsUnset,
   MAIL_FROM: z
     .string()
     .refine((v) => v.includes('@'), 'must contain an email address')
@@ -118,6 +132,16 @@ const API_REQUIRED_IN_PRODUCTION = [
   // (ADR 0019, the 10-minute reconcile keeps users correct), and without a key the hook answers 401.
 ] as const;
 
+/** True for `smtps:` and for `smtp:` carrying `requireTLS=true`. The URL is never put in a message. */
+function smtpUsesTls(url: string): boolean {
+  if (url.toLowerCase().startsWith('smtps:')) return true;
+  try {
+    return new URL(url).searchParams.get('requireTLS') === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /** Production must state every kernel value itself: the names only, never a value, in the message. */
 function kernelProblems(required: readonly string[]) {
   return (cfg: { NODE_ENV?: string } & Record<string, unknown>, ctx: z.RefinementCtx): void => {
@@ -126,6 +150,18 @@ function kernelProblems(required: readonly string[]) {
       if (cfg[key] === undefined) {
         ctx.addIssue({ code: 'custom', path: [key], message: 'is required in production' });
       }
+    }
+    // The SMTP URL carries the relay password, so production sends it only over TLS: smtps:// (TLS from the
+    // first byte) or smtp:// with requireTLS=true (STARTTLS that nodemailer refuses to skip). SMTP_ALLOW_PLAINTEXT
+    // is for the compose dev mailbox only; a real deployment leaves it unset.
+    const smtp = cfg['SMTP_URL'];
+    if (typeof smtp === 'string' && cfg['SMTP_ALLOW_PLAINTEXT'] !== 'true' && !smtpUsesTls(smtp)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SMTP_URL'],
+        message:
+          'must use smtps:// or smtp:// with requireTLS=true in production (plain smtp:// is not encrypted)',
+      });
     }
   };
 }
@@ -218,7 +254,8 @@ const apiShape = {
   // At least 32 characters when present; blank counts as unset (as in .env.example or compose `${VAR:-}`);
   // required in production (kernelProblems).
   DOCS_LINK_SECRET: blankAsUnset.pipe(z.string().min(32).optional()),
-  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnsetRaw,
+  // At least 32 characters when present (a short HMAC key is brute-forceable); blank still counts as unset.
+  ZITADEL_ACTIONS_SIGNING_KEY: blankAsUnsetRaw.pipe(z.string().min(32).optional()),
   // Shared secret for the Postal bounce webhook (HMAC-SHA256 of the raw body). Optional on purpose,
   // like the ZITADEL key: with no secret the hook answers 401 to everyone (deny by default).
   // Blank counts as unset so an empty `POSTAL_WEBHOOK_SECRET=` line (as in .env.example) does not block startup.
@@ -451,12 +488,15 @@ export abstract class CoreConfig {
   abstract readonly METRICS_PORT: number;
   abstract readonly DATABASE_URL: string;
   abstract readonly DB_LOCK_TIMEOUT_MS: number;
+  abstract readonly DB_STATEMENT_TIMEOUT_MS: number;
   abstract readonly DB_IDLE_IN_TX_TIMEOUT_MS: number;
+  abstract readonly DB_POOL_STATEMENT_TIMEOUT_MS: number;
   abstract readonly VALKEY_URL: string;
   abstract readonly FILES_ROOT: string;
   abstract readonly CLAMD_HOST: string;
   abstract readonly CLAMD_PORT: number;
   abstract readonly SMTP_URL: string;
+  abstract readonly SMTP_ALLOW_PLAINTEXT?: string | undefined;
   abstract readonly MAIL_FROM: string;
   abstract readonly ZITADEL_API_URL: string;
   abstract readonly WORKSPACE_PUBLIC_URL: string;

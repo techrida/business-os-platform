@@ -115,6 +115,7 @@ export function OutcomeDialog({
 
   return (
     <ActionDialog
+      refreshOnDone
       triggerLabel="Record outcome"
       title={`Record outcome for revision ${revisionNo}`}
       intro={

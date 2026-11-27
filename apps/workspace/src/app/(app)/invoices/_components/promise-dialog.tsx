@@ -6,7 +6,7 @@ import {
   recordPromiseAction,
   type PromiseActionState,
 } from '@/app/(app)/invoices/[id]/promise-actions';
-import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
+import { useFocusOnProblem, useRefreshAfterAction } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -28,8 +28,15 @@ export interface PromiseDialogProps {
   reloadHref: string;
 }
 
-/** Record a promise to pay: the day the customer said they will pay, and an optional note. */
-export function PromiseDialog({
+/**
+ * Record a promise to pay: the day the customer said they will pay, and an optional note. Keyed on the render's
+ * idempotency key, so the refresh after a success starts a fresh form instead of keeping "done".
+ */
+export function PromiseDialog(props: PromiseDialogProps) {
+  return <PromiseForm key={props.idempotencyKey} {...props} />;
+}
+
+function PromiseForm({
   invoiceId,
   idempotencyKey,
   today,
@@ -43,6 +50,7 @@ export function PromiseDialog({
   // Controlled: React 19 resets uncontrolled fields after every action, which would wipe them on a refusal.
   const [promisedDate, setPromisedDate] = useState('');
   const [note, setNote] = useState('');
+  const refreshAfterAction = useRefreshAfterAction();
   const formId = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
@@ -67,8 +75,8 @@ export function PromiseDialog({
       locked={pending}
       closeOnOutsideClick={false}
       onOpenChange={(open) => {
-        // A full reload after success shows the new promise and its history together.
-        if (!open && state.done) window.location.reload();
+        // A refresh after success shows the new promise and its history together.
+        if (!open && state.done) refreshAfterAction();
       }}
       footer={
         state.done ? (

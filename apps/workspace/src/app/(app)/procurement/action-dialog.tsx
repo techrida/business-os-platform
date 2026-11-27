@@ -1,6 +1,13 @@
 'use client';
 
-import { useActionState, useId, useRef, type ReactNode } from 'react';
+import {
+  useActionState,
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, type DialogSize } from '@/components/ui/dialog';
@@ -8,12 +15,31 @@ import {
   ErrorSummary,
   PendingLine,
   useFocusOnProblem,
+  useRefreshAfterAction,
 } from '@/components/p2/quotations/action-dialog';
 
 import type { ActionState } from './orders/_lib/state';
 import styles from './procurement.module.css';
 
-export function ProcurementActionDialog({
+/**
+ * The dialog shows "done" until it is closed (the action's own reply already re-rendered the page with a new render key,
+ * so nothing may reset it before that). Closing a done dialog refreshes the page and starts a fresh form on the render
+ * key the page holds by then.
+ */
+export function ProcurementActionDialog(
+  props: Omit<ComponentProps<typeof ProcurementActionForm>, 'onDoneClosed'>,
+) {
+  const [generation, setGeneration] = useState(0);
+  return (
+    <ProcurementActionForm
+      key={generation}
+      {...props}
+      onDoneClosed={() => setGeneration((g) => g + 1)}
+    />
+  );
+}
+
+function ProcurementActionForm({
   triggerLabel,
   triggerVariant = 'secondary',
   title,
@@ -29,7 +55,9 @@ export function ProcurementActionDialog({
   pendingWords,
   size = 'small',
   fields,
+  onDoneClosed,
 }: {
+  onDoneClosed: () => void;
   triggerLabel: string;
   triggerVariant?: 'primary' | 'secondary';
   title: string;
@@ -54,6 +82,7 @@ export function ProcurementActionDialog({
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrapRef, summaryRef);
   const done = state.done !== undefined;
+  const refreshAfterAction = useRefreshAfterAction();
 
   return (
     <Dialog
@@ -64,7 +93,10 @@ export function ProcurementActionDialog({
       locked={pending}
       closeOnOutsideClick={fields === undefined}
       onOpenChange={(open) => {
-        if (!open && done) window.location.reload();
+        if (!open && done) {
+          refreshAfterAction();
+          onDoneClosed();
+        }
       }}
       footer={
         done ? (

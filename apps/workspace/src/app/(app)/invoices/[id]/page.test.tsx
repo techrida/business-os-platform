@@ -49,7 +49,11 @@ vi.mock('@/lib/live-permissions', async () => {
       ),
   };
 });
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  notFound: mocks.notFound,
+  redirect: vi.fn(),
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 // The tenant's display settings come through the real `getDisplaySettings` read; only the session and the HTTP call
 // under it are stubbed. No session (the default) means the default settings.

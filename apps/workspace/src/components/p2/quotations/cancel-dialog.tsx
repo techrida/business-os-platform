@@ -52,6 +52,7 @@ export function CancelDialog({
 
   return (
     <ActionDialog
+      refreshOnDone
       triggerLabel={isRevision ? 'Discard revision' : 'Cancel quotation'}
       title={
         isRevision
