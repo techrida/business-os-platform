@@ -32,15 +32,13 @@ beforeEach(() => {
     unobserve() {}
     disconnect() {}
   };
-  mocks.action
-    .mockReset()
-    .mockImplementation((_prev: unknown, form: FormData) =>
-      Promise.resolve({
-        key: form.get('idempotencyKey') as string,
-        done: true,
-        message: 'Submitted.',
-      }),
-    );
+  mocks.action.mockReset().mockImplementation((_prev: unknown, form: FormData) =>
+    Promise.resolve({
+      key: form.get('idempotencyKey') as string,
+      done: true,
+      message: 'Submitted.',
+    }),
+  );
   mocks.refresh.mockReset();
   mocks.reload.mockReset();
   Object.defineProperty(window, 'location', {

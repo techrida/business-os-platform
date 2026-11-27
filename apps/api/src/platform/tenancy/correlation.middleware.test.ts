@@ -175,7 +175,9 @@ describe('client address through one proxy hop', () => {
   });
 
   it('without the header (the old web client) carries the peer address, which is the container', async () => {
-    const res = await request(await start()).get('/who').expect(200);
+    const res = await request(await start())
+      .get('/who')
+      .expect(200);
 
     expect((res.body as { ip: string }).ip).toMatch(/^(::ffff:)?127\.0\.0\.1$|^::1$/);
   });
