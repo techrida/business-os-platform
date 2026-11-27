@@ -1,6 +1,6 @@
 import { devToolsEnabled } from '@/dev/enabled';
 
-export function cookieName(kind: 'session' | 'login' | 'signed_out'): string {
+export function cookieName(kind: 'session' | 'login' | 'signed_out' | 'signed_in'): string {
   const namespace = devToolsEnabled() ? process.env.BOS_DEV_COOKIE_NAMESPACE : undefined;
   if (namespace === undefined) return `__Host-bos_${kind}`;
   if (!/^[a-z][a-z0-9-]{0,31}$/.test(namespace)) {

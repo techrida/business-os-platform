@@ -2,7 +2,14 @@ import { cookies } from 'next/headers';
 
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin, LOGIN_COOKIE, LoginStateExpiredError, SIGNED_OUT_COOKIE } from '@/lib/oidc';
+import {
+  completeLogin,
+  LOGIN_COOKIE,
+  LoginStateExpiredError,
+  SIGNED_IN_COOKIE,
+  SIGNED_IN_COOKIE_MAX_AGE,
+  SIGNED_OUT_COOKIE,
+} from '@/lib/oidc';
 import { createSession, destroySession, SESSION_COOKIE, setSessionCookie } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -76,6 +83,12 @@ export async function GET(req: Request): Promise<Response> {
 
     // Throws before any token request when the binding cookie is missing or foreign.
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
+    // ZITADEL now holds a session for this browser, even if the steps below refuse access: from here on every
+    // login asks for the password (see SIGNED_IN_COOKIE).
+    jar.set(SIGNED_IN_COOKIE, '1', {
+      ...RECOVERY_COOKIE_OPTIONS,
+      maxAge: SIGNED_IN_COOKIE_MAX_AGE,
+    });
     // Fixation and leftovers: the login succeeded at the identity provider, so the record this browser held
     // before (another user, or the same one again) goes now, before anything below can send the person
     // elsewhere (no access, wrong app) and leave that record alive.
@@ -91,7 +104,7 @@ export async function GET(req: Request): Promise<Response> {
     });
     await setSessionCookie(id);
     jar.set(RECOVERY_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
-    // Signed in again: the next login may reuse the ZITADEL session as usual.
+    // Signed in again: SIGNED_IN_COOKIE carries on from here.
     if (jar.get(SIGNED_OUT_COOKIE)?.value) {
       jar.set(SIGNED_OUT_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
     }
@@ -100,7 +113,8 @@ export async function GET(req: Request): Promise<Response> {
   } catch (err) {
     // The identity provider may have completed MFA after our ten-minute transaction expired.
     // Start a fresh, browser-bound flow; never accept the stale code or bypass its checks.
-    // ZITADEL can reuse its authenticated session, so this normally needs no user input.
+    // On a first sign-in ZITADEL reuses its new session, so this needs no user input; once
+    // SIGNED_IN_COOKIE is set the retry asks for the password like every other login.
     if (err instanceof LoginStateExpiredError && !jar.get(RECOVERY_COOKIE)?.value) {
       jar.set(RECOVERY_COOKIE, '1', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 600 });
       return redirectTo('/auth/login');
