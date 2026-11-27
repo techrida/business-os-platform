@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 
@@ -41,11 +42,74 @@ export interface ShellCounts {
   lowerNotifications: (by: number, settled?: Promise<unknown>) => void;
 }
 
-const ShellCountsContext = createContext<ShellCounts | null>(null);
+type Counts = Pick<ShellCounts, 'inbox' | 'notifications' | 'signedOut'>;
+
+/**
+ * The live numbers, kept outside React state and outside the context value. They change after the page is on
+ * screen (the read on arrival, the poll), and a context around the page that changes then also reaches the page's
+ * Suspense boundaries: React cannot hydrate a boundary whose segment is still streaming, so it renders that page
+ * again on the client and the streamed server copy stays in the DOM (two of every field). Only the components that
+ * show a number subscribe, so a new number re-renders them and nothing else.
+ */
+interface CountsStore {
+  get: () => Counts;
+  /** The numbers the server rendered with; hydration must start from them. */
+  getInitial: () => Counts;
+  subscribe: (listener: () => void) => () => void;
+  update: (next: (current: Counts) => Counts) => void;
+}
+
+function countsStore(initial: Counts): CountsStore {
+  let current = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    getInitial: () => initial,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(next) {
+      const value = next(current);
+      if (
+        value.inbox === current.inbox &&
+        value.notifications === current.notifications &&
+        value.signedOut === current.signedOut
+      )
+        return;
+      current = value;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+interface ShellCountsSource {
+  store: CountsStore;
+  lowerNotifications: ShellCounts['lowerNotifications'];
+}
+
+const ShellCountsContext = createContext<ShellCountsSource | null>(null);
+
+const subscribeNowhere = () => () => undefined;
+const noCounts = () => null;
 
 /** The shell's live counts, or `null` outside a `ShellCountsProvider` (the caller keeps its own numbers). */
 export function useShellCounts(): ShellCounts | null {
-  return useContext(ShellCountsContext);
+  const source = useContext(ShellCountsContext);
+  const counts = useSyncExternalStore(
+    source?.store.subscribe ?? subscribeNowhere,
+    source?.store.get ?? noCounts,
+    source?.store.getInitial ?? noCounts,
+  );
+  return useMemo(
+    () =>
+      source === null || counts === null
+        ? null
+        : { ...counts, lowerNotifications: source.lowerNotifications },
+    [source, counts],
+  );
 }
 
 /**
@@ -54,14 +118,6 @@ export function useShellCounts(): ShellCounts | null {
  */
 export function signInHref(location: Pick<Location, 'pathname' | 'search'>): string {
   return `/auth/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`;
-}
-
-interface State {
-  inbox: number | undefined;
-  notifications: number | undefined;
-  signedOut: boolean;
-  // The layout's numbers as last seen, to notice a new one after router.refresh().
-  fromLayout: { inbox: number | undefined; notifications: number | undefined };
 }
 
 const knownCount = (value: unknown): number | undefined =>
@@ -86,25 +142,11 @@ export function ShellCountsProvider({
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const [state, setState] = useState<State>({
-    inbox: initialInbox,
-    notifications: initialNotifications,
-    signedOut: false,
-    fromLayout: { inbox: initialInbox, notifications: initialNotifications },
-  });
-  // A new number from the layout (router.refresh()) replaces the live one; a missing one keeps it. This is
-  // React's documented adjust-state-on-prop-change pattern: it compares numbers, never objects.
-  if (
-    state.fromLayout.inbox !== initialInbox ||
-    state.fromLayout.notifications !== initialNotifications
-  ) {
-    setState({
-      ...state,
-      inbox: initialInbox ?? state.inbox,
-      notifications: initialNotifications ?? state.notifications,
-      fromLayout: { inbox: initialInbox, notifications: initialNotifications },
-    });
-  }
+  const [store] = useState(() =>
+    countsStore({ inbox: initialInbox, notifications: initialNotifications, signedOut: false }),
+  );
+  // The layout's numbers as last seen, to notice a new one after router.refresh().
+  const fromLayout = useRef({ inbox: initialInbox, notifications: initialNotifications });
 
   // Generation of the newest read; refs are touched only in callbacks and effects, never during render.
   const latest = useRef(0);
@@ -118,10 +160,19 @@ export function ShellCountsProvider({
   // When the last read started (null: none yet), so a quick run of page changes makes one read.
   const lastReadAt = useRef<number | null>(null);
 
-  // A fresh layout number outranks any read already in flight: that read started before it.
+  // A fresh layout number outranks any read already in flight: that read started before it. A new number from
+  // the layout replaces the live one; a missing one keeps it.
   useLayoutEffect(() => {
     latest.current += 1;
-  }, [initialInbox, initialNotifications]);
+    const seen = fromLayout.current;
+    if (seen.inbox === initialInbox && seen.notifications === initialNotifications) return;
+    fromLayout.current = { inbox: initialInbox, notifications: initialNotifications };
+    store.update((s) => ({
+      ...s,
+      inbox: initialInbox ?? s.inbox,
+      notifications: initialNotifications ?? s.notifications,
+    }));
+  }, [store, initialInbox, initialNotifications]);
 
   const refresh = useCallback(async () => {
     if (document.hidden || signedOut.current || inFlight.current || marksOut.current > 0) return;
@@ -137,7 +188,7 @@ export function ShellCountsProvider({
       if (generation !== latest.current) return;
       if (res.status === 401) {
         signedOut.current = true;
-        setState((s) => ({ ...s, signedOut: true }));
+        store.update((s) => ({ ...s, signedOut: true }));
         return;
       }
       if (!res.ok) return;
@@ -145,7 +196,7 @@ export function ShellCountsProvider({
       if (generation !== latest.current) return;
       const inbox = knownCount(data.inbox);
       const notifications = knownCount(data.notifications);
-      setState((s) => ({
+      store.update((s) => ({
         ...s,
         inbox: inbox ?? s.inbox,
         notifications: notifications ?? s.notifications,
@@ -155,12 +206,12 @@ export function ShellCountsProvider({
     } finally {
       inFlight.current = false;
     }
-  }, []);
+  }, [store]);
 
   const lowerNotifications = useCallback(
     (by: number, settled?: Promise<unknown>) => {
       latest.current += 1;
-      setState((s) =>
+      store.update((s) =>
         s.notifications === undefined
           ? s
           : { ...s, notifications: Math.max(0, s.notifications - by) },
@@ -179,7 +230,7 @@ export function ShellCountsProvider({
           void refresh();
         });
     },
-    [refresh],
+    [refresh, store],
   );
 
   // The bell has no number from the layout, so read once on arrival.
@@ -215,14 +266,9 @@ export function ShellCountsProvider({
     };
   }, [refresh]);
 
-  const value = useMemo<ShellCounts>(
-    () => ({
-      inbox: state.inbox,
-      notifications: state.notifications,
-      signedOut: state.signedOut,
-      lowerNotifications,
-    }),
-    [state.inbox, state.notifications, state.signedOut, lowerNotifications],
+  const source = useMemo<ShellCountsSource>(
+    () => ({ store, lowerNotifications }),
+    [store, lowerNotifications],
   );
-  return <ShellCountsContext.Provider value={value}>{children}</ShellCountsContext.Provider>;
+  return <ShellCountsContext.Provider value={source}>{children}</ShellCountsContext.Provider>;
 }
