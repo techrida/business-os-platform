@@ -219,9 +219,9 @@ describe('NotificationsBell in the shell', () => {
     unread = 'signed-out';
     await tick(15_000);
     expect(navigations).toHaveLength(1);
-    // Not a plain login link: the identity provider's live session would sign the person straight back in.
+    // /auth/login makes it ask for the password again (routes.test.ts covers that).
     expect(sentTo).toHaveLength(1);
-    expect(sentTo[0]).toMatch(/^\/auth\/login\?prompt=login&max_age=0&returnTo=/);
+    expect(sentTo[0]).toMatch(/^\/auth\/login\?returnTo=/);
     jsdom.virtualConsole.off('jsdomError', onError);
   });
 
