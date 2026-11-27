@@ -41,7 +41,7 @@ step "CA, migrate, seed"
 bash infra/scripts/export-dev-ca.sh
 bash infra/scripts/migrate-dev.sh
 dc --profile tools run --rm seed-zitadel
-docker cp "$(dc ps -q zitadel-api)":/zitadel/bootstrap/admin.pat .dev/admin.pat
+docker cp "$(dc ps -q zitadel-api)":/zitadel/admin/admin.pat .dev/admin.pat
 set -a; source .dev/zitadel.env; set +a
 NODE_ENV=development NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt" \
   BOS_DEV_BOOTSTRAP_TOKEN_FILE=.dev/admin.pat BOS_DEV_LOGIN_CLIENT_TOKEN_FILE=.dev/login-client.pat \
@@ -76,8 +76,9 @@ export DATABASE_URL="${DATABASE_URL/@postgres:/@127.0.0.1:}" VALKEY_URL="${VALKE
 mkdir -p .dev/files .dev/logs
 
 # Both Next apps are built after the API is up: ZITADEL's webhook target is the API on :3001.
-(NODE_ENV=development node apps/api/dist/main.js > .dev/logs/api.log 2>&1 &)
-(NODE_ENV=development METRICS_PORT=3339 node apps/api/dist/worker.js > .dev/logs/worker.log 2>&1 &)
+# zitadel-api.env (provisioner token, signing key) is loaded inside these two subshells only: the web apps below never see it.
+(set -a; source .dev/zitadel-api.env; set +a; NODE_ENV=development node apps/api/dist/main.js > .dev/logs/api.log 2>&1 &)
+(set -a; source .dev/zitadel-api.env; set +a; NODE_ENV=development METRICS_PORT=3339 node apps/api/dist/worker.js > .dev/logs/worker.log 2>&1 &)
 for i in $(seq 1 60); do
   [ "$(curl -s -o /dev/null -w '%{http_code}' --cacert .dev/caddy-root.crt https://api.localhost/health/ready || true)" = 200 ] && break
   sleep 3

@@ -45,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
   // Auth first, so an anonymous caller cannot make us read or parse anything.
   let session: Session | null;
   try {
-    session = await getSession();
+    session = await getSession({ slide: false });
   } catch (err) {
     // The store did not answer: not a sign-out, and nothing to accept. The cookie stays.
     if (err instanceof SessionUnavailableError) return sessionUnavailableResponse();

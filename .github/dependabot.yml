@@ -40,6 +40,20 @@ updates:
     groups:
       images:
         patterns: ['*']
+  - package-ecosystem: docker-compose
+    directory: /infra/compose
+    target-branch: p4-main
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+    # Same rules as the docker entry above: the compose files pin the same images by digest.
+    ignore:
+      - dependency-name: postgres
+        update-types: ['version-update:semver-major']
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
+    groups:
+      compose-images:
+        patterns: ['*']
   - package-ecosystem: npm
     directory: /infra/pnpm-bootstrap
     target-branch: p4-main

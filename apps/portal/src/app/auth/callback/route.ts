@@ -2,8 +2,14 @@ import { cookies } from 'next/headers';
 
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin, LOGIN_COOKIE } from '@/lib/oidc';
-import { createSession, safeReturnTo, setSessionCookie } from '@/lib/session';
+import { completeLogin, LOGIN_COOKIE, SIGNED_OUT_COOKIE } from '@/lib/oidc';
+import {
+  createSession,
+  destroySession,
+  safeReturnTo,
+  SESSION_COOKIE,
+  setSessionCookie,
+} from '@/lib/session';
 
 // Copied from apps/workspace (dedupe later).
 export const runtime = 'nodejs';
@@ -32,6 +38,22 @@ const VENDOR_HOME = '/vendor';
 function vendorReturnTo(returnTo: string): string {
   const safe = safeReturnTo(returnTo);
   return safe === VENDOR_HOME || /^\/vendor[/?#]/.test(safe) ? safe : VENDOR_HOME;
+}
+
+/** Best effort: a failed delete must not block the sign-in. The old record dies with its TTL. */
+async function destroyPreviousSession(previousId: string | undefined): Promise<void> {
+  if (!previousId) return;
+  try {
+    await destroySession(previousId);
+  } catch (err) {
+    // Only the error name: ioredis errors carry the command arguments.
+    console.warn(
+      JSON.stringify({
+        event: 'auth.previous_session_destroy_failed',
+        error: err instanceof Error ? err.name : 'unknown',
+      }),
+    );
+  }
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -65,6 +87,10 @@ export async function GET(req: Request): Promise<Response> {
 
     // Throws before any token request when the binding cookie is missing or foreign.
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
+    // Fixation and leftovers: the login succeeded at the identity provider, so the record this browser held
+    // before (another user, or the same one again) goes now, before anything below can send the person
+    // elsewhere (no access, wrong app) and leave that record alive.
+    await destroyPreviousSession(jar.get(SESSION_COOKIE)?.value);
     // The API is the authority on org and roles, not the token claims.
     const me = await getMe({ accessToken: tokens.accessToken });
     // Deny by default: only a customer or vendor user whose IdP org maps to a party (ADR 0027)
@@ -82,6 +108,16 @@ export async function GET(req: Request): Promise<Response> {
       ...tokens,
     });
     await setSessionCookie(id);
+    // Signed in again: the next login may reuse the ZITADEL session as usual.
+    if (jar.get(SIGNED_OUT_COOKIE)?.value) {
+      jar.set(SIGNED_OUT_COOKIE, '', {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 0,
+      });
+    }
     // returnTo went through safeReturnTo in /auth/login and was stored server-side with the state.
     return redirectTo(me.orgKind === 'vendor' ? vendorReturnTo(returnTo) : returnTo);
   } catch (err) {

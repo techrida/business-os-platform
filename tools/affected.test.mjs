@@ -36,7 +36,9 @@ test('apps/portal only: portal, its build and image, and the portal specs', () =
   assert.deepEqual([r.portal, r.web, r.docker, r['qa-portal']], [true, true, true, true]);
   assert.deepEqual([r.api, r.workspace, r.db, r['qa-workspace']], [false, false, false, false]);
   assert.deepEqual(r.packages, ['@bos/portal']);
-  assert.deepEqual(qaMatrix(r).include, [{ mode: 'specs', id: '1', shard: '1/3', ws: false }]);
+  assert.deepEqual(qaMatrix(r).include, [
+    { mode: 'specs', id: '2', shard: '2/2', list: 'shard-b', ws: false, portal: true },
+  ]);
 });
 
 test('apps/workspace only: workspace and its specs, not the portal or the API tests', () => {
@@ -45,7 +47,50 @@ test('apps/workspace only: workspace and its specs, not the portal or the API te
     [r.workspace, r['qa-workspace'], r.portal, r['qa-portal'], r.api],
     [true, true, false, false, false],
   );
-  assert.equal(qaMatrix(r).include.length, 4);
+  assert.equal(qaMatrix(r).include.length, 2);
+  assert.equal(qaMatrix(r, { quarantine: 'x' }).include.length, 3);
+});
+
+const images = (r) => ({
+  api: r['docker-api'],
+  workspace: r['docker-workspace'],
+  portal: r['docker-portal'],
+  login: r['docker-login'],
+});
+
+test('each production image is built only when its own app is affected', () => {
+  assert.deepEqual(images(run('apps/workspace/src/x.ts')), {
+    api: false,
+    workspace: true,
+    portal: false,
+    login: false,
+  });
+  assert.deepEqual(images(run('apps/portal/src/a.tsx')), {
+    api: false,
+    workspace: false,
+    portal: true,
+    login: false,
+  });
+  assert.deepEqual(images(run('apps/api/src/x.ts')), {
+    api: true,
+    workspace: false,
+    portal: false,
+    login: false,
+  });
+  // A shared package reaches the apps that depend on it, and only those.
+  const pdf = images(run('packages/pdf-viewer/src/x.ts'));
+  assert.deepEqual([pdf.workspace, pdf.portal, pdf.api], [true, true, false]);
+});
+
+test('a docs-only diff builds no image; everything builds all four, the login image included', () => {
+  assert.deepEqual(Object.values(images(run('docs/a.md'))), [false, false, false, false]);
+  assert.deepEqual(Object.values(images(run('pnpm-lock.yaml'))), [true, true, true, true]);
+  assert.deepEqual(Object.values(images(affected(['docs/a.md'], packages, { event: 'push' }))), [
+    true,
+    true,
+    true,
+    true,
+  ]);
 });
 
 test('apps/api: both browser suites run, because both apps serve from the API', () => {
@@ -122,12 +167,28 @@ test('an empty diff, and every event except pull_request, run everything', () =>
     assert.equal(affected(['docs/a.md'], packages, { event }).full, true, event);
 });
 
-test('the full matrix keeps the job names qa specs 1/2/3 and qa quarantined -', () => {
-  assert.deepEqual(
-    qaMatrix(run('pnpm-lock.yaml')).include.map((m) => `${m.mode} ${m.id}`),
-    ['specs 1', 'specs 2', 'specs 3', 'quarantined -'],
-  );
+test('the full matrix has two shards, and adds qa quarantined only when the quarantine file has content', () => {
+  const names = (quarantine) =>
+    qaMatrix(run('pnpm-lock.yaml'), { quarantine }).include.map((m) => `${m.mode} ${m.id}`);
+  assert.deepEqual(names('p4/line-item-widths'), ['specs 1', 'specs 2', 'quarantined -']);
+  for (const empty of ['', '\n', '  \n\t'])
+    assert.deepEqual(names(empty), ['specs 1', 'specs 2'], JSON.stringify(empty));
+  assert.deepEqual(names(undefined), ['specs 1', 'specs 2']);
   assert.equal(qaMatrix(run('docs/a.md')).include.length, 0);
+});
+
+test('each shard names a list file that exists, and only the portal job (shard B) runs the portal specs', () => {
+  const { include } = qaMatrix(run('pnpm-lock.yaml'));
+  const shards = include.filter((m) => m.mode === 'specs');
+  assert.deepEqual(
+    shards.map((m) => [m.shard, m.list, m.portal]),
+    [
+      ['1/2', 'shard-a', false],
+      ['2/2', 'shard-b', true],
+    ],
+  );
+  for (const m of shards)
+    assert.ok(readFileSync(new URL(`../.github/qa/${m.list}.txt`, import.meta.url), 'utf8').trim());
 });
 
 test('a file moved out of a gate area is still caught when both paths are listed (diff runs with --no-renames)', () => {
