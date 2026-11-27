@@ -43,6 +43,8 @@ vi.mock('@/lib/oidc', () => ({
   LOGIN_COOKIE_MAX_AGE: 600,
   SIGNED_OUT_COOKIE: '__Host-bos_portal_signed_out',
   SIGNED_OUT_COOKIE_MAX_AGE: 2_592_000,
+  SIGNED_IN_COOKIE: '__Host-bos_portal_signed_in',
+  SIGNED_IN_COOKIE_MAX_AGE: 2_592_000,
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
@@ -81,6 +83,12 @@ const ID_TOKEN = 'secret-id-token';
 const LOGIN_COOKIE = '__Host-bos_portal_login';
 const SESSION_COOKIE = '__Host-bos_portal_session';
 const SIGNED_OUT_COOKIE = '__Host-bos_portal_signed_out';
+const SIGNED_IN_COOKIE = '__Host-bos_portal_signed_in';
+/** The signed-in marker writes, as [value, maxAge] pairs. */
+const signedInWrites = (): [unknown, number | undefined][] =>
+  (m.cookieSet.mock.calls as unknown[][])
+    .filter((c) => c[0] === SIGNED_IN_COOKIE)
+    .map((c) => [c[1], (c[2] as { maxAge?: number }).maxAge]);
 /** The signed-out marker writes, as [value, maxAge] pairs. */
 const signedOutWrites = (): [unknown, number | undefined][] =>
   (m.cookieSet.mock.calls as unknown[][])
@@ -163,6 +171,16 @@ describe('GET /auth/login', () => {
   it('sends no prompt of its own without the marker', async () => {
     await call();
     expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('prompt');
+  });
+
+  // Kuu 2026-11-27: after an hour idle the password is needed again. The session record is gone, but ZITADEL's
+  // session is not, so a reload, new tab or Back reaching a plain /auth/login must still ask for the password.
+  it('forces prompt=login on a plain or silent link once this browser has signed in', async () => {
+    requestCookies.set(SIGNED_IN_COOKIE, '1');
+    await call('?returnTo=%2Finvoices');
+    expect(m.beginLogin.mock.calls[0]?.[0]).toEqual({ prompt: 'login', returnTo: '/invoices' });
+    await call('?prompt=none');
+    expect(m.beginLogin.mock.calls[1]?.[0]).toMatchObject({ prompt: 'login' });
   });
 
   it('falls back to / for an unsafe returnTo', async () => {
@@ -277,6 +295,27 @@ describe('GET /auth/callback', () => {
     expect(m.setSessionCookie).toHaveBeenCalledWith('sid-1');
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('https://portal.localhost/orders');
+  });
+
+  it('marks the browser as signed in for 30 days, so later logins ask for the password', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-1', returnTo: '/' });
+    m.getMe.mockResolvedValue(CUSTOMER_ME);
+    m.createSession.mockResolvedValue('sid-1');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    await call('?code=c&state=s');
+
+    expect(m.cookieSet).toHaveBeenCalledWith(SIGNED_IN_COOKIE, '1', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 2_592_000,
+    });
+  });
+
+  it('sets no signed-in marker when ZITADEL did not complete the login', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    m.completeLogin.mockRejectedValue(new Error('invalid_grant'));
+    await call('?code=c&state=s');
+    expect(signedInWrites()).toEqual([]);
   });
 
   it('deletes the session record this browser already held before it creates the new one', async () => {
@@ -486,6 +525,8 @@ describe('GET /auth/callback', () => {
     expect(res.headers.get('location')).toBe('https://portal.localhost/no-access');
     expect(m.createSession).not.toHaveBeenCalled();
     expect(cookiesWritten()).not.toContain('__Host-bos_portal_session');
+    // ZITADEL did sign this browser in, so its next login must ask for the password too.
+    expect(signedInWrites()).toEqual([['1', 2_592_000]]);
     expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
       ...LOGIN_COOKIE_ATTRS,
       maxAge: 0,
@@ -633,6 +674,8 @@ describe('/auth/logout', () => {
     expect(res.headers.get('location')).toBe(END_SESSION);
     // ZITADEL ends its session on the hint, so the next login may use its account chooser as usual.
     expect(signedOutWrites()).toEqual([]);
+    // The signed-in marker stays: it is what makes the next login ask for the password.
+    expect(signedInWrites()).toEqual([]);
   });
 
   // CR-06: getSession is null when the record idled out or Valkey is down. The ZITADEL session

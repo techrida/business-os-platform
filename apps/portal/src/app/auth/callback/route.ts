@@ -2,7 +2,13 @@ import { cookies } from 'next/headers';
 
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin, LOGIN_COOKIE, SIGNED_OUT_COOKIE } from '@/lib/oidc';
+import {
+  completeLogin,
+  LOGIN_COOKIE,
+  SIGNED_IN_COOKIE,
+  SIGNED_IN_COOKIE_MAX_AGE,
+  SIGNED_OUT_COOKIE,
+} from '@/lib/oidc';
 import {
   createSession,
   destroySession,
@@ -87,6 +93,15 @@ export async function GET(req: Request): Promise<Response> {
 
     // Throws before any token request when the binding cookie is missing or foreign.
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
+    // ZITADEL now holds a session for this browser, even if the steps below send the person elsewhere: from here
+    // on every login asks for the password (see SIGNED_IN_COOKIE).
+    jar.set(SIGNED_IN_COOKIE, '1', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: SIGNED_IN_COOKIE_MAX_AGE,
+    });
     // Fixation and leftovers: the login succeeded at the identity provider, so the record this browser held
     // before (another user, or the same one again) goes now, before anything below can send the person
     // elsewhere (no access, wrong app) and leave that record alive.
@@ -108,7 +123,7 @@ export async function GET(req: Request): Promise<Response> {
       ...tokens,
     });
     await setSessionCookie(id);
-    // Signed in again: the next login may reuse the ZITADEL session as usual.
+    // Signed in again: SIGNED_IN_COOKIE carries on from here.
     if (jar.get(SIGNED_OUT_COOKIE)?.value) {
       jar.set(SIGNED_OUT_COOKIE, '', {
         httpOnly: true,

@@ -59,6 +59,17 @@ export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
 export const SIGNED_OUT_COOKIE = '__Host-bos_portal_signed_out';
 /** 30 days: longer than a ZITADEL browser session is kept, so the session cannot outlive the marker. */
 export const SIGNED_OUT_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
+
+/**
+ * Set by the callback once ZITADEL has signed this browser in. From then on /auth/login always asks ZITADEL for
+ * `prompt=login`, whichever link led there: the ZITADEL session outlives ours (24 h after a TOTP check, whatever
+ * the login policy says), so after our session idles out (IDLE_SECONDS) or reaches its cap, a plain login would
+ * sign the person straight back in without the password. It holds no secret. Same rule as the workspace's cookie
+ * of the same purpose.
+ */
+export const SIGNED_IN_COOKIE = '__Host-bos_portal_signed_in';
+/** Same 30 days as SIGNED_OUT_COOKIE, for the same reason: no ZITADEL session can outlive the marker. */
+export const SIGNED_IN_COOKIE_MAX_AGE = SIGNED_OUT_COOKIE_MAX_AGE;
 const LOGIN_BINDING_BYTES = 32;
 
 const oidcKey = (state: string) => `pt:oidc:${state}`;
