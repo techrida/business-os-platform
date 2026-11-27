@@ -72,7 +72,6 @@ function InboxRow({ item, numberSystems }: { item: InboxItemDto; numberSystems: 
 
 export default async function InboxPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const session = await requireStaffSession(PATH);
-  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const state = readList(sp, INBOX_LIST);
   const { q } = state;
@@ -84,12 +83,18 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   let result: InboxPage | null = null;
   let pageInfo = pageWindow(state.page, state.rows);
   let problem: { message: string; status: number } | null = null;
+  // The list read starts first; display settings and the whole unfiltered inbox (the KPI cards) start
+  // with it instead of after it. Neither throws: a failed inbox read leaves the cards out. If the list
+  // is denied, the cards are dropped below and the extra read is the only cost.
+  const firstRead = getInboxPage(session, {
+    ...filters,
+    limit: pageInfo.limit,
+    offset: pageInfo.offset,
+  });
+  const numberSystemsRead = getNumberSystems();
+  const summaryRead = getInbox(session).then(inboxSummaryCards, () => []);
   try {
-    result = await getInboxPage(session, {
-      ...filters,
-      limit: pageInfo.limit,
-      offset: pageInfo.offset,
-    });
+    result = await firstRead;
     pageInfo = pageWindow(pageInfo.page, pageInfo.limit, result.total);
     if (result.items.length === 0 && result.total > 0) {
       // The URL named a page past the end: show the last one instead of an empty table.
@@ -103,9 +108,8 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     const f = failureOf(err);
     problem = { message: f.status === 403 ? inboxDenialMessage(err) : f.message, status: f.status };
   }
-  // The whole inbox, unfiltered, for the KPI cards; only read once the list itself was allowed.
-  // A failed read just leaves the cards out.
-  const summary = problem === null ? await getInbox(session).then(inboxSummaryCards, () => []) : [];
+  const [numberSystems, cards] = await Promise.all([numberSystemsRead, summaryRead]);
+  const summary = problem === null ? cards : [];
   const items = result?.items ?? null;
   const total = result?.total ?? 0;
   const hiding = activeFilterLabels(

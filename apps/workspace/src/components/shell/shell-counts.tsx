@@ -17,6 +17,8 @@ import {
 export const SHELL_COUNTS_URL = '/api/shell/counts';
 
 const POLL_MS = 15_000;
+/** A page change within this long of the last read waits for the end of it before reading, so a run of page changes makes one read. */
+const PATH_READ_MIN_MS = 5_000;
 const READ_TIMEOUT_MS = 10_000;
 
 /**
@@ -46,9 +48,14 @@ export function useShellCounts(): ShellCounts | null {
   return useContext(ShellCountsContext);
 }
 
-/** Where to send a person whose session ended: sign in, then come back to this page. */
+/**
+ * Where to send a person whose session ended while the tab sat open: a login that must ask for the password
+ * again (`prompt=login&max_age=0`, the same link as `stepUpLoginUrl` in lib/bff.ts, which is server-only), then
+ * back to this page. A plain login link would let the identity provider's still-live session sign them straight in.
+ */
 export function signInHref(location: Pick<Location, 'pathname' | 'search'>): string {
-  return `/auth/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`;
+  const returnTo = encodeURIComponent(location.pathname + location.search);
+  return `/auth/login?prompt=login&max_age=0&returnTo=${returnTo}`;
 }
 
 interface State {
@@ -64,9 +71,9 @@ const knownCount = (value: unknown): number | undefined =>
 
 /**
  * The one counts poller per tab, mounted once by the app layout. It feeds the sidebar's Inbox badge and the
- * header bell from a single read of `/api/shell/counts`: on every page change after the first (the layout has
- * just read the first page's numbers), when the window regains focus or the tab becomes visible, and every 15 s.
- * A hidden tab does not poll. When the layout has no unread count it reads once on arrival.
+ * header bell from a single read of `/api/shell/counts`: on page changes (at most one per 5 s, the last one is not dropped),
+ * when the window regains focus or the tab becomes visible, and every 15 s. A hidden tab does not poll. When
+ * the layout has no unread count (it no longer waits for one) it reads once on arrival.
  *
  * A field the route returns as `null` (refused or failed) keeps its last known value. Only the newest read may
  * write: a read overtaken by a newer read, or by a fresh number from the layout, is dropped when it lands.
@@ -110,6 +117,8 @@ export function ShellCountsProvider({
   // Marks-as-read still on the wire (`lowerNotifications`): no read starts while any are.
   const marksOut = useRef(0);
   const seenPath = useRef(pathname);
+  // When the last read started (null: none yet), so a quick run of page changes makes one read.
+  const lastReadAt = useRef<number | null>(null);
 
   // A fresh layout number outranks any read already in flight: that read started before it.
   useLayoutEffect(() => {
@@ -119,6 +128,7 @@ export function ShellCountsProvider({
   const refresh = useCallback(async () => {
     if (document.hidden || signedOut.current || inFlight.current || marksOut.current > 0) return;
     inFlight.current = true;
+    lastReadAt.current = Date.now();
     const generation = ++latest.current;
     try {
       const res = await fetch(SHELL_COUNTS_URL, {
@@ -185,7 +195,11 @@ export function ShellCountsProvider({
   useEffect(() => {
     if (seenPath.current === pathname) return;
     seenPath.current = pathname;
-    const read = window.setTimeout(() => void refresh(), 0);
+    // Within 5 s of the last read the read is delayed to the end of that window, not dropped: a page change
+    // that follows an action (an approval, then the redirect to the list) still gets a fresh number.
+    const last = lastReadAt.current;
+    const wait = last === null ? 0 : Math.max(0, PATH_READ_MIN_MS - (Date.now() - last));
+    const read = window.setTimeout(() => void refresh(), wait);
     return () => window.clearTimeout(read);
   }, [pathname, refresh]);
 

@@ -9,6 +9,8 @@ const source = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      // The subpath first: an alias matches by prefix, so the bare name would swallow it.
+      '@bos/contracts/constants': source('../../packages/contracts/src/constants/index.ts'),
       '@bos/contracts': source('../../packages/contracts/src/index.ts'),
       '@bos/locale': source('../../packages/locale/src/index.ts'),
       '@bos/pdf-viewer': source('../../packages/pdf-viewer/src/index.ts'),
