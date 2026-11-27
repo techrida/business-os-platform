@@ -40,6 +40,11 @@ const SHA256_HEX = /^[0-9a-f]{64}$/i;
  * This is a shared-secret scheme chosen by us, not Postal's own: native Postal signs webhooks with an RSA
  * key pair (header X-Postal-Signature, verified with the install's public key). Until that is confirmed
  * and swapped in, the secret has to be put on the webhook by whatever relays or configures Postal's call.
+ *
+ * Replay (R7 U1-05): the signature covers the body only, in our own format, so a captured request verifies
+ * again. No event-id guard is added: the format is not Postal's to extend, a guard needs a store (a table
+ * or a Valkey key set), and a replay is harmless today because markBounced only rewrites the same outbox
+ * row to the same state and a hard bounce re-stops only mail that is still pending.
  */
 export function verifyPostalSignature(rawBody: Buffer, header: string, secret: string): boolean {
   if (secret.length === 0 || header.length === 0) return false;

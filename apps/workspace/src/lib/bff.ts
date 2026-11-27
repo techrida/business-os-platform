@@ -8,7 +8,7 @@ import { dbBusyOf } from './db-busy';
 import { failureOf } from './api-kernel';
 import { getEnv } from './env';
 import type { FailureContext } from './kernel-ui';
-import { getSession, type Session } from './session';
+import { getSession, type GetSessionOptions, type Session } from './session';
 import { SessionUnavailableError, sessionUnavailableResponse } from './session-unavailable';
 
 /**
@@ -38,11 +38,12 @@ export function jsonResponse(body: unknown, status = 200): Response {
 /**
  * For Route Handlers: the session, or a 401/403/503 JSON response the handler returns as is. A handler
  * never redirects, because `fetch` from the browser would follow the redirect into the login HTML.
+ * Background polls pass `{ slide: false }` so they do not keep the session alive.
  */
-export async function routeSession(): Promise<Session | Response> {
+export async function routeSession(options?: GetSessionOptions): Promise<Session | Response> {
   let session: Session | null;
   try {
-    session = await getSession();
+    session = await getSession(options);
   } catch (err) {
     if (err instanceof SessionUnavailableError) return sessionUnavailableResponse();
     throw err;

@@ -13,6 +13,10 @@ export const LCP_BUCKETS = [0.5, 1, 1.5, 2, 2.5, 4, 8] as const;
 export const TX_SETUP_BUCKETS = [
   0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 5,
 ] as const;
+/** Lock waits are mostly zero; the upper edges show a queue behind one tenant (lock_timeout is 5 s). */
+export const TENANT_LOCK_WAIT_BUCKETS = [
+  0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5,
+] as const;
 export const TX_DURATION_BUCKETS = [
   0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30,
 ] as const;
@@ -88,7 +92,7 @@ export class MetricsService {
 
   private readonly dbBusy = new Counter({
     name: 'db_busy_errors_total',
-    help: 'Transactions Postgres ended as a deadlock victim or after a lock_timeout, by kind.',
+    help: 'Transactions Postgres ended as a deadlock victim, after a lock_timeout or after a statement_timeout, by kind.',
     labelNames: ['kind'] as const,
     registers: [this.registry],
   });
@@ -105,6 +109,13 @@ export class MetricsService {
     help: 'Whole withTx duration in seconds, including lock waits, by outcome.',
     labelNames: ['outcome'] as const,
     buckets: [...TX_DURATION_BUCKETS],
+    registers: [this.registry],
+  });
+
+  private readonly tenantLockWait = new Histogram({
+    name: 'db_tenant_lock_wait_seconds',
+    help: 'Time a transaction waited for its tenant audit-chain advisory lock (OQ-R7-02: is the per-write hash worth moving).',
+    buckets: [...TENANT_LOCK_WAIT_BUCKETS],
     registers: [this.registry],
   });
 
@@ -143,6 +154,10 @@ export class MetricsService {
 
   countDbBusy(kind: DbBusyKind): void {
     this.dbBusy.inc({ kind });
+  }
+
+  observeTenantLockWait(seconds: number): void {
+    this.tenantLockWait.observe(seconds);
   }
 
   recordHeartbeat(epochSeconds: number): void {

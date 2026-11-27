@@ -105,8 +105,8 @@ describe('withTx', () => {
     expect(executed).toHaveLength(2);
     const [stmt] = executed;
     expect(stmt?.text.trimStart().startsWith('SELECT')).toBe(true);
-    expect(stmt?.text.match(/set_config\(/g)).toHaveLength(9);
-    expect(stmt?.text.match(/, true\)/g)).toHaveLength(9);
+    expect(stmt?.text.match(/set_config\(/g)).toHaveLength(10);
+    expect(stmt?.text.match(/, true\)/g)).toHaveLength(10);
     expect(stmt?.text).not.toContain('tenant-1');
     expect(stmt?.params).toEqual([
       'tenant-1',
@@ -117,6 +117,7 @@ describe('withTx', () => {
       '203.0.113.7',
       'vitest/1',
       '5000ms',
+      '15000ms',
       '30000ms',
     ]);
   });
@@ -232,29 +233,56 @@ describe('withTx timeouts', () => {
     configureTx({});
   });
 
-  it('sets lock_timeout and idle_in_transaction_session_timeout for this transaction only', async () => {
+  it('sets lock_timeout, statement_timeout and idle_in_transaction_session_timeout for this transaction only', async () => {
     const { db, setting } = fakeDb();
     const seen: (string | null)[] = [];
     await withTx(db, scope, actor, () => {
-      seen.push(setting('lock_timeout'), setting('idle_in_transaction_session_timeout'));
+      seen.push(
+        setting('lock_timeout'),
+        setting('statement_timeout'),
+        setting('idle_in_transaction_session_timeout'),
+      );
       return Promise.resolve();
     });
-    expect(seen).toEqual(['5000ms', '30000ms']);
+    expect(seen).toEqual(['5000ms', '15000ms', '30000ms']);
     expect(setting('lock_timeout')).toBeNull();
+    expect(setting('statement_timeout')).toBeNull();
+  });
+
+  it('lets one transaction override the statement limit, and refuses 0 and fractions (no "off")', async () => {
+    const { db, setting } = fakeDb();
+    const seen: (string | null)[] = [];
+    const read = () => {
+      seen.push(setting('statement_timeout'));
+      return Promise.resolve();
+    };
+    await withTx(db, scope, actor, read, { statementTimeoutMs: 30_000 });
+    await withTx(db, scope, actor, read);
+    expect(seen).toEqual(['30000ms', '15000ms']);
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      await expect(withTx(db, scope, actor, read, { statementTimeoutMs: bad })).rejects.toThrow(
+        'statementTimeoutMs must be a positive integer',
+      );
+    }
+    expect(seen).toHaveLength(2);
   });
 
   it('uses what configureTx set, and the defaults again for values left out', async () => {
     const { db, setting } = fakeDb();
     const seen: (string | null)[] = [];
     const read = () => {
-      seen.push(setting('lock_timeout'), setting('idle_in_transaction_session_timeout'));
+      seen.push(
+        setting('lock_timeout'),
+        setting('statement_timeout'),
+        setting('idle_in_transaction_session_timeout'),
+      );
       return Promise.resolve();
     };
-    configureTx({ lockTimeoutMs: 1234, idleInTxTimeoutMs: 60_000 });
+    configureTx({ lockTimeoutMs: 1234, statementTimeoutMs: 2000, idleInTxTimeoutMs: 60_000 });
     await withTx(db, scope, actor, read);
     configureTx({ lockTimeoutMs: 250 });
     await withTx(db, scope, actor, read);
-    expect(seen).toEqual(['1234ms', '60000ms', '250ms', '30000ms']);
+    expect(seen).toEqual(['1234ms', '2000ms', '60000ms', '250ms', '15000ms', '30000ms']);
   });
 
   it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
@@ -262,6 +290,9 @@ describe('withTx timeouts', () => {
     (value) => {
       expect(() => configureTx({ lockTimeoutMs: value })).toThrow(
         'lockTimeoutMs must be a non-negative integer',
+      );
+      expect(() => configureTx({ statementTimeoutMs: value })).toThrow(
+        'statementTimeoutMs must be a non-negative integer',
       );
       expect(() => configureTx({ idleInTxTimeoutMs: value })).toThrow(
         'idleInTxTimeoutMs must be a non-negative integer',
@@ -271,11 +302,16 @@ describe('withTx timeouts', () => {
 });
 
 describe('withTx observer', () => {
-  const observer = { observeTx: vi.fn(), countDbBusy: vi.fn() } satisfies TxObserver;
+  const observer = {
+    observeTx: vi.fn(),
+    countDbBusy: vi.fn(),
+    observeTenantLockWait: vi.fn(),
+  } satisfies TxObserver;
 
   beforeEach(() => {
     observer.observeTx.mockReset();
     observer.countDbBusy.mockReset();
+    observer.observeTenantLockWait.mockReset();
     setTxObserver(observer);
   });
   afterEach(() => {
@@ -296,6 +332,7 @@ describe('withTx observer', () => {
   it.each([
     ['40P01', 'deadlock'],
     ['55P03', 'lock_timeout'],
+    ['57014', 'statement_timeout'],
   ])('counts a %s rollback as %s, also through the drizzle wrapper', async (code, kind) => {
     const { db } = fakeDb();
     const pg = Object.assign(new Error('busy'), { code });
@@ -307,6 +344,16 @@ describe('withTx observer', () => {
       expect.any(Number),
     );
     expect(observer.countDbBusy).toHaveBeenCalledExactlyOnceWith(kind);
+  });
+
+  it('reports the wait for the tenant lock, and none for a transaction that never takes it', async () => {
+    const { db } = fakeDb();
+    await withTx(db, scope, actor, () => Promise.resolve());
+    expect(observer.observeTenantLockWait).toHaveBeenCalledTimes(1);
+    expect(observer.observeTenantLockWait.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(0);
+    observer.observeTenantLockWait.mockReset();
+    await withTx(db, scope, actor, () => Promise.resolve(), { audit: 'lazy' });
+    expect(observer.observeTenantLockWait).not.toHaveBeenCalled();
   });
 
   it('reports other rollbacks without counting them as busy', async () => {

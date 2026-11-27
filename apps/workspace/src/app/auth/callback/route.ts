@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
 import { completeLogin, LOGIN_COOKIE, LoginStateExpiredError, SIGNED_OUT_COOKIE } from '@/lib/oidc';
-import { createSession, setSessionCookie } from '@/lib/session';
+import { createSession, destroySession, SESSION_COOKIE, setSessionCookie } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +28,22 @@ const RECOVERY_COOKIE_OPTIONS = {
   sameSite: 'lax' as const,
   path: '/',
 };
+
+/** Best effort: a failed delete must not block the sign-in. The old record dies with its TTL. */
+async function destroyPreviousSession(previousId: string | undefined): Promise<void> {
+  if (!previousId) return;
+  try {
+    await destroySession(previousId);
+  } catch (err) {
+    // Only the error name: ioredis errors carry the command arguments.
+    console.warn(
+      JSON.stringify({
+        event: 'auth.previous_session_destroy_failed',
+        error: err instanceof Error ? err.name : 'unknown',
+      }),
+    );
+  }
+}
 
 export async function GET(req: Request): Promise<Response> {
   const incoming = new URL(req.url);
@@ -60,6 +76,10 @@ export async function GET(req: Request): Promise<Response> {
 
     // Throws before any token request when the binding cookie is missing or foreign.
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
+    // Fixation and leftovers: the login succeeded at the identity provider, so the record this browser held
+    // before (another user, or the same one again) goes now, before anything below can send the person
+    // elsewhere (no access, wrong app) and leave that record alive.
+    await destroyPreviousSession(jar.get(SESSION_COOKIE)?.value);
     // The API is the authority on org and roles, not the token claims.
     const me = await getMe({ accessToken: tokens.accessToken });
     const id = await createSession({

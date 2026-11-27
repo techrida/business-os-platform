@@ -65,7 +65,9 @@ export const SCAN_FAILED_INFRA = 'infra-error';
 /** What one run did. `retry` means "try again later": the processor throws so BullMQ retries with backoff. */
 export type ScanOutcome = 'clean' | 'infected' | 'scan_failed' | 'skipped' | 'retry';
 
-@Processor(DOCS_SCAN_QUEUE)
+// Three files at a time: a scan streams the file to clamd and mostly waits, so one upload of several files
+// no longer queues behind its own first file. Each job opens its own clamd connection and its own transactions.
+@Processor(DOCS_SCAN_QUEUE, { concurrency: 3 })
 export class ScanProcessor extends WorkerHost {
   private readonly logger = new Logger(ScanProcessor.name);
 
