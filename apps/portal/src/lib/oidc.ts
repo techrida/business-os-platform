@@ -80,7 +80,27 @@ const PendingLoginSchema = z.object({
   returnTo: z.string(),
   /** SHA-256 (hex) of the LOGIN_COOKIE value. The raw value is never stored. */
   bindingHash: z.string().regex(/^[0-9a-f]{64}$/),
+  /** For `prompt=login` only: epoch seconds when the login began. The sign-in must be at least this recent. */
+  reauthAfter: z.number().int().optional(),
 });
+
+/**
+ * Tolerated clock difference between ZITADEL and this server. A sign-in that reused a ZITADEL session is at least
+ * an hour old, so this margin lets nothing through that `prompt=login` was meant to stop.
+ */
+const AUTH_TIME_SKEW_SECONDS = 60;
+
+/**
+ * A `prompt=login` login came back with an `auth_time` from before the login began: ZITADEL reused a session
+ * instead of asking for the credentials. Its login UI honours `prompt=login`, but its server does not check it
+ * when a session is linked to the request, so a session picked from the account list would get through.
+ */
+export class StaleSignInError extends Error {
+  constructor() {
+    super('oidc: prompt=login came back without a fresh sign-in');
+    this.name = 'StaleSignInError';
+  }
+}
 
 /**
  * The callback was not presented by the browser that started the login: the LOGIN_COOKIE is
@@ -180,7 +200,7 @@ export function __setOidcRedisForTests(redis: Redis | undefined): void {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Starts a login: stores `pt:oidc:<state>` = { codeVerifier, nonce, returnTo, bindingHash } for
+ * Starts a login: stores `pt:oidc:<state>` = { codeVerifier, nonce, returnTo, bindingHash, reauthAfter } for
  * 10 minutes and returns the ZITADEL authorization URL to redirect to, plus the `binding` value
  * the caller must set as LOGIN_COOKIE (HttpOnly, Secure, SameSite=Lax, Path=/,
  * Max-Age=LOGIN_COOKIE_MAX_AGE) on that redirect.
@@ -201,11 +221,12 @@ export async function beginLogin(o: {
   const returnTo = safeReturnTo(o.returnTo);
   const binding = randomBytes(LOGIN_BINDING_BYTES).toString('base64url');
   const bindingHash = sha256(binding).toString('hex');
+  const reauthAfter = o.prompt === 'login' ? nowSeconds() : undefined;
 
   const redis = await whenReady(getOidcRedis());
   await redis.set(
     oidcKey(state),
-    JSON.stringify({ codeVerifier, nonce, returnTo, bindingHash }),
+    JSON.stringify({ codeVerifier, nonce, returnTo, bindingHash, reauthAfter }),
     'EX',
     LOGIN_STATE_TTL_SECONDS,
   );
@@ -278,8 +299,15 @@ export async function completeLogin(
     idTokenExpected: true,
   });
 
-  const sub = response.claims()?.sub;
+  const claims = response.claims();
+  const sub = claims?.sub;
   if (!sub) throw new Error('oidc: ID token has no subject');
+  if (pending.reauthAfter !== undefined) {
+    const authTime = claims?.auth_time;
+    if (typeof authTime !== 'number' || authTime < pending.reauthAfter - AUTH_TIME_SKEW_SECONDS) {
+      throw new StaleSignInError();
+    }
+  }
 
   return { tokens: toTokens(response), sub, returnTo: safeReturnTo(pending.returnTo) };
 }
