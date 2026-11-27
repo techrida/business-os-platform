@@ -128,7 +128,6 @@ async function pendingLogin(state: string) {
         nonce: string;
         returnTo: string;
         bindingHash: string;
-        reauthAfter?: number;
       });
 }
 
@@ -241,17 +240,6 @@ describe('beginLogin', () => {
     expect(url.searchParams.get('max_age')).toBe('0');
     const { url: plain } = await beginLogin({ returnTo: '/' });
     expect(plain.searchParams.has('max_age')).toBe(false);
-  });
-
-  it('records when a prompt=login login began, and nothing for other logins', async () => {
-    const { url: forced } = await beginLogin({ returnTo: '/', prompt: 'login', maxAge: 0 });
-    expect((await pendingLogin(forced.searchParams.get('state') ?? ''))?.reauthAfter).toBe(
-      T0 / 1000,
-    );
-    const { url: plain } = await beginLogin({ returnTo: '/', prompt: 'none' });
-    expect(await pendingLogin(plain.searchParams.get('state') ?? '')).not.toHaveProperty(
-      'reauthAfter',
-    );
   });
 
   it.each([-1, 1.5, Number.NaN, 86_401])('drops a max_age of %s', async (maxAge) => {
@@ -445,11 +433,16 @@ describe('completeLogin', () => {
 
 // ZITADEL v4.20.1 checks prompt=login only in its login UI. Its server links any live session to the request, so
 // a session picked from the account list would come back here with the old auth_time.
-describe('completeLogin after prompt=login', () => {
+describe('completeLogin after a freshSignIn login', () => {
   const NOW = T0 / 1000;
 
   async function forcedLogin(authTime: number | undefined) {
-    const { url, binding } = await beginLogin({ returnTo: '/', prompt: 'login', maxAge: 0 });
+    const { url, binding } = await beginLogin({
+      returnTo: '/',
+      prompt: 'login',
+      maxAge: 0,
+      freshSignIn: true,
+    });
     const state = url.searchParams.get('state') ?? '';
     vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
       grantResult({
@@ -480,7 +473,20 @@ describe('completeLogin after prompt=login', () => {
     await expect(forcedLogin(undefined)).rejects.toBeInstanceOf(StaleSignInError);
   });
 
-  it('does not check auth_time on a login that did not ask for prompt=login', async () => {
+  // The dev persona switcher sends prompt=login without freshSignIn: its ZITADEL session has only a user check, so
+  // the ID token has no auth_time.
+  it('does not check auth_time on a prompt=login login that did not ask for a fresh sign-in', async () => {
+    const { url, binding } = await beginLogin({ returnTo: '/', prompt: 'login' });
+    const state = url.searchParams.get('state') ?? '';
+    vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
+      grantResult({ access_token: 'at', expiresIn: 300, sub: 'u' }),
+    );
+    await expect(
+      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding),
+    ).resolves.toMatchObject({ sub: 'u' });
+  });
+
+  it('does not check auth_time on a login that did not ask for a fresh sign-in', async () => {
     const { url, binding } = await beginLogin({ returnTo: '/' });
     const state = url.searchParams.get('state') ?? '';
     vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(

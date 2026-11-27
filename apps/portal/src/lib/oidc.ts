@@ -80,18 +80,18 @@ const PendingLoginSchema = z.object({
   returnTo: z.string(),
   /** SHA-256 (hex) of the LOGIN_COOKIE value. The raw value is never stored. */
   bindingHash: z.string().regex(/^[0-9a-f]{64}$/),
-  /** For `prompt=login` only: epoch seconds when the login began. The sign-in must be at least this recent. */
+  /** Set for `freshSignIn` logins: epoch seconds when the login began. The sign-in must be at least this recent. */
   reauthAfter: z.number().int().optional(),
 });
 
 /**
- * Tolerated clock difference between ZITADEL and this server. A sign-in that reused a ZITADEL session is at least
- * an hour old, so this margin lets nothing through that `prompt=login` was meant to stop.
+ * Tolerated clock difference between ZITADEL and this server. A reused ZITADEL session was signed in before the
+ * login began, usually long before, so this margin only absorbs clock drift.
  */
 const AUTH_TIME_SKEW_SECONDS = 60;
 
 /**
- * A `prompt=login` login came back with an `auth_time` from before the login began: ZITADEL reused a session
+ * A `freshSignIn` login came back with an `auth_time` from before the login began: ZITADEL reused a session
  * instead of asking for the credentials. Its login UI honours `prompt=login`, but its server does not check it
  * when a session is linked to the request, so a session picked from the account list would get through.
  */
@@ -208,6 +208,8 @@ export function __setOidcRedisForTests(redis: Redis | undefined): void {
 export async function beginLogin(o: {
   loginHint?: string;
   prompt?: 'login' | 'none' | 'consent' | 'select_account';
+  /** The callback must see an `auth_time` from after this call (StaleSignInError otherwise). */
+  freshSignIn?: boolean;
   returnTo: string;
 }): Promise<{ url: URL; binding: string }> {
   const env = getEnv();
@@ -221,7 +223,7 @@ export async function beginLogin(o: {
   const returnTo = safeReturnTo(o.returnTo);
   const binding = randomBytes(LOGIN_BINDING_BYTES).toString('base64url');
   const bindingHash = sha256(binding).toString('hex');
-  const reauthAfter = o.prompt === 'login' ? nowSeconds() : undefined;
+  const reauthAfter = o.freshSignIn ? nowSeconds() : undefined;
 
   const redis = await whenReady(getOidcRedis());
   await redis.set(

@@ -178,7 +178,11 @@ describe('GET /auth/login', () => {
   it('forces prompt=login on a plain or silent link once this browser has signed in', async () => {
     requestCookies.set(SIGNED_IN_COOKIE, '1');
     await call('?returnTo=%2Finvoices');
-    expect(m.beginLogin.mock.calls[0]?.[0]).toEqual({ prompt: 'login', returnTo: '/invoices' });
+    expect(m.beginLogin.mock.calls[0]?.[0]).toEqual({
+      prompt: 'login',
+      freshSignIn: true,
+      returnTo: '/invoices',
+    });
     await call('?prompt=none');
     expect(m.beginLogin.mock.calls[1]?.[0]).toMatchObject({ prompt: 'login' });
   });

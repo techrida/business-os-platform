@@ -72,6 +72,7 @@ export async function GET(req: Request): Promise<Response> {
     ...(loginHint !== undefined && { loginHint }),
     ...(prompt !== undefined && { prompt }),
     ...(maxAge !== undefined && { maxAge }),
+    ...(prompt === 'login' && { freshSignIn: true }),
     // Open-redirect guard: only a same-origin relative path survives, everything else is '/'.
     returnTo: safeReturnTo(params.get('returnTo')),
   });

@@ -202,6 +202,7 @@ describe('GET /auth/login', () => {
     await call();
     expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('prompt');
     expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('maxAge');
+    expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('freshSignIn');
   });
 
   // Kuu 2026-11-27: after an hour idle the password is needed again. The session record is gone, but ZITADEL's
@@ -212,6 +213,7 @@ describe('GET /auth/login', () => {
     expect(m.beginLogin.mock.calls[0]?.[0]).toEqual({
       prompt: 'login',
       maxAge: 0,
+      freshSignIn: true,
       returnTo: '/orders',
     });
   });
@@ -222,9 +224,13 @@ describe('GET /auth/login', () => {
     expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login', maxAge: 0 });
   });
 
-  it('passes max_age=0 through as a number for step-up (K7)', async () => {
+  it('passes max_age=0 through as a number for step-up (K7), and asks for a fresh sign-in', async () => {
     await call('?prompt=login&max_age=0');
-    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login', maxAge: 0 });
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({
+      prompt: 'login',
+      maxAge: 0,
+      freshSignIn: true,
+    });
   });
 
   it.each(['-1', '1.5', 'abc', '0x10', '', '9999999'])('drops max_age=%s', async (raw) => {
