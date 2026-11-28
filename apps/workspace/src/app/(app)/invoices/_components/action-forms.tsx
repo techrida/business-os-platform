@@ -7,6 +7,7 @@ import {
   useId,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -25,7 +26,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
-import { useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
+import { useFocusOnProblem, useRefreshAfterAction } from '@/components/p2/quotations/action-dialog';
 
 import dialogStyles from '@/components/p3/transaction-form-dialog.module.css';
 
@@ -69,8 +70,16 @@ function ErrorSummary({
   );
 }
 
-/** The invoice dialogs keep the original version and idempotency key through a refused action. */
-function InvoiceActionDialog({
+/**
+ * The invoice dialogs keep the original version and idempotency key through a refused action. Keyed on the invoice's
+ * version, so after a successful action refreshes the page (no document reload) the form starts again from the new
+ * version and cannot send the old one back (a 409).
+ */
+function InvoiceActionDialog(props: ComponentProps<typeof InvoiceActionForm>) {
+  return <InvoiceActionForm key={props.version} {...props} />;
+}
+
+function InvoiceActionForm({
   action,
   invoiceId,
   version,
@@ -102,6 +111,7 @@ function InvoiceActionDialog({
   const [state, formAction, pending] = useActionState<InvoiceActionState, FormData>(action, {
     key: idempotencyKey,
   });
+  const refreshAfterAction = useRefreshAfterAction();
   const formId = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
@@ -123,8 +133,8 @@ function InvoiceActionDialog({
       locked={pending}
       closeOnOutsideClick={false}
       onOpenChange={(open) => {
-        // A full reload after success replaces the detail and its expected version together.
-        if (!open && state.done) window.location.reload();
+        // A refresh after success brings the new version; the dialog is keyed on it, so the next action expects it.
+        if (!open && state.done) refreshAfterAction();
       }}
       footer={
         state.done ? (

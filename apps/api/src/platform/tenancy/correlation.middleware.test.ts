@@ -1,4 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import 'reflect-metadata';
+
+import type { Server } from 'node:http';
+
+import {
+  Controller,
+  Get,
+  type INestApplication,
+  type MiddlewareConsumer,
+  Module,
+  type NestModule,
+} from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { configureApp } from '../../app.setup';
 
 import { CorrelationMiddleware, type CorrelatedRequest } from './correlation.middleware';
 import { bindIdentity, ctx, currentCorrelationId } from './request-context';
@@ -101,5 +117,77 @@ describe('CorrelationMiddleware', () => {
     const { seenClient } = run({ 'user-agent': 'u'.repeat(512) });
 
     expect(seenClient?.userAgent).toHaveLength(512);
+  });
+});
+
+// What the web apps' API client now sends (U1-04): the caller's address in x-forwarded-for and the
+// browser's user agent. The audit row takes both from this store (tx.ts), so what ctx() holds here
+// is what the row carries.
+@Controller('who')
+class WhoController {
+  @Get()
+  who(): { ip: string | null; userAgent: string | null } {
+    bindIdentity({
+      tenantId: 't',
+      organizationId: 'o',
+      orgKind: 'staff',
+      partyId: null,
+      idpOrgId: 'i',
+      userId: 'u',
+      roles: [],
+      departmentId: null,
+      tokenExp: 1,
+    });
+    return { ip: ctx().ip, userAgent: ctx().userAgent };
+  }
+}
+
+@Module({ controllers: [WhoController] })
+class WhoModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(CorrelationMiddleware).forRoutes('*');
+  }
+}
+
+describe('client address through one proxy hop', () => {
+  let app: INestApplication | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+  });
+
+  async function start(): Promise<Server> {
+    const moduleRef = await Test.createTestingModule({ imports: [WhoModule] }).compile();
+    app = moduleRef.createNestApplication();
+    configureApp(app);
+    await app.init();
+    return app.getHttpServer() as Server;
+  }
+
+  it('carries the forwarded address and the user agent, not the address of the web container', async () => {
+    const res = await request(await start())
+      .get('/who')
+      .set('x-forwarded-for', '203.0.113.7')
+      .set('user-agent', 'Mozilla/5.0 (workspace test)')
+      .expect(200);
+
+    expect(res.body).toEqual({ ip: '203.0.113.7', userAgent: 'Mozilla/5.0 (workspace test)' });
+  });
+
+  it('without the header (the old web client) carries the peer address, which is the container', async () => {
+    const res = await request(await start())
+      .get('/who')
+      .expect(200);
+
+    expect((res.body as { ip: string }).ip).toMatch(/^(::ffff:)?127\.0\.0\.1$|^::1$/);
+  });
+
+  it('trusts only the last hop: an address the browser prepended is ignored', async () => {
+    const res = await request(await start())
+      .get('/who')
+      .set('x-forwarded-for', '6.6.6.6, 203.0.113.7')
+      .expect(200);
+
+    expect((res.body as { ip: string }).ip).toBe('203.0.113.7');
   });
 });

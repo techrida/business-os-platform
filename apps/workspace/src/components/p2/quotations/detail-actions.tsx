@@ -106,6 +106,9 @@ export function DetailActions({
 }) {
   const { status } = current;
   const ids = { quotationId, versionId: current.id, version: current.version, number, reloadHref };
+  // The dialogs refresh the page instead of reloading it, so each is keyed on the version it expects: after an action the
+  // new version remounts the form, and the old expected version cannot be sent again (a 409).
+  const versionKey = `${current.id}:${current.version}`;
 
   // Send is offered for an approved quotation, and for an expired one so the reason is on screen.
   // An opportunity the API would refuse to move hides it; the page says why (opportunity-gate.ts).
@@ -137,6 +140,7 @@ export function DetailActions({
       ) : null}
       {showSend ? (
         <SendDialog
+          key={versionKey}
           {...ids}
           contacts={contacts}
           createContact={createContact ?? null}
@@ -147,6 +151,7 @@ export function DetailActions({
       ) : null}
       {showOutcome ? (
         <OutcomeDialog
+          key={versionKey}
           {...ids}
           revisionNo={current.revisionNo}
           today={today}
@@ -156,6 +161,7 @@ export function DetailActions({
       ) : null}
       {showRevise ? (
         <ReviseForm
+          key={versionKey}
           {...ids}
           supersedes={(QUOTATION_REVISION_RULES.supersededOnRevise as readonly string[]).includes(
             status,
@@ -165,6 +171,7 @@ export function DetailActions({
       ) : null}
       {showCancel ? (
         <CancelDialog
+          key={versionKey}
           {...ids}
           awaitingApproval={status === 'submitted'}
           isRevision={(current.supersedesVersionId ?? null) !== null}

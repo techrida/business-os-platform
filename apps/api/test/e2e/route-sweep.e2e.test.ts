@@ -24,7 +24,7 @@ import { zitadelClaims } from './support/test-issuer';
 // Without a configured key the webhook answers 401 to everything, which would make its 401 tests
 // prove nothing. With one, a bad signature is refused by the HMAC check itself. AppModule is
 // imported inside startApp(), after this line, so the config sees it.
-const SIGNING_KEY = 'e2e-route-sweep-signing-key';
+const SIGNING_KEY = 'e2e-route-sweep-signing-key-not-a-real-secret';
 process.env.ZITADEL_ACTIONS_SIGNING_KEY = SIGNING_KEY;
 
 const e2e = inject('e2e');

@@ -21,8 +21,11 @@
 # Needs: docker, and RESTIC_PASSWORD in .env (or in the environment). Losing that password makes the repository
 # unreadable, so keep it with ZITADEL_MASTERKEY. Nothing here prints the password.
 #
-# restic runs from the pinned image restic/restic:0.18.1, with the files volume mounted READ-ONLY: a backup tool
-# bug can never change an uploaded file.
+# restic runs from the image restic/restic:0.18.1, pinned by digest (the multi-arch index digest; infra/scripts/
+# check-image-pins.mjs scans this folder), with the files volume mounted READ-ONLY: a backup tool bug can never
+# change an uploaded file. The image reference is written out on each `docker run` line below, because the checker
+# cannot see through a variable. To bump it: change the tag and digest in BOTH places.
+# (`docker buildx imagetools inspect restic/restic:<tag>`, use the top-level "Digest:".)
 set -euo pipefail
 
 MODE="${1:-backup}"
@@ -33,7 +36,6 @@ esac
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-IMAGE="restic/restic:0.18.1"
 # Compose project name is `bos` (infra/compose/compose.yaml), so the volume `files` is `bos_files`.
 FILES_VOLUME="${FILES_VOLUME:-bos_files}"
 REPO_VOLUME="${RESTIC_REPO_VOLUME:-bos_files-restic-repo}"
@@ -61,16 +63,27 @@ docker volume inspect "$FILES_VOLUME" >/dev/null 2>&1 || {
   exit 1
 }
 
-# One place that builds the docker run line. The password goes in through the environment of the `docker run`
-# process only (-e NAME without a value copies it), never on a command line where `ps` could show it.
-restic() {
+# The password goes in through the environment of the `docker run` process only (-e NAME without a value copies it),
+# never on a command line where `ps` could show it.
+# restic_run: the image's own entry point is restic, so the arguments are a restic command.
+restic_run() {
   RESTIC_PASSWORD="$RESTIC_PASSWORD" RESTIC_REPOSITORY="$RESTIC_REPOSITORY" \
     docker run --rm -e RESTIC_PASSWORD -e RESTIC_REPOSITORY \
       -v "$REPO_VOLUME:/repo" \
       -v "$FILES_VOLUME:/data:ro" \
+      restic/restic:0.18.1@sha256:39d9072fb5651c80d75c7a811612eb60b4c06b32ffe87c2e9f3c7222e1797e76 \
       "$@"
 }
-restic_run() { restic "$IMAGE" "$@"; }
+# restic_sh: the same container with /bin/sh as the entry point; the one argument is the shell script to run.
+restic_sh() {
+  RESTIC_PASSWORD="$RESTIC_PASSWORD" RESTIC_REPOSITORY="$RESTIC_REPOSITORY" \
+    docker run --rm -e RESTIC_PASSWORD -e RESTIC_REPOSITORY \
+      -v "$REPO_VOLUME:/repo" \
+      -v "$FILES_VOLUME:/data:ro" \
+      --entrypoint /bin/sh \
+      restic/restic:0.18.1@sha256:39d9072fb5651c80d75c7a811612eb60b4c06b32ffe87c2e9f3c7222e1797e76 \
+      -c "$1"
+}
 
 init_repo_if_needed() {
   if restic_run cat config >/dev/null 2>&1; then return 0; fi
@@ -80,7 +93,7 @@ init_repo_if_needed() {
 
 do_backup() {
   # Before the first upload, clean/ does not exist and restic would fail on the missing path.
-  if ! restic --entrypoint /bin/sh "$IMAGE" -c 'test -d /data/clean'; then
+  if ! restic_sh 'test -d /data/clean'; then
     log "clean/ does not exist yet (nothing was ever uploaded): nothing to back up"
     return 0
   fi
@@ -106,7 +119,7 @@ do_restore_check() {
   log "restoring the newest snapshot into a scratch folder and comparing every file's SHA-256"
   local started=$SECONDS
   # The restic image is Alpine (busybox sh, sha256sum available). Entry point is restic, so override it.
-  restic --entrypoint /bin/sh "$IMAGE" -c '
+  restic_sh '
     set -eu
     if [ ! -d /data/clean ]; then
       # Nothing was ever uploaded: no snapshot of an absent folder exists, so there is nothing to compare.

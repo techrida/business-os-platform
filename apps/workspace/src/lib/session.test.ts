@@ -256,6 +256,7 @@ describe('getSession', () => {
 
   it('does not resurrect a session deleted while it was being read', async () => {
     const id = await signedIn();
+    advance(120); // past the 60 s window in which a read does not write
     const realGet = redis.get.bind(redis);
     // Simulate a concurrent logout landing between our GET and the write-back.
     vi.spyOn(redis, 'get').mockImplementationOnce(async (key: RedisKey) => {
@@ -265,6 +266,62 @@ describe('getSession', () => {
     });
     expect(await getSession()).toBeNull();
     expect(await stored(id)).toBeNull();
+  });
+});
+
+describe('getSession idle timer', () => {
+  it('does not write when the record was written less than 60 s ago', async () => {
+    const id = await signedIn();
+    const evalSpy = vi.spyOn(redis, 'eval');
+    advance(59);
+    await expect(getSession()).resolves.toMatchObject({ id, lastSeenAt: T0_SECONDS });
+    expect(evalSpy).not.toHaveBeenCalled();
+    expect((await stored(id))?.lastSeenAt).toBe(T0_SECONDS);
+  });
+
+  it('writes again once 60 s have passed since the last write', async () => {
+    const id = await signedIn();
+    advance(60);
+    await expect(getSession()).resolves.toMatchObject({ id, lastSeenAt: T0_SECONDS + 60 });
+    expect((await stored(id))?.lastSeenAt).toBe(T0_SECONDS + 60);
+  });
+
+  it('does not slide with { slide: false }: 240 polls over 61 minutes leave the session expired', async () => {
+    const id = await signedIn();
+    const evalSpy = vi.spyOn(redis, 'eval');
+    let signedInAfterAnHour = false;
+    for (let poll = 1; poll <= 244; poll++) {
+      advance(15);
+      const s = await getSession({ slide: false });
+      if (Date.now() / 1000 - T0_SECONDS >= IDLE_SECONDS && s !== null) signedInAfterAnHour = true;
+    }
+    expect(signedInAfterAnHour).toBe(false);
+    expect(await getSession({ slide: false })).toBeNull();
+    expect(await stored(id)).toBeNull();
+    // Background reads never wrote the session.
+    expect(evalSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps tokens fresh on a background read without renewing the idle timer', async () => {
+    const id = await signedIn({ accessExp: T0_SECONDS + 30 });
+    advance(1800);
+    vi.mocked(refreshTokens).mockResolvedValue({
+      accessToken: 'access-2',
+      accessExp: T0_SECONDS + 1800 + 300,
+    });
+    const s = await getSession({ slide: false });
+    expect(s).toMatchObject({ accessToken: 'access-2', lastSeenAt: T0_SECONDS });
+    expect(await stored(id)).toMatchObject({ accessToken: 'access-2', lastSeenAt: T0_SECONDS });
+    // 1800 s of the hour are left, not a fresh hour.
+    expect(await redis.ttl(keyFor(id))).toBe(IDLE_SECONDS - 1800);
+  });
+
+  it('a sliding read after background reads still renews the timer', async () => {
+    const id = await signedIn();
+    advance(1800);
+    await getSession({ slide: false });
+    await getSession();
+    expect((await stored(id))?.lastSeenAt).toBe(T0_SECONDS + 1800);
   });
 });
 
@@ -431,6 +488,7 @@ describe('getSession when Valkey errors', () => {
   it('keeps the session when the sliding write rejects, and never logs the record', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const id = await signedIn();
+    advance(120); // past the 60 s window in which a read does not write
     const raw = await redis.get(keyFor(id));
     vi.spyOn(redis, 'eval').mockRejectedValue(replyError([keyFor(id), raw]));
     await expect(getSession()).resolves.toMatchObject({ id, sub: 'user-1', roles: ['founder'] });

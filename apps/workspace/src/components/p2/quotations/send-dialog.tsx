@@ -83,6 +83,7 @@ function SendForm({
 
   return (
     <ActionDialog
+      refreshOnDone
       triggerLabel="Send to customer"
       triggerVariant="primary"
       title={`Send ${number}`}

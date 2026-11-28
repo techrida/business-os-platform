@@ -1,6 +1,8 @@
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
+import Link from 'next/link';
+import type { AnchorHTMLAttributes, ComponentProps, ButtonHTMLAttributes } from 'react';
 
 import styles from './button.module.css';
+import { linkKind } from './link-kind';
 
 type Variant = 'primary' | 'secondary' | 'ghost';
 type Size = 'small' | 'medium' | 'large';
@@ -25,15 +27,28 @@ export function Button({
   return <button type={type} className={classes({ variant, size }, className)} {...rest} />;
 }
 
+type LinkRest = Omit<ComponentProps<typeof Link>, 'href' | 'className' | 'prefetch'>;
+
 /**
- * A link that looks like a button. It is a plain anchor, never next/link: several targets
- * (/auth/login) are route handlers, and a prefetch of one would start a login.
+ * A link that looks like a button. An internal page path goes through `next/link` without a
+ * prefetch (the targets are dynamic pages, so a prefetch only costs a request). Route-handler
+ * targets (/auth/login, PDFs, exports), downloads, new-tab and external links stay plain anchors,
+ * because the router would fetch a handler twice and a prefetch of /auth/login would start a login.
+ * `native` forces the plain anchor.
  */
 export function LinkButton({
   variant,
   size,
   className,
+  native,
+  href,
   ...rest
-}: AnchorHTMLAttributes<HTMLAnchorElement> & Look) {
-  return <a className={classes({ variant, size }, className)} {...rest} />;
+}: Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> &
+  Look & { href: string; native?: boolean }) {
+  const cls = classes({ variant, size }, className);
+  if (linkKind({ href, download: rest.download, target: rest.target, native }) === 'router') {
+    // Anchor props are a subset of Link's; exactOptionalPropertyTypes only objects to the `undefined`s.
+    return <Link href={href} prefetch={false} className={cls} {...(rest as LinkRest)} />;
+  }
+  return <a href={href} className={cls} {...rest} />;
 }

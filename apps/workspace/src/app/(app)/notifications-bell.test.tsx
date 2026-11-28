@@ -5,6 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ShellCountsProvider } from '@/components/shell/shell-counts';
 
+// Record where the bell sends a signed-out person (jsdom cannot report the URL of a navigation).
+const sentTo = vi.hoisted(() => [] as string[]);
+vi.mock('@/components/shell/shell-counts', async (original) => {
+  const real = await original<typeof import('@/components/shell/shell-counts')>();
+  return {
+    ...real,
+    signInHref: (location: Pick<Location, 'pathname' | 'search'>) => {
+      const href = real.signInHref(location);
+      sentTo.push(href);
+      return href;
+    },
+  };
+});
+
 // The real bell under the real shell counts poller. Only the router's path, the browser's fetch, the
 // tab's visibility and the bell's animation are scripted.
 const nav = vi.hoisted(() => ({ pathname: '/' }));
@@ -205,6 +219,9 @@ describe('NotificationsBell in the shell', () => {
     unread = 'signed-out';
     await tick(15_000);
     expect(navigations).toHaveLength(1);
+    // /auth/login makes it ask for the password again (routes.test.ts covers that).
+    expect(sentTo).toHaveLength(1);
+    expect(sentTo[0]).toMatch(/^\/auth\/login\?returnTo=/);
     jsdom.virtualConsole.off('jsdomError', onError);
   });
 

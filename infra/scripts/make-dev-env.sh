@@ -27,17 +27,27 @@ else
   cp .env.example .env
   chmod 600 .env
   sed -i \
-    -e "s/dev-postgres-pw/$(r 16)/g" \
-    -e "s/dev-owner-pw/$(r 16)/g" \
-    -e "s/dev-app-pw/$(r 16)/g" \
-    -e "s/dev-zitadel-db-pw/$(r 16)/g" \
-    -e "s/bos-dev-masterkey-0123456789abcd/$(r 16)/g" \
-    -e "s/bos-dev-login-cookie-secret-0123456789abcdef/$(r 32)/g" \
     -e "s/dev-docs-link-secret-0123456789abcdef0123/$(r 32)/g" \
-    -e "s/Dev-Admin-Passw0rd-1#/Bos-$(r 8)-Aa1#/g" \
     -e "s/^PGBACKREST_REPO1_CIPHER_PASS=\$/PGBACKREST_REPO1_CIPHER_PASS=$(r 32)/" .env
   echo "make-dev-env: .env written with random secrets (mode 600). Back up ZITADEL_MASTERKEY and PGBACKREST_REPO1_CIPHER_PASS with it (no backup can be restored without the second)."
 fi
+
+# The seven secrets .env.example leaves blank (U1-02), so copying it by hand never gives a stack shared passwords.
+# Hex only where the value sits inside a URL. ZITADEL_MASTERKEY must be exactly 32 characters (hex 16).
+ensure POSTGRES_PASSWORD "$(r 16)"
+ensure BOS_DB_OWNER_PASSWORD "$(r 16)"
+ensure BOS_DB_APP_PASSWORD "$(r 16)"
+ensure ZITADEL_DB_PASSWORD "$(r 16)"
+ensure ZITADEL_MASTERKEY "$(r 16)"
+ensure ZITADEL_LOGIN_COOKIE_SECRET "$(r 32)"
+ensure ZITADEL_ADMIN_PASSWORD "Bos-$(r 8)-Aa1#"
+# The host-side database URLs carry the two role passwords. Replace the .env.example placeholders with the real
+# values; a URL the operator already changed stays as it is.
+owner_pw=$(grep '^BOS_DB_OWNER_PASSWORD=' .env | head -n1 | cut -d= -f2-)
+app_pw=$(grep '^BOS_DB_APP_PASSWORD=' .env | head -n1 | cut -d= -f2-)
+sed -i \
+  -e "s|^\(DATABASE_URL=postgresql://bos_app:\)dev-app-pw@|\1${app_pw}@|" \
+  -e "s|^\(DATABASE_MIGRATE_URL=postgresql://bos_owner:\)dev-owner-pw@|\1${owner_pw}@|" .env
 
 # Session encryption key (32 random bytes, base64) and its id. Not read by the apps yet.
 ensure SESSION_ENC_KEY "$(openssl rand -base64 32)"
@@ -69,7 +79,7 @@ ensure DOCS_LINK_SECRET "$(r 32)"
 ensure ZITADEL_API_URL https://auth.localhost
 # Encrypts the restic repository of the files volume (infra/backup/files-backup.sh). Back it up with .env.
 ensure RESTIC_PASSWORD "$(r 32)"
-# ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY are written by the seed into .dev/zitadel.env.
+# ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY are written by the seed into .dev/zitadel-api.env (api and worker only).
 
 # P2 customer portal. Its own session key and key id (the portal and the workspace never share one), generated like
 # SESSION_ENC_KEY above: 32 random bytes, base64. Added only when missing or empty. Values are never printed.

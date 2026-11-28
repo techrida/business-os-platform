@@ -998,3 +998,49 @@ describe("quotation detail page: the tenant's date format", () => {
     expect(html).toContain('Last changed 10 Nov 2026, 01:45');
   });
 });
+
+describe('quotation detail page: fetch stages', () => {
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it('starts display settings, /v1/me and the quotation together, then everything that needs its ids', async () => {
+    mocks.getSession.mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
+    const quote = detail();
+    quote.quotation.status = 'accepted';
+    quote.versions[1]!.status = 'accepted';
+    quote.versions[1]!.paymentTermId = CUSTOMER;
+
+    // Nothing resolves until the test says so, so a call that waits for another one never starts.
+    const gate: { open: () => void } = { open: () => undefined };
+    const stage1 = new Promise<void>((resolve) => (gate.open = resolve));
+    mocks.apiFetch.mockImplementation(() =>
+      stage1.then(() => Promise.reject(new Error('default'))),
+    );
+    mocks.getMe.mockImplementation(() => stage1.then(() => Promise.reject(new Error('offline'))));
+    mocks.getQuotation.mockImplementation(() => stage1.then(() => quote));
+    const stage2 = new Promise<void>((resolve) => setTimeout(resolve, 50));
+    mocks.getOpportunity.mockImplementation(() => stage2.then(() => null));
+    mocks.listPaymentTerms.mockImplementation(() => stage2.then(() => []));
+    mocks.getEvidence.mockImplementation(() => stage2.then(() => null));
+
+    const pending = render();
+    await tick();
+    expect(mocks.apiFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      '/v1/settings/display',
+      undefined,
+    );
+    expect(mocks.getMe).toHaveBeenCalledTimes(1);
+    expect(mocks.getQuotation).toHaveBeenCalledTimes(1);
+    expect(mocks.getOpportunity).not.toHaveBeenCalled();
+
+    gate.open();
+    await tick();
+    await tick();
+    // Stage 2 is in flight together while none of it has answered yet.
+    expect(mocks.getOpportunity).toHaveBeenCalledTimes(1);
+    expect(mocks.listPaymentTerms).toHaveBeenCalledTimes(1);
+    expect(mocks.getEvidence).toHaveBeenCalledTimes(1);
+    await pending;
+    expect(mocks.getMe).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { todayInKathmandu } from '@/app/(app)/settings/format';
@@ -9,12 +9,14 @@ import { ID, KEY } from '../_lib/test-fixtures';
 
 import { PromiseDialog } from './promise-dialog';
 
-const mocks = vi.hoisted(() => ({ action: vi.fn() }));
+const mocks = vi.hoisted(() => ({ action: vi.fn(), refresh: vi.fn(), reload: vi.fn() }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 // The real server action needs a session; here it records what the form posted and answers like the action does.
 vi.mock('@/app/(app)/invoices/[id]/promise-actions', () => ({
   recordPromiseAction: mocks.action,
 }));
 
+const originalLocation = window.location;
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -24,11 +26,18 @@ beforeEach(() => {
     disconnect() {}
   };
   mocks.action.mockReset();
+  mocks.refresh.mockReset();
+  mocks.reload.mockReset();
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { ...originalLocation, reload: mocks.reload },
+  });
 });
 afterEach(async () => {
   await mounted?.unmount();
   mounted = undefined;
   document.body.innerHTML = '';
+  Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
 });
 
 async function open(replacing: string | null = null, today = todayInKathmandu()) {
@@ -111,5 +120,53 @@ describe('PromiseDialog', () => {
       );
     expect(cell('14')).toBeDefined();
     expect(cell('16')).toBeUndefined();
+  });
+});
+
+describe('PromiseDialog after a success (U1-19)', () => {
+  it('refreshes the page on Done, never reloads it, and starts a fresh form when the server sends a new key', async () => {
+    mocks.action.mockImplementation((_prev: unknown, form: FormData) =>
+      Promise.resolve({ key: form.get('idempotencyKey') as string, done: true }),
+    );
+    const view = (key: string) => (
+      <PromiseDialog
+        invoiceId={ID}
+        idempotencyKey={key}
+        today={todayInKathmandu()}
+        replacing={null}
+        reloadHref={`/invoices/${ID}`}
+      />
+    );
+    function Harness() {
+      const [key, setKey] = useState(KEY);
+      return (
+        <>
+          <button type="button" data-testid="server-refresh" onClick={() => setKey('new-key')} />
+          {view(key)}
+        </>
+      );
+    }
+    mounted = await mountForm(<Harness />);
+    const trigger = () =>
+      Array.from(document.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Record promise',
+      );
+    await click(trigger() ?? null);
+    await submit(document.querySelector<HTMLElement>('[role="dialog"]')!);
+    const done = Array.from(document.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Done',
+    );
+    await click(done ?? null);
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    expect(mocks.reload).not.toHaveBeenCalled();
+
+    // The page re-rendered on the server: a new render key arrives and the form is not stuck on "done".
+    await click(document.querySelector('[data-testid="server-refresh"]'));
+    await click(trigger() ?? null);
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.querySelector('form')).not.toBeNull();
+    expect(dialog.querySelector<HTMLInputElement>('input[name="idempotencyKey"]')!.value).toBe(
+      'new-key',
+    );
   });
 });

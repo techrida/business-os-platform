@@ -40,7 +40,7 @@ services:
 
   clamav:
     # For a host-run API and tests (CLAMD_HOST=127.0.0.1). Published ports need a non-internal network, so the
-    # base file already puts clamav on edge as well.
+    # base file already puts clamav on its egress network (not `edge`), which has a route out.
     ports:
       - '127.0.0.1:3310:3310'
 

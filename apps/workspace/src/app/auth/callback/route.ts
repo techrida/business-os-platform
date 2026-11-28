@@ -2,8 +2,16 @@ import { cookies } from 'next/headers';
 
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin, LOGIN_COOKIE, LoginStateExpiredError, SIGNED_OUT_COOKIE } from '@/lib/oidc';
-import { createSession, setSessionCookie } from '@/lib/session';
+import {
+  completeLogin,
+  LOGIN_COOKIE,
+  LoginStateExpiredError,
+  SIGNED_IN_COOKIE,
+  SIGNED_IN_COOKIE_MAX_AGE,
+  SIGNED_OUT_COOKIE,
+  StaleSignInError,
+} from '@/lib/oidc';
+import { createSession, destroySession, SESSION_COOKIE, setSessionCookie } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +36,22 @@ const RECOVERY_COOKIE_OPTIONS = {
   sameSite: 'lax' as const,
   path: '/',
 };
+
+/** Best effort: a failed delete must not block the sign-in. The old record dies with its TTL. */
+async function destroyPreviousSession(previousId: string | undefined): Promise<void> {
+  if (!previousId) return;
+  try {
+    await destroySession(previousId);
+  } catch (err) {
+    // Only the error name: ioredis errors carry the command arguments.
+    console.warn(
+      JSON.stringify({
+        event: 'auth.previous_session_destroy_failed',
+        error: err instanceof Error ? err.name : 'unknown',
+      }),
+    );
+  }
+}
 
 export async function GET(req: Request): Promise<Response> {
   const incoming = new URL(req.url);
@@ -60,6 +84,16 @@ export async function GET(req: Request): Promise<Response> {
 
     // Throws before any token request when the binding cookie is missing or foreign.
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
+    // ZITADEL now holds a session for this browser, even if the steps below refuse access: from here on every
+    // login asks for the password (see SIGNED_IN_COOKIE).
+    jar.set(SIGNED_IN_COOKIE, '1', {
+      ...RECOVERY_COOKIE_OPTIONS,
+      maxAge: SIGNED_IN_COOKIE_MAX_AGE,
+    });
+    // Fixation and leftovers: the login succeeded at the identity provider, so the record this browser held
+    // before (another user, or the same one again) goes now, before anything below can send the person
+    // elsewhere (no access, wrong app) and leave that record alive.
+    await destroyPreviousSession(jar.get(SESSION_COOKIE)?.value);
     // The API is the authority on org and roles, not the token claims.
     const me = await getMe({ accessToken: tokens.accessToken });
     const id = await createSession({
@@ -71,7 +105,7 @@ export async function GET(req: Request): Promise<Response> {
     });
     await setSessionCookie(id);
     jar.set(RECOVERY_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
-    // Signed in again: the next login may reuse the ZITADEL session as usual.
+    // Signed in again: SIGNED_IN_COOKIE carries on from here.
     if (jar.get(SIGNED_OUT_COOKIE)?.value) {
       jar.set(SIGNED_OUT_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
     }
@@ -80,7 +114,8 @@ export async function GET(req: Request): Promise<Response> {
   } catch (err) {
     // The identity provider may have completed MFA after our ten-minute transaction expired.
     // Start a fresh, browser-bound flow; never accept the stale code or bypass its checks.
-    // ZITADEL can reuse its authenticated session, so this normally needs no user input.
+    // On a first sign-in ZITADEL reuses its new session, so this needs no user input; once
+    // SIGNED_IN_COOKIE is set the retry asks for the password like every other login.
     if (err instanceof LoginStateExpiredError && !jar.get(RECOVERY_COOKIE)?.value) {
       jar.set(RECOVERY_COOKIE, '1', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 600 });
       return redirectTo('/auth/login');
@@ -94,8 +129,10 @@ export async function GET(req: Request): Promise<Response> {
     }
     // Log a correlation id only. Error messages and stacks from the OIDC library can contain
     // the code, state or tokens, so nothing from the error itself goes to the log.
+    // A refused stale sign-in gets its own event: a ZITADEL clock running behind ours would look like this too.
     const correlationId = crypto.randomUUID();
-    console.error(JSON.stringify({ event: 'auth.callback_failed', correlationId }));
+    const event = err instanceof StaleSignInError ? 'auth.stale_sign_in' : 'auth.callback_failed';
+    console.error(JSON.stringify({ event, correlationId }));
     return redirectTo('/auth/error?code=callback_failed');
   }
 }

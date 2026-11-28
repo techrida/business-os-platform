@@ -7,7 +7,7 @@ import * as client from 'openid-client';
 import { z } from 'zod';
 
 import { getEnv } from './env';
-import { safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
+import { onClientError, safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
 
 /**
  * Copied from apps/workspace/src/lib/oidc.ts (dedupe later); keys are `pt:oidc:`.
@@ -48,6 +48,28 @@ const PROMPTS = new Set(['login', 'none', 'consent', 'select_account']);
 export const LOGIN_COOKIE = '__Host-bos_portal_login';
 /** Max-Age of LOGIN_COOKIE: the same 10 minutes as the stored state. */
 export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
+
+/**
+ * Set by /auth/logout when it could not end the ZITADEL session (no ID token to send as id_token_hint, because the
+ * session record had idled out or Valkey was down, or discovery failed). ZITADEL then keeps its session, and the
+ * next login in this browser would sign straight back in (R2-001). While the cookie is present /auth/login asks
+ * ZITADEL for `prompt=login`, so the person must sign in again; a completed login clears it. It holds no secret.
+ * Same rule as the workspace's cookie of the same purpose.
+ */
+export const SIGNED_OUT_COOKIE = '__Host-bos_portal_signed_out';
+/** 30 days: longer than a ZITADEL browser session is kept, so the session cannot outlive the marker. */
+export const SIGNED_OUT_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
+
+/**
+ * Set by the callback once ZITADEL has signed this browser in. From then on /auth/login always asks ZITADEL for
+ * `prompt=login`, whichever link led there: the ZITADEL session outlives ours (24 h after a TOTP check, whatever
+ * the login policy says), so after our session idles out (IDLE_SECONDS) or reaches its cap, a plain login would
+ * sign the person straight back in without the password. It holds no secret. Same rule as the workspace's cookie
+ * of the same purpose.
+ */
+export const SIGNED_IN_COOKIE = '__Host-bos_portal_signed_in';
+/** Same 30 days as SIGNED_OUT_COOKIE, for the same reason: no ZITADEL session can outlive the marker. */
+export const SIGNED_IN_COOKIE_MAX_AGE = SIGNED_OUT_COOKIE_MAX_AGE;
 const LOGIN_BINDING_BYTES = 32;
 
 const oidcKey = (state: string) => `pt:oidc:${state}`;
@@ -58,7 +80,27 @@ const PendingLoginSchema = z.object({
   returnTo: z.string(),
   /** SHA-256 (hex) of the LOGIN_COOKIE value. The raw value is never stored. */
   bindingHash: z.string().regex(/^[0-9a-f]{64}$/),
+  /** Set for `freshSignIn` logins: epoch seconds when the login began. The sign-in must be at least this recent. */
+  reauthAfter: z.number().int().optional(),
 });
+
+/**
+ * Tolerated clock difference between ZITADEL and this server. A reused ZITADEL session was signed in before the
+ * login began, usually long before, so this margin only absorbs clock drift.
+ */
+const AUTH_TIME_SKEW_SECONDS = 60;
+
+/**
+ * A `freshSignIn` login came back with an `auth_time` from before the login began: ZITADEL reused a session
+ * instead of asking for the credentials. Its login UI honours `prompt=login`, but its server does not check it
+ * when a session is linked to the request, so a session picked from the account list would get through.
+ */
+export class StaleSignInError extends Error {
+  constructor() {
+    super('oidc: prompt=login came back without a fresh sign-in');
+    this.name = 'StaleSignInError';
+  }
+}
 
 /**
  * The callback was not presented by the browser that started the login: the LOGIN_COOKIE is
@@ -141,7 +183,10 @@ let oidcRedis: Redis | undefined;
  * on first use, with the same fail-fast options as the session client.
  */
 export function getOidcRedis(): Redis {
-  oidcRedis ??= new Redis(getEnv().OIDC_STATE_VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+  if (!oidcRedis) {
+    oidcRedis = new Redis(getEnv().OIDC_STATE_VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+    onClientError(oidcRedis, 'oidc');
+  }
   return oidcRedis;
 }
 
@@ -155,7 +200,7 @@ export function __setOidcRedisForTests(redis: Redis | undefined): void {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Starts a login: stores `pt:oidc:<state>` = { codeVerifier, nonce, returnTo, bindingHash } for
+ * Starts a login: stores `pt:oidc:<state>` = { codeVerifier, nonce, returnTo, bindingHash, reauthAfter } for
  * 10 minutes and returns the ZITADEL authorization URL to redirect to, plus the `binding` value
  * the caller must set as LOGIN_COOKIE (HttpOnly, Secure, SameSite=Lax, Path=/,
  * Max-Age=LOGIN_COOKIE_MAX_AGE) on that redirect.
@@ -163,6 +208,8 @@ export function __setOidcRedisForTests(redis: Redis | undefined): void {
 export async function beginLogin(o: {
   loginHint?: string;
   prompt?: 'login' | 'none' | 'consent' | 'select_account';
+  /** The callback must see an `auth_time` from after this call (StaleSignInError otherwise). */
+  freshSignIn?: boolean;
   returnTo: string;
 }): Promise<{ url: URL; binding: string }> {
   const env = getEnv();
@@ -176,11 +223,12 @@ export async function beginLogin(o: {
   const returnTo = safeReturnTo(o.returnTo);
   const binding = randomBytes(LOGIN_BINDING_BYTES).toString('base64url');
   const bindingHash = sha256(binding).toString('hex');
+  const reauthAfter = o.freshSignIn ? nowSeconds() : undefined;
 
   const redis = await whenReady(getOidcRedis());
   await redis.set(
     oidcKey(state),
-    JSON.stringify({ codeVerifier, nonce, returnTo, bindingHash }),
+    JSON.stringify({ codeVerifier, nonce, returnTo, bindingHash, reauthAfter }),
     'EX',
     LOGIN_STATE_TTL_SECONDS,
   );
@@ -253,8 +301,15 @@ export async function completeLogin(
     idTokenExpected: true,
   });
 
-  const sub = response.claims()?.sub;
+  const claims = response.claims();
+  const sub = claims?.sub;
   if (!sub) throw new Error('oidc: ID token has no subject');
+  if (pending.reauthAfter !== undefined) {
+    const authTime = claims?.auth_time;
+    if (typeof authTime !== 'number' || authTime < pending.reauthAfter - AUTH_TIME_SKEW_SECONDS) {
+      throw new StaleSignInError();
+    }
+  }
 
   return { tokens: toTokens(response), sub, returnTo: safeReturnTo(pending.returnTo) };
 }

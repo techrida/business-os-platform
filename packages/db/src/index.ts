@@ -1,5 +1,13 @@
 // Public API of @bos/db. P1 repositories import everything from here.
-export { createDb, type Db, type DbHandle } from './client.js';
+export {
+  createDb,
+  RUNTIME_QUERY_TIMEOUT_MARGIN_MS,
+  RUNTIME_STATEMENT_TIMEOUT_MS,
+  runtimePoolOptions,
+  warmPool,
+  type Db,
+  type DbHandle,
+} from './client.js';
 // `migrate(url)` is the name the P0 API interface note promises; runMigrations is the same function.
 export { MIGRATIONS_FOLDER, runMigrations, runMigrations as migrate } from './migrate.js';
 export {

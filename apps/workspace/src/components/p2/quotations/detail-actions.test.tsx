@@ -29,7 +29,7 @@ afterEach(() => {
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({ redirect: vi.fn(), useRouter: () => ({ refresh: vi.fn() }) }));
 
 // Open the real dialog and render its portal inline to inspect the contents in the Node renderer.
 vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
@@ -143,7 +143,7 @@ describe('which actions a status offers', () => {
 
 describe('Edit (demo feedback: a Returned quotation had no way back into the editor)', () => {
   const editLink = (html: string) =>
-    /<a[^>]*href="([^"]*)"[^>]*aria-label="Edit QT-2082-0042"[^>]*>Edit<\/a>/.exec(html)?.[1];
+    /<a[^>]*aria-label="Edit QT-2082-0042"[^>]*href="([^"]*)"[^>]*>Edit<\/a>/.exec(html)?.[1];
 
   it.each(['draft', 'returned'] as const)(
     'links a %s quotation the caller may edit to its editor',

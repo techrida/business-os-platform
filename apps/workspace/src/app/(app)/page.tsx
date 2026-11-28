@@ -16,11 +16,11 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { getMe } from '@/lib/api';
-import { getInbox, getUnreadCount, listNotifications } from '@/lib/api-kernel';
+import { getInboxPage, listNotifications } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { getMeOrNull } from '@/lib/live-permissions';
 import {
   ACTIVE_OPPORTUNITY_STAGES,
   activityHeadline,
@@ -32,6 +32,7 @@ import {
 } from '@/lib/overview-format';
 
 import styles from './overview.module.css';
+import { UnreadStat } from './unread-stat';
 
 /** The reads that let a person see an activity (its subject's read, as in ActivitiesService.list). */
 const ACTIVITY_SUBJECT_READS = [
@@ -47,7 +48,6 @@ export default async function OverviewPage() {
   // Every read stands alone: one that fails or is refused leaves out its own card, never shows a zero.
   const [
     inbox,
-    unread,
     notifications,
     me,
     customers,
@@ -57,10 +57,10 @@ export default async function OverviewPage() {
     quotations,
     activities,
   ] = await Promise.allSettled([
-    getInbox(session),
-    getUnreadCount(session),
+    getInboxPage(session, { limit: 5 }),
     listNotifications(session, { limit: 5 }),
-    getMe(session),
+    // The one `/v1/me` of this render: the layout reads the same memoised call.
+    getMeOrNull(session.accessToken),
     listCustomers(session, { limit: 1 }),
     getLeadSummary(session),
     listOpportunitiesPage(session, { stage: ACTIVE_OPPORTUNITY_STAGES, limit: 1 }),
@@ -69,13 +69,15 @@ export default async function OverviewPage() {
     listActivitiesPage(session, { status: 'logged', limit: 5 }),
   ]);
 
+  // The count is the API's total; the table shows the first five rows.
   const approvals = inbox.status === 'fulfilled' ? inbox.value : null;
   // /v1/me carries the caller's own name (its `userId` is the identity sub, not an app user id).
-  const myName = me.status === 'fulfilled' ? me.value.displayName : undefined;
+  const meRead = me.status === 'fulfilled' ? me.value : null;
+  const myName = meRead?.displayName ?? undefined;
   // The live grants win over the role defaults, so a revoked permission removes its tile.
   const granted =
-    me.status === 'fulfilled' && me.value.permissions !== undefined
-      ? new Set<string>(me.value.permissions.map((g) => g.permission))
+    meRead?.permissions !== undefined
+      ? new Set<string>(meRead.permissions.map((g) => g.permission))
       : null;
   const allowed =
     granted === null
@@ -103,13 +105,13 @@ export default async function OverviewPage() {
             <div>
               <p className={styles.eyebrow}>Your inbox</p>
               <h2 id="overview-approvals">
-                {approvals.length === 0
+                {approvals.total === 0
                   ? 'You’re caught up'
-                  : `${approvals.length} ${approvals.length === 1 ? 'approval' : 'approvals'} to review`}
+                  : `${approvals.total} ${approvals.total === 1 ? 'approval' : 'approvals'} to review`}
               </h2>
             </div>
             <LinkButton className={styles.inboxLink} variant="tertiary" href="/inbox">
-              {approvals.length === 0 ? 'Open inbox' : 'Review all'}
+              {approvals.total === 0 ? 'Open inbox' : 'Review all'}
               <Icon name="chevron-right" size={16} />
             </LinkButton>
           </Card>
@@ -154,14 +156,12 @@ export default async function OverviewPage() {
         {approvals !== null && (
           <StatCard
             label="Pending approvals"
-            value={approvals.length}
+            value={approvals.total}
             icon="inbox"
-            tone={approvals.length > 0 ? 'warning' : 'neutral'}
+            tone={approvals.total > 0 ? 'warning' : 'neutral'}
           />
         )}
-        {unread.status === 'fulfilled' && (
-          <StatCard label="Unread notifications" value={unread.value.count} icon="bell" />
-        )}
+        <UnreadStat />
       </div>
 
       {quotations.status === 'fulfilled' && (
@@ -223,7 +223,7 @@ export default async function OverviewPage() {
       )}
 
       <div className={styles.widgets}>
-        {approvals !== null && approvals.length > 0 && (
+        {approvals !== null && approvals.total > 0 && (
           <Panel title="Waiting for your decision">
             <Table caption="Pending approvals" minWidth={410}>
               <thead>
@@ -233,7 +233,7 @@ export default async function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {approvals.slice(0, 5).map((item) => (
+                {approvals.items.map((item) => (
                   <tr key={item.requestId}>
                     <Td>
                       <CellTitle

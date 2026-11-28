@@ -76,7 +76,7 @@ function Pdf({
     </span>
   ) : (
     <span className={styles.pdfWords}>
-      <PreparingRefresh text={pdf.text} />
+      <PreparingRefresh text={pdf.text} quotationId={quotation.id} versionId={version.id} />
     </span>
   );
 }
@@ -171,15 +171,24 @@ export default async function QuotationDetailPage({
   const path = `/quotations/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
 
-  const numberSystems = await getNumberSystems();
-  const dateFormat = await getDateFormat();
+  // Stage 1: display settings, the viewer's grants (`/v1/me`) and the quotation do not depend on each
+  // other, so they start together. Stage 2 below needs the quotation's ids.
   // Unit cost, cost total and margin (D29) arrive only when the viewer's live grants include
   // `quotation.cost.read`: the API leaves them out otherwise, and the components show what is present.
+  const [numberSystems, dateFormat, allowed, loaded] = await Promise.all([
+    getNumberSystems(),
+    getDateFormat(),
+    getPermissionCheck(session),
+    getQuotation(session, id).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    ),
+  ]);
   let detail: QuotationDetail;
-  try {
-    detail = await getQuotation(session, id);
-  } catch (err) {
-    const f = failureOf(err);
+  if (loaded.ok) {
+    detail = loaded.value;
+  } else {
+    const f = failureOf(loaded.error);
     if (f.status === 404) notFound();
     return (
       <Page width="narrow">
@@ -206,19 +215,7 @@ export default async function QuotationDetailPage({
 
   const { quotation, versions, customerName, contacts } = detail;
   const current = versions.find((v) => v.id === quotation.currentVersionId) ?? null;
-  const allowed = await getPermissionCheck(session);
   const accepted = current?.status === 'accepted' ? current : null;
-  const [orders, evidence] = await Promise.all([
-    accepted && allowed('sales_order.read')
-      ? listSalesOrders(session, { quotationVersionId: accepted.id }).catch(() => [])
-      : [],
-    accepted ? getEvidence(session, quotation.id, accepted.id) : null,
-  ]);
-  const order = orders.find((item) => item.status !== 'cancelled');
-  const mayRetryPdf = allowed('quotation.send');
-  const maySend = detail.capabilities.canSend ?? allowed('quotation.send');
-  const mayRecordOutcome =
-    detail.capabilities.canRecordOutcome ?? allowed('quotation.record_acceptance');
 
   // The revision on screen: the one `?rev=` names, else the current one. Actions and the client
   // decision always act on the current revision.
@@ -227,19 +224,30 @@ export default async function QuotationDetailPage({
   const earlier = view !== null && view.id !== quotation.currentVersionId;
   const contact =
     view?.contactId != null ? contacts.find((c) => c.id === view.contactId) : undefined;
-  // The deal's number and stage come from the opportunity itself; a denied or failed read leaves the link out, since it would open a 404.
-  const opportunity = await Promise.resolve()
-    .then(() => getOpportunity(session, quotation.opportunityId))
-    .catch(() => null);
   // The version carries only the payment term's id. A failed lookup drops the name, not the page.
   const paymentTermId = view?.paymentTermId ?? null;
-  const paymentTermsName =
+  // Stage 2: everything that needs the quotation's ids, started together.
+  const [orders, evidence, opportunity, paymentTermsName] = await Promise.all([
+    accepted && allowed('sales_order.read')
+      ? listSalesOrders(session, { quotationVersionId: accepted.id }).catch(() => [])
+      : [],
+    accepted ? getEvidence(session, quotation.id, accepted.id) : null,
+    // The deal's number and stage come from the opportunity itself; a denied or failed read leaves the link out, since it would open a 404.
+    Promise.resolve()
+      .then(() => getOpportunity(session, quotation.opportunityId))
+      .catch(() => null),
     paymentTermId === null
       ? undefined
-      : await Promise.resolve()
+      : Promise.resolve()
           .then(() => listPaymentTerms(session))
           .then((terms) => terms.find((t) => t.id === paymentTermId)?.label)
-          .catch(() => undefined);
+          .catch(() => undefined),
+  ]);
+  const order = orders.find((item) => item.status !== 'cancelled');
+  const mayRetryPdf = allowed('quotation.send');
+  const maySend = detail.capabilities.canSend ?? allowed('quotation.send');
+  const mayRecordOutcome =
+    detail.capabilities.canRecordOutcome ?? allowed('quotation.record_acceptance');
 
   // Send and Accepted are hidden while the opportunity's stage would make the API refuse them; the
   // reason is said here once, to whoever would otherwise have had the button.

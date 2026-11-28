@@ -1,8 +1,14 @@
 import { cookies } from 'next/headers';
 
-import { beginLogin, LOGIN_COOKIE, LOGIN_COOKIE_MAX_AGE, SIGNED_OUT_COOKIE } from '@/lib/oidc';
+import {
+  beginLogin,
+  LOGIN_COOKIE,
+  LOGIN_COOKIE_MAX_AGE,
+  SIGNED_IN_COOKIE,
+  SIGNED_OUT_COOKIE,
+} from '@/lib/oidc';
 import { checkLoginRateLimit } from '@/lib/rate-limit';
-import { safeReturnTo } from '@/lib/session';
+import { safeReturnTo, SESSION_COOKIE } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -55,15 +61,21 @@ export async function GET(req: Request): Promise<Response> {
   const params = new URL(req.url).searchParams;
   const jar = await cookies();
   const loginHint = parseLoginHint(params.get('login_hint'));
-  // After a sign-out that could not end the ZITADEL session, ask for the credentials again whatever the link said:
-  // `prompt=none` or the account chooser would otherwise sign the person straight back in (R2-001).
-  const prompt = jar.get(SIGNED_OUT_COOKIE)?.value ? 'login' : parsePrompt(params.get('prompt'));
-  const maxAge = parseMaxAge(params.get('max_age'));
+  // Once this browser has signed in here, or signed out without ending the ZITADEL session (R2-001), every login
+  // asks for the password again whatever the link said. A session that idled out must not come back through the
+  // ZITADEL session that outlived it, by reload, new tab, Back or any plain /auth/login link. The session cookie
+  // counts too: it outlives an idled-out record, and a browser signed in before SIGNED_IN_COOKIE existed has only it.
+  const reauth = [SIGNED_IN_COOKIE, SIGNED_OUT_COOKIE, SESSION_COOKIE].some(
+    (name) => jar.get(name)?.value,
+  );
+  const prompt = reauth ? 'login' : parsePrompt(params.get('prompt'));
+  const maxAge = reauth ? 0 : parseMaxAge(params.get('max_age'));
   // Spread instead of `key: undefined`: the tsconfig has exactOptionalPropertyTypes on.
   const { url, binding } = await beginLogin({
     ...(loginHint !== undefined && { loginHint }),
     ...(prompt !== undefined && { prompt }),
     ...(maxAge !== undefined && { maxAge }),
+    ...(prompt === 'login' && { freshSignIn: true }),
     // Open-redirect guard: only a same-origin relative path survives, everything else is '/'.
     returnTo: safeReturnTo(params.get('returnTo')),
   });

@@ -316,6 +316,7 @@ function PdfStage({
   const [state, setState] = useState<PdfState>({ status: 'loading' });
   const requested = useRef<number | null>(null);
   const controller = useRef<AbortController | null>(null);
+  const inFlight = useRef(false);
   const mounted = useRef(false);
 
   useEffect(() => {
@@ -334,6 +335,7 @@ function PdfStage({
     requested.current = attempt;
     const own = new AbortController();
     controller.current = own;
+    inFlight.current = true;
     const settle = (next: PdfState) => {
       if (!own.signal.aborted && requested.current === attempt) setState(next);
     };
@@ -346,7 +348,10 @@ function PdfStage({
           settle({ status: outcome });
         }
       })
-      .catch(() => settle({ status: 'error' }));
+      .catch(() => settle({ status: 'error' }))
+      .finally(() => {
+        if (requested.current === attempt) inFlight.current = false;
+      });
   }, [attempt, previewUrl]);
 
   const retry = () => {
@@ -354,9 +359,10 @@ function PdfStage({
     setAttempt((current) => current + 1);
   };
   // While the route says "being prepared", check again by itself; the words stay until the answer changes.
-  const watch = usePreparePoll(poll && state.status === 'preparing', () =>
-    setAttempt((current) => current + 1),
-  );
+  const watch = usePreparePoll(poll && state.status === 'preparing', () => {
+    // The schedule is short at first: never start a second download while the last one is still arriving.
+    if (!inFlight.current) setAttempt((current) => current + 1);
+  });
 
   /** Failed render: ask the API to queue it again once, then load the file again. A second click while asking is ignored. */
   const retryFailed = async () => {

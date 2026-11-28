@@ -18,14 +18,16 @@ on:
         description: 'Run each selected spec this many times (a stability check of new specs), e.g. 3'
         required: false
         default: '1'
+  # Kuu 2026-11-26: only main runs QA (pushes and pull requests into main).
   push:
-    branches: [main, p4-main, 'r6/**', 'kuu/**']
+    branches: [main]
   # Weekly full run: catches anything the per-pull-request selection (tools/affected.mjs) missed.
   schedule:
     - cron: '47 3 * * 1'
-  # Every pull request, with no path filter: a required "qa specs 1/2/3" check must report on a docs-only or
+  # Every pull request, with no path filter: the required `qa required` check must report on a docs-only or
   # tools-only PR too, or the PR waits for it forever.
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -43,7 +45,12 @@ jobs:
     name: changes (what this run covers)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # `actions: read` lets the selector ask for earlier runs of this workflow on the same commit (same-commit skip).
+    permissions:
+      contents: read
+      actions: read
     outputs:
+      skip: ${{ steps.affected.outputs.skip }}
       qa-workspace: ${{ steps.affected.outputs.qa-workspace }}
       qa-portal: ${{ steps.affected.outputs.qa-portal }}
       qa-matrix: ${{ steps.affected.outputs.qa-matrix }}
@@ -51,22 +58,38 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # No later step pushes, so the token is not left in .git/config.
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+
+      # The selector decides what is tested, so a pull request must not be able to edit it. The copy on the base commit
+      # replaces the one in the checkout; a change to tools/ or .github/ runs everything under that copy anyway.
+      - name: Use the selector from the base commit
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git show "$BASE_SHA:tools/affected.mjs" > tools/affected.mjs
 
       - name: Map the diff to areas
         id: affected
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Same-commit skip: a push run of this workflow that already succeeded for this commit means nothing runs again.
+          BOS_SKIP_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BOS_SKIP_WORKFLOW: qa.yml
+          GITHUB_TOKEN: ${{ github.token }}
         run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
   workspace:
-    # Three shards of the specs that pass today, plus one non-blocking job for the specs in .github/qa/quarantine.txt
-    # (they fail on the current code for reasons that are not the stack: see that file's history and the QA report).
-    # 4 jobs per run, so with ci.yml (5) a push stays far below the 20 concurrent jobs of the free plan.
+    # Two shards of the specs that pass today (the explicit lists .github/qa/shard-a.txt and shard-b.txt, balanced by
+    # measured duration; the portal specs run on shard B), plus one non-blocking job for the specs in
+    # .github/qa/quarantine.txt when it has content (they fail on the current code for reasons that are not the stack:
+    # see that file's history and the QA report). Each job pays about 18 minutes to bring up the stack, so a third
+    # shard costs more than it saves.
     name: qa ${{ matrix.mode }} ${{ matrix.id }}
     needs: changes
     # An empty matrix is an error, so a diff that touches neither app skips the job instead.
@@ -76,11 +99,13 @@ jobs:
     continue-on-error: ${{ matrix.mode == 'quarantined' }}
     strategy:
       fail-fast: false
-      # Computed by tools/affected.mjs: the full set (specs 1/2/3 + quarantined), or one specs 1 shard that runs only the
-      # portal specs (ws: false) when only the portal is affected.
+      # Computed by tools/affected.mjs: the full set (specs 1 and 2, plus quarantined when something is quarantined), or one
+      # specs 2 job that runs only the portal specs (ws: false) when only the portal is affected.
       matrix: ${{ fromJSON(needs.changes.outputs.qa-matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -96,6 +121,12 @@ jobs:
 
       - name: Bring up the stack and seed the dev personas
         run: bash .github/qa/up.sh
+
+      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
+      # listing tests. Still minutes before the first spec runs.
+      - name: Every workspace spec is in exactly one shard list
+        if: ${{ matrix.ws && matrix.mode == 'specs' }}
+        run: node .github/qa/spec-counts.mjs --lists
 
       - name: Install Chromium
         run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
@@ -160,6 +191,7 @@ jobs:
           SPEC_FILTER: ${{ inputs.spec_filter }}
           REPEAT_EACH: ${{ inputs.repeat_each || '1' }}
           SHARD: ${{ matrix.shard }}
+          LIST: ${{ matrix.list }}
         run: |
           cd apps/workspace
           skip="persona sign-in and sign-out|qa fixtures: "
@@ -170,10 +202,18 @@ jobs:
           # gives no words. Each word is a Playwright file filter.
           read -r -a filter <<< "$SPEC_FILTER"
           # The persona sign-ins already ran in the warm-up step.
-          # A filter naming only portal specs matches nothing here: with a filter set, no tests is not a failure.
+          # A filter naming only portal specs matches nothing here: with a filter set, no tests is not a failure. A filter
+          # is split between the two jobs by Playwright's --shard; with no filter the job runs its own file list.
           extra=()
-          if [ "${#filter[@]}" -gt 0 ]; then extra+=(--pass-with-no-tests); fi
-          pnpm exec playwright test --project=dev --shard="$SHARD" --repeat-each="$REPEAT_EACH" --grep-invert "$skip" "${extra[@]}" "${filter[@]}"
+          shard=(--shard="$SHARD")
+          targets=("${filter[@]}")
+          if [ "${#filter[@]}" -gt 0 ]; then
+            extra+=(--pass-with-no-tests)
+          elif [ -n "$LIST" ]; then
+            mapfile -t targets < "../../.github/qa/$LIST.txt"
+            shard=()
+          fi
+          pnpm exec playwright test --project=dev "${shard[@]}" --repeat-each="$REPEAT_EACH" --grep-invert "$skip" "${extra[@]}" "${targets[@]}"
 
       - name: Playwright (quarantined specs, informational)
         if: ${{ matrix.mode == 'quarantined' }}
@@ -191,7 +231,8 @@ jobs:
           pnpm exec playwright test --project=dev --timeout=60000 --grep "$quarantine"
 
       - name: Portal specs (they skip themselves without their fixtures)
-        if: ${{ !cancelled() && matrix.mode == 'specs' && matrix.id == '1' && (needs.changes.outputs.qa-portal == 'true' || needs.changes.outputs.qa-workspace == 'true') }}
+        # A matrix from the selector of an older base commit has no `portal` flag: its shard 1 ran the portal specs.
+        if: ${{ !cancelled() && matrix.mode == 'specs' && (matrix.portal || (!matrix.list && matrix.id == '1')) }}
         env:
           PORTAL_E2E_BASE_URL: https://portal.localhost
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
@@ -208,11 +249,13 @@ jobs:
           if [ "${#filter[@]}" -gt 0 ]; then extra+=(--pass-with-no-tests); fi
           pnpm --filter @bos/portal exec playwright test --repeat-each="$REPEAT_EACH" "${extra[@]}" "${filter[@]}"
 
-      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). Informational: a shared runner is too
-      # noisy for a hard limit, so this step cannot fail the job.
-      - name: Approve timing (p95 in the job summary)
+      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
+      # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
+      # the limit without a commit.
+      - name: Approve timing (p95 in the job summary, limit 80 ms)
         if: ${{ !cancelled() }}
-        continue-on-error: true
+        env:
+          BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
         run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
 
       # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.

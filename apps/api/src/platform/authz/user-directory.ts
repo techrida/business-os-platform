@@ -63,6 +63,17 @@ export abstract class UserDirectory {
     q?: Db | DbTransaction,
   ): Promise<string[]>;
 
+  /**
+   * `userIdsWithRole` for several roles in one statement: every role asked for is a key of the map. Optional, so the
+   * many test doubles of this port need not implement it; the approvals directory loader falls back to one read per
+   * role without it.
+   */
+  userIdsWithRoles?(
+    scope: TxScope,
+    roles: readonly RoleKey[],
+    q?: Db | DbTransaction,
+  ): Promise<Map<RoleKey, string[]>>;
+
   /** The address to email, or null when the user has none or is unknown. `q` as for userIdsWithRole. */
   abstract emailOf(userId: string, q?: Db | DbTransaction): Promise<string | null>;
 }

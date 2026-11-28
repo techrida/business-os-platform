@@ -2,7 +2,7 @@
 
 // A client component only because the picture needs an error fallback (state). It still renders on the server first,
 // so the initials are in the HTML before any script runs; the picture sits above them once it loads.
-import { avatarColour, avatarInitials, imagePath } from '@bos/contracts';
+import { avatarColour, avatarInitials, imagePath } from '@bos/contracts/constants';
 import {
   useCallback,
   useEffect,

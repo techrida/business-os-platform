@@ -37,17 +37,21 @@ const { ApiError } = vi.hoisted(() => ({
 /** The request's cookies, as `cookies().get()` sees them. Reset per test. */
 let requestCookies = new Map<string, string>();
 
-const { LoginStateExpiredError } = vi.hoisted(() => ({
+const { LoginStateExpiredError, StaleSignInError } = vi.hoisted(() => ({
   LoginStateExpiredError: class extends Error {},
+  StaleSignInError: class extends Error {},
 }));
 
 vi.mock('@/lib/oidc', () => ({
   LoginStateExpiredError,
+  StaleSignInError,
   // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
   LOGIN_COOKIE: '__Host-bos_login',
   LOGIN_COOKIE_MAX_AGE: 600,
   SIGNED_OUT_COOKIE: '__Host-bos_signed_out',
   SIGNED_OUT_COOKIE_MAX_AGE: 2_592_000,
+  SIGNED_IN_COOKIE: '__Host-bos_signed_in',
+  SIGNED_IN_COOKIE_MAX_AGE: 2_592_000,
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
@@ -89,6 +93,12 @@ const SESSION_ID = 's'.repeat(43);
 const BINDING = 'b'.repeat(43);
 const LOGIN_COOKIE_ATTRS = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' };
 const SIGNED_OUT_COOKIE = '__Host-bos_signed_out';
+const SIGNED_IN_COOKIE = '__Host-bos_signed_in';
+/** The signed-in marker writes, as [value, maxAge] pairs. */
+const signedInWrites = (): [unknown, number | undefined][] =>
+  (m.cookieSet.mock.calls as unknown[][])
+    .filter((c) => c[0] === SIGNED_IN_COOKIE)
+    .map((c) => [c[1], (c[2] as { maxAge?: number }).maxAge]);
 /** The signed-out marker writes, as [value, maxAge] pairs. */
 const signedOutWrites = (): [unknown, number | undefined][] =>
   (m.cookieSet.mock.calls as unknown[][])
@@ -193,11 +203,47 @@ describe('GET /auth/login', () => {
   it('sends no prompt of its own without the marker', async () => {
     await call();
     expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('prompt');
+    expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('maxAge');
+    expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('freshSignIn');
   });
 
-  it('passes max_age=0 through as a number for step-up (K7)', async () => {
-    await call('?prompt=login&max_age=0');
+  // Kuu 2026-11-27: after an hour idle the password is needed again. The session record is gone, but ZITADEL's
+  // session is not, so a reload, new tab or Back reaching a plain /auth/login must still ask for the password.
+  it('forces prompt=login and max_age=0 on a plain link once this browser has signed in', async () => {
+    requestCookies.set(SIGNED_IN_COOKIE, '1');
+    await call('?returnTo=%2Forders');
+    expect(m.beginLogin.mock.calls[0]?.[0]).toEqual({
+      prompt: 'login',
+      maxAge: 0,
+      freshSignIn: true,
+      returnTo: '/orders',
+    });
+  });
+
+  // A browser signed in before the marker existed still holds the session cookie after the record idled out.
+  it('forces prompt=login while the session cookie is present without the marker', async () => {
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    await call();
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({
+      prompt: 'login',
+      maxAge: 0,
+      freshSignIn: true,
+    });
+  });
+
+  it('overrides a silent prompt and a long max_age from the link once this browser has signed in', async () => {
+    requestCookies.set(SIGNED_IN_COOKIE, '1');
+    await call('?prompt=none&max_age=86400');
     expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login', maxAge: 0 });
+  });
+
+  it('passes max_age=0 through as a number for step-up (K7), and asks for a fresh sign-in', async () => {
+    await call('?prompt=login&max_age=0');
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({
+      prompt: 'login',
+      maxAge: 0,
+      freshSignIn: true,
+    });
   });
 
   it.each(['-1', '1.5', 'abc', '0x10', '', '9999999'])('drops max_age=%s', async (raw) => {
@@ -313,6 +359,94 @@ describe('GET /auth/callback', () => {
     expect(m.setSessionCookie).toHaveBeenCalledWith('sid-1');
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('https://app.localhost/orders');
+  });
+
+  it('marks the browser as signed in for 30 days, so later logins ask for the password', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-1', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-1');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    await call('?code=c&state=s');
+
+    expect(m.cookieSet).toHaveBeenCalledWith(SIGNED_IN_COOKIE, '1', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 2_592_000,
+    });
+  });
+
+  it('sets no signed-in marker when ZITADEL did not complete the login', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    m.completeLogin.mockRejectedValue(new Error('invalid_grant'));
+    await call('?code=c&state=s');
+    m.completeLogin.mockRejectedValue(new LoginStateExpiredError());
+    await call('?code=c&state=s');
+    expect(signedInWrites()).toEqual([]);
+  });
+
+  it('deletes the session record this browser already held before it creates the new one', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-2');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    await call('?code=c&state=s');
+
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+    expect(m.destroySession.mock.invocationCallOrder[0]).toBeLessThan(
+      m.createSession.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('deletes the previous record even when this sign-in is refused with 403 (no project role)', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockRejectedValue(new ApiError(403, 'forbidden'));
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    const res = await call('?code=c&state=s');
+
+    expect(res.headers.get('location')).toBe('https://app.localhost/no-access');
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+  });
+
+  it('does not delete anything when the browser held no session, and keeps the old one when sign-in fails', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-2');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    await call('?code=c&state=s');
+    expect(m.destroySession).not.toHaveBeenCalled();
+
+    m.completeLogin.mockRejectedValue(new Error('bad code'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    await call('?code=c&state=s');
+    expect(m.destroySession).not.toHaveBeenCalled();
+  });
+
+  it('still signs in when the old record cannot be deleted, and logs only the error name', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'user-2', returnTo: '/' });
+    m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
+    m.createSession.mockResolvedValue('sid-2');
+    m.destroySession.mockRejectedValue(
+      Object.assign(new Error(`del ws:sess:secret-key ${ACCESS}`), { name: 'ReplyError' }),
+    );
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+
+    const res = await call('?code=c&state=s');
+
+    expect(m.setSessionCookie).toHaveBeenCalledWith('sid-2');
+    expect(res.status).toBe(303);
+    const logged = JSON.stringify(warn.mock.calls);
+    expect(logged).toContain('ReplyError');
+    expect(logged).not.toContain('secret-key');
+    expect(logged).not.toContain(ACCESS);
   });
 
   it('clears the signed-out marker once the person has signed in again', async () => {
@@ -478,9 +612,28 @@ describe('GET /auth/callback', () => {
     expect(res.headers.get('location')).toBe('https://app.localhost/no-access');
     expect(m.createSession).not.toHaveBeenCalled();
     expect(cookiesWritten()).not.toContain('__Host-bos_session');
+    // ZITADEL did sign this browser in, so its next login must ask for the password too.
+    expect(signedInWrites()).toEqual([['1', 2_592_000]]);
     expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
       ...LOGIN_COOKIE_ATTRS,
       maxAge: 0,
+    });
+  });
+
+  it('logs a refused stale sign-in as its own event, then fails closed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    m.completeLogin.mockRejectedValue(new StaleSignInError());
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    const res = await call('?code=c&state=s');
+
+    expect(res.headers.get('location')).toBe(
+      'https://app.localhost/auth/error?code=callback_failed',
+    );
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toMatchObject({
+      event: 'auth.stale_sign_in',
     });
   });
 
@@ -548,6 +701,8 @@ describe('/auth/logout', () => {
     expect(res.headers.get('location')).toBe(END_SESSION);
     // ZITADEL ends its session on the hint, so the next login may use its account chooser as usual.
     expect(signedOutWrites()).toEqual([]);
+    // The signed-in marker stays: it is what makes the next login ask for the password.
+    expect(signedInWrites()).toEqual([]);
   });
 
   // CR-06: getSession is null when the record idled out or Valkey is down. The ZITADEL session

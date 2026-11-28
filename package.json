@@ -25,7 +25,10 @@
     "seed": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm seed-zitadel",
     "perf:load": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm -e K6_READ_P95_MS k6 run /perf/load.js",
     "perf:approvals": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm -e K6_APPROVE_P95_MS -e K6_PREVIEW_P95_MS -e K6_WRITE_P95_MS k6 run /perf/approvals.js",
-    "drill": "bash infra/backup/restore-drill.sh"
+    "perf:db-reads": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm -e K6_DB_READ_P95_MS -e K6_DB_READ_P99_MS -e K6_DB_READ_RATE -e K6_DB_READ_DURATION k6 run /perf/db-reads.js",
+    "perf:seed-db-reads": "bash perf/seed/seed-db-reads.sh",
+    "drill": "bash infra/backup/restore-drill.sh",
+    "prepare": "node -e \"import('./tools/prepush-install.mjs').then(m=>m.install()).catch(()=>{})\""
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

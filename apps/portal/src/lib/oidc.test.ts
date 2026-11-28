@@ -19,6 +19,10 @@ import {
   LoginBindingError,
   OIDC_SCOPES,
   refreshTokens,
+  SIGNED_IN_COOKIE,
+  SIGNED_OUT_COOKIE,
+  SIGNED_OUT_COOKIE_MAX_AGE,
+  StaleSignInError,
 } from './oidc';
 import { __setRedisForTests } from './session';
 
@@ -75,13 +79,17 @@ function grantResult<T extends GrantResult | RefreshResult = GrantResult>(fields
   id_token?: string;
   expiresIn?: number;
   sub?: string;
+  authTime?: number;
 }): T {
-  const { expiresIn, sub, ...body } = fields;
+  const { expiresIn, sub, authTime, ...body } = fields;
   return {
     ...body,
     token_type: 'bearer',
     expiresIn: () => expiresIn,
-    claims: () => (sub === undefined ? undefined : { sub }),
+    claims: () =>
+      sub === undefined
+        ? undefined
+        : { sub, ...(authTime !== undefined && { auth_time: authTime }) },
   } as unknown as T;
 }
 
@@ -135,6 +143,22 @@ describe('LOGIN_COOKIE', () => {
 
   it('lives exactly as long as the stored login state', () => {
     expect(LOGIN_COOKIE_MAX_AGE).toBe(600);
+  });
+});
+
+describe('SIGNED_OUT_COOKIE', () => {
+  it('is a __Host- cookie of its own, apart from the workspace marker', () => {
+    expect(SIGNED_OUT_COOKIE).toBe('__Host-bos_portal_signed_out');
+  });
+
+  it('lives 30 days, longer than a ZITADEL browser session', () => {
+    expect(SIGNED_OUT_COOKIE_MAX_AGE).toBe(2_592_000);
+  });
+});
+
+describe('SIGNED_IN_COOKIE', () => {
+  it('is a __Host- cookie of its own, apart from the workspace marker', () => {
+    expect(SIGNED_IN_COOKIE).toBe('__Host-bos_portal_signed_in');
   });
 });
 
@@ -411,6 +435,72 @@ describe('completeLogin', () => {
     await expect(
       completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding),
     ).rejects.toThrow(/expires_in/);
+  });
+});
+
+// ZITADEL v4.20.1 checks prompt=login only in its login UI. Its server links any live session to the request, so
+// a session picked from the account list would come back here with the old auth_time.
+describe('completeLogin after a freshSignIn login', () => {
+  const NOW = T0 / 1000;
+
+  async function forcedLogin(authTime: number | undefined) {
+    const { url, binding } = await beginLogin({
+      returnTo: '/',
+      prompt: 'login',
+      freshSignIn: true,
+    });
+    const state = url.searchParams.get('state') ?? '';
+    vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
+      grantResult({
+        access_token: 'at',
+        expiresIn: 300,
+        sub: 'u',
+        ...(authTime !== undefined && { authTime }),
+      }),
+    );
+    return completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding);
+  }
+
+  it('accepts a sign-in made after the login began', async () => {
+    vi.setSystemTime(T0 + 45_000); // password and TOTP typed in 45 s
+    await expect(forcedLogin(NOW + 40)).resolves.toMatchObject({ sub: 'u' });
+  });
+
+  it('accepts up to 60 s of clock difference with ZITADEL', async () => {
+    await expect(forcedLogin(NOW - 60)).resolves.toMatchObject({ sub: 'u' });
+  });
+
+  it('refuses a reused ZITADEL session: auth_time from before the login began', async () => {
+    await expect(forcedLogin(NOW - 3_700)).rejects.toBeInstanceOf(StaleSignInError);
+    await expect(forcedLogin(NOW - 61)).rejects.toBeInstanceOf(StaleSignInError);
+  });
+
+  it('refuses an ID token without auth_time', async () => {
+    await expect(forcedLogin(undefined)).rejects.toBeInstanceOf(StaleSignInError);
+  });
+
+  // The dev persona switcher sends prompt=login without freshSignIn: its ZITADEL session has only a user check, so
+  // the ID token has no auth_time.
+  it('does not check auth_time on a prompt=login login that did not ask for a fresh sign-in', async () => {
+    const { url, binding } = await beginLogin({ returnTo: '/', prompt: 'login' });
+    const state = url.searchParams.get('state') ?? '';
+    vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
+      grantResult({ access_token: 'at', expiresIn: 300, sub: 'u' }),
+    );
+    await expect(
+      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding),
+    ).resolves.toMatchObject({ sub: 'u' });
+  });
+
+  it('does not check auth_time on a login that did not ask for a fresh sign-in', async () => {
+    const { url, binding } = await beginLogin({ returnTo: '/' });
+    const state = url.searchParams.get('state') ?? '';
+    vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
+      grantResult({ access_token: 'at', expiresIn: 300, sub: 'u', authTime: NOW - 86_000 }),
+    );
+    await expect(
+      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding),
+    ).resolves.toMatchObject({ sub: 'u' });
   });
 });
 

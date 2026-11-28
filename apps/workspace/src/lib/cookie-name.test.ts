@@ -16,6 +16,7 @@ describe('development cookie namespace', () => {
     expect(cookieName('session')).toBe('__Host-bos_session');
     expect(cookieName('login')).toBe('__Host-bos_login');
     expect(cookieName('signed_out')).toBe('__Host-bos_signed_out');
+    expect(cookieName('signed_in')).toBe('__Host-bos_signed_in');
   });
 
   it('uses separate session and login cookies for concurrent development instances', async () => {

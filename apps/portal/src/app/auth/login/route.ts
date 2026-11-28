@@ -1,8 +1,14 @@
 import { cookies } from 'next/headers';
 
-import { beginLogin, LOGIN_COOKIE, LOGIN_COOKIE_MAX_AGE } from '@/lib/oidc';
+import {
+  beginLogin,
+  LOGIN_COOKIE,
+  LOGIN_COOKIE_MAX_AGE,
+  SIGNED_IN_COOKIE,
+  SIGNED_OUT_COOKIE,
+} from '@/lib/oidc';
 import { checkLoginRateLimit } from '@/lib/rate-limit';
-import { safeReturnTo } from '@/lib/session';
+import { safeReturnTo, SESSION_COOKIE } from '@/lib/session';
 
 // Copied from apps/workspace (dedupe later).
 export const runtime = 'nodejs';
@@ -40,18 +46,27 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const params = new URL(req.url).searchParams;
+  const jar = await cookies();
   const loginHint = parseLoginHint(params.get('login_hint'));
-  const prompt = parsePrompt(params.get('prompt'));
+  // Once this browser has signed in here, or signed out without ending the ZITADEL session (R2-001), every login
+  // asks for the password again whatever the link said. A session that idled out must not come back through the
+  // ZITADEL session that outlived it, by reload, new tab, Back or any plain /auth/login link. The session cookie
+  // counts too: it outlives an idled-out record, and a browser signed in before SIGNED_IN_COOKIE existed has only it.
+  const reauth = [SIGNED_IN_COOKIE, SIGNED_OUT_COOKIE, SESSION_COOKIE].some(
+    (name) => jar.get(name)?.value,
+  );
+  const prompt = reauth ? 'login' : parsePrompt(params.get('prompt'));
   // Spread instead of `key: undefined`: the tsconfig has exactOptionalPropertyTypes on.
   const { url, binding } = await beginLogin({
     ...(loginHint !== undefined && { loginHint }),
     ...(prompt !== undefined && { prompt }),
+    ...(prompt === 'login' && { freshSignIn: true }),
     // Open-redirect guard: only a same-origin relative path survives, everything else is '/'.
     returnTo: safeReturnTo(params.get('returnTo')),
   });
   // CR-01: the callback only completes in the browser holding this cookie. SameSite=Lax still
   // sends it on the top-level GET redirect back from ZITADEL.
-  (await cookies()).set(LOGIN_COOKIE, binding, {
+  jar.set(LOGIN_COOKIE, binding, {
     httpOnly: true,
     secure: true,
     sameSite: 'lax',

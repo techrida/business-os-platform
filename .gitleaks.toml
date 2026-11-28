@@ -21,8 +21,11 @@ regexes = [
   # HMAC test secrets: made-up strings used to sign throw-away tokens in tests.
   '''an-integration-test-secret-of-32-plus-chars''',
   '''e2e-route-sweep-signing-key''',
+  '''e2e-route-sweep-signing-key-not-a-real-secret''',
   # The RFC 6238 appendix B sample TOTP seed ("12345678901234567890" in base32); public.
   '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
+  # "abcdefghijklmnopqrst" in base32: a made-up second TOTP seed in apps/workspace/scripts/zitadel-login.test.ts.
+  '''MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U''',
   # `api:3001` is the compose service name and port of the API, not user:password credentials.
   '''api:3001/''',
   # A made-up idempotency key (a widely published example v4 UUID) in the portal payment-form test,

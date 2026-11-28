@@ -9,7 +9,6 @@ import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
 import { getBranding, logoSrc } from '@/lib/api-branding';
-import { getInboxCount, getUnreadCount } from '@/lib/api-kernel';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getMeOrNull, permissionsFrom } from '@/lib/live-permissions';
 import { getSession } from '@/lib/session';
@@ -30,18 +29,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   const roles = accountLabel(session.roles);
   // None throws: a failed read falls back to the default grouping, to initials and to the role defaults for the
-  // nav. A failed or refused inbox read leaves the badge out; it never shows a zero in its place.
-  const [numberSystems, me, approvalsWaiting, unreadNotifications, branding] = await Promise.all([
+  // nav. The badge numbers are not read here: the page does not wait for them, and `ShellCountsProvider` reads
+  // them once on arrival. Until it has an answer there is no badge, never a zero.
+  const [numberSystems, me, branding] = await Promise.all([
     getNumberSystems(),
     getMeOrNull(session.accessToken),
-    getInboxCount(session).then(
-      ({ count }) => count,
-      () => undefined,
-    ),
-    getUnreadCount(session).then(
-      ({ count }) => count,
-      () => undefined,
-    ),
     // The company's name and logo for the sidebar; null (the product name) when it cannot be read.
     getBranding(session),
   ]);
@@ -53,12 +45,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     <ShellFrame>
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
-      {/* One counts poll per tab feeds the sidebar's Inbox badge and the header bell. Both first-paint numbers are
-          read here, so the poller does not repeat them on arrival. */}
-      <ShellCountsProvider
-        initialInbox={approvalsWaiting}
-        initialNotifications={unreadNotifications}
-      >
+      {/* One counts poll per tab feeds the sidebar's Inbox badge and the header bell. It reads both numbers once
+          on arrival, after the page is on screen. */}
+      <ShellCountsProvider>
         <Sidebar
           user={{
             name: displayName ?? roles,
@@ -68,7 +57,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           }}
           brand={{ name: branding?.displayName ?? null, logoSrc: logoSrc(branding) }}
           permissions={permissionsFrom(me, session.roles)}
-          counts={approvalsWaiting === undefined ? {} : { '/inbox': approvalsWaiting }}
         />
         <ShellMain>
           <Header roles={session.roles} />
