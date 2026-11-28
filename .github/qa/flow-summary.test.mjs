@@ -69,6 +69,11 @@ test('CLI reads the paired files and still exits successfully when the limits ar
       }),
     );
     const script = (name) => fileURLToPath(new URL(name, import.meta.url));
+    const config = path.join(dir, 'limits.json');
+    writeFileSync(config, JSON.stringify({
+      'issue-invoice': { source: 'browser', page: {good: 400, poor: 1000}, backend: {good: 50, poor: 80} },
+      unmeasured: {source: 'k6'},
+    }));
     const args = [timing, log];
     const backend = execFileSync(process.execPath, [script('./flow-backend.mjs'), ...args], {
       encoding: 'utf8',
@@ -82,9 +87,14 @@ test('CLI reads the paired files and still exits successfully when the limits ar
       /\| issue-invoice \| 1 \| 0 \| 700 \| 700 \| 700 \| 400 \/ 1000 \| ok \| 1 \| 0 \| 100 \| 100 \| 100 \| 50 \/ 80 \| poor \|/,
     );
     const gate = () =>
-      spawnSync(process.execPath, [script('./flow-summary.mjs'), '--gate', ...args], {
+      spawnSync(process.execPath, [script('./flow-summary.mjs'), '--gate', ...args, config], {
         encoding: 'utf8',
       });
+    assert.equal(gate().status, 1);
+    writeFileSync(timing, '');
+    writeFileSync(log, '');
+    assert.equal(gate().status, 1);
+    writeFileSync(timing, JSON.stringify({name: 'issue-invoice', pageMs: 10, ok: true, requestIds: ['missing']}));
     assert.equal(gate().status, 1);
     for (const [pageMs, backendMs, expected, grade] of [
       [400, 50, 0, 'good'],

@@ -33,7 +33,8 @@ function evaluate(samples, apiLog, limits) {
     const limit = limits[name] ?? {};
     const pageGrade = verdict(page, limit.page);
     const backendGrade = verdict(backend, limit.backend);
-    poor ||= pageGrade === 'poor' || backendGrade === 'poor';
+    poor ||= limit.source === 'browser' &&
+      (!page.length || backend.length !== page.length || pageGrade === 'poor' || backendGrade === 'poor');
     const band = (range) => (range ? `${range.good} / ${range.poor}` : 'n/a');
     lines.push(
       `| ${[name, page.length, all.length - page.length, ...stats(page), band(limit.page), pageGrade, backend.length, page.length - backend.length, ...stats(backend), band(limit.backend), backendGrade].join(' | ')} |`,

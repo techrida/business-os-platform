@@ -8,7 +8,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "browser"
   },
   "approve-final-step": {
     "class": "single action",
@@ -19,7 +20,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "open-inbox": {
     "class": "list/search",
@@ -30,7 +32,8 @@
     "backend": {
       "good": 300,
       "poor": 600
-    }
+    },
+    "source": "k6"
   },
   "submit-memo": {
     "class": "single action",
@@ -41,7 +44,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "browser"
   },
   "create-lead": {
     "class": "single action",
@@ -52,7 +56,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "move-lead-stage": {
     "class": "single action",
@@ -63,7 +68,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "log-activity": {
     "class": "single action",
@@ -74,7 +80,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "save-quotation": {
     "class": "single action",
@@ -85,7 +92,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "browser"
   },
   "generate-pdf": {
     "class": "background job",
@@ -100,7 +108,8 @@
     "job": {
       "good": 3000,
       "poor": 10000
-    }
+    },
+    "source": "k6"
   },
   "convert-quotation": {
     "class": "single action",
@@ -111,7 +120,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "issue-invoice": {
     "class": "single action",
@@ -122,7 +132,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "create-credit-note": {
     "class": "single action",
@@ -133,7 +144,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "create-debit-note": {
     "class": "single action",
@@ -144,7 +156,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "record-payment": {
     "class": "single action",
@@ -155,7 +168,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "browser"
   },
   "verify-payment": {
     "class": "single action",
@@ -166,7 +180,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "open-vat-register": {
     "class": "report",
@@ -177,7 +192,8 @@
     "backend": {
       "good": 800,
       "poor": 1800
-    }
+    },
+    "source": "k6"
   },
   "open-receivables": {
     "class": "report",
@@ -188,7 +204,8 @@
     "backend": {
       "good": 800,
       "poor": 1800
-    }
+    },
+    "source": "k6"
   },
   "upload-document": {
     "class": "single action",
@@ -199,7 +216,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "scan-document": {
     "class": "background job",
@@ -214,7 +232,8 @@
     "job": {
       "good": 3000,
       "poor": 10000
-    }
+    },
+    "source": "k6"
   },
   "submit-purchase-request": {
     "class": "single action",
@@ -225,7 +244,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "browser"
   },
   "recommend-vendor-quotation": {
     "class": "single action",
@@ -236,7 +256,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "record-receipt": {
     "class": "single action",
@@ -247,7 +268,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "enter-vendor-bill": {
     "class": "single action",
@@ -258,7 +280,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "approve-bill": {
     "class": "single action",
@@ -269,7 +292,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "save-access-policy": {
     "class": "single action",
@@ -280,7 +304,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "save-approval-workflow": {
     "class": "single action",
@@ -291,7 +316,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "filter-audit-trail": {
     "class": "list/search",
@@ -302,7 +328,8 @@
     "backend": {
       "good": 300,
       "poor": 600
-    }
+    },
+    "source": "k6"
   },
   "global-search": {
     "class": "list/search",
@@ -313,7 +340,8 @@
     "backend": {
       "good": 300,
       "poor": 600
-    }
+    },
+    "source": "k6"
   },
   "portal-invoices": {
     "class": "list/search",
@@ -324,7 +352,8 @@
     "backend": {
       "good": 300,
       "poor": 600
-    }
+    },
+    "source": "k6"
   },
   "portal-submit-quotation": {
     "class": "single action",
@@ -335,7 +364,8 @@
     "backend": {
       "good": 50,
       "poor": 80
-    }
+    },
+    "source": "k6"
   },
   "sidebar-navigation": {
     "class": "page navigation",
@@ -346,6 +376,7 @@
     "backend": {
       "good": 300,
       "poor": 600
-    }
+    },
+    "source": "k6"
   }
 }
