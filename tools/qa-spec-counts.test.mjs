@@ -118,7 +118,9 @@ test('the committed shard lists cover every dev-project spec file exactly once (
       !['prod-no-switcher.spec.ts', 'lcp.spec.ts'].includes(f) &&
       !/^p4\/qa-fixtures/.test(f),
   );
-  const seconds = JSON.parse(readFileSync(new URL('../.github/qa/spec-seconds.json', import.meta.url)));
+  const seconds = JSON.parse(
+    readFileSync(new URL('../.github/qa/spec-seconds.json', import.meta.url)),
+  );
   for (const count of [6, 10, 14]) {
     const buckets = partition(seconds, count);
     assert.ok(buckets.every(({ files }) => files.length));

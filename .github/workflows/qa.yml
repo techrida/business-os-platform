@@ -127,6 +127,11 @@ jobs:
 
       - uses: ./.github/actions/qa-fixtures
 
+      - uses: ./.github/actions/qa-timings
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-')
+        with:
+          lane: fixtures
+
       - name: Encrypt fixture databases and sign-in state
         env:
           QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
@@ -298,6 +303,11 @@ jobs:
           BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
         run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
 
+      - uses: ./.github/actions/qa-timings
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-')
+        with:
+          lane: ${{ matrix.mode }}-${{ matrix.id }}
+
       # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
       - name: Remove any file that holds a persona password or TOTP secret
         if: ${{ !cancelled() }}
@@ -360,6 +370,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && needs.workspace.result == 'success'
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && needs.workspace.result == 'success'
+        with:
+          pattern: qa-timings-*
+          path: ${{ runner.temp }}/timings
+
+      - name: Gate combined page and API timings
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && needs.workspace.result == 'success'
+        run: |
+          cd "$RUNNER_TEMP/timings"
+          cat */page.jsonl > pages.jsonl
+          cat */api.jsonl > api.jsonl
+          node "$GITHUB_WORKSPACE/.github/qa/flow-summary.mjs" --gate pages.jsonl api.jsonl >> "$GITHUB_STEP_SUMMARY"
+
       - name: Every needed job succeeded or was skipped
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}

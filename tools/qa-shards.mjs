@@ -23,8 +23,12 @@ export function matrix(selected, count) {
   return {
     include: [
       ...Array.from({ length: count }, (_, i) => ({
-        mode: 'specs', id: String(i + 1), shard: `${i + 1}/${count}`,
-        ws: true, list: `shard-${i + 1}`, portal: portal && i === 0,
+        mode: 'specs',
+        id: String(i + 1),
+        shard: `${i + 1}/${count}`,
+        ws: true,
+        list: `shard-${i + 1}`,
+        portal: portal && i === 0,
       })),
       ...entries.filter((job) => job.mode === 'quarantined'),
     ],
@@ -39,6 +43,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const result = matrix(JSON.parse(process.env.SELECTED), count);
     appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(result)}\n`);
   } else {
-    buckets.forEach(({ files }, i) => writeFileSync(`.github/qa/shard-${i + 1}.txt`, files.join('\n') + '\n'));
+    buckets.forEach(({ files }, i) =>
+      writeFileSync(`.github/qa/shard-${i + 1}.txt`, files.join('\n') + '\n'),
+    );
   }
 }

@@ -35,4 +35,3 @@ runs:
       run: |
         cd apps/workspace
         pnpm exec playwright test --project=dev p4/qa-fixtures --output=test-results-fixtures
-

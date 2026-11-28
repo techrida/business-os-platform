@@ -109,7 +109,10 @@ function checkShardLists(root) {
     { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
   );
   const lists = {};
-  for (const name of Array.from({ length: Number(process.env.QA_SHARDS) }, (_, i) => `shard-${i + 1}`))
+  for (const name of Array.from(
+    { length: Number(process.env.QA_SHARDS) },
+    (_, i) => `shard-${i + 1}`,
+  ))
     lists[name] = readFileSync(`${root}.github/qa/${name}.txt`, 'utf8').split('\n');
   const verdict = checkLists({ specFiles: parseSpecFiles(out), lists });
   for (const problem of verdict.problems) console.log(`::error::${problem}`);
