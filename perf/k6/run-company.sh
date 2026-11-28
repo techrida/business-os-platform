@@ -22,9 +22,19 @@ for script in "$@"; do
     -v "${BOS_PERF_MANIFEST:-$BOS_PERF_STORAGE_ROOT/perf-manifest.json}:/perf-manifest.json:ro" \
     k6 run "/perf/$script.js" || result=1
   case "$script" in
-    sales|approvals)
+    sales|approvals|money)
       docker compose logs --no-log-prefix --since "$started" api | node perf/k6/backend-summary.mjs "$script" || result=1 ;;
   esac
+  if [[ "$script" == money ]]; then
+    # Read only this run's docs.scan events from the disposable worker's queue.
+    docker compose exec -T worker node -e '
+      const Redis = require("ioredis");
+      const db = new Redis(process.env.VALKEY_URL);
+      db.xrange("bull:docs.scan:events", Date.parse(process.argv[1]) + "-0", "+")
+        .then(events => console.log(JSON.stringify(events)))
+        .finally(() => db.disconnect());
+    ' "$started" | node perf/k6/scan-times.mjs || result=1
+  fi
   if [[ "$script" == sales ]]; then
     pnpm --filter @bos/api exec tsx test/perf-data/cli.ts pdf-times "$started" || result=1
   fi
