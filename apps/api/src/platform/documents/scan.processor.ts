@@ -14,7 +14,7 @@ import { stat } from 'node:fs/promises';
 import { documents, documentVersions, scoped } from '@bos/db';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { and, asc, eq, isNotNull, isNull, lt } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm';
 import type { Job, Queue } from 'bullmq';
 
 import { DB, type Db } from '../db/db.module';
@@ -388,6 +388,7 @@ export class ScanSweepProcessor extends WorkerHost {
   constructor(
     @Inject(DB) private readonly db: Db,
     @InjectQueue(DOCS_SCAN_QUEUE) private readonly scanQueue: Queue,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {
     super();
   }
@@ -400,12 +401,17 @@ export class ScanSweepProcessor extends WorkerHost {
   /** One pass. `now` is a parameter so tests need no waiting. */
   async sweep(now: Date = new Date()): Promise<SweepResult> {
     const cutoff = new Date(now.getTime() - SWEEP_STALE_MS);
+    const incomplete = await this.list(
+      and(
+        inArray(documentVersions.status, ['awaiting_content', 'quarantined']),
+        isNull(documentVersions.sha256),
+        lt(documentVersions.updatedAt, cutoff),
+      ),
+    );
     const stale = await this.list(
       and(
         eq(documentVersions.status, 'quarantined'),
         lt(documentVersions.updatedAt, cutoff),
-        // Validated uploads only (sha256 and detected type, recorded together after the checks). An upload that never recorded
-        // them stays quarantined for good: never scanned, published or served. The user uploads again as a new version.
         isNotNull(documentVersions.sha256),
         isNotNull(documentVersions.detectedMime),
       ),
@@ -416,7 +422,8 @@ export class ScanSweepProcessor extends WorkerHost {
         eq(documentVersions.scanEngine, SCAN_FAILED_INFRA),
       ),
     );
-    if (stale.length === 0 && failed.length === 0) return { requeued: 0, reset: 0 };
+    if (incomplete.length === 0 && stale.length === 0 && failed.length === 0)
+      return { requeued: 0, reset: 0 };
 
     // A version that is waiting out a backoff has a delayed job, so it is live and left alone. Matching is by
     // the job's data, not its id: a re-queued job's id is not the version id.
@@ -452,6 +459,37 @@ export class ScanSweepProcessor extends WorkerHost {
     for (const v of stale) await attempt(v, false);
     for (const v of failed) await attempt(v, true);
 
+    for (const v of incomplete) {
+      try {
+        const scope = { tenantId: v.tenantId, organizationId: v.organizationId };
+        const where = scoped(scope).where(
+          documentVersions,
+          and(
+            eq(documentVersions.id, v.id),
+            eq(documentVersions.status, v.status),
+            isNull(documentVersions.sha256),
+            lt(documentVersions.updatedAt, cutoff),
+          ),
+        );
+        await withTx(this.db, scope, systemActor('docs.scan.sweep'), async (tx) => {
+          // The trigger requires awaiting_content -> quarantined -> rejected.
+          // Claim conditionally so a PUT that completed since list() keeps its verdict.
+          const claimed = await tx
+            .update(documentVersions)
+            .set({ status: 'quarantined' })
+            .where(where)
+            .returning({ id: documentVersions.id });
+          if (claimed.length === 0) return;
+          await this.storage.removeQuarantine(v.storageKey);
+          await tx
+            .update(documentVersions)
+            .set({ status: 'rejected', updatedAt: now })
+            .where(scoped(scope).where(documentVersions, eq(documentVersions.id, v.id)));
+        });
+      } catch (error) {
+        failures.push(`${v.id}: ${String(error)}`);
+      }
+    }
     this.logger.log(
       `scan sweep: ${result.requeued} re-queued (${result.reset} were scan_failed), ${failures.length} failed`,
     );

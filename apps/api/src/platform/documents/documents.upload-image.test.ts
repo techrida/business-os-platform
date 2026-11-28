@@ -120,6 +120,7 @@ function pipeline(actor: { kind: string; id: string } = user) {
       writeFileSync(join(dir, key.replaceAll('/', '_')), bytes);
       return { bytes: bytes.length, sha256: Buffer.alloc(32), head: bytes.subarray(0, 4100) };
     }),
+    commitQuarantine: vi.fn(),
     quarantinePath: (key: string) => join(dir, key.replaceAll('/', '_')),
     promote: vi.fn(),
     removeQuarantine: vi.fn(),
@@ -157,7 +158,7 @@ describe('DocumentsService.createAndReceiveUpload', () => {
     expect(p.authz.assert).toHaveBeenCalledWith('profile.avatar.write', expect.anything());
     expect(p.policy.allowsSystemActor).not.toHaveBeenCalled();
     expect(p.updates[0]).toMatchObject({ status: 'quarantined' });
-    expect(p.updates[1]).toMatchObject({ detectedMime: 'image/png' });
+    expect(p.updates[0]).toMatchObject({ detectedMime: 'image/png' });
     expect(p.queue.add).toHaveBeenCalledTimes(1);
     expect(p.queue.add).toHaveBeenCalledWith(
       DOCS_SCAN_JOB,

@@ -251,8 +251,8 @@ describe('generated documents', () => {
     const chunks: Buffer[] = [];
     for await (const chunk of download.stream) chunks.push(chunk as Buffer);
     expect(Buffer.concat(chunks)).toEqual(file.bytes);
-    // The owner policy was asked for the system actor at create and again at receive.
-    expect(allowsSystemActor).toHaveBeenCalledTimes(2);
+    // The owner policy is checked at create, before streaming, and before committing the bytes.
+    expect(allowsSystemActor).toHaveBeenCalledTimes(3);
     expect(allowsSystemActor).toHaveBeenCalledWith(
       scope,
       ownerId,

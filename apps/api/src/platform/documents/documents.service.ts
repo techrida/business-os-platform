@@ -13,7 +13,7 @@
 //   create()          -> awaiting_content   a row exists, no bytes yet
 //   receiveContent()  -> quarantined        bytes on disk under quarantine/, type checked, docs.scan queued
 //                     -> rejected           wrong type or too big (file deleted)
-//                     -> quarantined, no sha256   the write failed (interrupted, wrong length): stays so, never reopened
+//                     -> awaiting_content   interrupted upload, safe to retry
 //   scan processor    -> clean | infected | scan_failed
 //
 // Generated files (a quotation PDF a job rendered) take the same road under the system actor, minus the scan
@@ -69,7 +69,7 @@ import { z } from 'zod';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { readDefaultEntityProfile } from '../settings/company-branding';
-import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
+import { READ_ONLY, withTx, requestTx, type Actor, type TxScope } from '../db/tx';
 import type { Principal, ResourceRef } from '../authz/can';
 import {
   queueCallWithin,
@@ -800,10 +800,8 @@ export class DocumentsService {
     }
     const s = scoped(who.scope);
 
-    // Step 1, one short transaction: check, then claim the version. The row lock makes the claim atomic, so
-    // two uploads of the same version cannot both pass: the second sees `quarantined` and gets 409.
-    const row = await withTx(this.db, who.scope, who.actor, async (tx) => {
-      let found = await this.loadVersion(tx, who.scope, versionId, opts.documentId);
+    const authorize = async (tx: DbTransaction, lock: boolean) => {
+      const found = await this.loadVersion(tx, who.scope, versionId, opts.documentId, lock);
       if (who.actor.kind === 'system') {
         // A generated file: the owner's system policy decides, never the request principal (there is none).
         await this.assertSystemOwner(who.scope, found.ownerType, found.ownerId, who.actor, tx);
@@ -828,81 +826,101 @@ export class DocumentsService {
           found.version.documentId,
         );
       }
-      found = await this.loadVersion(tx, who.scope, versionId, opts.documentId, true);
       if (found.version.status !== 'awaiting_content') {
         throw new ConflictException('Content was already received for this version');
       }
       if (contentLength !== found.version.sizeBytes) {
         throw new BadRequestException('Content-Length must equal the sizeBytes declared at create');
       }
-      await tx
-        .update(documentVersions)
-        // A retry starts from nothing recorded: a validation marker is only ever written by this upload's own step 4.
-        .set({ status: 'quarantined', detectedMime: null, updatedAt: new Date() })
-        .where(s.where(documentVersions, eq(documentVersions.id, versionId)));
-      return found;
-    });
-    const { version } = row;
-
-    // Step 2: stream to disk. Second cap: the bytes actually counted (a lying client, or chunked encoding).
-    let written;
-    try {
-      written = await this.storage.writeQuarantine(version.storageKey, src, MAX_UPLOAD_BYTES);
-    } catch (error) {
-      if (error instanceof PayloadTooLargeError) {
-        await this.reject(who, version, { reason: 'too_large', detectedMime: null, sha256: null });
-        throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
-      }
-      await this.failedWrite(who, version, flags);
-      this.logger.warn(`upload of version ${versionId} did not finish: ${describe(error)}`);
-      throw new BadRequestException(
-        'The upload was interrupted. Start a new upload; this version cannot take the content again.',
-      );
-    }
-    if (written.bytes !== contentLength) {
-      await this.failedWrite(who, version, flags);
-      throw new BadRequestException(
-        'The body length did not match Content-Length. Start a new upload; this version cannot take the content again.',
-      );
-    }
-
-    // Step 3: the type check, on the quarantined file.
-    const verdict = await checkType(
-      this.storage.quarantinePath(version.storageKey),
-      written.head,
-      version.declaredMime,
+      return found.version;
+    };
+    const version = await withTx(
+      this.db,
+      who.scope,
+      who.actor,
+      (tx) => authorize(tx, false),
+      READ_ONLY,
     );
-    if (!verdict.ok) {
-      await this.reject(who, version, {
-        reason: verdict.reason,
-        detectedMime: verdict.detectedMime,
-        sha256: written.sha256,
-      });
-      throw new UnsupportedMediaTypeException(
-        `The file content does not match its declared type: ${verdict.reason}`,
-      );
-    }
+    const stageKey = `${who.scope.tenantId}/${randomUUID()}`;
+    // Each PUT validates its own bytes. Only the winner may rename them to the immutable version key.
+    const lockForReceive = (tx: DbTransaction) => authorize(tx, true);
+    let updated: VersionRow;
+    try {
+      // Step 2: stream to disk. Second cap: the bytes actually counted (a lying client, or chunked encoding).
+      let written;
+      try {
+        written = await this.storage.writeQuarantine(stageKey, src, MAX_UPLOAD_BYTES);
+      } catch (error) {
+        if (error instanceof PayloadTooLargeError) {
+          await this.reject(who, version, lockForReceive, {
+            reason: 'too_large',
+            detectedMime: null,
+            sha256: null,
+          });
+          throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
+        }
+        this.logger.warn(`upload of version ${versionId} did not finish: ${describe(error)}`);
+        throw new BadRequestException('The upload was interrupted. Retry this upload.');
+      }
+      if (written.bytes !== contentLength) {
+        throw new BadRequestException(
+          'The body length did not match Content-Length. Retry this upload.',
+        );
+      }
 
-    // Step 4: record what was received. Status stays `quarantined` until the scan says otherwise.
-    const updated = await withTx(this.db, who.scope, who.actor, async (tx) => {
-      const [saved] = await tx
-        .update(documentVersions)
-        .set({
-          sha256: written.sha256,
-          sizeBytes: written.bytes,
+      // Step 3: the type check, on the quarantined file.
+      const verdict = await checkType(
+        this.storage.quarantinePath(stageKey),
+        written.head,
+        version.declaredMime,
+      );
+      if (!verdict.ok) {
+        await this.reject(who, version, lockForReceive, {
+          reason: verdict.reason,
           detectedMime: verdict.detectedMime,
-          updatedAt: new Date(),
-        })
-        .where(
-          s.where(
-            documentVersions,
-            and(eq(documentVersions.id, versionId), eq(documentVersions.status, 'quarantined')),
-          ),
-        )
-        .returning();
-      if (saved === undefined) throw new NotFoundException('Version not found');
-      return saved;
-    });
+          sha256: written.sha256,
+        });
+        throw new UnsupportedMediaTypeException(
+          `The file content does not match its declared type: ${verdict.reason}`,
+        );
+      }
+
+      // Step 4: record what was received. Status stays `quarantined` until the scan says otherwise.
+      updated = await withTx(this.db, who.scope, who.actor, async (tx) => {
+        await lockForReceive(tx);
+        const [saved] = await tx
+          .update(documentVersions)
+          .set({
+            status: 'quarantined',
+            sha256: written.sha256,
+            sizeBytes: written.bytes,
+            detectedMime: verdict.detectedMime,
+            updatedAt: new Date(),
+          })
+          .where(
+            s.where(
+              documentVersions,
+              and(
+                eq(documentVersions.id, versionId),
+                eq(documentVersions.status, 'awaiting_content'),
+              ),
+            ),
+          )
+          .returning();
+        if (saved === undefined) throw new NotFoundException('Version not found');
+        await this.storage.commitQuarantine(stageKey, version.storageKey);
+        return saved;
+      });
+    } catch (error) {
+      try {
+        await this.storage.removeQuarantine(stageKey);
+      } catch (cleanupError) {
+        this.logger.warn(
+          `could not remove staged bytes for version ${versionId}: ${describe(cleanupError)}`,
+        );
+      }
+      throw error;
+    }
 
     // Step 5 for a generated file (D28): no scan. Promote, then mark clean.
     if (flags.skipScan) return this.finishGenerated(who, updated);
@@ -1731,10 +1749,16 @@ export class DocumentsService {
   private async reject(
     who: { scope: TxScope; actor: Actor },
     version: VersionRow,
+    lockForReceive: (tx: DbTransaction) => Promise<VersionRow>,
     d: { reason: string; detectedMime: string | null; sha256: Buffer | null },
   ): Promise<void> {
     const s = scoped(who.scope);
     await withTx(this.db, who.scope, who.actor, async (tx) => {
+      await lockForReceive(tx);
+      await tx
+        .update(documentVersions)
+        .set({ status: 'quarantined' })
+        .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
       await tx
         .update(documentVersions)
         .set({
@@ -1756,46 +1780,6 @@ export class DocumentsService {
       });
     });
     await this.storage.removeQuarantine(version.storageKey);
-  }
-
-  /**
-   * A failed write (an interrupted stream or a body that did not match Content-Length) keeps its version
-   * `quarantined` with no sha256: it is never put back to `awaiting_content` (round 5, EF3), so a second PUT is a 409
-   * and the retry is a new version. Only the partial bytes go. The scan sweeper skips a version without a recorded
-   * sha256, so nothing scans or serves it; the uploader removes the document or supersedes it with a new version.
-   * Best effort: a leftover partial file is harmless, and the failure the caller reports is the upload's own.
-   */
-  private async failedWrite(
-    who: { scope: TxScope; actor: Actor },
-    version: VersionRow,
-    flags: { skipScan: boolean },
-  ): Promise<void> {
-    // A generated file has no person to start a new upload: it goes back to `awaiting_content`, as before, so the render
-    // job's own cleanup (discard the unfilled document, render again) still finds it. A quarantined version with no
-    // sha256 would count as filled for good.
-    if (flags.skipScan) {
-      await this.reopen(who, version);
-      return;
-    }
-    try {
-      await this.storage.removeQuarantine(version.storageKey);
-    } catch (error) {
-      this.logger.warn(
-        `partial bytes of version ${version.id} could not be removed: ${describe(error)}`,
-      );
-    }
-  }
-
-  /** Puts a half-received generated version back to awaiting_content (no bytes kept), so the job can write it again. */
-  private async reopen(who: { scope: TxScope; actor: Actor }, version: VersionRow): Promise<void> {
-    const s = scoped(who.scope);
-    await this.storage.removeQuarantine(version.storageKey);
-    await withTx(this.db, who.scope, who.actor, async (tx) => {
-      await tx
-        .update(documentVersions)
-        .set({ status: 'awaiting_content', updatedAt: new Date() })
-        .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
-    });
   }
 }
 
