@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { minimalPdf } from '../helpers/pdf-fixture';
@@ -127,11 +128,20 @@ test('records a payment with a PDF proof and opens it', async ({ browser, baseUR
     const submit = page.getByRole('button', { name: 'Record payment' });
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await submit.click();
-      await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
-      const opened = await page
-        .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
-        .then(() => true)
-        .catch(() => false);
+      const confirm = page
+        .getByRole('dialog')
+        .getByRole('button', { name: 'Confirm', exact: true });
+      const opened = await timeAction('record-payment', confirm, async () => {
+        const success = await page
+          .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
+          .then(() => true)
+          .catch(() => false);
+        if (success) {
+          await expect(page.getByText('Awaiting verification', { exact: true })).toBeVisible();
+          return true;
+        }
+        return false;
+      });
       if (opened) break;
       await expect(page.getByText(/A proof file is not ready yet/)).toBeVisible();
       await page.waitForTimeout(5_000);

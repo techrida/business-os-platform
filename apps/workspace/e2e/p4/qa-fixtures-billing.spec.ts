@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { approveInboxRequest, idFromUrl, pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { minimalPdf } from '../helpers/pdf-fixture';
@@ -64,7 +65,13 @@ async function issueInvoice(page: Page, id: string): Promise<void> {
   }).toPass({ timeout: 60_000 });
   await issue.click();
   const dialog = page.getByRole('dialog', { name: /^Issue / });
-  await dialog.getByRole('button', { name: /^Issue tax invoice$/i }).click();
+  await timeAction(
+    'issue-invoice',
+    dialog.getByRole('button', { name: /^Issue tax invoice$/i }),
+    async () => {
+      await expect(dialog.getByText(/issued as INV-/i)).toBeVisible();
+    },
+  );
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(page.getByText(/^INV-/).first()).toBeVisible({ timeout: 30_000 });
 }
@@ -84,12 +91,19 @@ async function recordPayment(page: Page): Promise<string> {
   ).toBeVisible({ timeout: 60_000 });
   for (let attempt = 0; attempt < 12; attempt += 1) {
     await page.getByRole('button', { name: 'Record payment', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
-    const opened = await page
-      .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (opened || /\/payments\/[0-9a-f-]{36}$/.test(page.url())) break;
+    const confirm = page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true });
+    const opened = await timeAction('record-payment', confirm, async () => {
+      const success = await page
+        .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (success || /\/payments\/[0-9a-f-]{36}$/.test(page.url())) {
+        await expect(page.getByText('Awaiting verification', { exact: true })).toBeVisible();
+        return true;
+      }
+      return false;
+    });
+    if (opened) break;
     await expect(page.getByText(/A proof file is not ready yet/)).toBeVisible();
     await page.waitForTimeout(5_000);
   }
