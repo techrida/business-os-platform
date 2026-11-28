@@ -109,7 +109,7 @@ test('the command exits 1 over the limit and 0 within it or with no timings', ()
 test('the qa workflow prints the summary to the job summary and fails the job over the limit', () => {
   const qa = readFileSync(new URL('../.github/workflows/qa.yml', import.meta.url), 'utf8');
   const start = qa.indexOf('- name: Approve to decided page');
-  const step = qa.slice(start, qa.indexOf('\n      - name:', start + 10));
+  const step = qa.slice(start).split('\n\n')[0];
   assert.match(
     step,
     /if: \$\{\{ !cancelled\(\) && \(github\.base_ref == 'main' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\) \|\| github\.event_name == 'workflow_dispatch'\) \}\}/,
