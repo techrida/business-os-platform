@@ -1,8 +1,9 @@
 // The audit trail's application side. Serves the NFR "every change is audited, and the trail is
 // tamper-evident" (ADR 0020).
 //
-// bos_app has no table right on audit.audit_events, so everything here goes through three SQL functions:
+// bos_app has no table right on audit.audit_events, so everything here goes through SQL functions:
 //   * audit.record()        appends a domain event inside the caller's withTx transaction;
+//   * audit.entity_user_actors()  reads distinct actors for approval exclusions in the caller's transaction;
 //   * audit.read_events()   lists events (SECURITY DEFINER, filtered by the tenant we pass in);
 //   * audit.verify_chain()  recomputes one month's hash chain.
 // The two readers take their scope as arguments and need no bos.* settings, so reads run on the plain pool
@@ -116,6 +117,18 @@ export class AuditService {
       sql`SELECT audit.record(${e.action}, ${e.entityType}, ${e.entityId},
         ${jsonOrNull(e.before)}::jsonb, ${jsonOrNull(e.after)}::jsonb, ${jsonOrNull(e.meta)}::jsonb)`,
     );
+  }
+
+  async entityUserActors(
+    tx: DbTransaction,
+    entityType: string,
+    entityId: string,
+    actions: readonly string[],
+  ): Promise<string[]> {
+    const result = await tx.execute<{ actor_id: string }>(
+      sql`SELECT actor_id FROM audit.entity_user_actors(${entityType}, ${entityId}, ${sql.param(actions)}::text[])`,
+    );
+    return result.rows.map((row) => row.actor_id);
   }
 
   /**

@@ -800,7 +800,26 @@ describe('privileges after 0008 (R16)', () => {
     expect(tenants.map((r) => r.t)).toContain(scope.tenantId);
   });
 
-  it('R16: bos_app can execute exactly these five functions in audit, and PUBLIC none', async () => {
+  it('reads distinct user actors for the transaction tenant, organization, entity and actions', async () => {
+    const scope = newScope();
+    const add = (s: Scope, actor: string, action = 'edit', entityId = '1') =>
+      inTx(app, settingsFor(s, { 'bos.actor_kind': 'user', 'bos.actor_id': actor }), (c) =>
+        c.query("SELECT audit.record($1, 'test', $2, NULL, NULL, NULL)", [action, entityId]),
+      );
+    await add(scope, 'editor');
+    await add(scope, 'editor');
+    await add(scope, 'viewer', 'view');
+    await add(scope, 'another-entity', 'edit', '2');
+    await add({ ...scope, organizationId: randomUUID() }, 'another-organization');
+    await add({ ...scope, tenantId: randomUUID() }, 'another-tenant');
+    const query = "SELECT actor_id FROM audit.entity_user_actors('test', '1', ARRAY['edit'])";
+    expect((await inTx(app, settingsFor(scope), (c) => c.query(query))).rows).toEqual([
+      { actor_id: 'editor' },
+    ]);
+    expect((await app.query(query)).rows).toEqual([]);
+  });
+
+  it('R16: bos_app can execute exactly these functions in audit, and PUBLIC none', async () => {
     const { rows } = await owner.query<{ proname: string; app: boolean; public: boolean }>(
       `SELECT p.proname,
               has_function_privilege('bos_app', p.oid, 'EXECUTE') AS app,
@@ -812,6 +831,7 @@ describe('privileges after 0008 (R16)', () => {
         GROUP BY p.oid, p.proname, p.proacl ORDER BY p.proname`,
     );
     expect(rows.filter((r) => r.app).map((r) => r.proname)).toEqual([
+      'entity_user_actors',
       'read_events',
       'record',
       'seal',

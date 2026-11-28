@@ -862,6 +862,13 @@
       "when": 1783000000168,
       "tag": "0222_vendor_quotation_line_description",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1783000000169,
+      "tag": "0223_audit_entity_user_actors",
+      "breakpoints": true
     }
   ]
 }

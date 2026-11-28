@@ -833,7 +833,6 @@ export class SourcingService {
   async submitCommitment(rfqId: string, idempotencyKey: string): Promise<RfqDto> {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
-    const recommenders = await this.recommendersOf(scope, rfqId);
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
         const done = await withIdempotency(
@@ -868,6 +867,9 @@ export class SourcingService {
               requesterIsFounder,
               isEmergency: pr.isEmergency,
             });
+            const recommenders = await this.audit.entityUserActors(tx, RFQ_AUDIT_ENTITY, rfqId, [
+              RECOMMENDED_ACTION,
+            ]);
             const sodUserIds = [
               ...new Set([pr.requesterUserId, ...recommenders, principal.userId]),
             ];
@@ -1125,18 +1127,6 @@ export class SourcingService {
     });
     const data = await this.approvals.loadDirectory(tx, scope, probe);
     return (data.roleMembers.get(role) ?? []).includes(userId);
-  }
-
-  /** Everyone who recommended on this RFQ (a re-sourced RFQ may have had several), from the audit trail. */
-  private async recommendersOf(scope: TxScope, rfqId: string): Promise<string[]> {
-    const events = await this.audit.list(scope, {
-      entityType: RFQ_AUDIT_ENTITY,
-      entityId: rfqId,
-      limit: 1000,
-    });
-    return events
-      .filter((e) => e.action === RECOMMENDED_ACTION && e.actorKind === 'user' && e.actorId !== '')
-      .map((e) => e.actorId);
   }
 
   private async minQuotes(scope: TxScope): Promise<number> {

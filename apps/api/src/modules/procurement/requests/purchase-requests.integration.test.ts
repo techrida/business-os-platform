@@ -499,6 +499,31 @@ describe('purchase request: the department route (AD10, AD11, AD12)', () => {
     }
   });
 
+  it('submits without listing audit events and excludes even an editor beyond the first page', async () => {
+    const d = await draft();
+    await withTx(
+      db,
+      scopeA,
+      { kind: 'user', id: U.other, correlationId: 'editor-history' },
+      async (tx) => {
+        await tx.execute(sql`SELECT audit.record('test.noise', 'purchase_requests', ${d.id}, NULL, NULL, NULL)
+        FROM generate_series(1, 501)`);
+        await tx.execute(
+          sql`SELECT audit.record('procurement.pr.updated', 'purchase_requests', ${d.id}, NULL, NULL, NULL)`,
+        );
+      },
+    );
+    const history = vi.spyOn(AuditService.prototype, 'list');
+    try {
+      await service.submit(d.id, undefined, randomUUID());
+      expect(history).not.toHaveBeenCalled();
+      const [request] = await requestsOf(d.id);
+      expect(request!.sodUserIds).toContain(U.other);
+    } finally {
+      history.mockRestore();
+    }
+  });
+
   it('a retried submit with the same Idempotency-Key opens one approval request', async () => {
     const d = await draft();
     const key = randomUUID();
