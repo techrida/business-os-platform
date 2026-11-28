@@ -102,3 +102,39 @@ export function buildDbReadsThresholds() {
   thresholds.checks = ['rate>0.99'];
   return thresholds;
 }
+
+// life-kb: Agents/shared/ui-product-preferences/speed-and-responsiveness.md, Business OS limits.
+// Background-job request thresholds measure enqueue latency.
+export const FLOW_THRESHOLDS = {
+  'http_req_duration{flow:approve-step-1}': ['p(95)<80'],
+  'http_req_duration{flow:approve-final-step}': ['p(95)<80'],
+  'http_req_duration{flow:open-inbox}': ['p(95)<600'],
+  'http_req_duration{flow:submit-memo}': ['p(95)<80'],
+  'http_req_duration{flow:create-lead}': ['p(95)<80'],
+  'http_req_duration{flow:move-lead-stage}': ['p(95)<80'],
+  'http_req_duration{flow:log-activity}': ['p(95)<80'],
+  'http_req_duration{flow:save-quotation}': ['p(95)<80'],
+  'http_req_duration{flow:generate-pdf}': ['p(95)<600'],
+  'http_req_duration{flow:convert-quotation}': ['p(95)<80'],
+  'http_req_duration{flow:issue-invoice}': ['p(95)<80'],
+  'http_req_duration{flow:create-credit-note}': ['p(95)<80'],
+  'http_req_duration{flow:create-debit-note}': ['p(95)<80'],
+  'http_req_duration{flow:record-payment}': ['p(95)<80'],
+  'http_req_duration{flow:verify-payment}': ['p(95)<80'],
+  'http_req_duration{flow:open-vat-register}': ['p(95)<1800'],
+  'http_req_duration{flow:open-receivables}': ['p(95)<1800'],
+  'http_req_duration{flow:upload-document}': ['p(95)<80'],
+  'http_req_duration{flow:scan-document}': ['p(95)<600'],
+  'http_req_duration{flow:submit-purchase-request}': ['p(95)<80'],
+  'http_req_duration{flow:recommend-vendor-quotation}': ['p(95)<80'],
+  'http_req_duration{flow:record-receipt}': ['p(95)<80'],
+  'http_req_duration{flow:enter-vendor-bill}': ['p(95)<80'],
+  'http_req_duration{flow:approve-bill}': ['p(95)<80'],
+  'http_req_duration{flow:save-access-policy}': ['p(95)<80'],
+  'http_req_duration{flow:save-approval-workflow}': ['p(95)<80'],
+  'http_req_duration{flow:filter-audit-trail}': ['p(95)<600'],
+  'http_req_duration{flow:global-search}': ['p(95)<600'],
+  'http_req_duration{flow:portal-invoices}': ['p(95)<600'],
+  'http_req_duration{flow:portal-submit-quotation}': ['p(95)<80'],
+  'http_req_duration{flow:sidebar-navigation}': ['p(95)<600'],
+};
