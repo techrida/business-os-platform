@@ -824,6 +824,11 @@ describe('separation of duties (done check 4)', () => {
     // The recommender (U.proc2) is also the only Accountant: the route has nobody for step 1.
     roles.accountant = [U.proc2];
     const r = await rfqWithQuotes(['1000.00', '1000.00', '1000.00']);
+    // A long RFQ history must still exclude the recommender beyond the audit reader's page size.
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.execute(sql`SELECT audit.record('test.noise', 'rfqs', ${r.rfqId}, NULL, NULL, NULL)
+        FROM generate_series(1, 501)`);
+    });
     as(U.proc2, 'procurement');
     await service.recommend(
       r.rfqId,

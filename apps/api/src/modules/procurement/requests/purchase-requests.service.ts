@@ -84,7 +84,6 @@ const CREATE_ACTION: Permission = 'procurement.pr.create';
 const READ_ACTION: Permission = 'procurement.pr.read';
 /** approval.blocked links may only open the inbox or memos (notify/templates.ts), so the notice opens the inbox. */
 const BLOCKED_NOTICE_LINK = '/inbox/';
-const EDITOR_LOOKUP_LIMIT = 1000;
 const NOTHING: SQL = sql`false`;
 
 const notFound = () =>
@@ -638,7 +637,12 @@ export class PurchaseRequestsService {
       amountNpr: fx.amountNpr,
     });
     // The requester, whoever presses submit and everyone who edited the request never approve it.
-    const editors = await this.editorsOf(scope, id);
+    const editors = await this.audit.entityUserActors(
+      tx,
+      PURCHASE_REQUEST_AUDIT_ENTITY,
+      id,
+      PURCHASE_REQUEST_EDIT_ACTIONS,
+    );
     const sodUserIds = [...new Set([pr.requesterUserId, callerUserId, ...editors])];
     const draftReference = pr.number ?? `Draft purchase request ${id.slice(0, 8)}`;
     const blocked = (reason: string) =>
@@ -831,23 +835,6 @@ export class PurchaseRequestsService {
       .where(scoped(scope).where(departments, eq(departments.id, departmentId)))
       .limit(1);
     if (row === undefined) throw badRequest('Unknown department');
-  }
-
-  /** The users who created or edited the request, from its audit events (they join the SoD list). */
-  private async editorsOf(scope: TxScope, id: string): Promise<string[]> {
-    const events = await this.audit.list(scope, {
-      entityType: PURCHASE_REQUEST_AUDIT_ENTITY,
-      entityId: id,
-      limit: EDITOR_LOOKUP_LIMIT,
-    });
-    return events
-      .filter(
-        (e) =>
-          e.actorKind === 'user' &&
-          e.actorId !== '' &&
-          PURCHASE_REQUEST_EDIT_ACTIONS.includes(e.action),
-      )
-      .map((e) => e.actorId);
   }
 
   /** P1-PLAN 6.2 "Blocked", without a request row: whoever may fix role assignments (admin.roles.write) is told. */

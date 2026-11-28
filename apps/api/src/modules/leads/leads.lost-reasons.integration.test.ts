@@ -31,6 +31,7 @@ import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import { CAN_KEY } from '../../platform/authz/decorators';
+import { setTxObserver, txObserver } from '../../platform/db/tx-settings';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
@@ -135,8 +136,15 @@ describe('D49 lost reasons: the list', () => {
     expect(list.map((o) => o.label)).toEqual(DEFAULT_LEAD_LOST_REASONS.map((d) => d.label));
     expect(list.map((o) => o.position)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(list.every((o) => o.isDefault && !o.retired)).toBe(true);
-    // A second read does not seed twice.
-    expect(await choices()).toHaveLength(7);
+    const previous = txObserver();
+    const wait = vi.fn();
+    setTxObserver({ observeTx: vi.fn(), countDbBusy: vi.fn(), observeTenantLockWait: wait });
+    try {
+      expect(await choices()).toHaveLength(7);
+      expect(wait).not.toHaveBeenCalled();
+    } finally {
+      setTxObserver(previous);
+    }
   });
 
   it('is behind crm.lead.write for the dialog and admin.settings.write for the Settings card', () => {
