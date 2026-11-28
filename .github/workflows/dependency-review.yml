@@ -4,7 +4,7 @@ name: dependency-review
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'kuu/release-*']
 
 permissions:
   contents: read

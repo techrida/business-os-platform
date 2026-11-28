@@ -13,11 +13,10 @@
 name: ci
 
 on:
-  # Kuu 2026-11-26: CI runs only for main (pushes and pull requests into main), not on p4-main or unit branches.
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, 'kuu/release-*']
   workflow_dispatch:
   # Weekly full run: catches anything the per-pull-request selection (tools/affected.mjs) missed.
   schedule:

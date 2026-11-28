@@ -32,9 +32,11 @@ export async function approveInboxRequest(
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Approve request' });
   await dialog.getByPlaceholder('Anything the requester should know').fill(comment);
+  const button = dialog.getByRole('button', { name: 'Approve', exact: true });
+  await button.click({ trial: true });
   const clicked = Date.now();
-  await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
   try {
+    await button.click();
     await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
     await expect(page.getByText('Your approval was recorded.')).toBeVisible();
   } catch (error) {

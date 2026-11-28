@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, 'kuu/release-*']
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
