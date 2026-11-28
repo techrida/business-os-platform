@@ -7,6 +7,7 @@ import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { z } from 'zod';
 
+import { portalCookieName } from './cookie-name';
 import { getEnv } from './env';
 import { refreshTokens } from './oidc';
 import { type Keyring, openSessionValue, sealSessionValue } from './session-crypto';
@@ -36,7 +37,7 @@ import {
  */
 
 /** `__Host-` makes the browser insist on Secure, Path=/ and no Domain, so no subdomain can plant or read it. */
-export const SESSION_COOKIE = '__Host-bos_portal_session';
+export const SESSION_COOKIE = portalCookieName('session');
 /** Sliding idle timeout: a session unused for this long is gone. */
 export const IDLE_SECONDS = 3600;
 /** Hard cap from sign-in, however active the user is. */
