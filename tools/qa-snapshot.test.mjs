@@ -67,6 +67,7 @@ esac
   writeFileSync(join(bin, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const env = {
     ...process.env,
+    GITHUB_SHA: '1'.repeat(40),
     RUNNER_TEMP: root,
     GNUPGHOME: join(root, 'gnupg'),
     PATH: bin + ':' + process.env.PATH,
@@ -88,4 +89,12 @@ esac
     assert.equal(readFileSync(join(target, '.dev', db + '.dump'), 'utf8'), 'dump ' + db + '\n');
   assert.ok(!existsSync(join(target, '.dev/logs/api.log')));
   assert.ok(!existsSync(join(target, 'apps/portal/.next/cache')));
+  const other = join(root, 'other-revision');
+  mkdirSync(other);
+  env.GITHUB_SHA = '2'.repeat(40);
+  rmSync(join(root, 'fixtures.tgz'));
+  run('unpack', other);
+  assert.ok(existsSync(join(other, '.dev/files/proof')));
+  assert.ok(!existsSync(join(other, 'apps')));
+  assert.ok(!existsSync(join(other, 'packages')));
 });

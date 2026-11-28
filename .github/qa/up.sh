@@ -26,7 +26,7 @@ echo $! > .dev/compose-up.pid
 end
 
 step "build workspace packages"
-if [[ ${1:-} != restore ]]; then
+if [[ ${1:-} != restore || $(cat .dev/qa-build-revision) != "$GITHUB_SHA" ]]; then
   pnpm -r --filter '@bos/api...' --filter '@bos/workspace^...' --filter '@bos/portal^...' --filter '@bos/seed-zitadel...' --if-present build
 fi
 lap "packages built"
@@ -93,7 +93,7 @@ done
 curl -sf --cacert .dev/caddy-root.crt https://api.localhost/health/ready >/dev/null || { tail -50 .dev/logs/api.log; exit 1; }
 lap "api ready"
 
-if [[ ${1:-} != restore ]]; then
+if [[ ${1:-} != restore || $(cat .dev/qa-build-revision) != "$GITHUB_SHA" ]]; then
   (cd apps/workspace && BOS_BUILD_PROFILE=dev NODE_ENV=production node node_modules/next/dist/bin/next build > ../../.dev/logs/workspace-build.log 2>&1) &
   wbuild=$!
   (cd apps/portal && NODE_ENV=production node node_modules/next/dist/bin/next build > ../../.dev/logs/portal-build.log 2>&1) &

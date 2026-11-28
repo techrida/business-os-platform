@@ -5,6 +5,7 @@ umask 077
 dc() { docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml "$@"; }
 case "$1" in
   save)
+    printf '%s\n' "$GITHUB_SHA" > .dev/qa-build-revision
     source .env
     dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli --raw EVAL \
       "local r={} for _,k in ipairs(redis.call('keys','pt:sess:*')) do table.insert(r,{k,redis.call('get',k),redis.call('pexpiretime',k)}) end return cjson.encode(r)" 0 > .dev/portal-sessions.json
@@ -14,7 +15,7 @@ case "$1" in
     docker cp "$(dc ps -q zitadel-api)":/zitadel/bootstrap/login-client.pat .dev/bootstrap.pat
     sudo chown "$(id -u):$(id -g)" .dev/bootstrap.pat
     tar --exclude='*/standalone' --exclude='*/cache' -czf - \
-      apps/workspace/.next-devtools apps/portal/.next apps/api/dist packages/*/dist .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
+      apps/workspace/.next-devtools apps/portal/.next apps/api/dist packages/*/dist .dev/qa-build-revision .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
       .dev/{zitadel,zitadel-api,zitadel-portal}.env .dev/personas.json .dev/files \
       .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json .dev/qa-approve-timings.jsonl |
       gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 \
@@ -29,7 +30,15 @@ case "$1" in
     # Authenticate the entire encrypted archive before extracting anything.
     gpg --batch --pinentry-mode loopback --passphrase-fd 3 --decrypt \
       -o "$RUNNER_TEMP/fixtures.tgz" "$RUNNER_TEMP/fixtures.gpg" 3<<<"$QA_FIXTURE_KEY"
-    tar -xzf "$RUNNER_TEMP/fixtures.tgz"
+    tar -xzf "$RUNNER_TEMP/fixtures.tgz" .dev/qa-build-revision
+    read -r revision < .dev/qa-build-revision
+    [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+    if [[ "$revision" == "$GITHUB_SHA" ]]; then
+      tar -xzf "$RUNNER_TEMP/fixtures.tgz"
+    else
+      # The current checkout supplies all application code, including routes removed since the cache was built.
+      tar --wildcards -xzf "$RUNNER_TEMP/fixtures.tgz" .env '.dev/*'
+    fi
     ;;
   restore)
     dc up -d --wait postgres valkey

@@ -126,12 +126,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Select an encrypted snapshot for this revision and UTC date
+      - name: Select an encrypted snapshot by its fixture inputs
         id: snapshot-key
         env:
           QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
-        run: |
-          node -e 'const {createHmac} = require("node:crypto"); const day = new Date().toISOString().slice(0,10); const tag = createHmac("sha256",process.env.QA_FIXTURE_KEY).update(process.env.GITHUB_SHA + day).digest("hex"); console.log("key=qa-fixture-v1-" + tag)' >> "$GITHUB_OUTPUT"
+        run: node tools/qa-fixture-key.mjs >> "$GITHUB_OUTPUT"
 
       - name: Restore encrypted QA fixture snapshot
         id: snapshot
@@ -263,10 +262,6 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - uses: ./.github/actions/qa-cache
-        with:
-          mode: ${{ needs.fixtures.result == 'success' && 'pull' || 'local' }}
-
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         if: needs.fixtures.result == 'success'
         with:
@@ -278,6 +273,10 @@ jobs:
         env:
           QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
         run: bash .github/qa/snapshot.sh unpack
+
+      - uses: ./.github/actions/qa-cache
+        with:
+          mode: ${{ needs.fixtures.result == 'success' && 'pull' || 'local' }}
 
       - name: Start shard stack
         env:
