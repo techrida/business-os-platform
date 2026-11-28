@@ -1125,6 +1125,7 @@ export class ApprovalsService {
         target: s.userId,
         team: s.groupId,
         facts,
+        headRequestId: sql<string | null>`case when ${head} then ${r.id} end`,
         sod,
       })
       .from(r)
@@ -1178,6 +1179,7 @@ export class ApprovalsService {
       if (identities.size)
         rules.push({
           ...key,
+          facts: key.headRequestId ? null : key.facts,
           identities: [...identities],
           distinct_approvers: spec.distinctApprovers,
         });
@@ -1185,11 +1187,13 @@ export class ApprovalsService {
     const actor = principal.userId;
     const ruleTable = sql`jsonb_to_recordset(${JSON.stringify(rules)}::jsonb)
         as rule(version uuid, document text, seq int, kind text, role text, target uuid, team uuid,
-          facts jsonb, sod uuid[], identities uuid[], distinct_approvers boolean)`;
+          "headRequestId" uuid, facts jsonb, sod uuid[], identities uuid[], distinct_approvers boolean)`;
     const match = sql`rule.version=${r.workflowVersionId} and rule.document=${r.documentType}
         and rule.seq=${s.seq} and rule.kind=${s.kind}
         and rule.role is not distinct from ${s.roleKey} and rule.target is not distinct from ${s.userId}
-        and rule.team is not distinct from ${s.groupId} and rule.facts is not distinct from ${facts}
+        and rule.team is not distinct from ${s.groupId} and
+          (case when ${head} then rule."headRequestId"=${r.id}
+            else rule.facts is not distinct from ${facts} end)
         and rule.sod is not distinct from ${sod}`;
     const eligible = sql`not (${actor}::uuid = any(${r.sodUserIds})) and exists (
         select 1 from unnest(rule.identities) as identity(id)
