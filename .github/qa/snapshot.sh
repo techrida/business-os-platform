@@ -17,14 +17,13 @@ case "$1" in
     tar --exclude='*/standalone' --exclude='*/cache' -czf - \
       apps/workspace/.next-devtools apps/portal/.next apps/api/dist packages/*/dist .dev/qa-build-revision .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
       .dev/{zitadel,zitadel-api,zitadel-portal}.env .dev/personas.json .dev/files \
-      .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json .dev/qa-approve-timings.jsonl |
+      .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json |
       gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 \
         -o "$RUNNER_TEMP/fixtures.gpg" 3<<<"$QA_FIXTURE_KEY"
     ;;
   check)
     gpg --batch --pinentry-mode loopback --passphrase-fd 3 --decrypt "$RUNNER_TEMP/fixtures.gpg" 3<<<"$QA_FIXTURE_KEY" |
-      tar -xzf - .dev/qa-approve-timings.jsonl
-    test -s .dev/qa-approve-timings.jsonl
+      tar -tzf - > /dev/null
     ;;
   unpack)
     # Authenticate the entire encrypted archive before extracting anything.
@@ -34,10 +33,10 @@ case "$1" in
     read -r revision < .dev/qa-build-revision
     [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
     if [[ "$revision" == "$GITHUB_SHA" ]]; then
-      tar -xzf "$RUNNER_TEMP/fixtures.tgz"
+      tar --exclude=.dev/qa-approve-timings.jsonl -xzf "$RUNNER_TEMP/fixtures.tgz"
     else
       # The current checkout supplies all application code, including routes removed since the cache was built.
-      tar --wildcards -xzf "$RUNNER_TEMP/fixtures.tgz" .env '.dev/*'
+      tar --exclude=.dev/qa-approve-timings.jsonl --wildcards -xzf "$RUNNER_TEMP/fixtures.tgz" .env '.dev/*'
     fi
     ;;
   restore)

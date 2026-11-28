@@ -144,3 +144,13 @@ test('the fixture measures from a ready Approve click through visible confirmati
     previous = index;
   }
 });
+
+test('release PRs select fresh fixtures and the full workspace even after a green push', () => {
+  const qa = readFileSync(new URL('../.github/workflows/qa.yml', import.meta.url), 'utf8');
+  assert.match(
+    qa,
+    /SELECTOR_EVENT: .*github.base_ref == 'main'.*startsWith\(github.head_ref, 'kuu\/release-'\).*'release'/,
+  );
+  assert.match(qa, /affected.mjs --event "\$SELECTOR_EVENT"/);
+  assert.match(qa, /id: snapshot\n {8}if: .*github.base_ref != 'main'/);
+});

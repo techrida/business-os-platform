@@ -28,7 +28,6 @@ test('the encrypted snapshot restores both databases, portal state, files and sa
   chmodSync(join(root, 'gnupg'), 0o700);
   const files = [
     '.dev/personas.json',
-    '.dev/qa-approve-timings.jsonl',
     '.dev/files/proof',
     '.dev/login-client.pat',
     '.dev/zitadel.env',
@@ -45,7 +44,12 @@ test('the encrypted snapshot restores both databases, portal state, files and sa
     'apps/portal/.next/BUILD_ID',
     'apps/workspace/.next-devtools/BUILD_ID',
   ];
-  for (const name of [...files, '.dev/logs/api.log', 'apps/portal/.next/cache/unneeded']) {
+  for (const name of [
+    ...files,
+    '.dev/qa-approve-timings.jsonl',
+    '.dev/logs/api.log',
+    'apps/portal/.next/cache/unneeded',
+  ]) {
     const path = join(source, name);
     mkdirSync(join(path, '..'), { recursive: true });
     writeFileSync(path, marker);
@@ -84,6 +88,7 @@ esac
   run('check', target);
   assert.ok(!existsSync(join(target, '.env')));
   run('unpack', target);
+  assert.ok(!existsSync(join(target, '.dev/qa-approve-timings.jsonl')));
   for (const name of files) assert.equal(readFileSync(join(target, name), 'utf8'), marker, name);
   for (const db of ['bos', 'zitadel'])
     assert.equal(readFileSync(join(target, '.dev', db + '.dump'), 'utf8'), 'dump ' + db + '\n');
