@@ -1,9 +1,351 @@
 {
-  "approve-step-1": { "page": 500, "backend": 80 },
-  "submit-memo": { "page": 500, "backend": 80 },
-  "save-quotation": { "page": 500, "backend": 80 },
-  "issue-invoice": { "page": 500, "backend": 80 },
-  "record-payment": { "page": 500, "backend": 80 },
-  "submit-purchase-request": { "page": 500, "backend": 80 },
-  "enter-vendor-bill": { "page": 500, "backend": 80 }
+  "approve-step-1": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "approve-final-step": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "open-inbox": {
+    "class": "list/search",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    }
+  },
+  "submit-memo": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "create-lead": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "move-lead-stage": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "log-activity": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "save-quotation": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "generate-pdf": {
+    "class": "background job",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    },
+    "job": {
+      "good": 3000,
+      "poor": 10000
+    }
+  },
+  "convert-quotation": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "issue-invoice": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "create-credit-note": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "create-debit-note": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "record-payment": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "verify-payment": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "open-vat-register": {
+    "class": "report",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 800,
+      "poor": 1800
+    }
+  },
+  "open-receivables": {
+    "class": "report",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 800,
+      "poor": 1800
+    }
+  },
+  "upload-document": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "scan-document": {
+    "class": "background job",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    },
+    "job": {
+      "good": 3000,
+      "poor": 10000
+    }
+  },
+  "submit-purchase-request": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "recommend-vendor-quotation": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "record-receipt": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "enter-vendor-bill": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "approve-bill": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "save-access-policy": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "save-approval-workflow": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "filter-audit-trail": {
+    "class": "list/search",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    }
+  },
+  "global-search": {
+    "class": "list/search",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    }
+  },
+  "portal-invoices": {
+    "class": "list/search",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    }
+  },
+  "portal-submit-quotation": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    }
+  },
+  "sidebar-navigation": {
+    "class": "page navigation",
+    "page": {
+      "good": 500,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 300,
+      "poor": 600
+    }
+  }
 }
