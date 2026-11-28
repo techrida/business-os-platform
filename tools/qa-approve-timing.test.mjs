@@ -110,6 +110,10 @@ test('the qa workflow prints the summary to the job summary and fails the job ov
   const qa = readFileSync(new URL('../.github/workflows/qa.yml', import.meta.url), 'utf8');
   const start = qa.indexOf('- name: Approve to decided page');
   const step = qa.slice(start, qa.indexOf('\n      - name:', start + 10));
+  assert.match(
+    step,
+    /if: \$\{\{ !cancelled\(\) && \(github\.base_ref == 'main' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\) \|\| github\.event_name == 'workflow_dispatch'\) \}\}/,
+  );
   assert.match(step, /approve-timing\.mjs/);
   assert.match(step, /GITHUB_STEP_SUMMARY/);
   assert.doesNotMatch(step, /continue-on-error/);
