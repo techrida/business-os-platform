@@ -129,6 +129,12 @@ export class ApprovalsController {
     return items;
   }
 
+  @Get('inbox/summary')
+  @AnyAuthenticated()
+  inboxSummary() {
+    return this.approvals.inboxSummary();
+  }
+
   /** The inbox badge: the list's total without the items, and the same 403 for a caller with no assignment. */
   @Get('inbox/count')
   @AnyAuthenticated()
