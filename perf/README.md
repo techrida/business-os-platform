@@ -113,3 +113,15 @@ invoices, a vendor quotation submission, and sidebar reads. Navigation search fi
 sidebar links in the browser and makes zero API requests. Measure its visible result in a browser.
 The scan report joins each verification upload to its BullMQ added and completed events by
 version ID. Times exclude polling delay. A missing completion fails the run.
+
+## Procurement workload
+
+Use the staff workload setup above with a fresh perf company. Set `BOS_PERF_SCALE=small` for a smoke run or `BOS_PERF_SCALE=procurement` for volume. Keep the same scale in the environment for both the loader and the runner.
+
+```bash
+pnpm --filter @bos/api exec tsx test/perf-data/cli.ts load
+docker compose up -d --wait api worker
+bash perf/k6/run-company.sh procurement
+```
+
+At procurement scale the loader creates 5,000 draft vendor bills. Before starting the measurement clock, the runner sends 2,000 purchase requests through department approval, quotation, commitment approval, purchase order issue and confirmed serialized receipt. The measured iterations follow that same route, then enter a bill against its order and receipt, verify its three-way match, and have two other staff members approve it. The server log reports the five tagged actions. The worker's queue events measure upload scans and purchase order render jobs separately.

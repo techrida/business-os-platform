@@ -37,7 +37,7 @@ function loadManifest() {
 }
 export const manifest = loadManifest();
 
-function credentialToken(role) {
+function credentialSession(role) {
   const prefix = 'K6_PERF_' + role.toUpperCase();
   const id = __ENV[prefix + '_CLIENT_ID'];
   const secret = __ENV[prefix + '_CLIENT_SECRET'];
@@ -56,11 +56,18 @@ function credentialToken(role) {
     { headers: { Authorization: 'Basic ' + basic }, redirects: 0, tags: { name: 'setup-token' } },
   );
   if (res.status !== 200) fail('Perf token request failed for ' + role + ': ' + res.status);
-  return res.json('access_token');
+  const lifetime = res.json('expires_in');
+  if (!(lifetime > 0)) fail('Missing perf token lifetime for ' + role);
+  return { token: res.json('access_token'), expiresAt: Date.now() + lifetime * 1000 };
 }
 
 export function staffToken(role) {
-  const token = credentialToken(role);
+  return staffSession(role).token;
+}
+
+export function staffSession(role) {
+  const session = credentialSession(role);
+  const { token } = session;
   const me = request(token, 'setup-me', 'GET', '/v1/me', null, 200).json();
   if (
     !manifest.staff[role] ||
@@ -70,11 +77,11 @@ export function staffToken(role) {
     !me.roles.includes(role)
   )
     fail('Unexpected perf identity for ' + role);
-  return token;
+  return session;
 }
 
 export function portalToken(role) {
-  const token = credentialToken(role);
+  const { token } = credentialSession(role);
   const me = request(token, 'setup-me', 'GET', '/v1/me', null, 200).json();
   const customer = role === 'customer_user';
   const expected = customer

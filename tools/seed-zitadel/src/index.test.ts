@@ -569,12 +569,13 @@ describe('@bos/seed-zitadel', () => {
     await runSeed({ ...deps, perfStaff: true, perfPlatform: true });
     const file = files.data.get('perf-subjects.json')!;
     const { subjects } = JSON.parse(file) as { subjects: Record<string, string> };
+    expect(subjects.warehouse).toBeTruthy();
     const { portalOrgs, orgId } = JSON.parse(file) as {
       portalOrgs: Record<string, string>;
       orgId: string;
     };
     expect(new Set([orgId, portalOrgs.customer_user, portalOrgs.vendor_user]).size).toBe(3);
-    expect(new Set(Object.values(subjects)).size).toBe(8);
+    expect(new Set(Object.values(subjects)).size).toBe(9);
     const previous = files.data.get('k6.env');
     await runSeed({ ...deps, perfStaff: true, perfPlatform: true });
     expect(files.data.get('k6.env') === previous).toBe(true);

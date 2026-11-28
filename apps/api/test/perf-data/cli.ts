@@ -1,5 +1,6 @@
 import { writeFile, rename, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { PDF_PREPARE_WITHIN_MS } from '@bos/contracts';
 import { createDb } from '@bos/db';
 import { z } from 'zod';
 import { ClamdClient } from '../../src/platform/documents/clamd.client';
@@ -25,8 +26,8 @@ async function main() {
   if (!url || !storage) throw new PerfDataError('Set BOS_PERF_DB_URL and BOS_PERF_STORAGE_ROOT');
   assertTarget(url, config['NODE_ENV']);
   const command = process.argv[2];
-  if (!['create', 'load', 'cleanup', 'pdf-times'].includes(command ?? ''))
-    throw new PerfDataError('Choose create, load, cleanup or pdf-times');
+  if (!['create', 'load', 'cleanup', 'pdf-times', 'procurement-ready'].includes(command ?? ''))
+    throw new PerfDataError('Choose create, load, cleanup, pdf-times or procurement-ready');
   const handle = createDb(url, { max: 5 });
   const { pool } = handle;
   const lock = await pool.connect();
@@ -37,6 +38,31 @@ async function main() {
     );
     if (!r.rows[0]?.locked) throw new PerfDataError('Another perf data command is running');
     await ensureStorageRoot(pool, storage);
+    if (command === 'procurement-ready') {
+      const deadline = Date.now() + PDF_PREPARE_WITHIN_MS;
+      do {
+        const { rows } = await pool.query<{ issued: number; ready: number }>(
+          `
+          SELECT count(DISTINCT p.id)::int issued, count(DISTINCT p.id) FILTER (WHERE v.status='clean')::int ready
+          FROM app.purchase_order_versions p
+          LEFT JOIN app.documents d ON d.owner_type='purchase_order_version' AND d.owner_id=p.id AND d.tenant_id=p.tenant_id AND d.organization_id=p.organization_id AND d.removed_at IS NULL
+          LEFT JOIN app.document_versions v ON v.id=d.current_version_id AND v.tenant_id=p.tenant_id AND v.organization_id=p.organization_id
+          WHERE p.tenant_id=$1 AND p.organization_id=$2`,
+          [scope.tenantId, scope.organizationId],
+        );
+        const { issued, ready } = rows[0]!;
+        if (issued !== 2000)
+          throw new PerfDataError(
+            'Expected 2,000 seeded purchase order versions before measurement',
+          );
+        if (issued === ready) {
+          console.log('All 2,000 seeded purchase order PDFs are ready');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      } while (Date.now() < deadline);
+      throw new PerfDataError('Timed out waiting for the seed purchase order PDFs');
+    }
     if (command === 'pdf-times') {
       const since = process.argv[3];
       if (!since || !Number.isFinite(Date.parse(since)))
@@ -87,7 +113,18 @@ async function main() {
               bills: 2,
               auditEvents: 100,
             }
-          : fullSizes;
+          : config['BOS_PERF_SCALE'] === 'procurement'
+            ? {
+                waitingPerApprover: 0,
+                leads: 1,
+                activities: 0,
+                customers: 1,
+                invoicesPerCustomer: 0,
+                payments: 0,
+                bills: fullSizes.bills,
+                auditEvents: 0,
+              }
+            : fullSizes;
       const workloadSizes =
         config['BOS_PERF_WORKLOAD'] === 'money'
           ? { ...sizes, waitingPerApprover: 0, leads: 1, activities: 0, bills: 0, auditEvents: 0 }

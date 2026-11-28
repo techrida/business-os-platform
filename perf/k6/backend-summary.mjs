@@ -17,6 +17,13 @@ const groups = {
     'credit-note',
     'debit-note',
   ],
+  procurement: [
+    'submit-purchase-request',
+    'recommend-vendor-quotation',
+    'record-receipt',
+    'enter-vendor-bill',
+    'approve-bill',
+  ],
   money: [
     'record-payment',
     'verify-payment',

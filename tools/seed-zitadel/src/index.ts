@@ -575,6 +575,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
       'finance',
       'founder',
       'procurement',
+      'warehouse',
       'management',
     ] as const;
     const orgId = (await api.findOrgByName(name)) ?? (await api.createOrg(name));
