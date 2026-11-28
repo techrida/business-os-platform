@@ -52,7 +52,7 @@ services:
 
   mailpit:
     profiles: [core]
-    image: axllent/mailpit:v1.33@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    image: axllent/mailpit:v1.34@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
     # SMTP on 127.0.0.1:1025 for a host-run API and worker (SMTP_URL=smtp://127.0.0.1:1025). The web UI stays
     # behind Caddy at https://mail.localhost.
     ports:
