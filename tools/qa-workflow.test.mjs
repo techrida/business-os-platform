@@ -194,3 +194,13 @@ test('ci.yml checks: format runs first after the install, and a docs-only change
   assert.match(step('Lint (zero warnings allowed)'), docsOnly);
   assert.doesNotMatch(step('Format check'), /\n\s+if:/);
 });
+
+test('release and main pull requests run CI, QA and security checks', () => {
+  for (const name of ['ci', 'qa', 'codeql', 'dependency-review']) {
+    const workflow = readFileSync(
+      new URL(`../.github/workflows/${name}.yml`, import.meta.url),
+      'utf8',
+    );
+    assert.match(workflow, /\n {2}pull_request:\n {4}branches: \[main, 'kuu\/release-\*'\]/, name);
+  }
+});

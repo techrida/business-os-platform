@@ -62,7 +62,7 @@ function verdictLine({ ok, p95, limitMs }) {
 
 /** p50, p95 and max are of the Approves that worked; the failures are counted on their own. */
 export function summarise(samples, limitMs = DEFAULT_P95_LIMIT_MS) {
-  const head = '### Approve timing (click Approve in the dialog to the decided inbox page)';
+  const head = '### Approve to decided page';
   if (samples.length === 0) return `${head}\n\nNo Approve was timed in this job.\n`;
   const worked = samples.filter((s) => s.ok).map((s) => s.ms);
   const failed = samples.filter((s) => !s.ok).map((s) => s.ms);

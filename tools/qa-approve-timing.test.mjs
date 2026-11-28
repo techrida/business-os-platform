@@ -39,6 +39,7 @@ test('parseTimings keeps numeric ms with its outcome and skips torn or foreign l
 test('summarise reports succeeded and failed counts, and p50, p95, max of the successes only', () => {
   const ok = (ms) => ({ ms, ok: true });
   const text = summarise([ok(100), ok(200), ok(300), ok(400), { ms: 30_000, ok: false }]);
+  assert.equal(text.split('\n')[0], '### Approve to decided page');
   assert.match(text, /\| 4 \| 1 \| 200 ms \| 400 ms \| 400 ms \|/);
   assert.match(text, /1 failed after 30000 ms/);
   assert.match(summarise([]), /No Approve was timed/);
@@ -107,10 +108,34 @@ test('the command exits 1 over the limit and 0 within it or with no timings', ()
 
 test('the qa workflow prints the summary to the job summary and fails the job over the limit', () => {
   const qa = readFileSync(new URL('../.github/workflows/qa.yml', import.meta.url), 'utf8');
-  const start = qa.indexOf('- name: Approve timing');
+  const start = qa.indexOf('- name: Approve to decided page');
   const step = qa.slice(start, qa.indexOf('\n      - name:', start + 10));
+  assert.match(
+    step,
+    /if: \$\{\{ !cancelled\(\) && \(github\.base_ref == 'main' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\) \|\| github\.event_name == 'workflow_dispatch'\) \}\}/,
+  );
   assert.match(step, /approve-timing\.mjs/);
   assert.match(step, /GITHUB_STEP_SUMMARY/);
   assert.doesNotMatch(step, /continue-on-error/);
   assert.match(step, /BOS_APPROVE_P95_LIMIT_MS: \$\{\{ vars\.QA_APPROVE_P95_LIMIT_MS \}\}/);
+});
+
+test('the fixture measures from a ready Approve click through visible confirmation', () => {
+  const fixture = readFileSync(
+    new URL('../apps/workspace/e2e/helpers/fixture-flow.ts', import.meta.url),
+    'utf8',
+  );
+  const steps = [
+    'await button.click({ trial: true })',
+    'const clicked = Date.now()',
+    'await button.click()',
+    "await expect(page.getByText('Your approval was recorded.')).toBeVisible()",
+    'recordApproveTiming(Date.now() - clicked, true)',
+  ];
+  let previous = -1;
+  for (const step of steps) {
+    const index = fixture.indexOf(step);
+    assert.ok(index > previous, step);
+    previous = index;
+  }
 });
