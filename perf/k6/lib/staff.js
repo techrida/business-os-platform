@@ -91,10 +91,10 @@ export function portalToken(role) {
   return token;
 }
 
-export function request(token, flow, method, path, body, status, key, contentType) {
+export function request(token, flow, method, path, body, status, key, mime = 'application/json') {
   const headers = {
     Authorization: 'Bearer ' + token,
-    'Content-Type': contentType || 'application/json',
+    'Content-Type': mime,
     'X-Entity-Id': manifest.organizationId,
     'X-Perf-Flow': flow,
   };
@@ -102,7 +102,7 @@ export function request(token, flow, method, path, body, status, key, contentTyp
   const res = http.request(
     method,
     api + path,
-    contentType ? body : body == null ? null : JSON.stringify(body),
+    body == null || mime !== 'application/json' ? body : JSON.stringify(body),
     {
       headers,
       redirects: 0,

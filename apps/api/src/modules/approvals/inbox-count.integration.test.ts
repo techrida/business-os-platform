@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { PERMISSIONS, type Permission, type RoleKey, type Scope } from '@bos/contracts';
 import { createStaffUser, createTenantWithEntity } from '@bos/db';
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -236,6 +237,40 @@ describe('inbox count on pending requests of four workflow versions', () => {
       expect(s).not.toContain('"result"');
     }
   });
+  it('returns one SQL page at 2,500 waiting, with matching count and age buckets', async () => {
+    asAccountant();
+    const extra = 2500 - requestIds.length;
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(sql`
+      with added as (
+        insert into app.approval_requests
+        select (jsonb_populate_record(r,jsonb_build_object(
+          'id',gen_random_uuid(),'document_id',gen_random_uuid(),
+          'submitted_at',${clock().toISOString()}::timestamptz - interval '2 days'
+        ))).* from app.approval_requests r cross join generate_series(1,${extra}::int)
+        where r.id=${requestIds[0]}
+        returning id
+      )
+      insert into app.approval_steps
+      select (jsonb_populate_record(s,jsonb_build_object('id',gen_random_uuid(),'request_id',added.id))).*
+      from app.approval_steps s cross join added where s.request_id=${requestIds[0]} and s.seq=1
+    `),
+    );
+    const sent = await capture(async () => {
+      const page = await counted.inboxPage({ limit: 10, offset: 20 });
+      expect(page.items).toHaveLength(10);
+      expect(page.total).toBe(2500);
+    });
+    expect(sent.length).toBeLessThanOrEqual(6);
+    expect(sent.some((query) => query.includes('limit') && query.includes('offset'))).toBe(true);
+    expect(await counted.inboxCount()).toEqual({ count: 2500 });
+    expect(await counted.inboxSummary()).toEqual(
+      expect.arrayContaining([
+        { documentType: 'test_memo', state: 'pending', age: 'under_week', count: extra },
+        { documentType: 'test_memo', state: 'pending', age: 'under_day', count: requestIds.length },
+      ]),
+    );
+  }, 30000);
 });
 
 describe('directoryViewOf: the active-user set stays the answer one spec alone would get', () => {

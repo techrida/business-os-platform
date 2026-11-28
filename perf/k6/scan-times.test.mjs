@@ -11,7 +11,7 @@ test('matches queued to completed for the selected uploads, including a retried 
     event(120, 'completed', 'b'),
     event(150, 'completed', 'a'),
   ];
-  assert.deepEqual(scanTimes(['a', 'b'], events), [15, 50]);
-  assert.deepEqual(scanTimes(['a', 'missing'], events), [50]);
-  assert.deepEqual(scanTimes(['missing'], events), []);
+  assert.deepEqual(scanTimes(events, ['a', 'b']), [15, 50]);
+  assert.deepEqual(scanTimes(events, ['a', 'missing']), [50]);
+  assert.deepEqual(scanTimes(events, ['missing']), []);
 });

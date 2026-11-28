@@ -1,7 +1,8 @@
 import { check, fail, sleep } from 'k6';
 import { manifest, portalToken, request, staffToken } from './lib/staff.js';
 import { arrivals, command, summaryTrendStats } from './lib/workload.js';
-import { platformLimits } from './platform-flows.mjs';
+import { FLOW_THRESHOLDS } from './thresholds.js';
+import { platformFlows } from './platform-flows.mjs';
 
 const paths = [
   'me',
@@ -42,8 +43,9 @@ const paths = [
   'payables/vat-register?from=2026-01-01&to=2026-01-31',
 ];
 const thresholds = { checks: ['rate==1'], dropped_iterations: ['count==0'] };
-for (const [flow, limit] of Object.entries(platformLimits)) {
-  thresholds['http_req_duration{flow:' + flow + '}'] = ['p(95)<' + limit];
+for (const flow of platformFlows) {
+  const duration = 'http_req_duration{flow:' + flow + '}';
+  thresholds[duration] = FLOW_THRESHOLDS[duration];
   thresholds['http_reqs{flow:' + flow + '}'] = ['count>0'];
 }
 export const options = {

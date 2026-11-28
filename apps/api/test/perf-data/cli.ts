@@ -88,7 +88,11 @@ async function main() {
               auditEvents: 100,
             }
           : fullSizes;
-      await generate(handle, sizes, storage, scanner);
+      const workloadSizes =
+        config['BOS_PERF_WORKLOAD'] === 'money'
+          ? { ...sizes, waitingPerApprover: 0, leads: 1, activities: 0, bills: 0, auditEvents: 0 }
+          : sizes;
+      await generate(handle, workloadSizes, storage, scanner);
     }
     if (config['BOS_PERF_SUBJECTS']) {
       const subject = z.string().regex(/^\d+$/);
