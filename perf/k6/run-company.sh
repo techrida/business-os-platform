@@ -25,6 +25,7 @@ result=0
 for script in "$@"; do
   if [[ "$script" == procurement && "${BOS_PERF_SCALE:-}" == procurement ]]; then
     run_k6 procurement 1
+    pnpm --filter @bos/api exec tsx test/perf-data/cli.ts procurement-ready
   fi
   started=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
   run_k6 "$script" || result=1

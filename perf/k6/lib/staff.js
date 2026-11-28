@@ -38,6 +38,10 @@ function loadManifest() {
 export const manifest = loadManifest();
 
 export function staffToken(role) {
+  return staffSession(role).token;
+}
+
+export function staffSession(role) {
   const prefix = 'K6_PERF_' + role.toUpperCase();
   const id = __ENV[prefix + '_CLIENT_ID'];
   const secret = __ENV[prefix + '_CLIENT_SECRET'];
@@ -66,7 +70,9 @@ export function staffToken(role) {
     !me.roles.includes(role)
   )
     fail('Unexpected perf identity for ' + role);
-  return token;
+  const lifetime = res.json('expires_in');
+  if (!(lifetime > 0)) fail('Missing perf token lifetime for ' + role);
+  return { token, expiresAt: Date.now() + lifetime * 1000 };
 }
 
 export function request(

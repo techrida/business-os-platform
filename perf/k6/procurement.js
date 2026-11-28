@@ -2,7 +2,8 @@
 import exec from 'k6/execution';
 import { check, fail, sleep } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
-import { manifest, request, staffToken } from './lib/staff.js';
+import { manifest, request, staffSession } from './lib/staff.js';
+import { sessionTokens } from './lib/session-tokens.mjs';
 import { arrivals, command, decide, summaryTrendStats } from './lib/workload.js';
 
 const scan = new Trend('procurement_scan_observed_ms', true);
@@ -52,7 +53,7 @@ export function setup() {
   return Object.fromEntries(
     ['procurement', 'warehouse', 'founder', 'accountant', 'finance', 'management'].map((role) => [
       role,
-      staffToken(role),
+      staffSession(role),
     ]),
   );
 }
@@ -88,14 +89,18 @@ function proof(token, path, extra = {}) {
   } while (Date.now() - start < 30000);
   expectState(false, 'proof scan completed');
 }
-export function procurement({
-  procurement: buyer,
-  warehouse,
-  founder,
-  accountant,
-  finance,
-  management,
-}) {
+// Each virtual user keeps its refreshed credentials across iterations of the long fixture seed.
+let sessions;
+export function procurement(initialSessions) {
+  sessions ??= initialSessions;
+  const {
+    procurement: buyer,
+    warehouse,
+    founder,
+    accountant,
+    finance,
+    management,
+  } = sessionTokens(sessions, staffSession, Date.now());
   const marker = Date.now() + '-' + exec.scenario.iterationInTest;
   const today = new Date().toISOString().slice(0, 10);
   const due = new Date(Date.now() + 86400000 * 7).toISOString();
