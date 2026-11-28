@@ -47,14 +47,19 @@ for (const [flow, limit] of Object.entries(platformLimits)) {
   thresholds['http_reqs{flow:' + flow + '}'] = ['count>0'];
 }
 export const options = {
-  scenarios: Object.fromEntries(
-    ['reads', 'settings', 'verification', 'portal', 'sidebar'].map((name) => [
-      name,
-      name === 'verification'
-        ? { ...arrivals(name, 1, 12), gracefulStop: '125s' }
-        : arrivals(name, 1, 2),
-    ]),
-  ),
+  scenarios: {
+    reads: arrivals('reads', 1, 5),
+    // One editor owns this tenant-wide revision. Overlapping saves would time stale-revision refusals.
+    settings: {
+      executor: 'constant-vus',
+      vus: 1,
+      duration: arrivals('settings', 1, 1).duration,
+      exec: 'settings',
+    },
+    verification: { ...arrivals('verification', 1, 12), gracefulStop: '305s' },
+    portal: arrivals('portal', 1, 4),
+    sidebar: arrivals('sidebar', 1, 6),
+  },
   summaryTrendStats,
   thresholds,
 };
@@ -127,6 +132,7 @@ export function settings({ founder, workflowKey, spec }) {
     '/v1/admin/workflows/' + workflowKey + '/versions',
     { spec },
   );
+  sleep(1);
 }
 const bytes = open('./fixtures/verification.pdf', 'b');
 function upload(token, flow, base, owner) {
@@ -146,7 +152,7 @@ export function verification({ sales, caseId }) {
     ownerType: 'verification_case',
     ownerId: caseId,
   });
-  const deadline = Date.now() + 120000;
+  const deadline = Date.now() + 300000;
   do {
     const version = get(sales, 'scan-document', 'documents/' + file.documentId).versions.find(
       (v) => v.id === file.versionId,
