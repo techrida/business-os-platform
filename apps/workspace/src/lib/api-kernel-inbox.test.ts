@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from './api';
-import { getInbox, getInboxPage } from './api-kernel';
+import { getInbox, getInboxPage, getInboxSummary } from './api-kernel';
 import { __resetEnvForTests } from './env';
 import type { Session } from './session';
 
@@ -81,6 +81,13 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+it('loads the aggregate counts without fetching inbox items', async () => {
+  const summary = [{ documentType: 'test_memo', state: 'pending', age: 'under_week', count: 43 }];
+  fetchMock.mockResolvedValue(reply(summary));
+  expect(await getInboxSummary(session)).toEqual(summary);
+  expect(lastUrl()).toBe('http://api:3001/v1/approvals/inbox/summary');
 });
 
 describe('getInboxPage', () => {

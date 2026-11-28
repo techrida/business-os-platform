@@ -10,16 +10,15 @@ export interface InboxSummaryCard {
 /** At most this many document types get a card of their own. */
 const TYPE_CARDS = 3;
 
-/**
- * KPI cards over everything waiting for the caller (the unfiltered inbox read, which has no default limit, so
- * `items` is the whole inbox): the total, then the document types with the most requests. Type cards are left
- * out when there is only one type, since they would repeat the total. An empty inbox has no cards.
- */
-export function inboxSummaryCards(items: readonly { documentType: string }[]): InboxSummaryCard[] {
-  if (items.length === 0) return [];
+export function inboxSummaryCards(
+  buckets: readonly { documentType: string; count: number }[],
+): InboxSummaryCard[] {
+  if (buckets.length === 0) return [];
   const byType = new Map<string, number>();
-  for (const { documentType } of items) {
-    byType.set(documentType, (byType.get(documentType) ?? 0) + 1);
+  let total = 0;
+  for (const { documentType, count } of buckets) {
+    byType.set(documentType, (byType.get(documentType) ?? 0) + count);
+    total += count;
   }
   const types =
     byType.size < 2
@@ -29,7 +28,7 @@ export function inboxSummaryCards(items: readonly { documentType: string }[]): I
           .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label))
           .slice(0, TYPE_CARDS);
   return [
-    { key: 'waiting', label: 'Waiting for you', value: items.length, icon: 'inbox' },
+    { key: 'waiting', label: 'Waiting for you', value: total, icon: 'inbox' },
     ...types.map(({ type, label, value }) => ({
       key: `type:${type}`,
       label,
