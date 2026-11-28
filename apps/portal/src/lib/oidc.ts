@@ -6,6 +6,7 @@ import { Redis } from 'ioredis';
 import * as client from 'openid-client';
 import { z } from 'zod';
 
+import { portalCookieName } from './cookie-name';
 import { getEnv } from './env';
 import { onClientError, safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
 
@@ -45,7 +46,7 @@ const PROMPTS = new Set(['login', 'none', 'consent', 'select_account']);
  * Browser binding for a login in progress. `__Host-` makes the browser insist on Secure, Path=/
  * and no Domain. Set by /auth/login for LOGIN_STATE_TTL_SECONDS, read and cleared by the callback.
  */
-export const LOGIN_COOKIE = '__Host-bos_portal_login';
+export const LOGIN_COOKIE = portalCookieName('login');
 /** Max-Age of LOGIN_COOKIE: the same 10 minutes as the stored state. */
 export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
 
@@ -56,7 +57,7 @@ export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
  * ZITADEL for `prompt=login`, so the person must sign in again; a completed login clears it. It holds no secret.
  * Same rule as the workspace's cookie of the same purpose.
  */
-export const SIGNED_OUT_COOKIE = '__Host-bos_portal_signed_out';
+export const SIGNED_OUT_COOKIE = portalCookieName('signed_out');
 /** 30 days: longer than a ZITADEL browser session is kept, so the session cannot outlive the marker. */
 export const SIGNED_OUT_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 
@@ -67,7 +68,7 @@ export const SIGNED_OUT_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
  * sign the person straight back in without the password. It holds no secret. Same rule as the workspace's cookie
  * of the same purpose.
  */
-export const SIGNED_IN_COOKIE = '__Host-bos_portal_signed_in';
+export const SIGNED_IN_COOKIE = portalCookieName('signed_in');
 /** Same 30 days as SIGNED_OUT_COOKIE, for the same reason: no ZITADEL session can outlive the marker. */
 export const SIGNED_IN_COOKIE_MAX_AGE = SIGNED_OUT_COOKIE_MAX_AGE;
 const LOGIN_BINDING_BYTES = 32;
