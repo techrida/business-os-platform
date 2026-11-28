@@ -1,28 +1,60 @@
 name: Prepare QA images and Chromium
 description: Restore the pinned local image builds and Playwright browser revision
+inputs:
+  mode:
+    description: publish from a trusted producer, pull on a trusted shard, or local on a fork
+    required: true
 runs:
   using: composite
   steps:
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      if: inputs.mode != 'pull'
       id: images
       with:
         path: ${{ runner.temp }}/qa-images.tar
         key: qa-images-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('infra/postgres/**', 'infra/login/**', 'packages/locale/src/theme-mode.ts', 'apps/workspace/src/styles/tokens.css', 'apps/workspace/src/styles/token-overrides.css', '.dockerignore') }}
     - name: Load QA images
-      if: steps.images.outputs.cache-hit == 'true'
+      if: inputs.mode != 'pull' && steps.images.outputs.cache-hit == 'true'
       shell: bash
       run: docker load -i "$RUNNER_TEMP/qa-images.tar"
     - name: Build and save QA images
-      if: steps.images.outputs.cache-hit != 'true'
+      if: inputs.mode != 'pull' && steps.images.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        docker build -t bos/postgres:16 infra/postgres
-        docker build -t bos-zitadel-login -f infra/login/Dockerfile .
+        git archive HEAD:infra/postgres | docker build -t bos/postgres:16 -
+        git archive HEAD -- infra/login packages/locale/src/theme-mode.ts apps/workspace/src/styles/{tokens,token-overrides}.css | docker build -t bos-zitadel-login -f infra/login/Dockerfile -
         docker save -o "$RUNNER_TEMP/qa-images.tar" bos/postgres:16 bos-zitadel-login
+    - name: Authenticate to the image registry
+      if: inputs.mode != 'local'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: printf %s "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+    - name: Publish QA images
+      if: inputs.mode == 'publish'
+      shell: bash
+      run: bash .github/qa/registry.sh publish
+    - name: Pull QA images
+      if: inputs.mode == 'pull'
+      shell: bash
+      run: bash .github/qa/registry.sh pull
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      id: vendors
+      with:
+        path: ${{ runner.temp }}/qa-vendor.tar
+        key: qa-vendor-v1-${{ runner.arch }}-${{ hashFiles('infra/compose/compose.yaml', 'infra/compose/compose.dev.yaml', '.github/qa/vendor-images.sh') }}
+    - name: Restore pinned third-party image layers
+      if: steps.vendors.outputs.cache-hit == 'true'
+      shell: bash
+      run: bash .github/qa/vendor-images.sh load
+    - name: Pull and save pinned third-party image layers
+      if: steps.vendors.outputs.cache-hit != 'true'
+      shell: bash
+      run: bash .github/qa/vendor-images.sh save
     - name: Read installed Playwright version
       id: version
       shell: bash
-      run: pnpm --filter @bos/workspace exec node -p '"version=" + require("@playwright/test/package.json").version' >> "$GITHUB_OUTPUT"
+      run: cd apps/workspace && node -p '"version=" + require("@playwright/test/package.json").version' >> "$GITHUB_OUTPUT"
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ~/.cache/ms-playwright

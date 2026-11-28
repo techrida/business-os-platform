@@ -6,7 +6,8 @@ dc() { docker compose --env-file .env -f infra/compose/compose.yaml -f infra/com
 case "$1" in
   save)
     source .env
-    dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli --raw EVAL       "local r={} for _,k in ipairs(redis.call('keys','pt:sess:*')) do table.insert(r,{k,redis.call('get',k),redis.call('pexpiretime',k)}) end return cjson.encode(r)" 0 > .dev/portal-sessions.json
+    dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli --raw EVAL \
+      "local r={} for _,k in ipairs(redis.call('keys','pt:sess:*')) do table.insert(r,{k,redis.call('get',k),redis.call('pexpiretime',k)}) end return cjson.encode(r)" 0 > .dev/portal-sessions.json
     for db in bos zitadel; do
       dc exec -T postgres pg_dump -Fc -U postgres "$db" > ".dev/$db.dump"
     done
@@ -27,13 +28,14 @@ case "$1" in
   restore)
     dc up -d --wait postgres valkey
     source .env
-    dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli -x EVAL       "for _,r in ipairs(cjson.decode(ARGV[1])) do redis.call('set',r[1],r[2],'PXAT',r[3]) end return 'OK'" 0 < .dev/portal-sessions.json | grep -qx OK
+    dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli -x EVAL \
+      "for _,r in ipairs(cjson.decode(ARGV[1])) do redis.call('set',r[1],r[2],'PXAT',r[3]) end return 'OK'" 0 < .dev/portal-sessions.json | grep -qx OK
     for db in bos zitadel; do
       dc exec -T postgres pg_restore -U postgres --clean --if-exists --exit-on-error -d "$db" < ".dev/$db.dump"
     done
     dc create --no-deps zitadel-api
-    chmod 644 .dev/bootstrap.pat
-    docker cp .dev/bootstrap.pat "$(dc ps --all -q zitadel-api)":/zitadel/bootstrap/login-client.pat
+    docker run --rm -i --volumes-from "$(dc ps --all -q zitadel-api)" --entrypoint sh bos/postgres:16 \
+      -c 'umask 022; cat > /zitadel/bootstrap/login-client.pat' < .dev/bootstrap.pat
     ;;
   *) exit 2 ;;
 esac

@@ -129,6 +129,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - uses: ./.github/actions/qa-cache
+        with:
+          mode: publish
 
       - name: Bring up the stack and seed the dev personas
         run: bash .github/qa/up.sh
@@ -205,6 +207,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - uses: ./.github/actions/qa-cache
+        with:
+          mode: ${{ needs.fixtures.result == 'success' && 'pull' || 'local' }}
 
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         if: needs.fixtures.result == 'success'
