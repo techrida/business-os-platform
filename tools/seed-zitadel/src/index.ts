@@ -248,6 +248,7 @@ export interface SeedDeps {
   /** Login name of the first-instance human admin to retire. Defaults to DEFAULT_ADMIN_USERNAME. */
   adminUsername?: string;
   configureDevMailpit?: boolean;
+  perfStaff?: boolean;
 }
 
 export interface SeedResult {
@@ -529,6 +530,8 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   // k6 container loads (compose `env_file`). A secret is shown by ZITADEL once: never rotate it
   // needlessly. ---
   const k6Env = parseEnv(await files.read('k6.env'));
+  const perfClients: Record<string, string> = {};
+  const perfClientIds: string[] = [];
   const ensureMachineClient = async (
     spec: Omit<MachineSpec, 'orgId'>,
     role: RoleKey,
@@ -563,10 +566,52 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     'accountant',
     k6Env['K6_APPROVER_CLIENT_SECRET'],
   );
+  if (deps.perfStaff) {
+    const name = 'Business OS disposable perf staff';
+    const roles = [
+      'sales',
+      'accountant',
+      'finance',
+      'founder',
+      'procurement',
+      'management',
+    ] as const;
+    const orgId = (await api.findOrgByName(name)) ?? (await api.createOrg(name));
+    const grant = grants.find((g) => g.grantedOrgId === orgId);
+    if (!grant) await api.createProjectGrant(projectId, orgId, [...roles]);
+    else if (!sameSet(grant.roleKeys, roles))
+      await api.updateProjectGrant(projectId, orgId, [...roles]);
+    const subjects: Record<string, string> = {};
+    for (const role of roles) {
+      const username = `bos-perf-${role}`;
+      const user =
+        (await api.findUser(orgId, username)) ??
+        (await api.createMachineUser({
+          username,
+          name: `Perf ${role}`,
+          description: 'Disposable perf staff',
+          orgId,
+        }));
+      await ensureAuthorization(
+        user.id,
+        orgId,
+        role === 'management' ? [role, 'accountant'] : [role],
+        username,
+      );
+      subjects[role] = user.id;
+      const prefix = `K6_PERF_${role.toUpperCase()}`;
+      perfClients[`${prefix}_CLIENT_ID`] = username;
+      perfClients[`${prefix}_CLIENT_SECRET`] =
+        (user.hasSecret && k6Env[`${prefix}_CLIENT_SECRET`]) || (await api.addSecret(user.id));
+      perfClientIds.push(username);
+    }
+    await files.write('perf-subjects.json', JSON.stringify({ orgId, subjects }));
+  }
   if (
     await files.write(
       'k6.env',
       renderEnv({
+        ...perfClients,
         K6_CLIENT_ID: LOADTEST_USER,
         K6_CLIENT_SECRET: loadSecret,
         K6_PROJECT_ID: projectId,
@@ -705,6 +750,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     ...(portalApp ? [portalApp.clientId] : []),
     LOADTEST_USER,
     LOADTEST_APPROVER_USER,
+    ...perfClientIds,
   ];
   const zitadelEnv: Record<string, string> = {
     OIDC_ISSUER: deps.issuer,
@@ -1169,6 +1215,13 @@ export async function main(): Promise<void> {
   // First, before any file or network access: guard the URL the seed writes to, and the issuer it records.
   assertDevTarget(apiBase, process.env);
   assertDevTarget(issuer, process.env);
+  const perfStaff = process.env['BOS_PERF_STAFF'] === '1';
+  if (perfStaff) {
+    assertDevTarget(apiBase, {});
+    assertDevTarget(issuer, {});
+    if (!['development', 'test'].includes(process.env['NODE_ENV'] ?? ''))
+      throw new Error('Perf staff require a dev/test seed');
+  }
   const finalize = process.argv.includes('--finalize');
   const patFile = process.env['ZITADEL_ADMIN_PAT_FILE'] ?? '/zitadel/admin/admin.pat';
   const personasFile = process.env['BOS_DEV_PERSONAS_FILE'] ?? '.dev/personas.json';
@@ -1193,6 +1246,7 @@ export async function main(): Promise<void> {
     ...(portalUrl ? { portalUrl } : {}),
     webhookUrl: process.env['ZITADEL_WEBHOOK_URL'] ?? DEFAULT_WEBHOOK_URL,
     adminUsername: process.env['ZITADEL_ADMIN_USERNAME'] ?? DEFAULT_ADMIN_USERNAME,
+    perfStaff,
     configureDevMailpit: process.env['BOS_SEED_DEV_MAILPIT'] === 'true',
   });
   console.log(

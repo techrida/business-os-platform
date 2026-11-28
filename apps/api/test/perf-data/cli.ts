@@ -1,8 +1,18 @@
-import { writeFile, rename } from 'node:fs/promises';
+import { writeFile, rename, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createDb } from '@bos/db';
 import { ClamdClient } from '../../src/platform/documents/clamd.client';
-import { assertTarget, createCompany, ensureStorageRoot, PerfDataError, scope } from './company';
+import {
+  assertTarget,
+  createCompany,
+  ensureStorageRoot,
+  PerfDataError,
+  scope,
+  staff,
+  staffOrg,
+  transaction,
+  assertCompany,
+} from './company';
 import { cleanup } from './cleanup';
 import { generate, fullSizes, manifest } from './generate';
 
@@ -36,7 +46,42 @@ async function main() {
         port: Number(config['BOS_PERF_CLAMD_PORT'] ?? 3310),
       });
       if (!(await scanner.ping())) throw new PerfDataError('Local ClamAV scanner unavailable');
-      await generate(handle, fullSizes, storage, scanner);
+      const sizes =
+        config['BOS_PERF_SCALE'] === 'small'
+          ? {
+              waitingPerApprover: 2,
+              leads: 5,
+              activities: 20,
+              customers: 2,
+              invoicesPerCustomer: 2,
+              payments: 2,
+              bills: 2,
+              auditEvents: 100,
+            }
+          : fullSizes;
+      await generate(handle, sizes, storage, scanner);
+    }
+    if (config['BOS_PERF_SUBJECTS']) {
+      const mapping = JSON.parse(await readFile(config['BOS_PERF_SUBJECTS'], 'utf8'));
+      const ids = [mapping.orgId, ...Object.keys(staff).map((role) => mapping.subjects?.[role])];
+      if (
+        ids.some((id) => typeof id !== 'string' || !/^\d+$/.test(id)) ||
+        new Set(ids).size !== ids.length
+      )
+        throw new PerfDataError('Invalid perf staff identity mapping');
+      await transaction(pool, async (c) => {
+        if (!(await assertCompany(c))) throw new PerfDataError('Missing perf company');
+        await c.query(
+          'UPDATE app.idp_orgs SET zitadel_org_id=$1 WHERE id=$2 AND tenant_id=$3 AND zitadel_org_id<>$1',
+          [mapping.orgId, staffOrg, scope.tenantId],
+        );
+        for (const [role, id] of Object.entries(staff)) {
+          await c.query(
+            'UPDATE app.users SET zitadel_user_id=$1 WHERE id=$2 AND tenant_id=$3 AND idp_org_id=$4 AND zitadel_user_id<>$1',
+            [mapping.subjects[role], id, scope.tenantId, staffOrg],
+          );
+        }
+      });
     }
     const path = resolve(config['BOS_PERF_MANIFEST'] ?? resolve(storage, 'perf-manifest.json'));
     await writeFile(`${path}.tmp`, JSON.stringify(await manifest(pool), null, 2), { mode: 0o600 });
