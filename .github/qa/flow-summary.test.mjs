@@ -71,7 +71,7 @@ test('CLI reads the paired files and still exits successfully when the limits ar
     const script = (name) => fileURLToPath(new URL(name, import.meta.url));
     const config = path.join(dir, 'limits.json');
     writeFileSync(config, JSON.stringify({
-      'issue-invoice': { source: 'browser', page: {good: 400, poor: 1000}, backend: {good: 50, poor: 80} },
+      'issue-invoice': { source: 'browser', page: {good: 400, gate: 500, poor: 1000}, backend: {good: 50, poor: 80} },
       unmeasured: {source: 'k6'},
     }));
     const args = [timing, log];
@@ -84,7 +84,7 @@ test('CLI reads the paired files and still exits successfully when the limits ar
     });
     assert.match(
       summary,
-      /\| issue-invoice \| 1 \| 0 \| 700 \| 700 \| 700 \| 400 \/ 1000 \| ok \| 1 \| 0 \| 100 \| 100 \| 100 \| 50 \/ 80 \| poor \|/,
+      /\| issue-invoice \| 1 \| 0 \| 700 \| 700 \| 700 \| 400 \/ 1000 \| over gate \(500 ms\) \| 1 \| 0 \| 100 \| 100 \| 100 \| 50 \/ 80 \| poor \|/,
     );
     const gate = () =>
       spawnSync(process.execPath, [script('./flow-summary.mjs'), '--gate', ...args, config], {
@@ -98,7 +98,8 @@ test('CLI reads the paired files and still exits successfully when the limits ar
     assert.equal(gate().status, 1);
     for (const [pageMs, backendMs, expected, grade] of [
       [400, 50, 0, 'good'],
-      [1000, 80, 0, 'ok'],
+      [500, 80, 0, 'above the good line (400 ms): Kuu decides whether to optimise'],
+      [501, 50, 1, 'over gate (500 ms)'],
       [1000.01, 50, 1, 'poor'],
     ]) {
       writeFileSync(

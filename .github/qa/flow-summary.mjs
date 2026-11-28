@@ -31,10 +31,16 @@ function evaluate(samples, apiLog, limits) {
     const page = successful.map((row) => row.pageMs);
     const backend = successful.map((row) => matchBackend(row, apiLog)).filter((ms) => ms !== null);
     const limit = limits[name] ?? {};
-    const pageGrade = verdict(page, limit.page);
+    const pageP95 = percentile(page, 95);
+    let pageGrade = verdict(page, limit.page);
+    if (pageGrade === 'ok' && limit.page.gate) {
+      pageGrade = pageP95 > limit.page.gate
+        ? 'over gate (' + limit.page.gate + ' ms)'
+        : 'above the good line (' + limit.page.good + ' ms): Kuu decides whether to optimise';
+    }
     const backendGrade = verdict(backend, limit.backend);
     poor ||= limit.source === 'browser' &&
-      (!page.length || backend.length !== page.length || pageGrade === 'poor' || backendGrade === 'poor');
+      (!page.length || backend.length !== page.length || pageP95 > limit.page.gate || pageGrade === 'poor' || backendGrade === 'poor');
     const band = (range) => (range ? `${range.good} / ${range.poor}` : 'n/a');
     lines.push(
       `| ${[name, page.length, all.length - page.length, ...stats(page), band(limit.page), pageGrade, backend.length, page.length - backend.length, ...stats(backend), band(limit.backend), backendGrade].join(' | ')} |`,
