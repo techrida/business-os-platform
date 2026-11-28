@@ -1,0 +1,54 @@
+# Performance data
+
+## Isolated perf company (Wave 2)
+
+Use a **disposable local development/test database named `bos_perf` or `bos_perf_<suffix>`**, with the current application migrations applied. The tool refuses the regular `bos` database, remote hosts and production mode. It owns a separate tenant and its default legal entity (`PERF`), so even tenant-wide tables and the tamper-evident audit chain are separate from demo company data. Run it offline, with no API/worker traffic against that database. Do not point it at a shared test stack.
+
+From the repository root, after installing workspace dependencies:
+
+```bash
+# Set BOS_PERF_DB_URL in your shell from the local secret store; use the disposable
+# database's admin connection (creation/cleanup need the table owner and admin privileges).
+export NODE_ENV=development
+export BOS_PERF_STORAGE_ROOT="$PWD/.dev/perf-files"
+export BOS_PERF_CLAMD_HOST=127.0.0.1
+export BOS_PERF_CLAMD_PORT=3310
+export NODE_OPTIONS=--conditions=bos-source
+
+# Create company, staff memberships, three approver groups, 50 customers and reference data.
+pnpm --filter @bos/api exec tsx test/perf-data/cli.ts create
+
+# Load or resume the full data set. Start the local ClamAV scanner first.
+pnpm --filter @bos/api exec tsx test/perf-data/cli.ts load
+
+# Remove the perf tenant, its rows, audit chain and tenant-owned files. Safe to repeat.
+pnpm --filter @bos/api exec tsx test/perf-data/cli.ts cleanup
+```
+
+`BOS_PERF_STORAGE_ROOT` must be the same file root the disposable API uses for `FILES_ROOT`, never a shared root: the first invocation binds it to the database and refuses to reuse it for another database. `BOS_PERF_DB_URL` is not stored or printed. The manifest defaults to `perf-manifest.json` in that storage root; optionally set `BOS_PERF_MANIFEST` to an absolute output path. It contains tenant/entity, staff/group, customer/portal and generated row IDs, not credentials. Keep it outside source control. A successful create or load replaces the manifest atomically; after cleanup it is a historical identifier list, not live data.
+
+The database-only synthetic identity-provider records are not sign-in accounts. For authenticated HTTP performance runs, provision a separate staff and customer identity-provider organization and real accounts that correspond to the manifest before running the load scenarios. No sign-in bypass or credentials are created by this tool.
+
+| Data                   | Default volume / state                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pending memo approvals | 2,500 active steps each for accountant, finance and founder (7,500 memos); later steps have real preceding recommendations                    |
+| Leads                  | 5,000 new leads, owned by perf sales staff                                                                                                    |
+| Activities             | 20,000 notes attached to those leads                                                                                                          |
+| Tax invoices           | 10,000 issued invoices spread across 365 days; 200 per each of 50 customers                                                                   |
+| Payments               | 5,000 submitted payments with individually uploaded and scanned synthetic proof PDFs                                                          |
+| Vendor bills           | 5,000 draft non-purchase-order bills, with real scanned synthetic PDFs and line totals                                                        |
+| Audit trail            | At least 100,000 hash-chained events; normal writes may exceed this target, any shortfall is filled by explicitly labelled seed sample events |
+
+The tool uses audited SQL for bulk CRM and reference rows, and the actual application services for memo routing, recommendations, invoice approval and issue (including numbering, snapshots and ledger posting), payment submission and bill creation. It does not mark proof files clean directly: the document upload and ClamAV scan paths do that. The offline runner does not dispatch email or enqueue background delivery work. Invoice PDFs are not rendered by this data loader.
+
+Run the same `load` command after interruption. Existing documents are resumed from their committed state or skipped, keyed by stable synthetic identifiers. The sizes and customer distribution are fixed for a full run; use cleanup before changing the distribution. A database advisory lock prevents two seed/cleanup commands running simultaneously. Cleanup validates the fixed company identity, checks for inbound references from outside the perf tenant, and deletes only tenant-scoped rows and its private audit chain in one database transaction. As the ordinary app intentionally forbids deleting issued documents and audit history, cleanup is an administrator-only teardown of a disposable database. It does not truncate tables, disable guards for other connections, or touch other companies.
+
+Integration checks (small counts, a failed scan followed by resume, repeated generation, hash-chain verification, and scoped cleanup):
+
+```bash
+pnpm --filter @bos/api exec vitest run src/perf-data.test.ts
+```
+
+## Legacy database-read seed
+
+`perf/seed/db-reads.sql` and `pnpm perf:seed-db-reads` are the original quotation/approval read benchmark fixture. They write to an existing demo entity and intentionally create artificial historical states. They are **not** part of the isolated Wave 2 data generator above; do not use them to populate the perf company without reviewing the seed's assumptions.
