@@ -1343,7 +1343,15 @@ describe('P1 review fixes (FIX-A2)', () => {
 describe('P1 review fixes (FIX-A2b)', () => {
   const inboxHas = async (as: string, requestId: string) => {
     me = as;
-    return (await service.inbox()).some((i) => i.requestId === requestId);
+    const items = await service.inbox();
+    expect((await service.inboxCount()).count).toBe(items.length);
+    const summary = await service.inboxSummary();
+    for (const type of new Set([...items, ...summary].map((row) => row.documentType))) {
+      expect(
+        summary.filter((row) => row.documentType === type).reduce((n, row) => n + row.count, 0),
+      ).toBe(items.filter((item) => item.documentType === type).length);
+    }
+    return items.some((i) => i.requestId === requestId);
   };
 
   it('R12: reroute after a decision does not keep the decider eligible for a later step', async () => {
