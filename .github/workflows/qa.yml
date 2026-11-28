@@ -37,7 +37,7 @@ concurrency:
 
 env:
   CI: 'true'
-  QA_SHARDS: '6'
+  QA_SHARD_CEILING: '10'
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
@@ -53,6 +53,7 @@ jobs:
       skip: ${{ steps.affected.outputs.skip }}
       qa-workspace: ${{ steps.affected.outputs.qa-workspace }}
       qa-portal: ${{ steps.affected.outputs.qa-portal }}
+      count: ${{ steps.capacity.outputs.count }}
       qa-matrix: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,13 +85,25 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
+      - name: Count available hosted runner slots
+        id: capacity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "count=$(node tools/qa-capacity.mjs)" >> "$GITHUB_OUTPUT"
+
       - name: Balance selected workspace specs
         id: shards
         env:
+          QA_SHARDS: ${{ steps.capacity.outputs.count }}
           SELECTED: ${{ steps.affected.outputs.qa-matrix }}
         run: node tools/qa-shards.mjs --matrix
 
   fixtures:
+    env:
+      QA_SHARDS: ${{ needs.changes.outputs.count }}
+    permissions:
+      contents: read
+      packages: write
     name: Build QA fixtures
     needs: changes
     if: ${{ (needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true') && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -155,6 +168,11 @@ jobs:
         run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
 
   workspace:
+    env:
+      QA_SHARDS: ${{ needs.changes.outputs.count }}
+    permissions:
+      contents: read
+      packages: read
     name: qa ${{ matrix.mode }} ${{ matrix.id }}
     needs: [changes, fixtures]
     # An empty matrix is an error, so a diff that touches neither app skips the job instead.

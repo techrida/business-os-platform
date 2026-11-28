@@ -121,7 +121,7 @@ test('the committed shard lists cover every dev-project spec file exactly once (
   const seconds = JSON.parse(
     readFileSync(new URL('../.github/qa/spec-seconds.json', import.meta.url)),
   );
-  for (const count of [6, 10, 14]) {
+  for (const count of Array.from({ length: 14 }, (_, i) => i + 1)) {
     const buckets = partition(seconds, count);
     assert.ok(buckets.every(({ files }) => files.length));
     const lists = Object.fromEntries(buckets.map(({ files }, i) => [i, files]));

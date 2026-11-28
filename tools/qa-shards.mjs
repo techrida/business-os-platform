@@ -3,7 +3,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export function partition(seconds, count) {
-  if (![6, 10, 14].includes(count)) throw new Error('Unsupported QA shard count');
+  if (!Number.isInteger(count) || count < 1 || count > 14) throw new Error('Unsupported QA shard count');
   const buckets = Array.from({ length: count }, (_, i) => ({
     seconds: i === 0 ? 77 : 0,
     files: [],
