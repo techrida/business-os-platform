@@ -21,6 +21,7 @@ export const staff = {
   founder: perfId('founder'),
   sales: perfId('sales'),
   procurement: perfId('procurement'),
+  warehouse: perfId('warehouse'),
   management: perfId('management'),
 };
 export const vendor = perfId('vendor');

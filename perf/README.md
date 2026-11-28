@@ -81,3 +81,15 @@ After all selected scripts, including a failed gate, the runner stops the dispos
 ## Legacy database-read seed
 
 `perf/seed/db-reads.sql` and `pnpm perf:seed-db-reads` are the original quotation/approval read benchmark fixture. They write to an existing demo entity and intentionally create artificial historical states. They are **not** part of the isolated Wave 2 data generator above; do not use them to populate the perf company without reviewing the seed's assumptions.
+
+## Procurement workload
+
+Use the staff workload setup above with a fresh perf company. Set `BOS_PERF_SCALE=small` for a smoke run or `BOS_PERF_SCALE=procurement` for volume. Keep the same scale in the environment for both the loader and the runner.
+
+```bash
+pnpm --filter @bos/api exec tsx test/perf-data/cli.ts load
+docker compose up -d --wait api worker
+bash perf/k6/run-company.sh procurement
+```
+
+At procurement scale the loader creates 5,000 draft vendor bills. Before starting the measurement clock, the runner sends 2,000 purchase requests through department approval, quotation, commitment approval, purchase order issue and confirmed serialized receipt. The measured iterations follow that same route, then enter a bill against its order and receipt, verify its three-way match, and have two other staff members approve it. The server log reports the five tagged actions. The worker's queue events measure upload scans and purchase order render jobs separately.

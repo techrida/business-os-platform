@@ -14,15 +14,25 @@ cleanup() {
     pnpm --filter @bos/api exec tsx test/perf-data/cli.ts cleanup
 }
 trap 'rc=$?; cleanup || exit 1; exit "$rc"' EXIT
-result=0
-for script in "$@"; do
-  started=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+run_k6() {
   docker compose run --rm -T --user "$(id -u):$(id -g)" -e K6_PERF_DURATION -e K6_PERF_RATE \
     -e K6_APPROVE_P95_MS -e K6_PREVIEW_P95_MS -e K6_WRITE_P95_MS \
+    -e K6_PROCUREMENT_SEED="${2:-0}" \
     -v "${BOS_PERF_MANIFEST:-$BOS_PERF_STORAGE_ROOT/perf-manifest.json}:/perf-manifest.json:ro" \
-    k6 run "/perf/$script.js" || result=1
+    k6 run "/perf/$1.js"
+}
+result=0
+for script in "$@"; do
+  if [[ "$script" == procurement && "${BOS_PERF_SCALE:-}" == procurement ]]; then
+    run_k6 procurement 1
+  fi
+  started=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+  run_k6 "$script" || result=1
+  if [[ "$script" == procurement ]]; then
+    docker compose exec -T worker node - "$started" < perf/k6/procurement-jobs.cjs || result=1
+  fi
   case "$script" in
-    sales|approvals)
+    sales|approvals|procurement)
       docker compose logs --no-log-prefix --since "$started" api | node perf/k6/backend-summary.mjs "$script" || result=1 ;;
   esac
   if [[ "$script" == sales ]]; then

@@ -1,3 +1,6 @@
+import { VENDOR_BILL_WORKFLOW_SPEC } from '../../src/modules/payables/bills/vendor-bill.rules';
+import { PR_COMMITMENT_WORKFLOW_SPEC } from '../../src/modules/procurement/sourcing/sourcing.rules';
+import { PURCHASE_REQUEST_WORKFLOW_SPEC } from '../../src/modules/procurement/requests/purchase-request.rules';
 import 'reflect-metadata';
 import { Readable } from 'node:stream';
 import type { RoleKey } from '@bos/contracts';
@@ -231,10 +234,28 @@ export async function generate(
   // The same configuration path as db-seed.ts: audited reference rows, not fabricated approval decisions.
   await transaction(pool, async (c) => {
     if (!(await assertCompany(c))) throw new PerfDataError('Missing perf company');
-    for (const type of ['test_memo', 'tax_invoice', 'quotation_version']) {
+    await c.query(
+      'UPDATE app.departments SET head_user_id=$1 WHERE id=$2 AND tenant_id=$3 AND head_user_id IS DISTINCT FROM $1',
+      [staff.founder, department, scope.tenantId],
+    );
+    await c.query(
+      "INSERT INTO app.cost_centers(id,tenant_id,organization_id,code,name) VALUES($1,$2,$3,'PERF','Perf purchases') ON CONFLICT DO NOTHING",
+      [perfId('cost-center'), scope.tenantId, scope.organizationId],
+    );
+    const procurementSpecs: Record<string, unknown> = {
+      purchase_request: PURCHASE_REQUEST_WORKFLOW_SPEC,
+      pr_commitment: PR_COMMITMENT_WORKFLOW_SPEC,
+      vendor_bill: VENDOR_BILL_WORKFLOW_SPEC,
+    };
+    for (const type of [
+      'test_memo',
+      'tax_invoice',
+      'quotation_version',
+      ...Object.keys(procurementSpecs),
+    ]) {
       const def = perfId(`workflow-${type}`),
         ver = perfId(`workflow-${type}-v1`);
-      const spec = {
+      const spec = procurementSpecs[type] ?? {
         documentType: type,
         steps: [
           { id: 'accountant', kind: 'role', role: 'accountant', reason: 'Accountant checks' },
@@ -527,6 +548,13 @@ export async function manifest(pool: Pool) {
     ...scope,
     staff,
     vatId: vat,
+    procurement: {
+      evidencePdf: fixturePdf('procurement').toString('ascii'),
+      departmentId: department,
+      costCenterId: perfId('cost-center'),
+      vendorId: vendor,
+      accountId: expense,
+    },
     staffIdpOrgId: staffOrg,
     approverGroups: Object.fromEntries(
       ['accountant', 'finance', 'founder'].map((role) => [role, perfId(`group-${role}`)]),

@@ -18,3 +18,17 @@ test('counts completed successful requests, preserves zero latency and flags mis
     { flow: 'missing', n: 0, percentiles: [] },
   ]);
 });
+
+test('procurement job timing follows the queued job through retries and excludes sweep jobs', async () => {
+  const { jobDurations } = await import('./procurement-jobs.cjs');
+  const events = [
+    ['10-0', ['event', 'added', 'jobId', 'a', 'name', 'docs.scan']],
+    ['11-0', ['event', 'added', 'jobId', 'b', 'name', 'docs.scan']],
+    ['12-0', ['event', 'added', 'jobId', 's', 'name', 'sweep']],
+    ['13-0', ['event', 'failed', 'jobId', 'a']],
+    ['14-0', ['event', 'completed', 'jobId', 's']],
+    ['15-0', ['event', 'completed', 'jobId', 'a', 'returnvalue', '"clean"']],
+    ['16-0', ['event', 'completed', 'jobId', 'b', 'returnvalue', '"infected"']],
+  ];
+  assert.deepEqual(jobDurations(events, 'docs.scan'), { pending: 1, durations: [5] });
+});

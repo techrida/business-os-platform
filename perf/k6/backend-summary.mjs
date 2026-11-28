@@ -14,6 +14,13 @@ const groups = {
     'credit-note',
     'debit-note',
   ],
+  procurement: [
+    'submit-purchase-request',
+    'recommend-vendor-quotation',
+    'record-receipt',
+    'enter-vendor-bill',
+    'approve-bill',
+  ],
   approvals: ['approve', 'approve-final', 'preview', 'write', 'submit'],
 };
 
@@ -48,7 +55,7 @@ export async function summarize(lines, flows) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const flows = groups[process.argv[2]];
-  if (!flows) throw new Error('Choose sales or approvals');
+  if (!flows) throw new Error('Choose a known workload');
   console.log('Measured API request time in milliseconds: flow, count, p50, p95, p99');
   for (const { flow, n, percentiles } of await summarize(
     createInterface({ input: process.stdin }),

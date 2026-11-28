@@ -86,7 +86,18 @@ async function main() {
               bills: 2,
               auditEvents: 100,
             }
-          : fullSizes;
+          : config['BOS_PERF_SCALE'] === 'procurement'
+            ? {
+                waitingPerApprover: 0,
+                leads: 1,
+                activities: 0,
+                customers: 1,
+                invoicesPerCustomer: 0,
+                payments: 0,
+                bills: fullSizes.bills,
+                auditEvents: 0,
+              }
+            : fullSizes;
       await generate(handle, sizes, storage, scanner);
     }
     if (config['BOS_PERF_SUBJECTS']) {

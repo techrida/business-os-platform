@@ -55,6 +55,12 @@ it('creates valid scoped data, resumes without duplicates and cleans only the pe
     'Perf proof did not scan clean',
   );
   const first = await generate(handle, sizes, storage, clamd);
+  expect(first.procurement.evidencePdf).toMatch(/^%PDF-/);
+  const departmentHead = await pool.query(
+    'SELECT head_user_id FROM app.departments WHERE tenant_id=$1 AND id=$2',
+    [scope.tenantId, first.procurement.departmentId],
+  );
+  expect(departmentHead.rows).toEqual([{ head_user_id: staff.founder }]);
   expect(first.vatId).toBe(vat);
   const quotationWorkflow = await pool.query(
     `SELECT v.status FROM app.workflow_definitions d JOIN app.workflow_versions v ON v.id=d.current_version_id
