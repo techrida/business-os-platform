@@ -6,7 +6,7 @@
 # Stage 1 installs and builds inside the monorepo. Stage 2 copies only Next's traced output,
 # so the runtime image has no pnpm, no source and no dev dependencies.
 
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS build
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS build
 # Corepack is deprecated, so pnpm comes from npm, installed from a lockfile (`npm ci`: integrity hashes).
 # infra/pnpm-bootstrap pins the version; infra/pnpm-bootstrap.test.mjs keeps it equal to the root `packageManager`.
 COPY infra/pnpm-bootstrap /pnpm-bootstrap
@@ -31,7 +31,7 @@ RUN pnpm --filter "@bos/workspace..." build
 RUN mkdir -p apps/workspace/public
 
 
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS runtime
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS runtime
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
