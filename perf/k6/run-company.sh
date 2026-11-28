@@ -30,7 +30,9 @@ for script in "$@"; do
   started=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
   run_k6 "$script" || result=1
   if [[ "$script" == procurement ]]; then
-    docker compose exec -T worker node - "$started" < perf/k6/procurement-jobs.cjs || result=1
+    docker compose cp perf/k6/percentile.cjs worker:/tmp/percentile.cjs
+    docker compose cp perf/k6/procurement-jobs.cjs worker:/tmp/procurement-jobs.cjs
+    docker compose exec -T worker node /tmp/procurement-jobs.cjs "$started" || result=1
   fi
   case "$script" in
     sales|approvals|money|platform|procurement)
@@ -49,7 +51,7 @@ for script in "$@"; do
   if [[ "$script" == platform ]]; then
     manifest=${BOS_PERF_MANIFEST:-$BOS_PERF_STORAGE_ROOT/perf-manifest.json}
     # The job event stream retains both endpoints even after BullMQ evicts a completed job.
-    for file in platform-scan-report.mjs scan-times.mjs backend-summary.mjs platform-flows.mjs; do
+    for file in platform-scan-report.mjs scan-times.mjs percentile.cjs; do
       docker compose cp "perf/k6/$file" "api:/tmp/$file"
     done
     docker compose exec -T api node /tmp/platform-scan-report.mjs "$started" \

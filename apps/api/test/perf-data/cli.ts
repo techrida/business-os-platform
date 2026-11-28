@@ -71,7 +71,7 @@ async function main() {
       const { rows } = await pool.query<{ queued: number; completed: number; ms: number[] | null }>(
         `
         SELECT count(*)::int queued, count(v.scanned_at)::int completed,
-          percentile_cont(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY extract(epoch FROM (v.scanned_at-q.approved_at))*1000) ms
+          percentile_disc(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY (extract(epoch FROM (v.scanned_at-q.approved_at))*1000)::float8) ms
         FROM app.quotation_versions q
         LEFT JOIN app.documents d ON d.id=q.rendered_document_id AND d.tenant_id=q.tenant_id AND d.organization_id=q.organization_id
         LEFT JOIN app.document_versions v ON v.id=d.current_version_id AND v.tenant_id=q.tenant_id AND v.organization_id=q.organization_id AND v.status='clean'
@@ -86,7 +86,7 @@ async function main() {
           ...(result.ms ?? []).map((ms) => ms.toFixed(1)),
         ].join(', '),
       );
-      if (!result.ms || result.completed !== result.queued || result.ms[1]! >= 10000)
+      if (!result.ms || result.completed !== result.queued || result.ms[1]! > 10000)
         throw new PerfDataError('Missing or slow PDF completion');
       return;
     }

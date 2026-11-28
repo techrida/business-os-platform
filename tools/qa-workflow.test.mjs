@@ -67,10 +67,15 @@ test('the portal specs run on the job the matrix marks (or shard 1 of an older b
 });
 
 test('the shard lists are checked after the stack is up (Playwright reads .dev files when it lists) and before any spec', () => {
-  const up = text.indexOf('bash .github/qa/up.sh');
+  const up = text.indexOf('- name: Start shard stack');
+  const assign = text.indexOf('- name: Assign the current workspace specs');
   const check = text.indexOf('node .github/qa/spec-counts.mjs --lists');
-  assert.ok(up > 0 && check > up, 'the check needs .dev/caddy-root.crt and .dev/personas.json');
-  assert.ok(check < text.indexOf('- uses: ./.github/actions/qa-fixtures'));
+  assert.ok(up > 0 && up < assign && assign < check);
+  assert.match(
+    text,
+    /if: matrix.mode == 'specs' && matrix.id == '1'\n {8}run: node .github\/qa\/spec-counts.mjs --lists/,
+  );
+  assert.ok(check < text.indexOf('- name: Playwright (workspace, dev project)'));
 });
 
 test('no workflow still talks about three shards', () => {

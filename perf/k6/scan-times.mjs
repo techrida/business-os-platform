@@ -1,6 +1,6 @@
 // BullMQ records "added" and "completed" in one Valkey stream using server timestamps.
 import { pathToFileURL } from 'node:url';
-import { percentile } from './backend-summary.mjs';
+import { percentile } from './percentile.cjs';
 
 export function scanTimes(events, versionIds) {
   const selected = versionIds && new Set(versionIds);
@@ -29,7 +29,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     [
       'proof-scan-queued-to-done',
       sorted.length,
-      ...[0.5, 0.95, 0.99].map((p) => percentile(sorted, p).toFixed(1)),
+      ...[50, 95, 99].map((p) => percentile(sorted, p).toFixed(1)),
     ].join(', '),
   );
 }

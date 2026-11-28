@@ -1,6 +1,6 @@
 // Run inside the disposable API container. Queue event IDs carry Valkey's millisecond timestamps.
 import { createRequire } from 'node:module';
-import { percentile } from './backend-summary.mjs';
+import { percentile } from './percentile.cjs';
 import { scanTimes } from './scan-times.mjs';
 import { pathToFileURL } from 'node:url';
 import { setTimeout } from 'node:timers/promises';
@@ -34,11 +34,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       rows.filter((r) => r.status === 'clean').map((r) => r.id),
     );
     console.log('Measured queued-to-done scan time (ms): completed/reserved, p50, p95, p99');
-    const values = times.length
-      ? [0.5, 0.95, 0.99].map((q) => percentile(times, q).toFixed(1))
-      : [];
+    const values = times.length ? [50, 95, 99].map((q) => percentile(times, q).toFixed(1)) : [];
     console.log([times.length + '/' + cohort.length, ...values].join(', '));
-    if (!times.length || times.length !== cohort.length || percentile(times, 0.95) >= 10000)
+    if (!times.length || times.length !== cohort.length || percentile(times, 95) > 10000)
       process.exitCode = 1;
   } finally {
     await db.end();

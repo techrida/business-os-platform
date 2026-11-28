@@ -1,3 +1,4 @@
+import { flowThresholds } from './thresholds.js';
 /* global __ENV */
 import exec from 'k6/execution';
 import { check, fail, sleep } from 'k6';
@@ -21,10 +22,7 @@ if (seed) {
   thresholds.procurement_seed_receipts = ['count==2000'];
 } else {
   thresholds.dropped_iterations = ['count==0'];
-  for (const flow of flows) {
-    thresholds['http_req_duration{flow:' + flow + '}'] = ['p(95)<80'];
-    thresholds['http_reqs{flow:' + flow + '}'] = ['count>0'];
-  }
+  Object.assign(thresholds, flowThresholds(flows));
 }
 export const options = {
   summaryTrendStats,

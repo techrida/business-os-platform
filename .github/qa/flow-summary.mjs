@@ -2,10 +2,8 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { matchBackend, parseApiLog, parseTimings, readOptional } from './flow-backend.mjs';
 
-export function percentile(values, p) {
-  if (values.length === 0) return undefined;
-  return [...values].sort((a, b) => a - b)[Math.ceil((p / 100) * values.length) - 1];
-}
+import { percentile } from '../../perf/k6/percentile.cjs';
+export { percentile };
 
 const shown = (value) => (value === undefined ? 'n/a' : Number(value.toFixed(2)));
 const stats = (values) => [50, 95, 99].map((p) => shown(percentile(values, p)));
@@ -31,9 +29,22 @@ function evaluate(samples, apiLog, limits) {
     const page = successful.map((row) => row.pageMs);
     const backend = successful.map((row) => matchBackend(row, apiLog)).filter((ms) => ms !== null);
     const limit = limits[name] ?? {};
-    const pageGrade = verdict(page, limit.page);
+    const pageP95 = percentile(page, 95);
+    let pageGrade = verdict(page, limit.page);
+    if (pageGrade === 'ok' && limit.page.gate) {
+      pageGrade =
+        pageP95 > limit.page.gate
+          ? 'over gate (' + limit.page.gate + ' ms)'
+          : 'above the good line (' + limit.page.good + ' ms): Kuu decides whether to optimise';
+    }
     const backendGrade = verdict(backend, limit.backend);
-    poor ||= pageGrade === 'poor' || backendGrade === 'poor';
+    poor ||=
+      limit.source === 'browser' &&
+      (!page.length ||
+        backend.length !== page.length ||
+        pageP95 > limit.page.gate ||
+        pageGrade === 'poor' ||
+        backendGrade === 'poor');
     const band = (range) => (range ? `${range.good} / ${range.poor}` : 'n/a');
     lines.push(
       `| ${[name, page.length, all.length - page.length, ...stats(page), band(limit.page), pageGrade, backend.length, page.length - backend.length, ...stats(backend), band(limit.backend), backendGrade].join(' | ')} |`,

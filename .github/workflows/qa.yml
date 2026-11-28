@@ -85,11 +85,12 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELECTOR_EVENT: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && 'release' || github.event_name }}
           # Same-commit skip: a push run of this workflow that already succeeded for this commit means nothing runs again.
           BOS_SKIP_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BOS_SKIP_WORKFLOW: qa.yml
           GITHUB_TOKEN: ${{ github.token }}
-        run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
+        run: node tools/affected.mjs --event "$SELECTOR_EVENT" --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
       - name: Count available hosted runner slots
         id: capacity
@@ -140,7 +141,7 @@ jobs:
           path: ${{ runner.temp }}/fixtures.gpg
           key: ${{ steps.snapshot-key.outputs.key }}
 
-      - name: Authenticate cached snapshot and extract approval samples
+      - name: Authenticate cached snapshot
         if: steps.snapshot.outputs.cache-hit == 'true'
         env:
           QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
@@ -157,9 +158,6 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - run: node tools/qa-shards.mjs
-        if: steps.snapshot.outputs.cache-hit != 'true'
-
       - name: Install
         if: steps.snapshot.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
@@ -172,12 +170,6 @@ jobs:
       - name: Bring up the stack and seed the dev personas
         if: steps.snapshot.outputs.cache-hit != 'true'
         run: bash .github/qa/up.sh
-
-      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
-      # listing tests. Still minutes before the first spec runs.
-      - name: Every workspace spec is in exactly one shard list
-        if: steps.snapshot.outputs.cache-hit != 'true'
-        run: node .github/qa/spec-counts.mjs --lists
 
       - uses: ./.github/actions/qa-fixtures
         if: steps.snapshot.outputs.cache-hit != 'true'
@@ -202,7 +194,7 @@ jobs:
           if-no-files-found: error
 
       - name: Preserve approval timings for the dispatch gate
-        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        if: steps.snapshot.outputs.cache-hit != 'true' && github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: qa-approval-samples
@@ -211,7 +203,7 @@ jobs:
           if-no-files-found: error
 
       # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
-      # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
+      # successful Approves is over the configured page limit; the repository variable QA_APPROVE_P95_LIMIT_MS overrides
       # the limit without a commit.
       - name: Approve to decided page
         if: ${{ !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
@@ -257,8 +249,6 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - run: node tools/qa-shards.mjs
-
       - name: Install
         run: pnpm install --frozen-lockfile
 
@@ -286,10 +276,6 @@ jobs:
       - uses: ./.github/actions/qa-fixtures
         if: needs.fixtures.result == 'skipped'
 
-      - name: Check current workspace spec coverage on a restored snapshot
-        if: needs.fixtures.outputs.reused == 'true' && matrix.ws && matrix.id == '1'
-        run: node .github/qa/spec-counts.mjs --lists
-
       - name: Renew portal sessions from cached fixtures
         if: needs.fixtures.outputs.reused == 'true'
         env:
@@ -303,6 +289,14 @@ jobs:
       # The env-gated specs (BOS_E2E_P4 and the *_ID variables) run against these fixtures instead of skipping.
       - name: Export the fixture ids to the spec environment
         run: bash .github/qa/export-ids.sh
+
+      - name: Assign the current workspace specs to shards
+        if: matrix.mode == 'specs'
+        run: node tools/qa-shards.mjs
+
+      - name: Check current workspace spec coverage
+        if: matrix.mode == 'specs' && matrix.id == '1'
+        run: node .github/qa/spec-counts.mjs --lists
 
       # With a spec filter set both Playwright steps pass with no tests, so a mistyped filter would pass silently: print how
       # many tests each step runs and fail when the filter matched none in either suite (.github/qa/spec-counts.mjs).
@@ -387,7 +381,7 @@ jobs:
           pnpm --filter @bos/portal exec playwright test --repeat-each="$REPEAT_EACH" "${extra[@]}" "${filter[@]}"
 
       # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
-      # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
+      # successful Approves is over the configured page limit; the repository variable QA_APPROVE_P95_LIMIT_MS overrides
       # the limit without a commit.
       - name: Approve to decided page
         if: ${{ needs.fixtures.result == 'skipped' && !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
@@ -450,16 +444,20 @@ jobs:
           node "$GITHUB_WORKSPACE/.github/qa/flow-summary.mjs" --gate pages.jsonl api.jsonl >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
-        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success'
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success' && needs.fixtures.outputs.reused != 'true'
         with:
           name: qa-approval-samples
           path: ${{ runner.temp }}/approval
 
       - name: Check dispatch fixture approval timings
-        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success'
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success' && needs.fixtures.outputs.reused != 'true'
         env:
           BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
         run: node .github/qa/approve-timing.mjs "$RUNNER_TEMP/approval/qa-approve-timings.jsonl" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record skipped approval timing
+        if: github.event_name == 'workflow_dispatch' && needs.fixtures.outputs.reused == 'true'
+        run: 'echo "Approve timing skipped: snapshot reuse" >> "$GITHUB_STEP_SUMMARY"'
 
       - name: Every needed job succeeded or was skipped
         env:

@@ -19,6 +19,9 @@ import {
   VendorPortalPurchaseOrderViewSchema,
   type ApprovalRequestDto,
 } from '@bos/contracts';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { systemActor, withTx } from '../../src/platform/db/tx';
 import { createCompanyBankAccount, createExpenseAccount } from '@bos/db';
 import {
   afterAll,
@@ -376,6 +379,13 @@ describe('P4 exit Journey 11: department request to approved payment request ove
     expect(route.steps.map((step) => step.roleKey)).not.toContain('accountant');
     expect(route.steps.map((step) => step.roleKey)).not.toContain('finance');
     expect(world.personas.departmentHead.tokenRoles).toEqual(['operations_officer']);
+    // Keep this JSON number exact in Postgres. A JavaScript round trip would round it down.
+    const updated = await withTx(drizzle(world.pool), world.scope, systemActor('test'), (tx) =>
+      tx.execute(sql`update app.approval_requests
+        set facts = facts || '{"largeNumber":9007199254740993}'::jsonb
+        where tenant_id = ${world.scope.tenantId} and id = ${route.requestId}`),
+    );
+    expect(updated.rowCount).toBe(1);
     const head = await auth('departmentHead');
     const inbox = await get<{ requestId: string }[]>('/v1/approvals/inbox', head);
     expect(inbox.map((item) => item.requestId)).toEqual([route.requestId]);
