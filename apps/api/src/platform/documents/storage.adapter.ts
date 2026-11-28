@@ -35,6 +35,7 @@ export interface StorageAdapter {
     src: Readable,
     maxBytes: number,
   ): Promise<{ bytes: number; sha256: Buffer; head: Buffer }>;
+  commitQuarantine(stageKey: string, versionKey: string): Promise<void>;
   /** Moves quarantine/<key> to clean/<key>. Safe to repeat (a retried job finds it already moved). */
   promote(key: string): Promise<void>;
   openClean(key: string): Promise<Readable>;
@@ -103,6 +104,10 @@ export class DiskStorageAdapter implements StorageAdapter {
       throw error;
     }
     return { bytes, sha256: hash.digest(), head: Buffer.concat(head) };
+  }
+
+  commitQuarantine(stageKey: string, versionKey: string): Promise<void> {
+    return rename(this.quarantinePath(stageKey), this.quarantinePath(versionKey));
   }
 
   async promote(key: string): Promise<void> {

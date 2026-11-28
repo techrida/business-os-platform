@@ -885,6 +885,7 @@ describe('DocumentsService.createAndReceiveScanned', () => {
         writeFileSync(join(dir, key.replaceAll('/', '_')), bytes);
         return { bytes: bytes.length, sha256: Buffer.alloc(32), head: bytes.subarray(0, 4100) };
       }),
+      commitQuarantine: vi.fn(),
       quarantinePath: (key: string) => join(dir, key.replaceAll('/', '_')),
       promote: vi.fn(),
       removeQuarantine: vi.fn(),
@@ -912,7 +913,7 @@ describe('DocumentsService.createAndReceiveScanned', () => {
     expect(policy.allowsSystemActor).toHaveBeenCalled();
     expect(authz.assert).not.toHaveBeenCalled();
     expect(p.updates[0]).toMatchObject({ status: 'quarantined' });
-    expect(p.updates[1]).toMatchObject({ detectedMime: 'image/png' });
+    expect(p.updates[0]).toMatchObject({ detectedMime: 'image/png' });
     expect(p.queue.add).toHaveBeenCalledTimes(1);
     expect(p.queue.add).toHaveBeenCalledWith(
       DOCS_SCAN_JOB,

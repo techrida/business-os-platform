@@ -414,7 +414,7 @@ describe('PUT .../content (raw streamed upload)', () => {
         return Promise.resolve({});
       },
     };
-    const sweeper = new ScanSweepProcessor(db, sweepQueue as unknown as Queue);
+    const sweeper = new ScanSweepProcessor(db, sweepQueue as unknown as Queue, storage);
     await sweeper.sweep(new Date(Date.now() + 16 * 60_000));
     expect(added).toContainEqual({ name: 'docs.scan', data: scanJob(c.versionId) });
     expect(await processor.scanVersion(scanJob(c.versionId), true)).toBe('clean');
@@ -466,40 +466,43 @@ describe('PUT .../content (raw streamed upload)', () => {
         ),
     ],
     ['the body is shorter than Content-Length', () => Readable.from([PDF().subarray(0, 10)])],
-  ])(
-    'keeps a version quarantined when %s: a second PUT is a 409 and the retry is a new version (EF3)',
-    async (_name, body) => {
-      const c = await create();
-      await expect(
-        service.receiveContent(c.versionId, body(), PDF().length, {
-          documentId: c.documentId,
-          who: { scope: current.scope, actor: current.actor },
-        }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      const failed = await row(c.versionId);
-      // Old code put it back to awaiting_content, so the next PUT reused the same version.
-      expect(failed.status).toBe('quarantined');
-      expect(failed.sha256).toBeNull();
-      expect(failed.detected_mime).toBeNull();
-      expect(existsSync(storage.quarantinePath(failed.storage_key))).toBe(false);
+  ])('allows a retry of the same version when %s', async (_name, body) => {
+    const c = await create();
+    await expect(
+      service.receiveContent(c.versionId, body(), PDF().length, {
+        documentId: c.documentId,
+        who: { scope: current.scope, actor: current.actor },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const failed = await row(c.versionId);
+    expect(failed.status).toBe('awaiting_content');
+    expect(failed.sha256).toBeNull();
+    expect(existsSync(storage.quarantinePath(failed.storage_key))).toBe(false);
+    expect((await put(c.uploadPath, PDF(), 'application/pdf')).status).toBe(200);
+  });
 
-      const again = await put(c.uploadPath, PDF(), 'application/pdf');
-      expect(again.status, JSON.stringify(again.body)).toBe(409);
-      expect((await row(c.versionId)).status).toBe('quarantined');
-
-      const next = await request(baseUrl).post(`/v1/documents/${c.documentId}/versions`).send({
-        filename: 'invoice.pdf',
-        declaredMime: 'application/pdf',
-        sizeBytes: PDF().length,
-      });
-      expect(next.status, JSON.stringify(next.body)).toBe(201);
-      const retry = next.body as Created;
-      expect(retry.versionId).not.toBe(c.versionId);
-      expect((await put(retry.uploadPath, PDF(), 'application/pdf')).status).toBe(200);
-      expect((await row(retry.versionId)).status).toBe('quarantined');
-      expect((await row(retry.versionId)).sha256).not.toBeNull();
-    },
-  );
+  it('retries the same PUT after a digest commit lock timeout and scans the retried bytes', async () => {
+    const c = await create();
+    const admin = new Pool({ connectionString: testDb.adminUrl, max: 1 });
+    try {
+      await admin.query(`CREATE FUNCTION fail_digest_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'canceling statement due to lock timeout' USING ERRCODE = '55P03'; END $$`);
+      await admin.query(`CREATE CONSTRAINT TRIGGER fail_digest_commit AFTER UPDATE ON app.document_versions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.id = '${c.versionId}' AND NEW.sha256 IS NOT NULL)
+        EXECUTE FUNCTION fail_digest_commit()`);
+      expect((await put(c.uploadPath, PDF(), 'application/pdf')).status).toBe(503);
+      expect(queue.add).not.toHaveBeenCalled();
+      const pending = await row(c.versionId);
+      expect(pending.status).toBe('awaiting_content');
+      expect(existsSync(storage.quarantinePath(pending.storage_key))).toBe(true);
+    } finally {
+      await admin.query('DROP FUNCTION IF EXISTS fail_digest_commit() CASCADE');
+      await admin.end();
+    }
+    expect((await put(c.uploadPath, PDF(), 'application/pdf')).status).toBe(200);
+    expect(queue.add).toHaveBeenCalledTimes(1);
+    expect(await processor.scanVersion(scanJob(c.versionId), true)).toBe('clean');
+  });
 
   it('answers 411 when there is no Content-Length (chunked encoding)', async () => {
     const c = await create();

@@ -134,7 +134,7 @@ interface Seeded {
 
 /** A document with one version in `status`; with `bytes` the file is also written to quarantine/. */
 async function seed(
-  status: 'quarantined' | 'scan_failed' = 'quarantined',
+  status: 'awaiting_content' | 'quarantined' | 'scan_failed' = 'quarantined',
   opts: {
     bytes?: Buffer | null;
     scanEngine?: string | null;
@@ -163,10 +163,11 @@ async function seed(
       storageKey,
       status: 'awaiting_content',
     });
-    await tx
-      .update(documentVersions)
-      .set({ status: 'quarantined' })
-      .where(eq(documentVersions.id, versionId));
+    if (status !== 'awaiting_content')
+      await tx
+        .update(documentVersions)
+        .set({ status: 'quarantined' })
+        .where(eq(documentVersions.id, versionId));
     // The receive records both in one UPDATE after its checks: that is what marks the bytes as validated.
     if (opts.unvalidated !== true) {
       await tx
@@ -213,7 +214,8 @@ async function row(versionId: string) {
 const bullJob = (data: ScanJobData, attemptsMade: number, attempts: number) =>
   ({ name: DOCS_SCAN_JOB, data, attemptsMade, opts: { attempts } }) as unknown as Job<ScanJobData>;
 
-const sweeperFor = (queue: FakeQueue) => new ScanSweepProcessor(db, queue as unknown as Queue);
+const sweeperFor = (queue: FakeQueue) =>
+  new ScanSweepProcessor(db, queue as unknown as Queue, storage);
 
 // ------------------------------------------------------------------------------------------- R7
 
@@ -278,19 +280,22 @@ describe('R7: the sweeper', () => {
     });
   });
 
-  it('neither scans nor re-queues a quarantined version whose upload never recorded its validation', async () => {
-    const s = await seed('quarantined', { unvalidated: true });
-    const queue = new FakeQueue();
-    await sweeperFor(queue).sweep(later());
-    expect(queue.added(s.versionId)).toHaveLength(0);
-    // A scan job that arrives anyway (an old one) does not publish the bytes either.
-    expect(
-      await processorFor({
-        scan: () => Promise.resolve({ verdict: 'clean', ms: 1 }),
-      } as unknown as ClamdClient).scanVersion(s.job, true),
-    ).toBe('skipped');
-    expect((await row(s.versionId)).status).toBe('quarantined');
-  });
+  it.each(['awaiting_content', 'quarantined'] as const)(
+    'rejects an expired %s upload without scanning unvalidated bytes',
+    async (status) => {
+      const s = await seed(status, { unvalidated: true });
+      const queue = new FakeQueue();
+      await sweeperFor(queue).sweep(later());
+      expect(queue.added(s.versionId)).toHaveLength(0);
+      // A scan job that arrives anyway (an old one) does not publish the bytes either.
+      expect(
+        await processorFor({
+          scan: () => Promise.resolve({ verdict: 'clean', ms: 1 }),
+        } as unknown as ClamdClient).scanVersion(s.job, true),
+      ).toBe('skipped');
+      expect((await row(s.versionId)).status).toBe('rejected');
+    },
+  );
 
   it('fails closed: an upload that never recorded its validation is never scanned, published or served, however old', async () => {
     const s = await seed('quarantined', { unvalidated: true });
@@ -303,9 +308,9 @@ describe('R7: the sweeper', () => {
       await processorFor({ scan: never } as unknown as ClamdClient).scanVersion(s.job, true),
     ).toBe('skipped');
     expect(never).not.toHaveBeenCalled();
-    // Still quarantined, with no verdict, and the document never points at it.
+    // Rejected, with no verdict, and the document never points at it.
     expect(await row(s.versionId)).toMatchObject({
-      status: 'quarantined',
+      status: 'rejected',
       scan_engine: null,
       current_version_id: null,
     });
