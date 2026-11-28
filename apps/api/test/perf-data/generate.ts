@@ -565,6 +565,8 @@ export async function manifest(pool: Pool) {
         [scope.tenantId],
       )
     ).rows.map((r) => r.id),
+    vendorPortalUser: perfId('vendor-portal-user'),
+    vendorId: vendor,
     portalUsers: (
       await pool.query<{ id: string; party_id: string; idp_org_id: string }>(
         `SELECT u.id,o.party_id,u.idp_org_id FROM app.users u JOIN app.idp_orgs o ON o.id=u.idp_org_id AND o.tenant_id=u.tenant_id WHERE u.tenant_id=$1 AND o.kind='customer' ORDER BY u.id`,

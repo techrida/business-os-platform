@@ -38,7 +38,22 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+// Bake the namespace into development builds. All cookie reads and writes must use the
+// same names even if the service environment changes between build and start.
+const cookieNamespace =
+  isDev || process.env.BOS_BUILD_PROFILE === 'dev'
+    ? process.env.BOS_DEV_COOKIE_NAMESPACE
+    : undefined;
+if (cookieNamespace !== undefined && !/^[a-z][a-z0-9-]{0,31}$/.test(cookieNamespace)) {
+  throw new Error('Invalid BOS_DEV_COOKIE_NAMESPACE');
+}
+
 const nextConfig: NextConfig = {
+  env: {
+    BOS_PORTAL_COOKIE_PREFIX: cookieNamespace
+      ? `__Host-bos_${cookieNamespace}_portal`
+      : '__Host-bos_portal',
+  },
   output: 'standalone',
   // Show images as they are: nothing resizes them on the server, so the image library (sharp) stays out of the build.
   images: { unoptimized: true },

@@ -37,11 +37,7 @@ function loadManifest() {
 }
 export const manifest = loadManifest();
 
-export function staffToken(role) {
-  return staffSession(role).token;
-}
-
-export function staffSession(role) {
+function credentialSession(role) {
   const prefix = 'K6_PERF_' + role.toUpperCase();
   const id = __ENV[prefix + '_CLIENT_ID'];
   const secret = __ENV[prefix + '_CLIENT_SECRET'];
@@ -60,7 +56,18 @@ export function staffSession(role) {
     { headers: { Authorization: 'Basic ' + basic }, redirects: 0, tags: { name: 'setup-token' } },
   );
   if (res.status !== 200) fail('Perf token request failed for ' + role + ': ' + res.status);
-  const token = res.json('access_token');
+  const lifetime = res.json('expires_in');
+  if (!(lifetime > 0)) fail('Missing perf token lifetime for ' + role);
+  return { token: res.json('access_token'), expiresAt: Date.now() + lifetime * 1000 };
+}
+
+export function staffToken(role) {
+  return staffSession(role).token;
+}
+
+export function staffSession(role) {
+  const session = credentialSession(role);
+  const { token } = session;
   const me = request(token, 'setup-me', 'GET', '/v1/me', null, 200).json();
   if (
     !manifest.staff[role] ||
@@ -70,24 +77,31 @@ export function staffSession(role) {
     !me.roles.includes(role)
   )
     fail('Unexpected perf identity for ' + role);
-  const lifetime = res.json('expires_in');
-  if (!(lifetime > 0)) fail('Missing perf token lifetime for ' + role);
-  return { token, expiresAt: Date.now() + lifetime * 1000 };
+  return session;
 }
 
-export function request(
-  token,
-  flow,
-  method,
-  path,
-  body,
-  status,
-  key,
-  contentType = 'application/json',
-) {
+export function portalToken(role) {
+  const { token } = credentialSession(role);
+  const me = request(token, 'setup-me', 'GET', '/v1/me', null, 200).json();
+  const customer = role === 'customer_user';
+  const expected = customer
+    ? manifest.portalUsers.some((u) => u.id === me.id && u.party_id === me.partyId)
+    : me.id === manifest.vendorPortalUser && me.partyId === manifest.vendorId;
+  if (
+    !expected ||
+    me.orgKind !== (customer ? 'customer' : 'vendor') ||
+    me.tenantId !== manifest.tenantId ||
+    me.organizationId !== manifest.organizationId ||
+    !me.roles.includes(role)
+  )
+    fail('Unexpected perf portal identity');
+  return token;
+}
+
+export function request(token, flow, method, path, body, status, key, mime = 'application/json') {
   const headers = {
     Authorization: 'Bearer ' + token,
-    'Content-Type': contentType,
+    'Content-Type': mime,
     'X-Entity-Id': manifest.organizationId,
     'X-Perf-Flow': flow,
   };
@@ -95,14 +109,20 @@ export function request(
   const res = http.request(
     method,
     api + path,
-    body == null || contentType !== 'application/json' ? body : JSON.stringify(body),
+    body == null || mime !== 'application/json' ? body : JSON.stringify(body),
     {
       headers,
       redirects: 0,
       tags: { name: flow, flow },
     },
   );
-  if (!check(res, { [flow]: (r) => r.status === status }, { flow })) {
+  if (
+    !check(
+      res,
+      { [flow]: (r) => (Array.isArray(status) ? status.includes(r.status) : r.status === status) },
+      { flow },
+    )
+  ) {
     let code;
     try {
       code = res.json('error.code');

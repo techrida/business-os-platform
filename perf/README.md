@@ -82,6 +82,38 @@ After all selected scripts, including a failed gate, the runner stops the dispos
 
 `perf/seed/db-reads.sql` and `pnpm perf:seed-db-reads` are the original quotation/approval read benchmark fixture. They write to an existing demo entity and intentionally create artificial historical states. They are **not** part of the isolated Wave 2 data generator above; do not use them to populate the perf company without reviewing the seed's assumptions.
 
+### Payment and report measurements
+
+Set `BOS_PERF_WORKLOAD=money` when running the fixture loader to seed the money workload.
+Full scale creates 10,000 issued invoices across a year and 5,000 payments. For the small
+fixture set `BOS_PERF_SCALE=small` and run
+`K6_PERF_DURATION=3s K6_PERF_RATE=1 bash perf/k6/run-company.sh money`.
+Each payment iteration consumes a different seeded invoice. At full scale, the default
+60-second run fits within the fixture.
+
+An accountant uploads a proof, waits for its clean scan and records a payment. Finance
+verifies the payment, allocates it in full and checks the invoice's paid status. The
+concurrent report scenario reads the current month's sales VAT register and today's
+receivables aging. The aging endpoint only supports an as-of-today report. The runner
+reports server request times separately for each operation and uses the scan queue's
+added and completed event timestamps to measure the background job. Report p95 under
+800 ms is good and 1,800 ms is the failing threshold.
+
+### Platform workload
+
+Add `-e BOS_PERF_PLATFORM=1` to the disposable staff identity seed command above for
+the platform workload. This provisions one customer and one vendor machine user in separate
+organizations. The loader maps them to the first perf customer and the invited perf vendor.
+Load the fixture offline, start the API and worker, then run `bash perf/k6/run-company.sh platform`.
+Use the API with the paged inbox and summary routes (P-8).
+
+The workload covers inbox list/count/summary, verification file reservation and byte upload,
+scan status reads, access policy and workflow draft saves, filtered audit events, customer
+invoices, a vendor quotation submission, and sidebar reads. Navigation search filters the
+sidebar links in the browser and makes zero API requests. Measure its visible result in a browser.
+The scan report joins each verification upload to its BullMQ added and completed events by
+version ID. Times exclude polling delay. A missing completion fails the run.
+
 ## Procurement workload
 
 Use the staff workload setup above with a fresh perf company. Set `BOS_PERF_SCALE=small` for a smoke run or `BOS_PERF_SCALE=procurement` for volume. Keep the same scale in the environment for both the loader and the runner.

@@ -566,13 +566,18 @@ describe('@bos/seed-zitadel', () => {
 
   it('provisions separate perf subjects and reuses their client credentials', async () => {
     const { files, deps } = setup();
-    await runSeed({ ...deps, perfStaff: true });
+    await runSeed({ ...deps, perfStaff: true, perfPlatform: true });
     const file = files.data.get('perf-subjects.json')!;
     const { subjects } = JSON.parse(file) as { subjects: Record<string, string> };
     expect(subjects.warehouse).toBeTruthy();
-    expect(new Set(Object.values(subjects)).size).toBe(7);
+    const { portalOrgs, orgId } = JSON.parse(file) as {
+      portalOrgs: Record<string, string>;
+      orgId: string;
+    };
+    expect(new Set([orgId, portalOrgs.customer_user, portalOrgs.vendor_user]).size).toBe(3);
+    expect(new Set(Object.values(subjects)).size).toBe(9);
     const previous = files.data.get('k6.env');
-    await runSeed({ ...deps, perfStaff: true });
+    await runSeed({ ...deps, perfStaff: true, perfPlatform: true });
     expect(files.data.get('k6.env') === previous).toBe(true);
     expect(files.data.get('perf-subjects.json')).toBe(file);
   });

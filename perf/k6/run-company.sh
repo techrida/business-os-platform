@@ -33,9 +33,29 @@ for script in "$@"; do
     docker compose exec -T worker node - "$started" < perf/k6/procurement-jobs.cjs || result=1
   fi
   case "$script" in
-    sales|approvals|procurement)
+    sales|approvals|money|platform|procurement)
       docker compose logs --no-log-prefix --since "$started" api | node perf/k6/backend-summary.mjs "$script" || result=1 ;;
   esac
+  if [[ "$script" == money ]]; then
+    # Read only this run's docs.scan events from the disposable worker's queue.
+    docker compose exec -T worker node -e '
+      const Redis = require("ioredis");
+      const db = new Redis(process.env.VALKEY_URL);
+      db.xrange("bull:docs.scan:events", Date.parse(process.argv[1]) + "-0", "+")
+        .then(events => console.log(JSON.stringify(events)))
+        .finally(() => db.disconnect());
+    ' "$started" | node perf/k6/scan-times.mjs || result=1
+  fi
+  if [[ "$script" == platform ]]; then
+    manifest=${BOS_PERF_MANIFEST:-$BOS_PERF_STORAGE_ROOT/perf-manifest.json}
+    # The job event stream retains both endpoints even after BullMQ evicts a completed job.
+    for file in platform-scan-report.mjs scan-times.mjs backend-summary.mjs platform-flows.mjs; do
+      docker compose cp "perf/k6/$file" "api:/tmp/$file"
+    done
+    docker compose exec -T api node /tmp/platform-scan-report.mjs "$started" \
+      "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).tenantId' "$manifest")" \
+      "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).organizationId' "$manifest")" || result=1
+  fi
   if [[ "$script" == sales ]]; then
     pnpm --filter @bos/api exec tsx test/perf-data/cli.ts pdf-times "$started" || result=1
   fi

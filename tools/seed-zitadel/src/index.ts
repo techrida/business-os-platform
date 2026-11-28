@@ -249,6 +249,7 @@ export interface SeedDeps {
   adminUsername?: string;
   configureDevMailpit?: boolean;
   perfStaff?: boolean;
+  perfPlatform?: boolean;
 }
 
 export interface SeedResult {
@@ -583,19 +584,29 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     else if (!sameSet(grant.roleKeys, roles))
       await api.updateProjectGrant(projectId, orgId, [...roles]);
     const subjects: Record<string, string> = {};
-    for (const role of roles) {
+    const portalOrgs: Record<string, string> = {};
+    const portalRoles = deps.perfPlatform ? (['customer_user', 'vendor_user'] as const) : [];
+    for (const role of [...roles, ...portalRoles]) {
+      let accountOrg = orgId;
+      if (role === 'customer_user' || role === 'vendor_user') {
+        const portalName = 'Business OS disposable perf ' + role;
+        accountOrg = (await api.findOrgByName(portalName)) ?? (await api.createOrg(portalName));
+        if (!grants.some((g) => g.grantedOrgId === accountOrg))
+          await api.createProjectGrant(projectId, accountOrg, [role]);
+        portalOrgs[role] = accountOrg;
+      }
       const username = `bos-perf-${role}`;
       const user =
-        (await api.findUser(orgId, username)) ??
+        (await api.findUser(accountOrg, username)) ??
         (await api.createMachineUser({
           username,
           name: `Perf ${role}`,
-          description: 'Disposable perf staff',
-          orgId,
+          description: 'Disposable perf workload',
+          orgId: accountOrg,
         }));
       await ensureAuthorization(
         user.id,
-        orgId,
+        accountOrg,
         role === 'management' ? [role, 'accountant'] : [role],
         username,
       );
@@ -606,7 +617,10 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
         (user.hasSecret && k6Env[`${prefix}_CLIENT_SECRET`]) || (await api.addSecret(user.id));
       perfClientIds.push(username);
     }
-    await files.write('perf-subjects.json', JSON.stringify({ orgId, subjects }));
+    await files.write(
+      'perf-subjects.json',
+      JSON.stringify({ orgId, subjects, ...(deps.perfPlatform ? { portalOrgs } : {}) }),
+    );
   }
   if (
     await files.write(
@@ -1248,6 +1262,7 @@ export async function main(): Promise<void> {
     webhookUrl: process.env['ZITADEL_WEBHOOK_URL'] ?? DEFAULT_WEBHOOK_URL,
     adminUsername: process.env['ZITADEL_ADMIN_USERNAME'] ?? DEFAULT_ADMIN_USERNAME,
     perfStaff,
+    perfPlatform: process.env['BOS_PERF_PLATFORM'] === '1',
     configureDevMailpit: process.env['BOS_SEED_DEV_MAILPIT'] === 'true',
   });
   console.log(

@@ -1,8 +1,11 @@
 // Read the selected compose API's JSON logs from stdin. Retain only flow names and elapsed times.
+import { readFileSync } from 'node:fs';
+import { platformFlows } from './platform-flows.mjs';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 const groups = {
+  platform: platformFlows,
   sales: [
     'create-lead',
     'move-lead',
@@ -20,6 +23,13 @@ const groups = {
     'record-receipt',
     'enter-vendor-bill',
     'approve-bill',
+  ],
+  money: [
+    'record-payment',
+    'verify-payment',
+    'allocate-payment',
+    'open-vat-register',
+    'open-receivables',
   ],
   approvals: ['approve', 'approve-final', 'preview', 'write', 'submit'],
 };
@@ -54,14 +64,25 @@ export async function summarize(lines, flows) {
   });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const platform = process.argv[2] === 'platform';
+  const limits = platform
+    ? JSON.parse(
+        readFileSync(new URL('../../.github/qa/flow-limits.json', import.meta.url), 'utf8'),
+      )
+    : {};
   const flows = groups[process.argv[2]];
-  if (!flows) throw new Error('Choose a known workload');
+  if (!flows) throw new Error('Unknown workload');
   console.log('Measured API request time in milliseconds: flow, count, p50, p95, p99');
   for (const { flow, n, percentiles } of await summarize(
     createInterface({ input: process.stdin }),
     flows,
   )) {
     console.log([flow, n, ...percentiles.map((p) => p.toFixed(1))].join(', '));
-    if (!n || percentiles[1] >= 80) process.exitCode = 1;
+    const limit = platform
+      ? limits[flow].backend.poor
+      : ['open-vat-register', 'open-receivables'].includes(flow)
+        ? 1800
+        : 80;
+    if (!n || percentiles[1] >= limit) process.exitCode = 1;
   }
 }

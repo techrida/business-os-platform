@@ -1,0 +1,25 @@
+name: Collect QA flow timing samples
+description: Keep page samples and the API completion fields needed to match their requests
+inputs:
+  lane:
+    required: true
+    description: Unique job name
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/qa-timings"
+        touch .dev/qa-flow-timings.jsonl
+        cp .dev/qa-flow-timings.jsonl "$RUNNER_TEMP/qa-timings/page.jsonl"
+        jq -Rc --slurpfile samples .dev/qa-flow-timings.jsonl '
+          ([$samples[].requestIds[]] | INDEX(.)) as $ids |
+          fromjson? | select(.msg == "request completed" and .req.method == "POST" and $ids[.req.id]) |
+          {msg,responseTime,req:{id:.req.id,method:.req.method,url:(.req.url|split("?")[0])}}
+        ' .dev/logs/api.log > "$RUNNER_TEMP/qa-timings/api.jsonl"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-timings-${{ inputs.lane }}
+        path: ${{ runner.temp }}/qa-timings/
+        retention-days: 1
+        overwrite: true

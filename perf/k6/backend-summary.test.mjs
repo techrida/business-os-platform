@@ -32,3 +32,12 @@ test('procurement job timing follows the queued job through retries and excludes
   ];
   assert.deepEqual(jobDurations(events, 'docs.scan'), { pending: 1, durations: [5] });
 });
+
+test('scan queue timing includes waiting and fails on incomplete jobs', async () => {
+  const { scanTimes } = await import('./scan-times.mjs');
+  const event = (ms, event, jobId) => [ms + '-0', ['event', event, 'jobId', jobId]];
+  const events = [event(1, 'added', 'a'), event(10, 'added', 'b'), event(31, 'completed', 'a')];
+  assert.throws(() => scanTimes(events), /incomplete/);
+  assert.deepEqual(scanTimes([...events, event(20, 'completed', 'b')]), [10, 30]);
+  assert.throws(() => scanTimes([]), /no jobs/i);
+});

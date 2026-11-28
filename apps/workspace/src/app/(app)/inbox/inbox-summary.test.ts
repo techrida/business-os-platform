@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { inboxSummaryCards } from './inbox-summary';
 
-const of = (...types: string[]) => types.map((documentType) => ({ documentType }));
+const of = (...types: string[]) => types.map((documentType) => ({ documentType, count: 1 }));
 
 describe('inboxSummaryCards', () => {
   it('has no cards for an empty inbox', () => {
@@ -10,7 +10,7 @@ describe('inboxSummaryCards', () => {
   });
 
   it('shows only the total when every request is one type', () => {
-    const cards = inboxSummaryCards(of('tax_invoice', 'tax_invoice'));
+    const cards = inboxSummaryCards([{ documentType: 'tax_invoice', count: 2 }]);
     expect(cards.map((c) => [c.label, c.value])).toEqual([['Waiting for you', 2]]);
   });
 
