@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { pickFromCombobox } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import {
@@ -122,14 +123,19 @@ test('the person who recorded a payment cannot verify it', async ({ browser, bas
     ).toBeVisible({ timeout: 60_000 });
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await page.getByRole('button', { name: 'Record payment', exact: true }).click();
-      await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click();
-      if (
-        await page
+      const confirm = page
+        .getByRole('dialog')
+        .getByRole('button', { name: 'Confirm', exact: true });
+      const opened = await timeAction('record-payment', confirm, async () => {
+        const success = await page
           .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
           .then(() => true)
-          .catch(() => false)
-      )
-        break;
+          .catch(() => false);
+        if (success)
+          await expect(page.getByText('Awaiting verification', { exact: true })).toBeVisible();
+        return success;
+      });
+      if (opened) break;
       await expect(page.getByText(/A proof file is not ready yet/)).toBeVisible();
       await page.waitForTimeout(5_000);
     }

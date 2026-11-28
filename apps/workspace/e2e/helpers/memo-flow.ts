@@ -1,5 +1,6 @@
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
+import { timeAction } from './flow-timing';
 import { persona } from './personas';
 import { chooseOption, hasSelection, selectByLabel } from './select';
 import { signInOnZitadel } from './zitadel-login';
@@ -152,12 +153,13 @@ export async function submitMemo(page: Page): Promise<string> {
   const submit = page.getByRole('button', { name: 'Submit for approval', exact: true });
   await expect(submit).toBeEnabled({ timeout: 30_000 });
   await submit.click();
-  await page
+  const confirm = page
     .getByRole('dialog', { name: 'Submit for approval?' })
-    .getByRole('button', { name: 'Submit for approval', exact: true })
-    .click();
-  await page.waitForURL(/[?&]submitted=pending\b/, { timeout: 30_000 });
-  await expect(page.getByText('Submitted for approval.', { exact: false })).toBeVisible();
+    .getByRole('button', { name: 'Submit for approval', exact: true });
+  await timeAction('submit-memo', confirm, async () => {
+    await page.waitForURL(/[?&]submitted=pending\b/, { timeout: 30_000 });
+    await expect(page.getByText('Submitted for approval.', { exact: false })).toBeVisible();
+  });
   const link = page.getByRole('link', { name: 'View the approval route and history' });
   const href = (await link.getAttribute('href')) ?? '';
   const requestId = /\/inbox\/([0-9a-f-]{36})$/.exec(href)?.[1];

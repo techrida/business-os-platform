@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { approveInboxRequest, idFromUrl, recordFixtureIds } from '../helpers/fixture-flow';
 import { ensureLeadOwner } from '../helpers/lead-owner';
 import { signInAs, type Signed } from '../helpers/memo-flow';
@@ -88,8 +89,10 @@ async function buildQuotation(page: Page, opportunityId: string, submit: boolean
   await expect(page.getByRole('table', { name: 'Quotation lines' })).toContainText(
     'QA fixture implementation',
   );
-  await save.click();
-  await expect(page).toHaveURL(/\/quotations\/[^/]+\/edit\?saved=1/);
+  await timeAction('save-quotation', save, async () => {
+    await expect(page).toHaveURL(/\/quotations\/[^/]+\/edit\?saved=1/);
+    await expect(page.getByRole('heading', { level: 1, name: /^QT-/ })).toBeVisible();
+  });
   const id = idFromUrl(page);
   if (!submit) return id;
 

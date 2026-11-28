@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { signInAs } from '../helpers/memo-flow';
 import { chooseOption, selectByLabel } from '../helpers/select';
 
@@ -38,9 +39,11 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await chooseOption(selectByLabel(add, 'Tax code'), { index: 0 });
     await add.getByRole('button', { name: 'Add line', exact: true }).click();
     await expect(lines.getByText('HRMS implementation')).toBeVisible();
-    await save.click();
-    await expect(page).toHaveURL(/\/quotations\/[^/]+\/edit\?saved=1/);
-    await expect(page.getByText('Draft saved.', { exact: true })).toBeVisible();
+    await timeAction('save-quotation', save, async () => {
+      await expect(page).toHaveURL(/\/quotations\/[^/]+\/edit\?saved=1/);
+      await expect(page.getByText('Draft saved.', { exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { level: 1, name: /^QT-/ })).toBeVisible();
+    });
   });
 
   await test.step('reopen a saved line, cancel changes, then save a real edit', async () => {

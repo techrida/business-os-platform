@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { fillDateField } from '../helpers/date-fields';
 import {
   approveInboxRequest,
@@ -70,11 +71,12 @@ async function raiseRequest(
   await expect(page).toHaveURL(/\/procurement\/requests\/[0-9a-f-]{36}\?created=1$/);
   const id = idFromUrl(page);
   await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
-  await page
+  const confirm = page
     .getByRole('dialog', { name: 'Submit for approval?' })
-    .getByRole('button', { name: 'Submit for approval', exact: true })
-    .click();
-  await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
+    .getByRole('button', { name: 'Submit for approval', exact: true });
+  await timeAction('submit-purchase-request', confirm, async () => {
+    await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
+  });
   return { id, number: (await page.getByRole('heading', { level: 1 }).innerText()).trim() };
 }
 
@@ -256,10 +258,15 @@ test('qa fixtures: one connected Journey 11 (request, RFQ, order, serialized rec
       await chooseOption(selectByLabel(enterer, 'VAT'), { label: ZERO_RATED });
       await enterer.getByRole('combobox', { name: 'Expense account', exact: true }).click();
       await enterer.getByRole('option').first().click();
-      await enterer.getByRole('button', { name: 'Create bill', exact: true }).click();
-      await expect(enterer).toHaveURL(/\/payables\/bills\/[0-9a-f-]{36}(\?created=1)?$/);
+      await timeAction(
+        'enter-vendor-bill',
+        enterer.getByRole('button', { name: 'Create bill', exact: true }),
+        async () => {
+          await expect(enterer).toHaveURL(/\/payables\/bills\/[0-9a-f-]{36}(\?created=1)?$/);
+          await expect(enterer.getByText('Matched', { exact: true }).first()).toBeVisible();
+        },
+      );
       ids['p4ExitBill'] = idFromUrl(enterer);
-      await expect(enterer.getByText('Matched', { exact: true }).first()).toBeVisible();
       const submit = enterer.getByRole('button', { name: 'Submit for approval', exact: true });
       await submit.click();
       await enterer
