@@ -10,6 +10,11 @@ name: qa
 on:
   workflow_dispatch:
     inputs:
+      shard_ceiling:
+        description: Maximum workspace shards for a hosted timing comparison
+        type: choice
+        options: ['14', '10', '6']
+        default: '10'
       spec_filter:
         description: 'Playwright file filter (a path or regex, empty = all), e.g. p4/list-filters'
         required: false
@@ -37,6 +42,7 @@ concurrency:
 
 env:
   CI: 'true'
+  QA_SHARD_CEILING: ${{ inputs.shard_ceiling || '10' }}
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
@@ -52,7 +58,9 @@ jobs:
       skip: ${{ steps.affected.outputs.skip }}
       qa-workspace: ${{ steps.affected.outputs.qa-workspace }}
       qa-portal: ${{ steps.affected.outputs.qa-portal }}
-      qa-matrix: ${{ steps.affected.outputs.qa-matrix }}
+      parallel: ${{ steps.capacity.outputs.count || '1' }}
+      count: ${{ inputs.shard_ceiling || steps.capacity.outputs.count || '1' }}
+      qa-matrix: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,20 +91,154 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
-  workspace:
-    # Two shards of the specs that pass today (the explicit lists .github/qa/shard-a.txt and shard-b.txt, balanced by
-    # measured duration; the portal specs run on shard B), plus one non-blocking job for the specs in
-    # .github/qa/quarantine.txt when it has content (they fail on the current code for reasons that are not the stack:
-    # see that file's history and the QA report). Each job pays about 18 minutes to bring up the stack, so a third
-    # shard costs more than it saves.
-    name: qa ${{ matrix.mode }} ${{ matrix.id }}
+      - name: Count available hosted runner slots
+        id: capacity
+        if: steps.affected.outputs.qa-workspace == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(node tools/qa-capacity.mjs)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Selected $count workspace shards (ceiling $QA_SHARD_CEILING)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Balance selected workspace specs
+        id: shards
+        env:
+          QA_SHARDS: ${{ inputs.shard_ceiling || steps.capacity.outputs.count || '1' }}
+          SELECTED: ${{ steps.affected.outputs.qa-matrix }}
+        run: node tools/qa-shards.mjs --matrix
+
+  fixtures:
+    env:
+      QA_SHARDS: ${{ needs.changes.outputs.count }}
+    permissions:
+      contents: read
+      packages: write
+    name: Build QA fixtures
+    outputs:
+      reused: ${{ steps.snapshot.outputs.cache-hit }}
     needs: changes
+    if: ${{ (needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true') && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select an encrypted snapshot by its fixture inputs
+        id: snapshot-key
+        env:
+          QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
+        run: node tools/qa-fixture-key.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Restore encrypted QA fixture snapshot
+        id: snapshot
+        if: github.ref != 'refs/heads/main' && github.base_ref != 'main' && github.event_name != 'schedule'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/fixtures.gpg
+          key: ${{ steps.snapshot-key.outputs.key }}
+
+      - name: Authenticate cached snapshot and extract approval samples
+        if: steps.snapshot.outputs.cache-hit == 'true'
+        env:
+          QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
+        run: bash .github/qa/snapshot.sh check
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        with:
+          version: 11.29.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: node tools/qa-shards.mjs
+        if: steps.snapshot.outputs.cache-hit != 'true'
+
+      - name: Install
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/qa-cache
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        with:
+          mode: publish
+
+      - name: Bring up the stack and seed the dev personas
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        run: bash .github/qa/up.sh
+
+      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
+      # listing tests. Still minutes before the first spec runs.
+      - name: Every workspace spec is in exactly one shard list
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        run: node .github/qa/spec-counts.mjs --lists
+
+      - uses: ./.github/actions/qa-fixtures
+        if: steps.snapshot.outputs.cache-hit != 'true'
+
+      - uses: ./.github/actions/qa-timings
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-')
+        with:
+          lane: fixtures
+
+      - name: Encrypt fixture databases and sign-in state
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        env:
+          QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
+        run: bash .github/qa/snapshot.sh save
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: qa-fixtures
+          path: ${{ runner.temp }}/fixtures.gpg
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Preserve approval timings for the dispatch gate
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: qa-approval-samples
+          path: .dev/qa-approve-timings.jsonl
+          include-hidden-files: true
+          if-no-files-found: error
+
+      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
+      # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
+      # the limit without a commit.
+      - name: Approve to decided page
+        if: ${{ !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+        env:
+          BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
+        run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: ./.github/actions/qa-reports
+        if: ${{ !cancelled() && steps.snapshot.outputs.cache-hit != 'true' }}
+        with:
+          lane: fixtures
+
+  workspace:
+    env:
+      QA_SHARDS: ${{ needs.changes.outputs.count }}
+    permissions:
+      contents: read
+      packages: read
+    name: qa ${{ matrix.mode }} ${{ matrix.id }}
+    needs: [changes, fixtures]
     # An empty matrix is an error, so a diff that touches neither app skips the job instead.
-    if: ${{ needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.fixtures.result == 'success' || needs.fixtures.result == 'skipped') && (needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: ${{ matrix.mode == 'quarantined' }}
     strategy:
+      max-parallel: ${{ fromJSON(needs.changes.outputs.parallel) }}
       fail-fast: false
       # Computed by tools/affected.mjs: the full set (specs 1 and 2, plus quarantined when something is quarantined), or one
       # specs 2 job that runs only the portal specs (ws: false) when only the portal is affected.
@@ -115,52 +257,48 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - run: node tools/qa-shards.mjs
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Bring up the stack and seed the dev personas
-        run: bash .github/qa/up.sh
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        if: needs.fixtures.result == 'success'
+        with:
+          name: qa-fixtures
+          path: ${{ runner.temp }}
 
-      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
-      # listing tests. Still minutes before the first spec runs.
-      - name: Every workspace spec is in exactly one shard list
-        if: ${{ matrix.ws && matrix.mode == 'specs' }}
+      - name: Decrypt fixture state
+        if: needs.fixtures.result == 'success'
+        env:
+          QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
+        run: bash .github/qa/snapshot.sh unpack
+
+      - uses: ./.github/actions/qa-cache
+        with:
+          mode: ${{ needs.fixtures.result == 'success' && 'pull' || 'local' }}
+
+      - name: Start shard stack
+        env:
+          MODE: ${{ needs.fixtures.result == 'success' && 'restore' || 'seed' }}
+        run: bash .github/qa/up.sh "$MODE"
+
+      - uses: ./.github/actions/qa-fixtures
+        if: needs.fixtures.result == 'skipped'
+
+      - name: Check current workspace spec coverage on a restored snapshot
+        if: needs.fixtures.outputs.reused == 'true' && matrix.ws && matrix.id == '1'
         run: node .github/qa/spec-counts.mjs --lists
 
-      - name: Install Chromium
-        run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
-
-      # A staff user gets its membership (and so appears in owner and approver pickers) on its first request. Many specs
-      # need the other personas to exist, and Playwright runs files alphabetically, so every persona signs in once first.
-      # The sign-ins are independent, so they run in parallel (each waits for a fresh TOTP window, 30 s).
-      - name: Playwright warm-up (every persona signs in and out once)
-        if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
+      - name: Renew portal sessions from cached fixtures
+        if: needs.fixtures.outputs.reused == 'true'
         env:
-          BOS_E2E_RECORD: '1'
           BOS_E2E_BRANDED_LOGIN: '1'
-          BOS_E2E_REPORT_DIR: playwright-report-signin
-          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
-        run: |
-          cd apps/workspace
-          pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --retries=1 --output=test-results-signin
-
-      # Memberships exist now: put those without a department into General (the SQL is idempotent; up.sh ran it once
-      # for the entity address, before any membership existed).
-      - name: Demo fixtures for the memberships the sign-ins created
-        run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
-
-      # The fixture rows came from demo-data.sql; the purchase order is issued through the screen, not by SQL.
-      - name: Playwright fixtures (documents made through the product screens)
-        if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
-        env:
-          BOS_E2E_NEXT_DEV: '1'
-          BOS_E2E_BRANDED_LOGIN: '1'
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
-          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+        working-directory: apps/workspace
         run: |
-          cd apps/workspace
-          pnpm exec playwright test --project=dev p4/qa-fixtures --output=test-results-fixtures
+          pnpm exec playwright test --project=dev p4/qa-fixtures.spec --grep 'qa fixtures: portal sign-in state' --fully-parallel --workers=4
 
       # The env-gated specs (BOS_E2E_P4 and the *_ID variables) run against these fixtures instead of skipping.
       - name: Export the fixture ids to the spec environment
@@ -252,47 +390,20 @@ jobs:
       # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
       # the limit without a commit.
       - name: Approve to decided page
-        if: ${{ !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ needs.fixtures.result == 'skipped' && !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
         env:
           BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
         run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
 
-      # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
-      - name: Remove any file that holds a persona password or TOTP secret
-        if: ${{ !cancelled() }}
-        run: |
-          set -euo pipefail
-          node -e "
-          const fs=require('fs');
-          const list=JSON.parse(fs.readFileSync('.dev/personas.json','utf8'));
-          const out=[]; for (const e of list) for (const k of ['password','totpSecret']) if (typeof e[k]==='string' && e[k].length>=8) out.push(e[k]);
-          fs.writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\\n')+'\\n');"
-          dirs=()
-          for d in apps/workspace/playwright-report apps/workspace/playwright-report-signin apps/workspace/test-results apps/workspace/test-results-signin apps/workspace/test-results-fixtures apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
-          if [ "${#dirs[@]}" -gt 0 ]; then
-            grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}" > "$RUNNER_TEMP/leaks.txt" || true
-            if [ -s "$RUNNER_TEMP/leaks.txt" ]; then
-              echo "::warning::a seeded credential was found in these files; they are deleted and not uploaded:"
-              cat "$RUNNER_TEMP/leaks.txt"
-              xargs -d '\n' rm -f < "$RUNNER_TEMP/leaks.txt"
-            fi
-          fi
-          rm -f "$RUNNER_TEMP/needles.txt"
-
-      - name: Upload Playwright report, screenshots and videos
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: ./.github/actions/qa-timings
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-')
         with:
-          name: playwright-${{ matrix.mode }}-${{ matrix.id }}
-          path: |
-            apps/workspace/playwright-report
-            apps/workspace/playwright-report-signin
-            apps/workspace/test-results
-            apps/workspace/test-results-signin
-            apps/workspace/test-results-fixtures
-            apps/portal/test-results
-          retention-days: 14
-          if-no-files-found: ignore
+          lane: ${{ matrix.mode }}-${{ matrix.id }}
+
+      - uses: ./.github/actions/qa-reports
+        if: ${{ !cancelled() }}
+        with:
+          lane: ${{ matrix.mode }}-${{ matrix.id }}
 
       - name: Directory diagnostics on failure (counts only)
         if: ${{ failure() }}
@@ -315,10 +426,41 @@ jobs:
   qa-required:
     name: qa required
     if: ${{ always() }}
-    needs: [changes, workspace]
+    needs: [changes, fixtures, workspace]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success' || github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && needs.workspace.result == 'success'
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && needs.workspace.result == 'success'
+        with:
+          pattern: qa-timings-*
+          path: ${{ runner.temp }}/timings
+
+      - name: Gate combined page and API timings
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'kuu/release-') && needs.workspace.result == 'success'
+        run: |
+          cd "$RUNNER_TEMP/timings"
+          cat */page.jsonl > pages.jsonl
+          cat */api.jsonl > api.jsonl
+          node "$GITHUB_WORKSPACE/.github/qa/flow-summary.mjs" --gate pages.jsonl api.jsonl >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success'
+        with:
+          name: qa-approval-samples
+          path: ${{ runner.temp }}/approval
+
+      - name: Check dispatch fixture approval timings
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && needs.fixtures.result == 'success'
+        env:
+          BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
+        run: node .github/qa/approve-timing.mjs "$RUNNER_TEMP/approval/qa-approve-timings.jsonl" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Every needed job succeeded or was skipped
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}

@@ -6,10 +6,6 @@
 // Counts come from `playwright test --list`, which applies the same file filters and --grep-invert as the real run.
 // Run by the qa workflow: node .github/qa/spec-counts.mjs  (env: SPEC_FILTER, SHARD, REPEAT_EACH, WS_STEP)
 //
-// `--lists` is the other mode: the two shards of the workspace run are the explicit file lists .github/qa/shard-a.txt and
-// shard-b.txt (balanced by measured duration, 2026-11-26: both about 1007 s of test time, the portal specs add 77 s to
-// shard B). The check fails when a spec file that the `dev` project runs is in no list or in both, or a list names a file
-// that no longer exists, so a new spec can never silently stop running.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -113,14 +109,17 @@ function checkShardLists(root) {
     { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
   );
   const lists = {};
-  for (const name of ['shard-a', 'shard-b'])
+  for (const name of Array.from(
+    { length: Number(process.env.QA_SHARDS) },
+    (_, i) => `shard-${i + 1}`,
+  ))
     lists[name] = readFileSync(`${root}.github/qa/${name}.txt`, 'utf8').split('\n');
   const verdict = checkLists({ specFiles: parseSpecFiles(out), lists });
   for (const problem of verdict.problems) console.log(`::error::${problem}`);
   console.log(
     verdict.ok
       ? 'Every workspace spec is in exactly one shard list.'
-      : 'The shard lists and the specs disagree: fix .github/qa/shard-a.txt and shard-b.txt.',
+      : 'The shard lists and the specs disagree: update .github/qa/spec-seconds.json.',
   );
   if (!verdict.ok) process.exit(1);
 }

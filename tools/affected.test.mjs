@@ -37,7 +37,7 @@ test('apps/portal only: portal, its build and image, and the portal specs', () =
   assert.deepEqual([r.api, r.workspace, r.db, r['qa-workspace']], [false, false, false, false]);
   assert.deepEqual(r.packages, ['@bos/portal']);
   assert.deepEqual(qaMatrix(r).include, [
-    { mode: 'specs', id: '2', shard: '2/2', list: 'shard-b', ws: false, portal: true },
+    { mode: 'specs', id: '1', shard: '1/1', ws: false, portal: true },
   ]);
 });
 
@@ -47,8 +47,8 @@ test('apps/workspace only: workspace and its specs, not the portal or the API te
     [r.workspace, r['qa-workspace'], r.portal, r['qa-portal'], r.api],
     [true, true, false, false, false],
   );
-  assert.equal(qaMatrix(r).include.length, 2);
-  assert.equal(qaMatrix(r, { quarantine: 'x' }).include.length, 3);
+  assert.equal(qaMatrix(r).include.length, 1);
+  assert.equal(qaMatrix(r, { quarantine: 'x' }).include.length, 2);
 });
 
 const images = (r) => ({
@@ -167,28 +167,14 @@ test('an empty diff, and every event except pull_request, run everything', () =>
     assert.equal(affected(['docs/a.md'], packages, { event }).full, true, event);
 });
 
-test('the full matrix has two shards, and adds qa quarantined only when the quarantine file has content', () => {
+test('the selector requests the workspace suite, and adds qa quarantined only when the quarantine file has content', () => {
   const names = (quarantine) =>
     qaMatrix(run('pnpm-lock.yaml'), { quarantine }).include.map((m) => `${m.mode} ${m.id}`);
-  assert.deepEqual(names('p4/line-item-widths'), ['specs 1', 'specs 2', 'quarantined -']);
+  assert.deepEqual(names('p4/line-item-widths'), ['specs 1', 'quarantined -']);
   for (const empty of ['', '\n', '  \n\t'])
-    assert.deepEqual(names(empty), ['specs 1', 'specs 2'], JSON.stringify(empty));
-  assert.deepEqual(names(undefined), ['specs 1', 'specs 2']);
+    assert.deepEqual(names(empty), ['specs 1'], JSON.stringify(empty));
+  assert.deepEqual(names(undefined), ['specs 1']);
   assert.equal(qaMatrix(run('docs/a.md')).include.length, 0);
-});
-
-test('each shard names a list file that exists, and only the portal job (shard B) runs the portal specs', () => {
-  const { include } = qaMatrix(run('pnpm-lock.yaml'));
-  const shards = include.filter((m) => m.mode === 'specs');
-  assert.deepEqual(
-    shards.map((m) => [m.shard, m.list, m.portal]),
-    [
-      ['1/2', 'shard-a', false],
-      ['2/2', 'shard-b', true],
-    ],
-  );
-  for (const m of shards)
-    assert.ok(readFileSync(new URL(`../.github/qa/${m.list}.txt`, import.meta.url), 'utf8').trim());
 });
 
 test('a file moved out of a gate area is still caught when both paths are listed (diff runs with --no-renames)', () => {

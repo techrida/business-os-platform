@@ -1,6 +1,7 @@
 // Run: node --test tools/qa-spec-counts.test.mjs
 // A mistyped spec filter makes both Playwright steps pass with no tests (--pass-with-no-tests). The check must fail then.
 import assert from 'node:assert/strict';
+import { partition, matrix } from './qa-shards.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
@@ -117,10 +118,16 @@ test('the committed shard lists cover every dev-project spec file exactly once (
       !['prod-no-switcher.spec.ts', 'lcp.spec.ts'].includes(f) &&
       !/^p4\/qa-fixtures/.test(f),
   );
-  const lists = {};
-  for (const name of ['shard-a', 'shard-b'])
-    lists[name] = readFileSync(new URL(`../.github/qa/${name}.txt`, import.meta.url), 'utf8').split(
-      '\n',
-    );
-  assert.deepEqual(checkLists({ specFiles: new Set(dev), lists }).problems, []);
+  const seconds = JSON.parse(
+    readFileSync(new URL('../.github/qa/spec-seconds.json', import.meta.url)),
+  );
+  for (const count of Array.from({ length: 14 }, (_, i) => i + 1)) {
+    const buckets = partition(seconds, count);
+    assert.ok(buckets.every(({ files }) => files.length));
+    const lists = Object.fromEntries(buckets.map(({ files }, i) => [i, files]));
+    assert.deepEqual(checkLists({ specFiles: new Set(dev), lists }).problems, []);
+    const result = matrix({ include: [{ ws: true, portal: true, mode: 'specs' }] }, count);
+    assert.equal(result.include.length, count);
+    assert.equal(result.include.filter((job) => job.portal).length, 1);
+  }
 });

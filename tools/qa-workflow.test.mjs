@@ -20,7 +20,7 @@ test('the quarantined job stays non-blocking', () => {
 test('qa required always reports and needs every job; the matrix comes from the change detection', () => {
   assert.match(
     text,
-    /qa-required:\n {4}name: qa required\n {4}if: \$\{\{ always\(\) \}\}\n {4}needs: \[changes, workspace\]/,
+    /qa-required:\n {4}name: qa required\n {4}if: \$\{\{ always\(\) \}\}\n {4}needs: \[changes, fixtures, workspace\]/,
   );
   assert.match(text, /matrix: \$\{\{ fromJSON\(needs\.changes\.outputs\.qa-matrix\) \}\}/);
 });
@@ -70,7 +70,7 @@ test('the shard lists are checked after the stack is up (Playwright reads .dev f
   const up = text.indexOf('bash .github/qa/up.sh');
   const check = text.indexOf('node .github/qa/spec-counts.mjs --lists');
   assert.ok(up > 0 && check > up, 'the check needs .dev/caddy-root.crt and .dev/personas.json');
-  assert.ok(check < text.indexOf('- name: Playwright warm-up'));
+  assert.ok(check < text.indexOf('- uses: ./.github/actions/qa-fixtures'));
 });
 
 test('no workflow still talks about three shards', () => {

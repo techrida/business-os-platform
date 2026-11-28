@@ -1,0 +1,44 @@
+name: Collect browser reports
+description: Screen the generated reports for fixture credentials before uploading them
+inputs:
+  lane:
+    description: Unique QA job name
+    required: true
+runs:
+  using: composite
+  steps:
+    # A leaked credential in an artifact stays readable for the whole retention period: fail before uploading.
+    - name: Remove any file that holds a persona password or TOTP secret
+      shell: bash
+      run: |
+        set -euo pipefail
+        node -e "
+        const fs=require('fs');
+        const list=JSON.parse(fs.readFileSync('.dev/personas.json','utf8'));
+        const out=[]; for (const e of list) for (const k of ['password','totpSecret']) if (typeof e[k]==='string' && e[k].length>=8) out.push(e[k]);
+        fs.writeFileSync(process.env.RUNNER_TEMP+'/needles.txt', out.join('\\n')+'\\n');"
+        dirs=()
+        for d in apps/workspace/playwright-report apps/workspace/playwright-report-signin apps/workspace/test-results apps/workspace/test-results-signin apps/workspace/test-results-fixtures apps/portal/test-results; do [ -d "$d" ] && dirs+=("$d"); done
+        if [ "${#dirs[@]}" -gt 0 ]; then
+          grep -rIlF -f "$RUNNER_TEMP/needles.txt" "${dirs[@]}" > "$RUNNER_TEMP/leaks.txt" || true
+          if [ -s "$RUNNER_TEMP/leaks.txt" ]; then
+            echo "::warning::a seeded credential was found in these files; they are deleted and not uploaded:"
+            cat "$RUNNER_TEMP/leaks.txt"
+            xargs -d '\n' rm -f < "$RUNNER_TEMP/leaks.txt"
+          fi
+        fi
+        rm -f "$RUNNER_TEMP/needles.txt"
+
+    - name: Upload Playwright report, screenshots and videos
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: playwright-${{ inputs.lane }}
+        path: |
+          apps/workspace/playwright-report
+          apps/workspace/playwright-report-signin
+          apps/workspace/test-results
+          apps/workspace/test-results-signin
+          apps/workspace/test-results-fixtures
+          apps/portal/test-results
+        retention-days: 14
+        if-no-files-found: ignore

@@ -1,0 +1,37 @@
+name: Create browser fixtures
+description: Sign in the dev personas and create the documents used by both suites
+runs:
+  using: composite
+  steps:
+    # A staff user gets its membership (and so appears in owner and approver pickers) on its first request. Many specs
+    # need the other personas to exist, and Playwright runs files alphabetically, so every persona signs in once first.
+    # The sign-ins are independent, so they run in parallel (each waits for a fresh TOTP window, 30 s).
+    - name: Playwright warm-up (every persona signs in and out once)
+      env:
+        BOS_E2E_RECORD: '1'
+        BOS_E2E_BRANDED_LOGIN: '1'
+        BOS_E2E_REPORT_DIR: playwright-report-signin
+        NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+        BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+      shell: bash
+      run: |
+        cd apps/workspace
+        pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --retries=1 --output=test-results-signin
+
+    # Memberships exist now: put those without a department into General (the SQL is idempotent; up.sh ran it once
+    # for the entity address, before any membership existed).
+    - name: Demo fixtures for the memberships the sign-ins created
+      shell: bash
+      run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
+
+    # The fixture rows came from demo-data.sql; the purchase order is issued through the screen, not by SQL.
+    - name: Playwright fixtures (documents made through the product screens)
+      env:
+        BOS_E2E_NEXT_DEV: '1'
+        BOS_E2E_BRANDED_LOGIN: '1'
+        NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
+        BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
+      shell: bash
+      run: |
+        cd apps/workspace
+        pnpm exec playwright test --project=dev p4/qa-fixtures --output=test-results-fixtures
