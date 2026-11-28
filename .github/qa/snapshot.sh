@@ -34,7 +34,7 @@ case "$1" in
     for db in bos zitadel; do
       dc exec -T postgres pg_restore -U postgres --clean --if-exists --exit-on-error -d "$db" < ".dev/$db.dump"
     done
-    dc create --no-deps zitadel-api
+    dc up --no-start --no-deps zitadel-api
     docker run --rm -i --volumes-from "$(dc ps --all -q zitadel-api)" --entrypoint sh bos/postgres:16 \
       -c 'umask 022; cat > /zitadel/bootstrap/login-client.pat' < .dev/bootstrap.pat
     ;;
