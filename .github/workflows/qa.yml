@@ -294,7 +294,8 @@ jobs:
           BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
         working-directory: apps/workspace
-        run: pnpm exec playwright test --project=dev p4/qa-fixtures.spec --grep 'qa fixtures: portal sign-in state' --fully-parallel --workers=4
+        run: |
+          pnpm exec playwright test --project=dev p4/qa-fixtures.spec --grep 'qa fixtures: portal sign-in state' --fully-parallel --workers=4
 
       # The env-gated specs (BOS_E2E_P4 and the *_ID variables) run against these fixtures instead of skipping.
       - name: Export the fixture ids to the spec environment
