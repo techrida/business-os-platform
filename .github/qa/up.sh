@@ -20,7 +20,8 @@ mkdir -p .dev
 end
 
 step "containers (core + files), images build in the background"
-dc --profile core --profile files up -d --build --no-deps postgres valkey valkey-oidc mailpit zitadel-api clamav > .dev/compose-up.log 2>&1 &
+if [[ ${1:-} == restore ]]; then bash .github/qa/snapshot.sh restore; fi
+dc --profile core --profile files up -d --no-deps postgres valkey valkey-oidc mailpit zitadel-api clamav > .dev/compose-up.log 2>&1 &
 echo $! > .dev/compose-up.pid
 end
 
@@ -39,6 +40,7 @@ end
 
 step "CA, migrate, seed"
 bash infra/scripts/export-dev-ca.sh
+if [[ ${1:-} != restore ]]; then
 bash infra/scripts/migrate-dev.sh
 dc --profile tools run --rm seed-zitadel
 docker cp "$(dc ps -q zitadel-api)":/zitadel/admin/admin.pat .dev/admin.pat
@@ -47,11 +49,14 @@ NODE_ENV=development NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt" \
   BOS_DEV_BOOTSTRAP_TOKEN_FILE=.dev/admin.pat BOS_DEV_LOGIN_CLIENT_TOKEN_FILE=.dev/login-client.pat \
   OIDC_ISSUER=https://auth.localhost node infra/scripts/dev-login-client.mjs >/dev/null
 chmod 600 .dev/*.pat .dev/personas.json 2>/dev/null || true
-lap "seeded"
+fi
+lap "database ready"
 end
 
 step "demo fixtures"
+if [[ ${1:-} != restore ]]; then
 dc exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
+fi
 end
 
 step "register secrets as masked"

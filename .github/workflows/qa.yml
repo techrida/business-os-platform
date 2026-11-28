@@ -83,6 +83,64 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/affected.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
 
+  fixtures:
+    name: Build QA fixtures
+    needs: changes
+    if: ${{ (needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true') && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.29.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Bring up the stack and seed the dev personas
+        run: bash .github/qa/up.sh
+
+      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
+      # listing tests. Still minutes before the first spec runs.
+      - name: Every workspace spec is in exactly one shard list
+        run: node .github/qa/spec-counts.mjs --lists
+
+      - name: Install Chromium
+        run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
+
+      - uses: ./.github/actions/qa-fixtures
+
+      - name: Encrypt fixture databases and sign-in state
+        env:
+          QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
+        run: bash .github/qa/snapshot.sh save
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: qa-fixtures
+          path: ${{ runner.temp }}/fixtures.gpg
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+      # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
+      # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
+      # the limit without a commit.
+      - name: Approve to decided page
+        if: ${{ !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
+        env:
+          BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
+        run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
+
   workspace:
     # Two shards of the specs that pass today (the explicit lists .github/qa/shard-a.txt and shard-b.txt, balanced by
     # measured duration; the portal specs run on shard B), plus one non-blocking job for the specs in
@@ -90,9 +148,9 @@ jobs:
     # see that file's history and the QA report). Each job pays about 18 minutes to bring up the stack, so a third
     # shard costs more than it saves.
     name: qa ${{ matrix.mode }} ${{ matrix.id }}
-    needs: changes
+    needs: [changes, fixtures]
     # An empty matrix is an error, so a diff that touches neither app skips the job instead.
-    if: ${{ needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.fixtures.result == 'success' || needs.fixtures.result == 'skipped') && (needs.changes.outputs.qa-workspace == 'true' || needs.changes.outputs.qa-portal == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: ${{ matrix.mode == 'quarantined' }}
@@ -118,49 +176,28 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Bring up the stack and seed the dev personas
-        run: bash .github/qa/up.sh
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        if: needs.fixtures.result == 'success'
+        with:
+          name: qa-fixtures
+          path: ${{ runner.temp }}
 
-      # Needs the stack's files (.dev/caddy-root.crt, .dev/personas.json): Playwright's config and personas.spec.ts read them while
-      # listing tests. Still minutes before the first spec runs.
-      - name: Every workspace spec is in exactly one shard list
-        if: ${{ matrix.ws && matrix.mode == 'specs' }}
-        run: node .github/qa/spec-counts.mjs --lists
+      - name: Decrypt fixture state
+        if: needs.fixtures.result == 'success'
+        env:
+          QA_FIXTURE_KEY: ${{ secrets.QA_FIXTURE_KEY }}
+        run: bash .github/qa/snapshot.sh unpack
+
+      - name: Start shard stack
+        env:
+          MODE: ${{ needs.fixtures.result == 'success' && 'restore' || 'seed' }}
+        run: bash .github/qa/up.sh "$MODE"
 
       - name: Install Chromium
         run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
 
-      # A staff user gets its membership (and so appears in owner and approver pickers) on its first request. Many specs
-      # need the other personas to exist, and Playwright runs files alphabetically, so every persona signs in once first.
-      # The sign-ins are independent, so they run in parallel (each waits for a fresh TOTP window, 30 s).
-      - name: Playwright warm-up (every persona signs in and out once)
-        if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
-        env:
-          BOS_E2E_RECORD: '1'
-          BOS_E2E_BRANDED_LOGIN: '1'
-          BOS_E2E_REPORT_DIR: playwright-report-signin
-          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
-          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
-        run: |
-          cd apps/workspace
-          pnpm exec playwright test --project=dev personas.spec --grep "persona sign-in and sign-out" --fully-parallel --workers=6 --retries=1 --output=test-results-signin
-
-      # Memberships exist now: put those without a department into General (the SQL is idempotent; up.sh ran it once
-      # for the entity address, before any membership existed).
-      - name: Demo fixtures for the memberships the sign-ins created
-        run: docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
-
-      # The fixture rows came from demo-data.sql; the purchase order is issued through the screen, not by SQL.
-      - name: Playwright fixtures (documents made through the product screens)
-        if: ${{ matrix.mode == 'specs' || matrix.mode == 'quarantined' }}
-        env:
-          BOS_E2E_NEXT_DEV: '1'
-          BOS_E2E_BRANDED_LOGIN: '1'
-          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/.dev/caddy-root.crt
-          BOS_DEV_PERSONAS_FILE: ${{ github.workspace }}/.dev/personas.json
-        run: |
-          cd apps/workspace
-          pnpm exec playwright test --project=dev p4/qa-fixtures --output=test-results-fixtures
+      - uses: ./.github/actions/qa-fixtures
+        if: needs.fixtures.result == 'skipped'
 
       # The env-gated specs (BOS_E2E_P4 and the *_ID variables) run against these fixtures instead of skipping.
       - name: Export the fixture ids to the spec environment
@@ -252,7 +289,7 @@ jobs:
       # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
       # the limit without a commit.
       - name: Approve to decided page
-        if: ${{ !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ needs.fixtures.result == 'skipped' && !cancelled() && (github.base_ref == 'main' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
         env:
           BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
         run: node .github/qa/approve-timing.mjs .dev/qa-approve-timings.jsonl >> "$GITHUB_STEP_SUMMARY"
@@ -315,7 +352,7 @@ jobs:
   qa-required:
     name: qa required
     if: ${{ always() }}
-    needs: [changes, workspace]
+    needs: [changes, fixtures, workspace]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
