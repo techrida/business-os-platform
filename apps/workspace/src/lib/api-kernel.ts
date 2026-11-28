@@ -13,6 +13,7 @@ import {
   ErrorBodySchema,
   type InboxItemDto,
   InboxCountDtoSchema,
+  InboxSummarySchema,
   InboxItemDtoSchema,
   type MemoList,
   MemoListSchema,
@@ -197,6 +198,10 @@ export async function getInboxPage(
     throw new ApiError(502, `${label} returned an invalid body`, items.error?.issues);
   }
   return { items: items.data, total };
+}
+
+export function getInboxSummary(session: Session) {
+  return call(session, '/v1/approvals/inbox/summary', InboxSummarySchema);
 }
 
 /**

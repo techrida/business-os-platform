@@ -214,8 +214,10 @@ export function explicitSpecOf(
 type Q = Db | DbTransaction;
 type RequestRow = typeof approvalRequests.$inferSelect;
 type StepRow = typeof approvalSteps.$inferSelect;
-/** A request as the inbox reads it: every column but the snapshot (a whole document) and its hash. */
-type InboxRequest = Omit<RequestRow, 'snapshot' | 'snapshotSha256'>;
+/** The stored step fields used to resolve a routing target. */
+type AssignmentStep = Pick<StepRow, 'seq' | 'kind' | 'userId' | 'roleKey' | 'groupId'> & {
+  reason?: string;
+};
 /** What the assignment checks read of a request. */
 type AssignmentRequest = Pick<
   RequestRow,
@@ -985,39 +987,87 @@ export class ApprovalsService {
     return (await this.inboxPage({})).items;
   }
 
-  /**
-   * The inbox narrowed by search and type, then paged. Loads every matching row, runs the eligibility checks and
-   * only then counts and slices: the total is what the caller may decide, never what the filters match.
-   */
   async inboxPage(query: InboxQuery): Promise<{ items: InboxItemDto[]; total: number }> {
     const { scope, principal } = this.caller.current();
-    this.requireStaff(scope, principal);
-    const genericApprover = can(principal, 'approvals.requests.act').allowed;
-    const types = query.documentType ?? [];
-    const filtered = query.q !== undefined || types.length > 0;
-    const eligible = await this.eligibleInbox(scope, principal, genericApprover, query);
-    // A filter that hides everything is an empty list, not a missing assignment: judge the 403 unfiltered.
-    const unfilteredCount =
-      eligible.length === 0 && filtered
-        ? (await this.eligibleInboxRows(scope, principal, genericApprover, {})).length
-        : eligible.length;
-    await this.refuseWithoutAssignment(scope, principal, genericApprover, unfilteredCount);
-    const offset = query.offset ?? 0;
-    const end = query.limit === undefined ? undefined : offset + query.limit;
-    return { items: eligible.slice(offset, end), total: eligible.length };
+    const read = await this.inboxSelection(scope, principal, query);
+    const page = this.db
+      .select({
+        request: INBOX_REQUEST_COLUMNS,
+        step: approvalSteps,
+        total: sql<number>`count(*) over ()`.mapWith(Number),
+      })
+      .from(approvalRequests)
+      .innerJoin(approvalSteps, read.join)
+      .innerJoin(read.rules, read.match)
+      .where(read.where)
+      .orderBy(asc(approvalRequests.submittedAt), asc(approvalRequests.id))
+      .offset(query.offset ?? 0)
+      .$dynamic();
+    const rows = await (query.limit === undefined ? page : page.limit(query.limit));
+    const total =
+      rows[0]?.total ?? (query.offset || query.limit === 0 ? await this.selectionCount(read) : 0);
+    if (!read.generic && total === 0) {
+      if (query.q !== undefined || query.documentType?.length) await this.inboxCount();
+      else await this.refuseWithoutAssignment(scope, principal, false, 0);
+    }
+    const items = rows.map(({ request, step }) => {
+      const amount = (request.facts as Record<string, unknown>)['amountNpr'];
+      return {
+        requestId: request.id,
+        documentType: request.documentType,
+        documentId: request.documentId,
+        documentNumber: request.documentNumber,
+        title: request.title,
+        amountNpr: DecimalString.safeParse(amount).success ? (amount as string) : null,
+        reason: step.reason,
+        activeStep: stepDto(step, request.facts),
+        submittedAt: request.submittedAt.toISOString(),
+        version: request.version,
+      };
+    });
+    return { items, total };
   }
 
-  /**
-   * How many requests the caller may decide now: always `inboxPage({}).total`, from the same eligibility checks,
-   * without building the items. The same 403 as the list for a caller with no approval assignment, never 0.
-   */
+  private async selectionCount(read: Awaited<ReturnType<ApprovalsService['inboxSelection']>>) {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)`.mapWith(Number) })
+      .from(approvalRequests)
+      .innerJoin(approvalSteps, read.join)
+      .innerJoin(read.rules, read.match)
+      .where(read.where);
+    return row!.count;
+  }
+
   async inboxCount(): Promise<{ count: number }> {
     const { scope, principal } = this.caller.current();
-    this.requireStaff(scope, principal);
-    const genericApprover = can(principal, 'approvals.requests.act').allowed;
-    const count = (await this.eligibleInboxRows(scope, principal, genericApprover, {})).length;
-    await this.refuseWithoutAssignment(scope, principal, genericApprover, count);
+    const read = await this.inboxSelection(scope, principal, {});
+    const count = await this.selectionCount(read);
+    await this.refuseWithoutAssignment(scope, principal, read.generic, count);
     return { count };
+  }
+
+  async inboxSummary() {
+    const { scope, principal } = this.caller.current();
+    const read = await this.inboxSelection(scope, principal, {});
+    const now = this.clock();
+    const age = sql<
+      'under_day' | 'under_week' | 'week_or_more'
+    >`case when ${approvalRequests.submittedAt} > ${addHours(now, -24).toISOString()}::timestamptz then 'under_day'
+      when ${approvalRequests.submittedAt} > ${addHours(now, -168).toISOString()}::timestamptz then 'under_week' else 'week_or_more' end`;
+    const buckets = await this.db
+      .select({
+        documentType: approvalRequests.documentType,
+        state: approvalRequests.status,
+        age,
+        count: sql<number>`count(*)`.mapWith(Number),
+      })
+      .from(approvalRequests)
+      .innerJoin(approvalSteps, read.join)
+      .innerJoin(read.rules, read.match)
+      .where(read.where)
+      .groupBy(approvalRequests.documentType, approvalRequests.status, sql`3`);
+    await this.refuseWithoutAssignment(scope, principal, read.generic, buckets.length);
+    return buckets;
   }
 
   /** The inbox 403: no generic grant, nothing eligible, and no duty that makes an empty inbox a list. */
@@ -1037,148 +1087,119 @@ export class ApprovalsService {
     }
   }
 
-  private async eligibleInbox(
-    scope: TxScope,
-    principal: Principal,
-    genericApprover: boolean,
-    query: InboxQuery,
-  ): Promise<InboxItemDto[]> {
-    const rows = await this.eligibleInboxRows(scope, principal, genericApprover, query);
-    return rows.map(({ request, step }) => {
-      const amount = (request.facts as Record<string, unknown>)['amountNpr'];
-      return {
-        requestId: request.id,
-        documentType: request.documentType,
-        documentId: request.documentId,
-        documentNumber: request.documentNumber,
-        title: request.title,
-        amountNpr: DecimalString.safeParse(amount).success ? (amount as string) : null,
-        reason: step.reason,
-        activeStep: stepDto(step, request.facts),
-        submittedAt: request.submittedAt.toISOString(),
-        version: request.version,
-      };
-    });
-  }
-
-  /**
-   * The one eligibility predicate of the inbox list and its count: the (request, active step) pairs the caller may
-   * decide now, oldest first. SQL only narrows to this entity's pending requests (and the list's filters); every
-   * rule that decides eligibility runs here in TypeScript, so the list and the count cannot disagree.
-   */
-  private async eligibleInboxRows(
-    scope: TxScope,
-    principal: Principal,
-    genericApprover: boolean,
-    query: InboxQuery,
-  ): Promise<{ request: InboxRequest; step: StepRow }[]> {
-    const now = this.clock();
-    const types = query.documentType ?? [];
-    const rows = await this.db
-      .select({ request: INBOX_REQUEST_COLUMNS, step: approvalSteps })
-      .from(approvalRequests)
-      .innerJoin(
-        approvalSteps,
-        and(
-          eq(approvalSteps.requestId, approvalRequests.id),
-          eq(approvalSteps.seq, approvalRequests.currentSeq),
-        ),
-      )
-      .where(
-        and(
-          eq(approvalRequests.tenantId, scope.tenantId),
-          eq(approvalRequests.organizationId, scope.organizationId),
-          eq(approvalRequests.status, 'pending'),
-          eq(approvalSteps.status, 'active'),
-          types.length > 0 ? inArray(approvalRequests.documentType, types) : undefined,
-          query.q === undefined
-            ? undefined
-            : exactMatch(query.q, [
-                approvalRequests.title,
-                approvalRequests.documentNumber,
-                approvalSteps.reason,
-              ]),
-        ),
-      )
-      .orderBy(asc(approvalRequests.submittedAt), asc(approvalRequests.id));
-
-    if (rows.length === 0) return [];
-
-    // Earlier decisions of every listed request, for the distinctApprovers check below.
-    const decided = new Map<string, StepDecision[]>();
-    const stepRows = await this.db
-      .select({
-        requestId: approvalSteps.requestId,
-        seq: approvalSteps.seq,
-        decidedBy: approvalSteps.decidedBy,
-        decidedOnBehalfOf: approvalSteps.decidedOnBehalfOf,
-      })
-      .from(approvalSteps)
-      .where(
-        and(
-          eq(approvalSteps.tenantId, scope.tenantId),
-          eq(approvalSteps.organizationId, scope.organizationId),
-          inArray(approvalSteps.requestId, [...new Set(rows.map((r) => r.request.id))]),
-        ),
-      );
-    for (const d of stepRows) {
-      decided.set(d.requestId, [...(decided.get(d.requestId) ?? []), ...decisionsOf([d])]);
-    }
-
-    // Explicit-route requests name their approvers on the step rows, not in the frozen spec, so the active
-    // check needs those users too (each version's view of the directory adds them, see directoryViewOf).
-    const stepUserIds = rows.flatMap(({ step }) =>
-      step.kind === 'user' && step.userId !== null ? [step.userId] : [],
+  /** Resolve each distinct assignment once. SQL checks request-specific exclusions for both
+   * the actor and at least one identity they can represent, before it pages or aggregates. */
+  private async inboxSelection(scope: TxScope, principal: Principal, query: InboxQuery) {
+    this.requireStaff(scope, principal);
+    const generic = can(principal, 'approvals.requests.act').allowed;
+    const r = approvalRequests,
+      s = approvalSteps;
+    const join = and(eq(s.requestId, r.id), eq(s.seq, r.currentSeq))!;
+    const base = and(
+      eq(r.tenantId, scope.tenantId),
+      eq(r.organizationId, scope.organizationId),
+      eq(r.status, 'pending'),
+      eq(s.status, 'active'),
+      query.documentType?.length ? inArray(r.documentType, query.documentType) : undefined,
+      query.q === undefined
+        ? undefined
+        : exactMatch(query.q, [r.title, r.documentNumber, s.reason]),
     );
-    // One read for the specs the listed requests were submitted under, and one directory for all of them: the
-    // union of their roles, groups and users, so the statement count does not grow with the number of versions.
-    const specs = await this.frozenSpecs(this.db, [
-      ...new Set(rows.map((r) => r.request.workflowVersionId)),
-    ]);
-    const union = await this.loadDirectoryFor(this.db, scope, [...specs.values()], stepUserIds);
-    // The active-user set is the one answer that depends on which spec asks, so each version gets its own view.
-    const views = new Map<string, DirectoryData>();
-    for (const [versionId, spec] of specs) {
-      views.set(versionId, directoryViewOf(union, spec, stepUserIds));
-    }
-    const eligible: { request: InboxRequest; step: StepRow }[] = [];
-    for (const { request, step } of rows) {
-      const entry = {
-        spec: specs.get(request.workflowVersionId)!,
-        data: views.get(request.workflowVersionId)!,
+    // A head without a generic grant must still match today's routing plan. Only that
+    // case needs the full routing facts and separation-of-duties inputs in the key.
+    const head = generic
+      ? sql`false`
+      : sql`${r.documentType}='purchase_request' and ${s.kind}='department_head'`;
+    const facts = sql<Record<
+      string,
+      unknown
+    > | null>`case when ${head} then ${r.facts} else nullif(${r.facts}->'assignedApprover','null'::jsonb) end`;
+    const sod = sql<string[] | null>`case when ${head} then ${r.sodUserIds} end`;
+    const keys = await this.db
+      .selectDistinct({
+        version: r.workflowVersionId,
+        document: r.documentType,
+        seq: s.seq,
+        kind: s.kind,
+        role: s.roleKey,
+        target: s.userId,
+        team: s.groupId,
+        facts,
+        sod,
+      })
+      .from(r)
+      .innerJoin(s, join)
+      .where(base);
+
+    const specs = await this.frozenSpecs(this.db, [...new Set(keys.map((k) => k.version))]);
+    const users = [
+      ...new Set(keys.flatMap((k) => (k.kind === 'user' && k.target ? [k.target] : []))),
+    ];
+    const data = await this.loadDirectoryFor(this.db, scope, [...specs.values()], users);
+    const views = new Map([...specs].map(([id, spec]) => [id, directoryViewOf(data, spec, users)]));
+    const now = this.clock();
+    const rules = [];
+    for (const key of keys) {
+      const documentType = key.document;
+      const step = {
+        seq: key.seq,
+        kind: key.kind,
+        userId: key.target,
+        groupId: key.team,
+        roleKey: key.role,
       };
+      const request = {
+        ...scope,
+        documentType,
+        facts: key.sod ? key.facts : { assignedApprover: key.facts },
+        sodUserIds: key.sod ?? [],
+      };
+      const spec = specs.get(key.version)!;
+      const view = views.get(key.version)!;
       if (
-        !genericApprover &&
-        !this.prHeadAssignment(principal, request, step, entry.spec, entry.data, now) &&
-        !this.outsideRoleAssignment(principal, request, step, entry.data)
-      ) {
+        !generic &&
+        !this.prHeadAssignment(principal, request, step, spec, view, now) &&
+        !this.outsideRoleAssignment(principal, request, step, view)
+      )
         continue;
+      const identities = new Set<string>();
+      for (;;) {
+        const who = this.decider(request, step, view, now, principal.userId, identities);
+        const identity = who.onBehalfOf ?? principal.userId;
+        if (
+          !who.eligible ||
+          !holdsStepRole(principal, documentType, step, who) ||
+          identities.has(identity)
+        )
+          break;
+        identities.add(identity);
+        if (!who.onBehalfOf || who.assigned) break;
       }
-      // The same checks as act() step 3, in the same order and with the same directory, so the inbox
-      // never lists an item act() would refuse (and both pick the same principal for a delegate).
-      const userId = principal.userId;
-      const sod = new Set(request.sodUserIds);
-      const earlier = entry.spec.distinctApprovers
-        ? earlierDeciders(decided.get(request.id) ?? [], step.seq)
-        : new Set<string>();
-      const who = this.decider(
-        request,
-        step,
-        entry.data,
-        now,
-        userId,
-        new Set([...sod, ...earlier]),
-      );
-      if (!who.eligible) continue;
-      // The token's roles, not the lagging mirror, decide a direct approver of a role step.
-      if (!holdsStepRole(principal, request.documentType, step, who)) continue;
-      if (sod.has(userId) || (who.onBehalfOf !== null && sod.has(who.onBehalfOf))) continue;
-      if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
-        continue;
-      }
-      eligible.push({ request, step });
+      if (identities.size)
+        rules.push({
+          ...key,
+          identities: [...identities],
+          distinct_approvers: spec.distinctApprovers,
+        });
     }
-    return eligible;
+    const actor = principal.userId;
+    const ruleTable = sql`jsonb_to_recordset(${JSON.stringify(rules)}::jsonb)
+        as rule(version uuid, document text, seq int, kind text, role text, target uuid, team uuid,
+          facts jsonb, sod uuid[], identities uuid[], distinct_approvers boolean)`;
+    const match = sql`rule.version=${r.workflowVersionId} and rule.document=${r.documentType}
+        and rule.seq=${s.seq} and rule.kind=${s.kind}
+        and rule.role is not distinct from ${s.roleKey} and rule.target is not distinct from ${s.userId}
+        and rule.team is not distinct from ${s.groupId} and rule.facts is not distinct from ${facts}
+        and rule.sod is not distinct from ${sod}`;
+    const eligible = sql`not (${actor}::uuid = any(${r.sodUserIds})) and exists (
+        select 1 from unnest(rule.identities) as identity(id)
+        where not (identity.id = any(${r.sodUserIds})) and
+          (not rule.distinct_approvers or ${s.seq} = 1 or not exists (
+            select 1 from ${approvalSteps} prior where prior.tenant_id=${r.tenantId}
+              and prior.organization_id=${r.organizationId} and prior.request_id=${r.id}
+              and prior.seq<${s.seq} and (prior.decided_by in (${actor}::uuid,identity.id)
+                or prior.decided_on_behalf_of in (${actor}::uuid,identity.id)))))`;
+    return { join, rules: ruleTable, match, where: and(base, eligible), generic };
   }
 
   /**
@@ -1346,7 +1367,7 @@ export class ApprovalsService {
   private prHeadAssignment(
     p: Principal,
     request: AssignmentRequest,
-    step: StepRow,
+    step: AssignmentStep,
     spec: WorkflowSpec,
     data: DirectoryData,
     now: Date,
@@ -1511,7 +1532,7 @@ export class ApprovalsService {
   private outsideRoleAssignment(
     p: Principal,
     request: AssignmentRequest,
-    step: StepRow,
+    step: AssignmentStep,
     data: DirectoryData,
   ): boolean {
     if (
@@ -1561,7 +1582,7 @@ export class ApprovalsService {
    */
   private decider(
     request: Pick<RequestRow, 'facts' | 'documentType'>,
-    step: StepRow,
+    step: AssignmentStep,
     data: DirectoryData,
     now: Date,
     userId: string,
@@ -2346,8 +2367,8 @@ function routingSpecOf(
 }
 
 /** Rebuilds the routing view of a stored step (group id back to its key) for the directory. */
-export function stepSpecOf(step: StepRow, data: DirectoryData): StepSpec {
-  const base = { id: `seq-${step.seq}`, reason: step.reason };
+export function stepSpecOf(step: AssignmentStep, data: DirectoryData): StepSpec {
+  const base = { id: `seq-${step.seq}`, reason: step.reason ?? '' };
   if (step.kind === 'role') return { ...base, kind: 'role', role: step.roleKey as RoleKey };
   if (step.kind === 'user') return { ...base, kind: 'user', user: step.userId ?? '' };
   // A department_head row stores what the router resolved it to: the head (user_id) or the fallback
@@ -2368,7 +2389,7 @@ export function stepSpecOf(step: StepRow, data: DirectoryData): StepSpec {
 function holdsStepRole(
   p: Principal,
   documentType: string,
-  step: StepRow,
+  step: AssignmentStep,
   who: { onBehalfOf: string | null; outsideRole: boolean },
 ): boolean {
   if (who.onBehalfOf !== null || step.roleKey === null) return true;
