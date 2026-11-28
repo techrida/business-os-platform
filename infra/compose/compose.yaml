@@ -199,7 +199,7 @@ services:
 
   valkey:
     profiles: [core]
-    image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    image: valkey/valkey:9.1-alpine@sha256:56729e68bdda139cbd3f6a2538683dc3523325fc5711ea1a379938f1b37893f0
     command:
       - valkey-server
       - --maxmemory
@@ -232,7 +232,7 @@ services:
   # and nothing is written to disk.
   valkey-oidc:
     profiles: [core]
-    image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    image: valkey/valkey:9.1-alpine@sha256:56729e68bdda139cbd3f6a2538683dc3523325fc5711ea1a379938f1b37893f0
     command:
       - valkey-server
       - --maxmemory
@@ -259,7 +259,7 @@ services:
 
   zitadel-api:
     profiles: [core]
-    image: ghcr.io/zitadel/zitadel:v4.20.1@sha256:4817dbd8896306867f28bba63e7dc3526b2d2646ac7111db9524eb3ab6e82301
+    image: ghcr.io/zitadel/zitadel:v4.20.6@sha256:169179455987c52d89c6c719bcd2871d6797e8a8df7c44396cd96d34eec56363
     # user "0": the bootstrap volume is root-owned and the image runs as a non-root user, which could not write
     # the PAT (personal access token) files. Same as ZITADEL's official compose.
     user: '0'
@@ -360,7 +360,7 @@ services:
 
   caddy:
     profiles: [core]
-    image: caddy:2.11-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
+    image: caddy:2.11-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     environment:
       AUTH_HOST: ${AUTH_HOST:-auth.localhost}
       APP_HOST: ${APP_HOST:-app.localhost}
@@ -406,7 +406,7 @@ services:
     profiles: [files]
     # Pinned to the 1.5 line; the lead pulled it and it is ClamAV 1.5.4 (GPL-2.0, a separate service, not linked
     # into our code). `_base` ships no signatures: freshclam inside the container downloads them into clamav-db.
-    image: clamav/clamav:1.5_base@sha256:58168cd4f48a118c7d20b76da8ffce97e579b84ed7e6d1e977c6e22b1e989c5a
+    image: clamav/clamav:1.5_base@sha256:92bf5569b64d3a51cfd5f660b1556b8855e082e0c2e551d1ed7be39304f53d67
     environment:
       CLAMAV_NO_FRESHCLAMD: 'false' # keep the signature updater running (freshclam.conf: Checks 2 = twice a day)
       CLAMAV_NO_MILTERD: 'true' # mail-filter daemon, not needed
@@ -699,7 +699,7 @@ services:
   # fetch a remote URL, so render templates must be self-contained (inline CSS, no external images).
   gotenberg:
     profiles: [app]
-    image: gotenberg/gotenberg:8.40.0@sha256:53073e798c8ef39ea2187e44cb67bab77894ea2509100b94c4fe3b461f7b2996
+    image: gotenberg/gotenberg:9.10.0@sha256:2ce6fcd3f5019c82b0376065b9103d6d4938d34c1c06a39a8263a9fcf47a6f5b
     healthcheck:
       # The image has no HEALTHCHECK of its own, but it ships curl.
       test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3000/health']
@@ -716,7 +716,7 @@ services:
   # ---------------------------------------------------------------- tools (one-shot: docker compose run --rm <name>)
   seed-zitadel:
     profiles: [tools]
-    image: node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
+    image: node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530
     user: '0' # admin.pat in the zitadel-admin volume is root-owned
     working_dir: /repo
     # ASSUMPTION: U6 builds tools/seed-zitadel to dist/index.js. Override the command if it runs through tsx.
@@ -750,7 +750,7 @@ services:
 
   k6:
     profiles: [tools]
-    image: grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
+    image: grafana/k6:2.4.0@sha256:d41bb79cd8de5a7ad619b53570e3712633e8bff0937010a5c6c57a4747e7a276
     command: ['run', '/perf/load.js']
     environment:
       SSL_CERT_FILE: /certs/caddy-root.crt # Go trusts Caddy's root CA through this
