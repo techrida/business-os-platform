@@ -1,6 +1,7 @@
 import { type InboxItemDto, pageWindow, ROWS_OPTIONS } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import type { NumberSystems } from '@bos/locale';
 
 import { ListFooter } from '@/components/p2/crm/list-footer';
@@ -10,7 +11,7 @@ import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
 import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { failureOf, getInbox, getInboxPage, type InboxPage } from '@/lib/api-kernel';
+import { failureOf, getInboxSummary, getInboxPage, type InboxPage } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { documentNumberText, money, when } from '@/lib/kernel-format';
@@ -70,6 +71,17 @@ function InboxRow({ item, numberSystems }: { item: InboxItemDto; numberSystems: 
   );
 }
 
+async function Summary({ read }: { read: Promise<ReturnType<typeof inboxSummaryCards>> }) {
+  const summary = await read;
+  return summary.length > 0 ? (
+    <section className={styles.stats} aria-label="Inbox summary">
+      {summary.map((card) => (
+        <StatCard key={card.key} label={card.label} value={card.value} icon={card.icon} />
+      ))}
+    </section>
+  ) : null;
+}
+
 export default async function InboxPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const session = await requireStaffSession(PATH);
   const sp = await searchParams;
@@ -83,16 +95,13 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   let result: InboxPage | null = null;
   let pageInfo = pageWindow(state.page, state.rows);
   let problem: { message: string; status: number } | null = null;
-  // The list read starts first; display settings and the whole unfiltered inbox (the KPI cards) start
-  // with it instead of after it. Neither throws: a failed inbox read leaves the cards out. If the list
-  // is denied, the cards are dropped below and the extra read is the only cost.
   const firstRead = getInboxPage(session, {
     ...filters,
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   });
   const numberSystemsRead = getNumberSystems();
-  const summaryRead = getInbox(session).then(inboxSummaryCards, () => []);
+  const summaryRead = getInboxSummary(session).then(inboxSummaryCards, () => []);
   try {
     result = await firstRead;
     pageInfo = pageWindow(pageInfo.page, pageInfo.limit, result.total);
@@ -108,8 +117,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     const f = failureOf(err);
     problem = { message: f.status === 403 ? inboxDenialMessage(err) : f.message, status: f.status };
   }
-  const [numberSystems, cards] = await Promise.all([numberSystemsRead, summaryRead]);
-  const summary = problem === null ? cards : [];
+  const numberSystems = await numberSystemsRead;
   const items = result?.items ?? null;
   const total = result?.total ?? 0;
   const hiding = activeFilterLabels(
@@ -142,13 +150,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         </EmptyState>
       ) : items !== null ? (
         <div className={styles.results}>
-          {summary.length > 0 ? (
-            <section className={styles.stats} aria-label="Inbox summary">
-              {summary.map((card) => (
-                <StatCard key={card.key} label={card.label} value={card.value} icon={card.icon} />
-              ))}
-            </section>
-          ) : null}
+          <Suspense fallback={null}>
+            <Summary read={summaryRead} />
+          </Suspense>
           <div className={styles.toolbar}>
             <InboxFilters documentType={documentType} rows={state.rows} decided={decided} />
             <ResultCount shown={items.length} total={total} noun="request" />

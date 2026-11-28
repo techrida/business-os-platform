@@ -370,6 +370,16 @@ export const InboxItemDtoSchema = z.object({
 });
 export type InboxItemDto = z.infer<typeof InboxItemDtoSchema>;
 
+export const InboxSummarySchema = z.array(
+  z.object({
+    documentType: z.string(),
+    state: z.literal('pending'),
+    age: z.enum(['under_day', 'under_week', 'week_or_more']),
+    count: z.number().int().nonnegative(),
+  }),
+);
+export type InboxSummary = z.infer<typeof InboxSummarySchema>;
+
 /** GET /v1/approvals/inbox/count: how many requests the caller may decide now (the inbox list's total). */
 export const InboxCountDtoSchema = z.object({
   count: z.number().int().min(0),
