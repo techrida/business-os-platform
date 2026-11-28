@@ -69,19 +69,24 @@ export function staffToken(role) {
   return token;
 }
 
-export function request(token, flow, method, path, body, status, key) {
+export function request(token, flow, method, path, body, status, key, mime = 'application/json') {
   const headers = {
     Authorization: 'Bearer ' + token,
-    'Content-Type': 'application/json',
+    'Content-Type': mime,
     'X-Entity-Id': manifest.organizationId,
     'X-Perf-Flow': flow,
   };
   if (key) headers['Idempotency-Key'] = key;
-  const res = http.request(method, api + path, body == null ? null : JSON.stringify(body), {
-    headers,
-    redirects: 0,
-    tags: { name: flow, flow },
-  });
+  const res = http.request(
+    method,
+    api + path,
+    body == null || mime !== 'application/json' ? body : JSON.stringify(body),
+    {
+      headers,
+      redirects: 0,
+      tags: { name: flow, flow },
+    },
+  );
   if (!check(res, { [flow]: (r) => r.status === status }, { flow })) {
     let code;
     try {
