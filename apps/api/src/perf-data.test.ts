@@ -5,7 +5,7 @@ import { createTenantWithEntity, createStaffUser, createDb, type DbHandle } from
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { ClamdClient } from './platform/documents/clamd.client';
-import { assertTarget, scope, staff } from '../test/perf-data/company';
+import { assertTarget, scope, staff, vat } from '../test/perf-data/company';
 import { cleanup } from '../test/perf-data/cleanup';
 import { generate } from '../test/perf-data/generate';
 
@@ -55,6 +55,13 @@ it('creates valid scoped data, resumes without duplicates and cleans only the pe
     'Perf proof did not scan clean',
   );
   const first = await generate(handle, sizes, storage, clamd);
+  expect(first.vatId).toBe(vat);
+  const quotationWorkflow = await pool.query(
+    `SELECT v.status FROM app.workflow_definitions d JOIN app.workflow_versions v ON v.id=d.current_version_id
+     WHERE d.tenant_id=$1 AND d.organization_id=$2 AND d.document_type='quotation_version'`,
+    [scope.tenantId, scope.organizationId],
+  );
+  expect(quotationWorkflow.rows).toEqual([{ status: 'published' }]);
   expect(first.ids.test_memos).toHaveLength(6);
   const pending = await pool.query<{ user_id: string; n: number }>(
     `SELECT s.user_id,count(*)::int n FROM app.approval_steps s JOIN app.approval_requests r ON r.id=s.request_id AND r.tenant_id=s.tenant_id WHERE r.tenant_id=$1 AND r.status='pending' AND s.status='active' GROUP BY s.user_id`,

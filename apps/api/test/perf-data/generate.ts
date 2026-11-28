@@ -231,7 +231,7 @@ export async function generate(
   // The same configuration path as db-seed.ts: audited reference rows, not fabricated approval decisions.
   await transaction(pool, async (c) => {
     if (!(await assertCompany(c))) throw new PerfDataError('Missing perf company');
-    for (const type of ['test_memo', 'tax_invoice']) {
+    for (const type of ['test_memo', 'tax_invoice', 'quotation_version']) {
       const def = perfId(`workflow-${type}`),
         ver = perfId(`workflow-${type}-v1`);
       const spec = {
@@ -526,6 +526,7 @@ export async function manifest(pool: Pool) {
   return {
     ...scope,
     staff,
+    vatId: vat,
     staffIdpOrgId: staffOrg,
     approverGroups: Object.fromEntries(
       ['accountant', 'finance', 'founder'].map((role) => [role, perfId(`group-${role}`)]),

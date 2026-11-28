@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { summarize } from './backend-summary.mjs';
+
+test('counts completed successful requests, preserves zero latency and flags missing flows', async () => {
+  const record = (status, time) =>
+    JSON.stringify({
+      req: { headers: { 'x-perf-flow': 'write' } },
+      res: { statusCode: status },
+      responseTime: time,
+    });
+  const rows = await summarize(
+    [record(201, 0), record(201, 100), record(400, 500), record(200, null)],
+    ['write', 'missing'],
+  );
+  assert.deepEqual(rows, [
+    { flow: 'write', n: 2, percentiles: [50, 95, 99] },
+    { flow: 'missing', n: 0, percentiles: [] },
+  ]);
+});

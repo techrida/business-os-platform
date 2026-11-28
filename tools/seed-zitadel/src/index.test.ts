@@ -568,7 +568,7 @@ describe('@bos/seed-zitadel', () => {
     const { files, deps } = setup();
     await runSeed({ ...deps, perfStaff: true });
     const file = files.data.get('perf-subjects.json')!;
-    const { subjects } = JSON.parse(file);
+    const { subjects } = JSON.parse(file) as { subjects: Record<string, string> };
     expect(new Set(Object.values(subjects)).size).toBe(6);
     const previous = files.data.get('k6.env');
     await runSeed({ ...deps, perfStaff: true });
