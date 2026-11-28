@@ -564,6 +564,18 @@ describe('@bos/seed-zitadel', () => {
     expect(SEED_TOOL).toBe('@bos/seed-zitadel');
   });
 
+  it('provisions separate perf subjects and reuses their client credentials', async () => {
+    const { files, deps } = setup();
+    await runSeed({ ...deps, perfStaff: true });
+    const file = files.data.get('perf-subjects.json')!;
+    const { subjects } = JSON.parse(file) as { subjects: Record<string, string> };
+    expect(new Set(Object.values(subjects)).size).toBe(6);
+    const previous = files.data.get('k6.env');
+    await runSeed({ ...deps, perfStaff: true });
+    expect(files.data.get('k6.env') === previous).toBe(true);
+    expect(files.data.get('perf-subjects.json')).toBe(file);
+  });
+
   it('first run creates everything and writes the dev files', async () => {
     const { api, files, store, deps } = setup();
     const result = await runSeed(deps);
