@@ -115,6 +115,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/qa-cache
+
       - name: Bring up the stack and seed the dev personas
         run: bash .github/qa/up.sh
 
@@ -122,9 +124,6 @@ jobs:
       # listing tests. Still minutes before the first spec runs.
       - name: Every workspace spec is in exactly one shard list
         run: node .github/qa/spec-counts.mjs --lists
-
-      - name: Install Chromium
-        run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
 
       - uses: ./.github/actions/qa-fixtures
 
@@ -182,6 +181,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/qa-cache
+
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         if: needs.fixtures.result == 'success'
         with:
@@ -198,9 +199,6 @@ jobs:
         env:
           MODE: ${{ needs.fixtures.result == 'success' && 'restore' || 'seed' }}
         run: bash .github/qa/up.sh "$MODE"
-
-      - name: Install Chromium
-        run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium
 
       - uses: ./.github/actions/qa-fixtures
         if: needs.fixtures.result == 'skipped'

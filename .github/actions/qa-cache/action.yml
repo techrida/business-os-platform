@@ -1,0 +1,32 @@
+name: Prepare QA images and Chromium
+description: Restore the pinned local image builds and Playwright browser revision
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      id: images
+      with:
+        path: ${{ runner.temp }}/qa-images.tar
+        key: qa-images-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('infra/postgres/**', 'infra/login/**', 'packages/locale/src/theme-mode.ts', 'apps/workspace/src/styles/tokens.css', 'apps/workspace/src/styles/token-overrides.css', '.dockerignore') }}
+    - name: Load QA images
+      if: steps.images.outputs.cache-hit == 'true'
+      shell: bash
+      run: docker load -i "$RUNNER_TEMP/qa-images.tar"
+    - name: Build and save QA images
+      if: steps.images.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        docker build -t bos/postgres:16 infra/postgres
+        docker build -t bos-zitadel-login -f infra/login/Dockerfile .
+        docker save -o "$RUNNER_TEMP/qa-images.tar" bos/postgres:16 bos-zitadel-login
+    - name: Read installed Playwright version
+      id: version
+      shell: bash
+      run: pnpm --filter @bos/workspace exec node -p '"version=" + require("@playwright/test/package.json").version' >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/ms-playwright
+        key: qa-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+    - name: Install Chromium and operating system dependencies
+      shell: bash
+      run: pnpm --filter @bos/workspace exec playwright install --with-deps chromium

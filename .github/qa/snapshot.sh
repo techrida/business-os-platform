@@ -5,6 +5,8 @@ umask 077
 dc() { docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml -f .github/qa/compose.qa.yaml "$@"; }
 case "$1" in
   save)
+    source .env
+    dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli --raw EVAL       "local r={} for _,k in ipairs(redis.call('keys','pt:sess:*')) do table.insert(r,{k,redis.call('get',k),redis.call('pexpiretime',k)}) end return cjson.encode(r)" 0 > .dev/portal-sessions.json
     for db in bos zitadel; do
       dc exec -T postgres pg_dump -Fc -U postgres "$db" > ".dev/$db.dump"
     done
@@ -12,7 +14,7 @@ case "$1" in
     sudo chown "$(id -u):$(id -g)" .dev/bootstrap.pat
     tar -czf - .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
       .dev/{zitadel,zitadel-api,zitadel-portal}.env .dev/personas.json .dev/files \
-      .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json |
+      .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json |
       gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 \
         -o "$RUNNER_TEMP/fixtures.gpg" 3<<<"$QA_FIXTURE_KEY"
     ;;
@@ -23,7 +25,9 @@ case "$1" in
     tar -xzf "$RUNNER_TEMP/fixtures.tgz"
     ;;
   restore)
-    dc up -d --wait postgres
+    dc up -d --wait postgres valkey
+    source .env
+    dc exec -T -e VALKEYCLI_AUTH="$VALKEY_PASSWORD" valkey valkey-cli -x EVAL       "for _,r in ipairs(cjson.decode(ARGV[1])) do redis.call('set',r[1],r[2],'PXAT',r[3]) end return 'OK'" 0 < .dev/portal-sessions.json | grep -qx OK
     for db in bos zitadel; do
       dc exec -T postgres pg_restore -U postgres --clean --if-exists --exit-on-error -d "$db" < ".dev/$db.dump"
     done
