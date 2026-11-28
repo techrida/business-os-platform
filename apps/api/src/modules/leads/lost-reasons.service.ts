@@ -33,7 +33,7 @@ import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { AuditService } from '../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned } from '../../platform/db/idempotency';
-import { withTx } from '../../platform/db/tx';
+import { type Actor, READ_ONLY, type TxScope, withTx } from '../../platform/db/tx';
 import { LeadsCaller } from './leads.caller';
 
 const AUDIT_ENTITY = 'lead_lost_reasons';
@@ -117,18 +117,22 @@ export class LeadLostReasonsService {
 
   private async all(withRetired: boolean): Promise<ReasonRow[]> {
     const { scope, actor } = this.caller.current();
+    const existing = await withTx(
+      this.db,
+      scope,
+      actor,
+      (tx) => this.ordered(tx, scope.tenantId),
+      READ_ONLY,
+    );
+    // Check the unfiltered list: a tenant that retired every option is already initialized.
+    const rows = existing.length > 0 ? existing : await this.bootstrapDefaults(scope, actor);
+    return withRetired ? rows : rows.filter((row) => row.retiredAt === null);
+  }
+
+  private bootstrapDefaults(scope: TxScope, actor: Actor): Promise<ReasonRow[]> {
     return withTx(this.db, scope, actor, async (tx) => {
       await this.seedDefaults(tx, scope.tenantId);
-      return tx
-        .select()
-        .from(leadLostReasons)
-        .where(
-          and(
-            eq(leadLostReasons.tenantId, scope.tenantId),
-            withRetired ? undefined : sql`${leadLostReasons.retiredAt} IS NULL`,
-          ),
-        )
-        .orderBy(asc(leadLostReasons.position), asc(leadLostReasons.label));
+      return this.ordered(tx, scope.tenantId);
     });
   }
 
