@@ -252,7 +252,7 @@ jobs:
       # The fixtures time every Approve they click (e2e/helpers/fixture-flow.ts). The job fails when the p95 of the
       # successful Approves is over 80 ms (Kuu 2026-11-26); the repository variable QA_APPROVE_P95_LIMIT_MS overrides
       # the limit without a commit.
-      - name: Approve timing (p95 in the job summary, limit 80 ms)
+      - name: Approve to decided page
         if: ${{ !cancelled() }}
         env:
           BOS_APPROVE_P95_LIMIT_MS: ${{ vars.QA_APPROVE_P95_LIMIT_MS }}
