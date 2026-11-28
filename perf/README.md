@@ -81,3 +81,18 @@ After all selected scripts, including a failed gate, the runner stops the dispos
 ## Legacy database-read seed
 
 `perf/seed/db-reads.sql` and `pnpm perf:seed-db-reads` are the original quotation/approval read benchmark fixture. They write to an existing demo entity and intentionally create artificial historical states. They are **not** part of the isolated Wave 2 data generator above; do not use them to populate the perf company without reviewing the seed's assumptions.
+
+### Platform workload
+
+Add `-e BOS_PERF_PLATFORM=1` to the disposable staff identity seed command above for
+the platform workload. This provisions one customer and one vendor machine user in separate
+organizations. The loader maps them to the first perf customer and the invited perf vendor.
+Load the fixture offline, start the API and worker, then run `bash perf/k6/run-company.sh platform`.
+Use the API with the paged inbox and summary routes (P-8).
+
+The workload covers inbox list/count/summary, verification file reservation and byte upload,
+scan status reads, access policy and workflow draft saves, filtered audit events, customer
+invoices, a vendor quotation submission, and sidebar reads. Navigation search filters the
+sidebar links in the browser and makes zero API requests. Measure its visible result in a browser.
+The scan report joins each verification upload to its BullMQ added and completed events by
+version ID. Times exclude polling delay. A missing completion fails the run.

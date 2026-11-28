@@ -6,7 +6,7 @@ import type { DbHandle } from '@bos/db';
 export class PerfDataError extends Error {}
 
 export type Pool = DbHandle['pool'];
-type PoolClient = NonNullable<Parameters<Parameters<Pool['connect']>[0]>[1]>;
+export type PoolClient = NonNullable<Parameters<Parameters<Pool['connect']>[0]>[1]>;
 
 // A separate tenant is necessary: audit hashes chain across all entities of a tenant.
 export function perfId(key: string): string {

@@ -37,7 +37,7 @@ function loadManifest() {
 }
 export const manifest = loadManifest();
 
-export function staffToken(role) {
+function credentialToken(role) {
   const prefix = 'K6_PERF_' + role.toUpperCase();
   const id = __ENV[prefix + '_CLIENT_ID'];
   const secret = __ENV[prefix + '_CLIENT_SECRET'];
@@ -56,7 +56,11 @@ export function staffToken(role) {
     { headers: { Authorization: 'Basic ' + basic }, redirects: 0, tags: { name: 'setup-token' } },
   );
   if (res.status !== 200) fail('Perf token request failed for ' + role + ': ' + res.status);
-  const token = res.json('access_token');
+  return res.json('access_token');
+}
+
+export function staffToken(role) {
+  const token = credentialToken(role);
   const me = request(token, 'setup-me', 'GET', '/v1/me', null, 200).json();
   if (
     !manifest.staff[role] ||
@@ -69,20 +73,49 @@ export function staffToken(role) {
   return token;
 }
 
-export function request(token, flow, method, path, body, status, key) {
+export function portalToken(role) {
+  const token = credentialToken(role);
+  const me = request(token, 'setup-me', 'GET', '/v1/me', null, 200).json();
+  const customer = role === 'customer_user';
+  const expected = customer
+    ? manifest.portalUsers.some((u) => u.id === me.id && u.party_id === me.partyId)
+    : me.id === manifest.vendorPortalUser && me.partyId === manifest.vendorId;
+  if (
+    !expected ||
+    me.orgKind !== (customer ? 'customer' : 'vendor') ||
+    me.tenantId !== manifest.tenantId ||
+    me.organizationId !== manifest.organizationId ||
+    !me.roles.includes(role)
+  )
+    fail('Unexpected perf portal identity');
+  return token;
+}
+
+export function request(token, flow, method, path, body, status, key, contentType) {
   const headers = {
     Authorization: 'Bearer ' + token,
-    'Content-Type': 'application/json',
+    'Content-Type': contentType || 'application/json',
     'X-Entity-Id': manifest.organizationId,
     'X-Perf-Flow': flow,
   };
   if (key) headers['Idempotency-Key'] = key;
-  const res = http.request(method, api + path, body == null ? null : JSON.stringify(body), {
-    headers,
-    redirects: 0,
-    tags: { name: flow, flow },
-  });
-  if (!check(res, { [flow]: (r) => r.status === status }, { flow })) {
+  const res = http.request(
+    method,
+    api + path,
+    contentType ? body : body == null ? null : JSON.stringify(body),
+    {
+      headers,
+      redirects: 0,
+      tags: { name: flow, flow },
+    },
+  );
+  if (
+    !check(
+      res,
+      { [flow]: (r) => (Array.isArray(status) ? status.includes(r.status) : r.status === status) },
+      { flow },
+    )
+  ) {
     let code;
     try {
       code = res.json('error.code');

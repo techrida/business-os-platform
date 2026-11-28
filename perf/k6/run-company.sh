@@ -22,9 +22,19 @@ for script in "$@"; do
     -v "${BOS_PERF_MANIFEST:-$BOS_PERF_STORAGE_ROOT/perf-manifest.json}:/perf-manifest.json:ro" \
     k6 run "/perf/$script.js" || result=1
   case "$script" in
-    sales|approvals)
+    sales|approvals|platform)
       docker compose logs --no-log-prefix --since "$started" api | node perf/k6/backend-summary.mjs "$script" || result=1 ;;
   esac
+  if [[ "$script" == platform ]]; then
+    manifest=${BOS_PERF_MANIFEST:-$BOS_PERF_STORAGE_ROOT/perf-manifest.json}
+    # The job event stream retains both endpoints even after BullMQ evicts a completed job.
+    for file in scan-times.mjs backend-summary.mjs platform-flows.mjs; do
+      docker compose cp "perf/k6/$file" "api:/tmp/$file"
+    done
+    docker compose exec -T api node /tmp/scan-times.mjs "$started" \
+      "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).tenantId' "$manifest")" \
+      "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).organizationId' "$manifest")" || result=1
+  fi
   if [[ "$script" == sales ]]; then
     pnpm --filter @bos/api exec tsx test/perf-data/cli.ts pdf-times "$started" || result=1
   fi

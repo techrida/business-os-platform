@@ -5,8 +5,9 @@ import { createTenantWithEntity, createStaffUser, createDb, type DbHandle } from
 import { createTestDatabase, type TestDatabase } from '@bos/db/testing';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { ClamdClient } from './platform/documents/clamd.client';
-import { assertTarget, scope, staff, vat } from '../test/perf-data/company';
+import { assertTarget, scope, staff, vat, transaction } from '../test/perf-data/company';
 import { cleanup } from '../test/perf-data/cleanup';
+import { seedPlatformPortal } from '../test/perf-data/platform';
 import { generate } from '../test/perf-data/generate';
 
 let db: TestDatabase, handle: DbHandle, pool: DbHandle['pool'], storage: string;
@@ -99,6 +100,30 @@ it('creates valid scoped data, resumes without duplicates and cleans only the pe
     ).rows[0]?.n,
   ).toBe(4);
   expect(await generate(handle, sizes, storage, clamd)).toEqual(first);
+  for (let i = 0; i < 2; i++)
+    await transaction(pool, (c) =>
+      seedPlatformPortal(
+        c,
+        { customer_user: '7101', vendor_user: '7102' },
+        { customer_user: '7201', vendor_user: '7202' },
+      ),
+    );
+  expect(
+    (
+      await pool.query<{ n: number }>(
+        'SELECT count(*)::int n FROM app.rfq_vendors WHERE tenant_id=$1',
+        [scope.tenantId],
+      )
+    ).rows[0]?.n,
+  ).toBe(1);
+  expect(
+    (
+      await pool.query<{ n: number }>(
+        "SELECT count(*)::int n FROM app.users u JOIN app.idp_orgs o ON o.id=u.idp_org_id AND o.tenant_id=u.tenant_id WHERE u.tenant_id=$1 AND (o.kind,u.zitadel_user_id) IN (('vendor','7202'),('customer','7201'))",
+        [scope.tenantId],
+      )
+    ).rows[0]?.n,
+  ).toBe(2);
   await cleanup(pool, storage);
   await cleanup(pool, storage);
   expect(

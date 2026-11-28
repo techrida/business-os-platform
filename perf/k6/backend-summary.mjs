@@ -2,7 +2,10 @@
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
+import { platformLimits } from './platform-flows.mjs';
+
 const groups = {
+  platform: Object.keys(platformLimits),
   sales: [
     'create-lead',
     'move-lead',
@@ -48,13 +51,13 @@ export async function summarize(lines, flows) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const flows = groups[process.argv[2]];
-  if (!flows) throw new Error('Choose sales or approvals');
+  if (!flows) throw new Error('Choose a registered workload');
   console.log('Measured API request time in milliseconds: flow, count, p50, p95, p99');
   for (const { flow, n, percentiles } of await summarize(
     createInterface({ input: process.stdin }),
     flows,
   )) {
     console.log([flow, n, ...percentiles.map((p) => p.toFixed(1))].join(', '));
-    if (!n || percentiles[1] >= 80) process.exitCode = 1;
+    if (!n || percentiles[1] >= (platformLimits[flow] ?? 80)) process.exitCode = 1;
   }
 }
