@@ -14,7 +14,7 @@ on:
         description: Maximum workspace shards for a hosted timing comparison
         type: choice
         options: ['14', '10', '6']
-        default: '14'
+        default: '10'
       spec_filter:
         description: 'Playwright file filter (a path or regex, empty = all), e.g. p4/list-filters'
         required: false
@@ -42,7 +42,7 @@ concurrency:
 
 env:
   CI: 'true'
-  QA_SHARD_CEILING: ${{ inputs.shard_ceiling || '14' }}
+  QA_SHARD_CEILING: ${{ inputs.shard_ceiling || '10' }}
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
@@ -285,6 +285,10 @@ jobs:
 
       - uses: ./.github/actions/qa-fixtures
         if: needs.fixtures.result == 'skipped'
+
+      - name: Check current workspace spec coverage on a restored snapshot
+        if: needs.fixtures.outputs.reused == 'true' && matrix.ws && matrix.id == '1'
+        run: node .github/qa/spec-counts.mjs --lists
 
       - name: Renew portal sessions from cached fixtures
         if: needs.fixtures.outputs.reused == 'true'
