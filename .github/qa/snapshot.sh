@@ -16,9 +16,14 @@ case "$1" in
     tar --exclude='*/standalone' --exclude='*/cache' -czf - \
       apps/workspace/.next-devtools apps/portal/.next apps/api/dist packages/*/dist .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
       .dev/{zitadel,zitadel-api,zitadel-portal}.env .dev/personas.json .dev/files \
-      .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json |
+      .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json .dev/qa-approve-timings.jsonl |
       gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 \
         -o "$RUNNER_TEMP/fixtures.gpg" 3<<<"$QA_FIXTURE_KEY"
+    ;;
+  check)
+    gpg --batch --pinentry-mode loopback --passphrase-fd 3 --decrypt "$RUNNER_TEMP/fixtures.gpg" 3<<<"$QA_FIXTURE_KEY" |
+      tar -xzf - .dev/qa-approve-timings.jsonl
+    test -s .dev/qa-approve-timings.jsonl
     ;;
   unpack)
     # Authenticate the entire encrypted archive before extracting anything.

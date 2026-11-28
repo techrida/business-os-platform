@@ -28,6 +28,7 @@ test('the encrypted snapshot restores both databases, portal state, files and sa
   chmodSync(join(root, 'gnupg'), 0o700);
   const files = [
     '.dev/personas.json',
+    '.dev/qa-approve-timings.jsonl',
     '.dev/files/proof',
     '.dev/login-client.pat',
     '.dev/zitadel.env',
@@ -79,6 +80,8 @@ esac
     });
   run('save', source);
   assert.ok(!readFileSync(join(root, 'fixtures.gpg')).includes(marker));
+  run('check', target);
+  assert.ok(!existsSync(join(target, '.env')));
   run('unpack', target);
   for (const name of files) assert.equal(readFileSync(join(target, name), 'utf8'), marker, name);
   for (const db of ['bos', 'zitadel'])
