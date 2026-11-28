@@ -26,7 +26,9 @@ echo $! > .dev/compose-up.pid
 end
 
 step "build workspace packages"
-pnpm -r --filter '@bos/api...' --filter '@bos/workspace^...' --filter '@bos/portal^...' --filter '@bos/seed-zitadel...' --if-present build
+if [[ ${1:-} != restore ]]; then
+  pnpm -r --filter '@bos/api...' --filter '@bos/workspace^...' --filter '@bos/portal^...' --filter '@bos/seed-zitadel...' --if-present build
+fi
 lap "packages built"
 end
 
@@ -41,21 +43,21 @@ end
 step "CA, migrate, seed"
 bash infra/scripts/export-dev-ca.sh
 if [[ ${1:-} != restore ]]; then
-bash infra/scripts/migrate-dev.sh
-dc --profile tools run --rm seed-zitadel
-docker cp "$(dc ps -q zitadel-api)":/zitadel/admin/admin.pat .dev/admin.pat
-set -a; source .dev/zitadel.env; set +a
-NODE_ENV=development NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt" \
-  BOS_DEV_BOOTSTRAP_TOKEN_FILE=.dev/admin.pat BOS_DEV_LOGIN_CLIENT_TOKEN_FILE=.dev/login-client.pat \
-  OIDC_ISSUER=https://auth.localhost node infra/scripts/dev-login-client.mjs >/dev/null
-chmod 600 .dev/*.pat .dev/personas.json 2>/dev/null || true
+  bash infra/scripts/migrate-dev.sh
+  dc --profile tools run --rm seed-zitadel
+  docker cp "$(dc ps -q zitadel-api)":/zitadel/admin/admin.pat .dev/admin.pat
+  set -a; source .dev/zitadel.env; set +a
+  NODE_ENV=development NODE_EXTRA_CA_CERTS="$PWD/.dev/caddy-root.crt" \
+    BOS_DEV_BOOTSTRAP_TOKEN_FILE=.dev/admin.pat BOS_DEV_LOGIN_CLIENT_TOKEN_FILE=.dev/login-client.pat \
+    OIDC_ISSUER=https://auth.localhost node infra/scripts/dev-login-client.mjs >/dev/null
+  chmod 600 .dev/*.pat .dev/personas.json 2>/dev/null || true
 fi
 lap "database ready"
 end
 
 step "demo fixtures"
 if [[ ${1:-} != restore ]]; then
-dc exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
+  dc exec -T postgres psql -U postgres -d bos -v ON_ERROR_STOP=1 -P pager=off < .github/qa/demo-data.sql
 fi
 end
 
@@ -91,13 +93,15 @@ done
 curl -sf --cacert .dev/caddy-root.crt https://api.localhost/health/ready >/dev/null || { tail -50 .dev/logs/api.log; exit 1; }
 lap "api ready"
 
-(cd apps/workspace && BOS_BUILD_PROFILE=dev NODE_ENV=production node node_modules/next/dist/bin/next build > ../../.dev/logs/workspace-build.log 2>&1) &
-wbuild=$!
-(cd apps/portal && NODE_ENV=production node node_modules/next/dist/bin/next build > ../../.dev/logs/portal-build.log 2>&1) &
-pbuild=$!
-wait $wbuild || { tail -60 .dev/logs/workspace-build.log; exit 1; }
-wait $pbuild || { tail -60 .dev/logs/portal-build.log; exit 1; }
-lap "next builds done"
+if [[ ${1:-} != restore ]]; then
+  (cd apps/workspace && BOS_BUILD_PROFILE=dev NODE_ENV=production node node_modules/next/dist/bin/next build > ../../.dev/logs/workspace-build.log 2>&1) &
+  wbuild=$!
+  (cd apps/portal && NODE_ENV=production node node_modules/next/dist/bin/next build > ../../.dev/logs/portal-build.log 2>&1) &
+  pbuild=$!
+  wait $wbuild || { tail -60 .dev/logs/workspace-build.log; exit 1; }
+  wait $pbuild || { tail -60 .dev/logs/portal-build.log; exit 1; }
+  lap "next builds done"
+fi
 (cd apps/workspace && NODE_ENV=production BOS_BUILD_PROFILE=dev node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3000 > ../../.dev/logs/workspace.log 2>&1 &)
 (cd apps/portal && set -a && { [ ! -f ../../.dev/zitadel-portal.env ] || source ../../.dev/zitadel-portal.env; } && set +a && NODE_ENV=production SESSION_ENC_KEY="$PORTAL_SESSION_ENC_KEY" SESSION_ENC_KEY_ID="$PORTAL_SESSION_ENC_KEY_ID" \
   OIDC_REDIRECT_URI="$PORTAL_PUBLIC_URL/auth/callback" node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3002 > ../../.dev/logs/portal.log 2>&1 &)

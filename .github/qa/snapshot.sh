@@ -13,7 +13,8 @@ case "$1" in
     done
     docker cp "$(dc ps -q zitadel-api)":/zitadel/bootstrap/login-client.pat .dev/bootstrap.pat
     sudo chown "$(id -u):$(id -g)" .dev/bootstrap.pat
-    tar -czf - .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
+    tar --exclude='*/standalone' --exclude='*/cache' -czf - \
+      apps/workspace/.next-devtools apps/portal/.next apps/api/dist packages/*/dist .env .dev/{bos,zitadel}.dump .dev/{bootstrap,login-client}.pat \
       .dev/{zitadel,zitadel-api,zitadel-portal}.env .dev/personas.json .dev/files \
       .dev/portal-{customer,vendor,vendor-b,pending}.json .dev/portal-sessions.json .dev/portal-proof.pdf .dev/qa-fixture-ids.json |
       gpg --batch --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 \
