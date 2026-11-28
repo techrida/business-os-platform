@@ -14,6 +14,7 @@ import {
   transaction,
   assertCompany,
 } from './company';
+import { seedPlatformPortal } from './platform';
 import { cleanup } from './cleanup';
 import { generate, fullSizes, manifest } from './generate';
 
@@ -95,7 +96,11 @@ async function main() {
     }
     if (config['BOS_PERF_SUBJECTS']) {
       const subject = z.string().regex(/^\d+$/);
-      const identity = z.object({ orgId: subject, subjects: z.record(z.string(), subject) });
+      const identity = z.object({
+        orgId: subject,
+        subjects: z.record(z.string(), subject),
+        portalOrgs: z.object({ customer_user: subject, vendor_user: subject }).optional(),
+      });
       const parsed = identity.safeParse(
         JSON.parse(await readFile(config['BOS_PERF_SUBJECTS'], 'utf8')),
       );
@@ -116,6 +121,7 @@ async function main() {
             [mapping.subjects[role], id, scope.tenantId, staffOrg],
           );
         }
+        if (mapping.portalOrgs) await seedPlatformPortal(c, mapping.portalOrgs, mapping.subjects);
       });
     }
     const path = resolve(config['BOS_PERF_MANIFEST'] ?? resolve(storage, 'perf-manifest.json'));

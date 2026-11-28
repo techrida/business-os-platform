@@ -2,12 +2,14 @@
 import { pathToFileURL } from 'node:url';
 import { percentile } from './backend-summary.mjs';
 
-export function scanTimes(events) {
+export function scanTimes(events, versionIds) {
+  const selected = versionIds && new Set(versionIds);
   const queued = new Map();
   const durations = [];
   for (const [id, fields] of events) {
     const event = {};
     for (let i = 0; i < fields.length; i += 2) event[fields[i]] = fields[i + 1];
+    if (selected && !selected.has(event.jobId)) continue;
     const time = Number(id.split('-')[0]);
     if (event.event === 'added') queued.set(event.jobId, time);
     if (event.event === 'completed' && queued.has(event.jobId)) {
@@ -15,8 +17,8 @@ export function scanTimes(events) {
       queued.delete(event.jobId);
     }
   }
-  if (queued.size) throw new Error('Proof scan queue has incomplete jobs');
-  if (!durations.length) throw new Error('No jobs completed in the proof scan queue');
+  if (!selected && queued.size) throw new Error('Proof scan queue has incomplete jobs');
+  if (!selected && !durations.length) throw new Error('No jobs completed in the proof scan queue');
   return durations.sort((a, b) => a - b);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

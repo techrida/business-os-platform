@@ -98,3 +98,18 @@ receivables aging. The aging endpoint only supports an as-of-today report. The r
 reports server request times separately for each operation and uses the scan queue's
 added and completed event timestamps to measure the background job. Report p95 under
 800 ms is good and 1,800 ms is the failing threshold.
+
+### Platform workload
+
+Add `-e BOS_PERF_PLATFORM=1` to the disposable staff identity seed command above for
+the platform workload. This provisions one customer and one vendor machine user in separate
+organizations. The loader maps them to the first perf customer and the invited perf vendor.
+Load the fixture offline, start the API and worker, then run `bash perf/k6/run-company.sh platform`.
+Use the API with the paged inbox and summary routes (P-8).
+
+The workload covers inbox list/count/summary, verification file reservation and byte upload,
+scan status reads, access policy and workflow draft saves, filtered audit events, customer
+invoices, a vendor quotation submission, and sidebar reads. Navigation search filters the
+sidebar links in the browser and makes zero API requests. Measure its visible result in a browser.
+The scan report joins each verification upload to its BullMQ added and completed events by
+version ID. Times exclude polling delay. A missing completion fails the run.
