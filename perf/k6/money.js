@@ -1,3 +1,4 @@
+import { flowThresholds } from './thresholds.js';
 import encoding from 'k6/encoding';
 import exec from 'k6/execution';
 import { check, fail, sleep } from 'k6';
@@ -10,17 +11,17 @@ const proof = encoding.b64decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFEkAAAAASUVORK5CYII=',
 );
 const scan = new Trend('payment_proof_scan_observed_ms', true);
-const limits = {
-  'record-payment': 80,
-  'verify-payment': 80,
-  'open-vat-register': 1800,
-  'open-receivables': 1800,
-};
 const thresholds = { checks: ['rate==1'], dropped_iterations: ['count==0'] };
-for (const [flow, ms] of Object.entries(limits)) {
-  thresholds['http_req_duration{flow:' + flow + '}'] = ['p(95)<' + ms];
-  thresholds['http_reqs{flow:' + flow + '}'] = ['count>0'];
-}
+Object.assign(
+  thresholds,
+  flowThresholds([
+    'record-payment',
+    'verify-payment',
+    'allocate-payment',
+    'open-vat-register',
+    'open-receivables',
+  ]),
+);
 export const options = {
   summaryTrendStats,
   thresholds,

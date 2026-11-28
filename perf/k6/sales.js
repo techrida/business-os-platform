@@ -1,3 +1,4 @@
+import { flowThresholds } from './thresholds.js';
 import exec from 'k6/execution';
 import { sleep, check, fail } from 'k6';
 import { Trend } from 'k6/metrics';
@@ -7,24 +8,21 @@ import { arrivals, command, decide, summaryTrendStats } from './lib/workload.js'
 const pdfReady = new Trend('quotation_pdf_ready_ms', true);
 const flows = [
   'create-lead',
-  'move-lead',
+  'move-lead-stage',
   'log-activity',
   'save-quotation',
-  'enqueue-pdf',
-  'convert-order',
+  'generate-pdf',
+  'convert-quotation',
   'issue-invoice',
-  'credit-note',
-  'debit-note',
+  'create-credit-note',
+  'create-debit-note',
 ];
 const thresholds = {
   checks: ['rate==1'],
   dropped_iterations: ['count==0'],
-  quotation_pdf_ready_ms: ['p(95)<10000'],
+  quotation_pdf_ready_ms: ['p(95)<=10000'],
 };
-for (const flow of flows) {
-  thresholds['http_req_duration{flow:' + flow + '}'] = ['p(95)<80'];
-  thresholds['http_reqs{flow:' + flow + '}'] = ['count>0'];
-}
+Object.assign(thresholds, flowThresholds(flows));
 export const options = {
   summaryTrendStats,
   scenarios: { quotation: arrivals('quotation', 1, 12), billing: arrivals('billing', 1, 4) },
@@ -76,7 +74,7 @@ function prospect(sales) {
   });
   const moved = command(
     sales,
-    'move-lead',
+    'move-lead-stage',
     'PATCH',
     '/v1/leads/' + lead.id + '/stage',
     {
@@ -134,7 +132,7 @@ export function quotation({ sales, customer, contact, accountant, finance }) {
     1,
     'pending',
   );
-  decide(finance, 'enqueue-pdf', submitted.approvalRequestId, version, 'approved');
+  decide(finance, 'generate-pdf', submitted.approvalRequestId, version, 'approved');
   const start = Date.now();
   let approved;
   do {
@@ -159,7 +157,7 @@ export function quotation({ sales, customer, contact, accountant, finance }) {
     evidenceKinds: ['signed_quote'],
     expectedVersion: sent.version,
   });
-  command(accountant, 'convert-order', 'POST', '/v1/sales-orders', {
+  command(accountant, 'convert-quotation', 'POST', '/v1/sales-orders', {
     quotationVersionId: q.currentVersionId,
   });
 }
@@ -197,7 +195,7 @@ export function billing({ customer, accountant, management, finance }) {
     200,
   );
   for (const kind of ['credit', 'debit']) {
-    command(finance, kind + '-note', 'POST', '/v1/' + kind + '-notes', {
+    command(finance, 'create-' + kind + '-note', 'POST', '/v1/' + kind + '-notes', {
       originalInvoiceId: invoice.id,
       reason: 'Synthetic adjustment',
       lines: kind === 'credit' ? [{ originalLineNo: 1, quantity: '1' }] : [line()],

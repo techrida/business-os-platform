@@ -1,3 +1,4 @@
+const { percentile } = require('./percentile.cjs');
 // BullMQ stream IDs carry the queue server's millisecond clock for both events.
 function jobDurations(events, name) {
   const queued = new Map();
@@ -18,8 +19,8 @@ function jobDurations(events, name) {
 module.exports = { jobDurations };
 
 // Read on the disposable worker so its ordinary queue connection stays inside Compose.
-if (process.argv[1] === '-') {
-  const Redis = require('ioredis');
+if (require.main === module) {
+  const Redis = require(require.resolve('ioredis', { paths: [process.cwd()] }));
   const redis = new Redis(process.env.VALKEY_URL);
   async function measure() {
     const since = Date.parse(process.argv[2]);
@@ -36,16 +37,7 @@ if (process.argv[1] === '-') {
         await new Promise((resolve) => setTimeout(resolve, 500));
       } while (Date.now() < deadline);
       const { pending, durations } = result;
-      const values = [0.5, 0.95, 0.99].map((p) => {
-        const at = p * (durations.length - 1);
-        const lower = Math.floor(at);
-        return durations.length
-          ? (
-              durations[lower] +
-              (at - lower) * (durations[Math.ceil(at)] - durations[lower])
-            ).toFixed(1)
-          : '';
-      });
+      const values = [50, 95, 99].map((p) => percentile(durations, p)?.toFixed(1) ?? '');
       console.log('Measured queue time (ms), job, completed, pending, p50, p95, p99');
       console.log([name, durations.length, pending, ...values].join(', '));
       if (pending || !durations.length) process.exitCode = 1;

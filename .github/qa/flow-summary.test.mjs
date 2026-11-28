@@ -70,10 +70,17 @@ test('CLI reads the paired files and still exits successfully when the limits ar
     );
     const script = (name) => fileURLToPath(new URL(name, import.meta.url));
     const config = path.join(dir, 'limits.json');
-    writeFileSync(config, JSON.stringify({
-      'issue-invoice': { source: 'browser', page: {good: 400, gate: 500, poor: 1000}, backend: {good: 50, poor: 80} },
-      unmeasured: {source: 'k6'},
-    }));
+    writeFileSync(
+      config,
+      JSON.stringify({
+        'issue-invoice': {
+          source: 'browser',
+          page: { good: 400, gate: 500, poor: 1000 },
+          backend: { good: 50, poor: 80 },
+        },
+        unmeasured: { source: 'k6' },
+      }),
+    );
     const args = [timing, log];
     const backend = execFileSync(process.execPath, [script('./flow-backend.mjs'), ...args], {
       encoding: 'utf8',
@@ -94,7 +101,10 @@ test('CLI reads the paired files and still exits successfully when the limits ar
     writeFileSync(timing, '');
     writeFileSync(log, '');
     assert.equal(gate().status, 1);
-    writeFileSync(timing, JSON.stringify({name: 'issue-invoice', pageMs: 10, ok: true, requestIds: ['missing']}));
+    writeFileSync(
+      timing,
+      JSON.stringify({ name: 'issue-invoice', pageMs: 10, ok: true, requestIds: ['missing'] }),
+    );
     assert.equal(gate().status, 1);
     for (const [pageMs, backendMs, expected, grade] of [
       [400, 50, 0, 'good'],
@@ -126,15 +136,19 @@ test('CLI reads the paired files and still exits successfully when the limits ar
 test('k6 flow tags have the configured backend fail lines', async () => {
   globalThis.__ENV = {};
   try {
-    const { FLOW_THRESHOLDS } = await import('../../perf/k6/thresholds.js');
     const { readFileSync } = await import('node:fs');
-    const flows = JSON.parse(readFileSync(new URL('./flow-limits.json', import.meta.url)));
+    globalThis.open = () => readFileSync(new URL('./flow-limits.json', import.meta.url), 'utf8');
+    const { flowThresholds } = await import('../../perf/k6/thresholds.js');
+    const flows = JSON.parse(globalThis.open());
+    const thresholds = flowThresholds(Object.keys(flows));
     for (const [flow, limits] of Object.entries(flows)) {
-      assert.deepEqual(FLOW_THRESHOLDS[`http_req_duration{flow:${flow}}`], [
-        `p(95)<${limits.backend.poor}`,
+      assert.deepEqual(thresholds[`http_req_duration{flow:${flow}}`], [
+        `p(95)<=${limits.backend.poor}`,
       ]);
+      assert.deepEqual(thresholds[`http_reqs{flow:${flow}}`], ['count>0']);
     }
   } finally {
+    delete globalThis.open;
     delete globalThis.__ENV;
   }
 });

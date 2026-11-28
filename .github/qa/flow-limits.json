@@ -409,5 +409,44 @@
       "poor": 600
     },
     "source": "k6"
+  },
+  "preview-approval": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "gate": 500,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    },
+    "source": "k6"
+  },
+  "create-memo": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "gate": 500,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    },
+    "source": "k6"
+  },
+  "allocate-payment": {
+    "class": "single action",
+    "page": {
+      "good": 400,
+      "gate": 500,
+      "poor": 1000
+    },
+    "backend": {
+      "good": 50,
+      "poor": 80
+    },
+    "source": "k6"
   }
 }

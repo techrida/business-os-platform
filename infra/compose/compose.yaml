@@ -763,6 +763,7 @@ services:
         required: false
     volumes:
       - ../../perf/k6:/perf:ro
+      - ../../.github/qa/flow-limits.json:/.github/qa/flow-limits.json:ro
       - *ca-mount
     restart: 'no'
     networks: [edge]

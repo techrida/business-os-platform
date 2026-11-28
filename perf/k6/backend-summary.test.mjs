@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { summarize } from './backend-summary.mjs';
 
 test('counts completed successful requests, preserves zero latency and flags missing flows', async () => {
@@ -11,10 +13,10 @@ test('counts completed successful requests, preserves zero latency and flags mis
     });
   const rows = await summarize(
     [record(201, 0), record(201, 100), record(400, 500), record(200, null)],
-    ['write', 'missing'],
+    ['create-memo', 'missing'],
   );
   assert.deepEqual(rows, [
-    { flow: 'write', n: 2, percentiles: [50, 95, 99] },
+    { flow: 'create-memo', n: 2, percentiles: [0, 100, 100] },
     { flow: 'missing', n: 0, percentiles: [] },
   ]);
 });
@@ -40,4 +42,37 @@ test('scan queue timing includes waiting and fails on incomplete jobs', async ()
   assert.throws(() => scanTimes(events), /incomplete/);
   assert.deepEqual(scanTimes([...events, event(20, 'completed', 'b')]), [10, 30]);
   assert.throws(() => scanTimes([]), /no jobs/i);
+});
+
+test('the sales gate accepts the original tags and fails only above each configured limit', () => {
+  const tags = [
+    'create-lead',
+    'move-lead',
+    'log-activity',
+    'save-quotation',
+    'enqueue-pdf',
+    'convert-order',
+    'issue-invoice',
+    'credit-note',
+    'debit-note',
+  ];
+  const run = (pdfMs) =>
+    spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL('./backend-summary.mjs', import.meta.url)), 'sales'],
+      {
+        input: tags
+          .map((tag) =>
+            JSON.stringify({
+              req: { headers: { 'x-perf-flow': tag } },
+              res: { statusCode: 200 },
+              responseTime: tag === 'enqueue-pdf' ? pdfMs : 80,
+            }),
+          )
+          .join('\n'),
+        encoding: 'utf8',
+      },
+    );
+  assert.equal(run(600).status, 0);
+  assert.equal(run(601).status, 1);
 });

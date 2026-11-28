@@ -33,9 +33,6 @@ export const NFR = {
   authOverheadP99Ms: numberFromEnv('K6_READ_P99_MS', 800),
   writeP95Ms: numberFromEnv('K6_WRITE_P95_MS', 500),
   failedRate: numberFromEnv('K6_FAILED_RATE', 0.01),
-  // P1 (approvals.js): the real approve action and the route preview.
-  approveP95Ms: numberFromEnv('K6_APPROVE_P95_MS', 300),
-  previewP95Ms: numberFromEnv('K6_PREVIEW_P95_MS', 200),
   // Database reads (db-reads.js), ADR 0011: reads p95 under 300 ms and p99 under 800 ms.
   dbReadP95Ms: numberFromEnv('K6_DB_READ_P95_MS', 300),
   dbReadP99Ms: numberFromEnv('K6_DB_READ_P99_MS', 800),
@@ -63,30 +60,8 @@ export function buildThresholds() {
 }
 
 /**
- * P1 gates for `pnpm perf:approvals`, selected by the `name` tag that approvals.js puts on every
- * measured request. A threshold can only fail the run if some request carries its tag, and a typo
- * in a tag would leave an empty metric whose p(95) is 0 and passes forever. So each name also has
- * a `count>0` threshold: no samples means a failed gate, not a green one.
- *
- * abortOnFail stays off (k6's default) so the run finishes and the summary prints. k6 still exits
- * with code 99 when any threshold is crossed.
- */
-export function buildApprovalsThresholds() {
-  return {
-    'http_req_duration{name:approve}': [`p(95)<${NFR.approveP95Ms}`],
-    'http_req_duration{name:preview}': [`p(95)<${NFR.previewP95Ms}`],
-    'http_req_duration{name:write}': [`p(95)<${NFR.writeP95Ms}`],
-    'http_reqs{name:approve}': ['count>0'],
-    'http_reqs{name:preview}': ['count>0'],
-    'http_reqs{name:write}': ['count>0'],
-    http_req_failed: [`rate<${NFR.failedRate}`],
-    checks: ['rate>0.99'],
-  };
-}
-
-/**
  * Gates for `pnpm perf:db-reads`, selected by the `name` tag db-reads.js puts on each read (DB_READ_NAMES). As in
- * buildApprovalsThresholds, each name also has a `count>0` threshold so a mistyped tag fails the gate instead of
+ * flowThresholds, each name also has a `count>0` threshold so a mistyped tag fails the gate instead of
  * leaving an empty metric that passes.
  */
 export function buildDbReadsThresholds() {
@@ -103,38 +78,16 @@ export function buildDbReadsThresholds() {
   return thresholds;
 }
 
-// life-kb: Agents/shared/ui-product-preferences/speed-and-responsiveness.md, Business OS limits.
-// Background-job request thresholds measure enqueue latency.
-export const FLOW_THRESHOLDS = {
-  'http_req_duration{flow:approve-step-1}': ['p(95)<80'],
-  'http_req_duration{flow:approve-final-step}': ['p(95)<80'],
-  'http_req_duration{flow:open-inbox}': ['p(95)<600'],
-  'http_req_duration{flow:submit-memo}': ['p(95)<80'],
-  'http_req_duration{flow:create-lead}': ['p(95)<80'],
-  'http_req_duration{flow:move-lead-stage}': ['p(95)<80'],
-  'http_req_duration{flow:log-activity}': ['p(95)<80'],
-  'http_req_duration{flow:save-quotation}': ['p(95)<80'],
-  'http_req_duration{flow:generate-pdf}': ['p(95)<600'],
-  'http_req_duration{flow:convert-quotation}': ['p(95)<80'],
-  'http_req_duration{flow:issue-invoice}': ['p(95)<80'],
-  'http_req_duration{flow:create-credit-note}': ['p(95)<80'],
-  'http_req_duration{flow:create-debit-note}': ['p(95)<80'],
-  'http_req_duration{flow:record-payment}': ['p(95)<80'],
-  'http_req_duration{flow:verify-payment}': ['p(95)<80'],
-  'http_req_duration{flow:open-vat-register}': ['p(95)<1800'],
-  'http_req_duration{flow:open-receivables}': ['p(95)<1800'],
-  'http_req_duration{flow:upload-document}': ['p(95)<80'],
-  'http_req_duration{flow:scan-document}': ['p(95)<600'],
-  'http_req_duration{flow:submit-purchase-request}': ['p(95)<80'],
-  'http_req_duration{flow:recommend-vendor-quotation}': ['p(95)<80'],
-  'http_req_duration{flow:record-receipt}': ['p(95)<80'],
-  'http_req_duration{flow:enter-vendor-bill}': ['p(95)<80'],
-  'http_req_duration{flow:approve-bill}': ['p(95)<80'],
-  'http_req_duration{flow:save-access-policy}': ['p(95)<80'],
-  'http_req_duration{flow:save-approval-workflow}': ['p(95)<80'],
-  'http_req_duration{flow:filter-audit-trail}': ['p(95)<600'],
-  'http_req_duration{flow:global-search}': ['p(95)<600'],
-  'http_req_duration{flow:portal-invoices}': ['p(95)<600'],
-  'http_req_duration{flow:portal-submit-quotation}': ['p(95)<80'],
-  'http_req_duration{flow:sidebar-navigation}': ['p(95)<600'],
-};
+// k6 reads the same limits file locally and from the read-only Compose mount.
+export function flowThresholds(flows, overrides = {}) {
+  const limits = JSON.parse(open('../../.github/qa/flow-limits.json'));
+  const thresholds = {};
+  for (const flow of flows) {
+    const limit = overrides[flow]
+      ? numberFromEnv(overrides[flow], limits[flow].backend.poor)
+      : limits[flow].backend.poor;
+    thresholds['http_req_duration{flow:' + flow + '}'] = ['p(95)<=' + limit];
+    thresholds['http_reqs{flow:' + flow + '}'] = ['count>0'];
+  }
+  return thresholds;
+}

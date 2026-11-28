@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { percentile } from '../../perf/k6/percentile.cjs';
+export { percentile };
 
 const limits = JSON.parse(readFileSync(new URL('./flow-limits.json', import.meta.url), 'utf8'));
 export const DEFAULT_P95_LIMIT_MS = limits['approve-step-1'].page.gate;
@@ -17,13 +19,6 @@ export function verdict(samples, limitMs = DEFAULT_P95_LIMIT_MS) {
   const p95 = percentile(worked, 95);
   if (p95 === undefined) return { ok: false, p95, limitMs };
   return { ok: p95 <= limitMs, p95, limitMs };
-}
-
-/** Nearest-rank percentile of a numeric list; undefined for an empty list. */
-export function percentile(values, p) {
-  if (values.length === 0) return undefined;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)];
 }
 
 /**
@@ -100,7 +95,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const result = verdict(samples, limitMs);
   if (!result.ok) {
     console.error(
-      result.p95 === undefined ? "::error::No successful Approve was timed" : `::error::Approve p95 ${Math.round(result.p95)} ms is over the limit of ${limitMs} ms`,
+      result.p95 === undefined
+        ? '::error::No successful Approve was timed'
+        : `::error::Approve p95 ${Math.round(result.p95)} ms is over the limit of ${limitMs} ms`,
     );
     process.exitCode = 1;
   }

@@ -1,7 +1,7 @@
 import exec from 'k6/execution';
 import { staffToken } from './lib/staff.js';
 import { arrivals, command, decide, summaryTrendStats } from './lib/workload.js';
-import { buildApprovalsThresholds } from './thresholds.js';
+import { flowThresholds, NFR } from './thresholds.js';
 
 export const options = {
   summaryTrendStats,
@@ -11,9 +11,15 @@ export const options = {
     write: arrivals('write', 2, 5),
   },
   thresholds: {
-    ...buildApprovalsThresholds(),
-    'http_req_duration{name:approve-final}': ['p(95)<80'],
-    'http_reqs{name:approve-final}': ['count>0'],
+    ...flowThresholds(
+      ['approve-step-1', 'approve-final-step', 'preview-approval', 'create-memo', 'submit-memo'],
+      {
+        'approve-step-1': 'K6_APPROVE_P95_MS',
+        'preview-approval': 'K6_PREVIEW_P95_MS',
+        'create-memo': 'K6_WRITE_P95_MS',
+      },
+    ),
+    http_req_failed: ['rate<' + NFR.failedRate],
     dropped_iterations: ['count==0'],
     checks: ['rate==1'],
   },
@@ -37,19 +43,19 @@ export function approve({ sales, accountant, finance }) {
   const draft = memo(sales, 'prepare-memo');
   const submitted = command(
     sales,
-    'submit',
+    'submit-memo',
     'POST',
     '/v1/test-memos/' + draft.id + '/submit',
     { expectedVersion: draft.version },
     200,
   );
-  const version = decide(accountant, 'approve', submitted.requestId, 1, 'pending');
-  decide(finance, 'approve-final', submitted.requestId, version, 'approved');
+  const version = decide(accountant, 'approve-step-1', submitted.requestId, 1, 'pending');
+  decide(finance, 'approve-final-step', submitted.requestId, version, 'approved');
 }
 export function preview({ sales }) {
   command(
     sales,
-    'preview',
+    'preview-approval',
     'POST',
     '/v1/approvals/preview',
     { documentType: 'test_memo', facts: { amountNpr: '1000.00' } },
@@ -57,5 +63,5 @@ export function preview({ sales }) {
   );
 }
 export function write({ sales }) {
-  memo(sales, 'write');
+  memo(sales, 'create-memo');
 }
