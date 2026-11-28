@@ -1,11 +1,7 @@
-// Reads the Approve timings the Playwright fixtures wrote (.dev/qa-approve-timings.jsonl: one `{"ms": <number>, "ok": <boolean>}` per
-// line) and prints a Markdown summary with the count of succeeded and failed Approves, and p50, p95 and max of the successes. Used by the qa workflow for the job
-// summary. It exits 1 when the p95 of the successful Approves is above the limit (80 ms, Kuu 2026-11-26, OQ-R7-09 c;
-// BOS_APPROVE_P95_LIMIT_MS overrides it). A failed Approve is not counted in the percentile; the spec that clicked it
-// already failed.
 import { readFileSync } from 'node:fs';
 
-export const DEFAULT_P95_LIMIT_MS = 80;
+const limits = JSON.parse(readFileSync(new URL('./flow-limits.json', import.meta.url), 'utf8'));
+export const DEFAULT_P95_LIMIT_MS = limits['approve-step-1'].page.gate;
 
 /** The limit from an environment value: a positive number of milliseconds, else the default. */
 export function limitFrom(value) {
@@ -15,11 +11,11 @@ export function limitFrom(value) {
     : DEFAULT_P95_LIMIT_MS;
 }
 
-/** `ok: false` only when there is a successful Approve and the p95 of the successes is above the limit. */
+/** `ok: false` when samples are missing or their p95 exceeds the limit. */
 export function verdict(samples, limitMs = DEFAULT_P95_LIMIT_MS) {
   const worked = samples.filter((s) => s.ok).map((s) => s.ms);
   const p95 = percentile(worked, 95);
-  if (p95 === undefined) return { ok: true, p95, limitMs };
+  if (p95 === undefined) return { ok: false, p95, limitMs };
   return { ok: p95 <= limitMs, p95, limitMs };
 }
 
@@ -66,13 +62,19 @@ export function summarise(samples, limitMs = DEFAULT_P95_LIMIT_MS) {
   if (samples.length === 0) return `${head}\n\nNo Approve was timed in this job.\n`;
   const worked = samples.filter((s) => s.ok).map((s) => s.ms);
   const failed = samples.filter((s) => !s.ok).map((s) => s.ms);
+  const p95 = percentile(worked, 95);
+  const page = limits['approve-step-1'].page;
+  const note =
+    p95 > page.good && p95 <= page.gate
+      ? ` (above the good line (${page.good} ms): Kuu decides whether to optimise)`
+      : '';
   const ms = (v) => (v === undefined ? 'n/a' : `${Math.round(v)} ms`);
   return [
     head,
     '',
     '| succeeded | failed | p50 | p95 | max |',
     '|---|---|---|---|---|',
-    `| ${worked.length} | ${failed.length} | ${ms(percentile(worked, 50))} | ${ms(percentile(worked, 95))} | ${ms(worked.length === 0 ? undefined : Math.max(...worked))} |`,
+    `| ${worked.length} | ${failed.length} | ${ms(percentile(worked, 50))} | ${ms(p95)}${note} | ${ms(worked.length === 0 ? undefined : Math.max(...worked))} |`,
     '',
     ...(failed.length === 0
       ? []
@@ -98,7 +100,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const result = verdict(samples, limitMs);
   if (!result.ok) {
     console.error(
-      `::error::Approve p95 ${Math.round(result.p95)} ms is over the limit of ${limitMs} ms`,
+      result.p95 === undefined ? "::error::No successful Approve was timed" : `::error::Approve p95 ${Math.round(result.p95)} ms is over the limit of ${limitMs} ms`,
     );
     process.exitCode = 1;
   }

@@ -46,39 +46,43 @@ test('summarise reports succeeded and failed counts, and p50, p95, max of the su
   assert.match(summarise([{ ms: 5, ok: false }]), /\| 0 \| 1 \| n\/a \| n\/a \| n\/a \|/);
 });
 
-test('the limit is 80 ms p95, judged on the successful Approves only', () => {
-  assert.equal(DEFAULT_P95_LIMIT_MS, 80);
+test('the limit is 500 ms p95, judged on the successful Approves only', () => {
+  assert.equal(DEFAULT_P95_LIMIT_MS, 500);
   const ok = (ms) => ({ ms, ok: true });
   const fast = Array.from({ length: 20 }, (_, i) => ok(40 + i)); // 40..59 ms
   assert.equal(verdict(fast).ok, true);
-  assert.equal(verdict([...fast, ok(80)]).ok, true, 'exactly at the limit passes');
-  const slow = Array.from({ length: 20 }, (_, i) => ok(70 + i)); // p95 = 88 ms
+  assert.equal(verdict([ok(500)]).ok, true, 'exactly at the limit passes');
+  assert.match(
+    summarise([ok(500)]),
+    /above the good line \(400 ms\): Kuu decides whether to optimise/,
+  );
+  const slow = Array.from({ length: 20 }, (_, i) => ok(500 + i)); // p95 = 88 ms
   const over = verdict(slow);
   assert.equal(over.ok, false);
-  assert.equal(over.p95, 88);
+  assert.equal(over.p95, 518);
   // A failed Approve is not in the percentile; a run with no success has nothing to judge.
   assert.equal(verdict([...fast, { ms: 30_000, ok: false }]).ok, true);
-  assert.equal(verdict([]).ok, true);
-  assert.equal(verdict([{ ms: 30_000, ok: false }]).ok, true);
-  assert.equal(verdict(slow, 100).ok, true, 'the limit can be passed in');
+  assert.equal(verdict([]).ok, false);
+  assert.equal(verdict([{ ms: 30_000, ok: false }]).ok, false);
+  assert.equal(verdict(slow, 520).ok, true, 'the limit can be passed in');
 });
 
-test('limitFrom reads a positive number and falls back to 80', () => {
+test('limitFrom reads a positive number and falls back to 500', () => {
   assert.equal(limitFrom('120'), 120);
-  for (const bad of [undefined, '', 'x', '0', '-5']) assert.equal(limitFrom(bad), 80, String(bad));
+  for (const bad of [undefined, '', 'x', '0', '-5']) assert.equal(limitFrom(bad), 500, String(bad));
 });
 
 test('the summary says whether the p95 is within the limit or fails the job', () => {
   const ok = (ms) => ({ ms, ok: true });
-  assert.match(summarise([ok(50), ok(60)]), /p95 60 ms is within the limit of 80 ms/);
+  assert.match(summarise([ok(50), ok(60)]), /p95 60 ms is within the limit of 500 ms/);
   assert.match(
-    summarise([ok(50), ok(200)]),
-    /p95 200 ms is over the limit of 80 ms: the job fails/,
+    summarise([ok(50), ok(600)]),
+    /p95 600 ms is over the limit of 500 ms: the job fails/,
   );
   assert.match(summarise([]), /No Approve was timed/);
 });
 
-test('the command exits 1 over the limit and 0 within it or with no timings', () => {
+test('the command exits 1 over the limit and 0 within it, and fails with no timings', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'approve-timing-'));
   const script = fileURLToPath(new URL('../.github/qa/approve-timing.mjs', import.meta.url));
   const run = (rows, env = {}) => {
@@ -91,16 +95,17 @@ test('the command exits 1 over the limit and 0 within it or with no timings', ()
   };
   try {
     assert.equal(run([{ ms: 50, ok: true }]).status, 0);
-    const slow = run([{ ms: 200, ok: true }]);
+    const slow = run([{ ms: 600, ok: true }]);
     assert.equal(slow.status, 1);
-    assert.match(slow.stdout, /over the limit of 80 ms/);
-    assert.match(slow.stderr, /::error::Approve p95 200 ms is over the limit of 80 ms/);
-    assert.equal(run([{ ms: 200, ok: true }], { BOS_APPROVE_P95_LIMIT_MS: '250' }).status, 0);
-    assert.equal(run([]).status, 0);
+    assert.match(slow.stdout, /over the limit of 500 ms/);
+    assert.match(slow.stderr, /::error::Approve p95 600 ms is over the limit of 500 ms/);
+    assert.equal(run([{ ms: 600, ok: true }], { BOS_APPROVE_P95_LIMIT_MS: '650' }).status, 0);
+    assert.equal(run([]).status, 1);
+    assert.equal(run([{ ms: 100, ok: false }]).status, 1);
     const missing = spawnSync(process.execPath, [script, path.join(dir, 'nope.jsonl')], {
       encoding: 'utf8',
     });
-    assert.equal(missing.status, 0);
+    assert.equal(missing.status, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
