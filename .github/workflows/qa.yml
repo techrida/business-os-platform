@@ -10,6 +10,11 @@ name: qa
 on:
   workflow_dispatch:
     inputs:
+      shard_ceiling:
+        description: Maximum workspace shards for a hosted timing comparison
+        type: choice
+        options: ['14', '10', '6']
+        default: '14'
       spec_filter:
         description: 'Playwright file filter (a path or regex, empty = all), e.g. p4/list-filters'
         required: false
@@ -37,7 +42,7 @@ concurrency:
 
 env:
   CI: 'true'
-  QA_SHARD_CEILING: '10'
+  QA_SHARD_CEILING: ${{ inputs.shard_ceiling || '14' }}
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
@@ -53,7 +58,7 @@ jobs:
       skip: ${{ steps.affected.outputs.skip }}
       qa-workspace: ${{ steps.affected.outputs.qa-workspace }}
       qa-portal: ${{ steps.affected.outputs.qa-portal }}
-      count: ${{ steps.capacity.outputs.count }}
+      count: ${{ steps.capacity.outputs.count || '1' }}
       qa-matrix: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,14 +92,18 @@ jobs:
 
       - name: Count available hosted runner slots
         id: capacity
+        if: steps.affected.outputs.qa-workspace == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: echo "count=$(node tools/qa-capacity.mjs)" >> "$GITHUB_OUTPUT"
+        run: |
+          count=$(node tools/qa-capacity.mjs)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Selected $count workspace shards (ceiling $QA_SHARD_CEILING)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Balance selected workspace specs
         id: shards
         env:
-          QA_SHARDS: ${{ steps.capacity.outputs.count }}
+          QA_SHARDS: ${{ steps.capacity.outputs.count || '1' }}
           SELECTED: ${{ steps.affected.outputs.qa-matrix }}
         run: node tools/qa-shards.mjs --matrix
 
