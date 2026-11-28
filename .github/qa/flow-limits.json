@@ -1,0 +1,9 @@
+{
+  "approve-step-1": { "page": 500, "backend": 80 },
+  "submit-memo": { "page": 500, "backend": 80 },
+  "save-quotation": { "page": 500, "backend": 80 },
+  "issue-invoice": { "page": 500, "backend": 80 },
+  "record-payment": { "page": 500, "backend": 80 },
+  "submit-purchase-request": { "page": 500, "backend": 80 },
+  "enter-vendor-bill": { "page": 500, "backend": 80 }
+}

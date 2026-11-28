@@ -93,6 +93,8 @@
 
 	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000} {
 		header_up X-Request-Id {http.request.uuid}
+		# Expose the same correlation ID to the browser for QA flow timing.
+		header_down X-Request-Id {http.request.uuid}
 		import node_upstream
 	}
 }

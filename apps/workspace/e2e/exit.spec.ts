@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { timeAction } from './helpers/flow-timing';
 import { statusWithoutToken } from './helpers/api';
 import {
   createDraftMemo,
@@ -50,13 +51,20 @@ import { persona } from './helpers/personas';
 const MAIL_TIMEOUT_MS = 60_000;
 
 /** Approves from an inbox detail page and checks the confirmation toast on the inbox. */
-async function approve(page: Page, comment: string): Promise<void> {
+async function approve(page: Page, comment: string, timeStepOne = false): Promise<void> {
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Approve request' });
   await dialog.getByPlaceholder('Anything the requester should know').fill(comment);
-  await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
-  await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
-  await expect(page.getByText('Your approval was recorded.')).toBeVisible();
+  const confirm = dialog.getByRole('button', { name: 'Approve', exact: true });
+  const decided = async () => {
+    await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
+    await expect(page.getByText('Your approval was recorded.')).toBeVisible();
+  };
+  if (timeStepOne) await timeAction('approve-step-1', confirm, decided);
+  else {
+    await confirm.click();
+    await decided();
+  }
 }
 
 test('memo exit: a memo goes through the two approvals its author named, with emails and an audit trail', async ({
@@ -127,7 +135,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
     await test.step('the named recommender sees the reason in the inbox and approves step 1', async () => {
       const found = await openFromInbox(management, title, stepOneReason);
       expect(found.requestId).toBe(requestId);
-      await approve(management, 'Looks right. Step 1 approved by the exit spec.');
+      await approve(management, 'Looks right. Step 1 approved by the exit spec.', true);
       // Decided: it leaves this person's inbox.
       await expect(inboxRow(management, title)).toHaveCount(0);
     });

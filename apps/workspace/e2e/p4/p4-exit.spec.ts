@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { timeAction } from '../helpers/flow-timing';
 import { approveInboxRequest } from '../helpers/fixture-flow';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { chooseOption, selectByName } from '../helpers/select';
@@ -72,11 +73,12 @@ test('procurement raises a PR, its department head alone approves, then three ve
         await expect(page).toHaveURL(/\/procurement\/requests\/[0-9a-f-]{36}\?created=1$/);
         const pathname = new URL(page.url()).pathname;
         await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
-        await page
+        const confirm = page
           .getByRole('dialog', { name: 'Submit for approval?' })
-          .getByRole('button', { name: 'Submit for approval', exact: true })
-          .click();
-        await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
+          .getByRole('button', { name: 'Submit for approval', exact: true });
+        await timeAction('submit-purchase-request', confirm, async () => {
+          await expect(page.getByText('Awaiting approval', { exact: true })).toBeVisible();
+        });
         // The region also lists who acted, so the route's one step is counted by its routing reason.
         await expect(
           page.getByRole('region', { name: 'Approval', exact: true }).getByRole('listitem').filter({
