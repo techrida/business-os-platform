@@ -1,15 +1,18 @@
 // Longest measured spec first. Portal work occupies one bucket before assigning workspace files.
+import { listedWorkspaceSpecs } from '../.github/qa/spec-counts.mjs';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export function partition(seconds, count) {
+export function partition(seconds, count, files = Object.keys(seconds)) {
   if (!Number.isInteger(count) || count < 1 || count > 14)
     throw new Error('Unsupported QA shard count');
   const buckets = Array.from({ length: count }, (_, i) => ({
     seconds: i === 0 ? 77 : 0,
     files: [],
   }));
-  for (const [file, duration] of Object.entries(seconds).sort((a, b) => b[1] - a[1])) {
+  for (const [file, duration] of files
+    .map((file) => [file, seconds[file] ?? 1])
+    .sort((a, b) => b[1] - a[1])) {
     const bucket = buckets.reduce((a, b) => (a.seconds <= b.seconds ? a : b));
     bucket.files.push(file);
     bucket.seconds += duration;
@@ -39,11 +42,12 @@ export function matrix(selected, count) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const count = Number(process.env.QA_SHARDS);
   const seconds = JSON.parse(readFileSync('.github/qa/spec-seconds.json', 'utf8'));
-  const buckets = partition(seconds, count);
   if (process.argv[2] === '--matrix') {
     const result = matrix(JSON.parse(process.env.SELECTED), count);
     appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(result)}\n`);
   } else {
+    const files = [...listedWorkspaceSpecs('')].map((file) => `e2e/${file}`);
+    const buckets = partition(seconds, count, files);
     buckets.forEach(({ files }, i) =>
       writeFileSync(`.github/qa/shard-${i + 1}.txt`, files.join('\n') + '\n'),
     );

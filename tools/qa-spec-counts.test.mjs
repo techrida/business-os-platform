@@ -131,3 +131,11 @@ test('the committed shard lists cover every dev-project spec file exactly once (
     assert.equal(result.include.filter((job) => job.portal).length, 1);
   }
 });
+
+test('an unmeasured workspace spec enters the lightest shard', () => {
+  const buckets = partition({ 'slow.spec.ts': 100 }, 2, ['slow.spec.ts', 'new.spec.ts']);
+  assert.deepEqual(
+    buckets.map(({ files }) => files),
+    [['new.spec.ts'], ['slow.spec.ts']],
+  );
+});

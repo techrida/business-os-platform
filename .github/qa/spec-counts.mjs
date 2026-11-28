@@ -92,7 +92,7 @@ function listTotal(cwd, args) {
   return n;
 }
 
-function checkShardLists(root) {
+export function listedWorkspaceSpecs(root) {
   const ws = `${root}apps/workspace`;
   const quarantine = readFileSync(`${root}.github/qa/quarantine.txt`, 'utf8');
   const out = execFileSync(
@@ -108,13 +108,17 @@ function checkShardLists(root) {
     ],
     { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
   );
+  return parseSpecFiles(out);
+}
+
+function checkShardLists(root) {
   const lists = {};
   for (const name of Array.from(
     { length: Number(process.env.QA_SHARDS) },
     (_, i) => `shard-${i + 1}`,
   ))
     lists[name] = readFileSync(`${root}.github/qa/${name}.txt`, 'utf8').split('\n');
-  const verdict = checkLists({ specFiles: parseSpecFiles(out), lists });
+  const verdict = checkLists({ specFiles: listedWorkspaceSpecs(root), lists });
   for (const problem of verdict.problems) console.log(`::error::${problem}`);
   console.log(
     verdict.ok
